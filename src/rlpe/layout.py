@@ -18,7 +18,7 @@ CAPTION_LEAD_PATTERN = re.compile(r"^(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?
 def render_pdf_pages(pdf_path: Path, out_dir: Path, dpi: int = 200) -> list[PageRecord]:
     ensure_dir(out_dir)
     pages: list[PageRecord] = []
-    import fitz
+    fitz = _import_pymupdf()
 
     doc = fitz.open(str(pdf_path))
     for idx, page in enumerate(doc, start=1):
@@ -28,6 +28,28 @@ def render_pdf_pages(pdf_path: Path, out_dir: Path, dpi: int = 200) -> list[Page
         text = page.get_text("text") or ""
         pages.append(PageRecord(page_index=idx, image_path=str(image_path), text=text, width=pix.width, height=pix.height, metadata={"dpi": dpi}))
     return pages
+
+
+def _import_pymupdf():
+    """Import PyMuPDF safely and avoid the unrelated `fitz` package collision."""
+    try:
+        import pymupdf as fitz  # PyMuPDF>=1.24 preferred import
+
+        return fitz
+    except Exception:
+        pass
+
+    try:
+        import fitz  # legacy PyMuPDF import path
+
+        # Guard against wrong `fitz` package (not PyMuPDF).
+        if not hasattr(fitz, "open"):
+            raise RuntimeError("Imported module 'fitz' is not PyMuPDF")
+        return fitz
+    except Exception as exc:
+        raise RuntimeError(
+            "PyMuPDF import failed. Please ensure `pymupdf` is installed and uninstall conflicting `fitz` package."
+        ) from exc
 
 
 def extract_figure_number(text: str | None) -> str | None:

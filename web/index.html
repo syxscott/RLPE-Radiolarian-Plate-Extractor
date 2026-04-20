@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>放射虫图版提取系统 - RLPE</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🔬 放射虫图版提取系统</h1>
+                <p class="subtitle">Radiolarian Literature Plate Extractor (RLPE)</p>
+                <div class="header-status">
+                    <span id="api-status" class="status-indicator">连接中...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs">
+            <button class="tab-btn active" data-tab="upload">📤 上传处理</button>
+            <button class="tab-btn" data-tab="jobs">📋 任务管理</button>
+            <button class="tab-btn" data-tab="results">📊 结果查看</button>
+            <button class="tab-btn" data-tab="settings">⚙️ 设置</button>
+        </nav>
+
+        <!-- Tab Content -->
+        <main class="tab-content">
+            <!-- Upload & Process Tab -->
+            <section id="upload-tab" class="tab-pane active">
+                <div class="card">
+                    <h2>📂 上传 PDF 文件</h2>
+                    <div class="upload-area" id="upload-area">
+                        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <h3>拖拽 PDF 文件到此</h3>
+                        <p>或点击选择文件</p>
+                        <input type="file" id="pdf-input" accept=".pdf" multiple hidden>
+                    </div>
+                    <div id="file-list" class="file-list"></div>
+                </div>
+
+                <div class="card">
+                    <h2>⚙️ 处理配置</h2>
+                    <div class="config-grid">
+                        <div class="config-group">
+                            <label for="grobid-url">GROBID 服务地址</label>
+                            <input type="text" id="grobid-url" value="http://localhost:8070" placeholder="GROBID 服务 URL">
+                        </div>
+                        <div class="config-group">
+                            <label for="ocr-backend">OCR 引擎</label>
+                            <select id="ocr-backend">
+                                <option value="paddleocr">PaddleOCR</option>
+                                <option value="easyocr">EasyOCR</option>
+                            </select>
+                        </div>
+                        <div class="config-group">
+                            <label for="num-workers">并发处理数</label>
+                            <input type="number" id="num-workers" value="4" min="1" max="32">
+                        </div>
+                        <div class="config-group">
+                            <label for="min-panel-score">Panel 分割置信度阈值</label>
+                            <input type="number" id="min-panel-score" value="0.8" min="0" max="1" step="0.05">
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <h3>LLM 增强选项（可选）</h3>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="use-gemma4">
+                            启用 Gemma 4 后处理增强
+                        </label>
+                        <div id="gemma-config" class="gemma-config hidden">
+                            <div class="config-group">
+                                <label for="llm-backend">LLM 后端</label>
+                                <select id="llm-backend">
+                                    <option value="transformers">Transformers (本地 GPU)</option>
+                                    <option value="ollama">Ollama</option>
+                                    <option value="llamacpp">llama.cpp 服务</option>
+                                </select>
+                            </div>
+                            <div class="config-group">
+                                <label for="llm-host">LLM 服务地址</label>
+                                <input type="text" id="llm-host" value="http://127.0.0.1:8080" placeholder="LLM 服务 URL">
+                            </div>
+                            <div class="config-group">
+                                <label for="gemma-conf-threshold">Gemma 置信度阈值</label>
+                                <input type="number" id="gemma-conf-threshold" value="0.7" min="0" max="1" step="0.05">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="use-geology-llm">
+                            启用地质信息 LLM 提取
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="save-intermediate">
+                            保存中间结果（用于调试）
+                        </label>
+                    </div>
+                </div>
+
+                <div class="card action-buttons">
+                    <button id="process-btn" class="btn btn-primary btn-large" disabled>
+                        ▶️ 开始处理
+                    </button>
+                    <button id="clear-btn" class="btn btn-secondary">清空列表</button>
+                </div>
+            </section>
+
+            <!-- Jobs Management Tab -->
+            <section id="jobs-tab" class="tab-pane">
+                <div class="card">
+                    <h2>📋 处理任务列表</h2>
+                    <div class="jobs-toolbar">
+                        <input type="text" id="job-search" placeholder="搜索任务 ID...">
+                        <select id="job-filter">
+                            <option value="">全部状态</option>
+                            <option value="queued">队列中</option>
+                            <option value="running">处理中</option>
+                            <option value="done">已完成</option>
+                            <option value="failed">失败</option>
+                        </select>
+                        <button id="refresh-jobs-btn" class="btn btn-small">🔄 刷新</button>
+                    </div>
+                    <div id="jobs-list" class="jobs-list"></div>
+                </div>
+            </section>
+
+            <!-- Results Tab -->
+            <section id="results-tab" class="tab-pane">
+                <div class="card">
+                    <h2>📊 结果统计</h2>
+                    <div id="results-stats" class="stats-grid"></div>
+                </div>
+
+                <div class="card">
+                    <h2>🔍 图版与标签匹配结果</h2>
+                    <div class="results-toolbar">
+                        <input type="text" id="result-search" placeholder="搜索论文 ID、物种名...">
+                        <select id="result-filter">
+                            <option value="">全部论文</option>
+                        </select>
+                        <button id="export-btn" class="btn btn-small">💾 导出</button>
+                    </div>
+                    <div id="results-table-wrapper" class="table-wrapper">
+                        <table id="results-table" class="results-table">
+                            <thead>
+                                <tr>
+                                    <th>论文 ID</th>
+                                    <th>图版 ID</th>
+                                    <th>Panel 标签</th>
+                                    <th>物种</th>
+                                    <th>置信度</th>
+                                    <th>图版缩略图</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-tbody">
+                                <tr class="placeholder">
+                                    <td colspan="7" style="text-align: center; color: #999;">暂无结果</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Settings Tab -->
+            <section id="settings-tab" class="tab-pane">
+                <div class="card">
+                    <h2>⚙️ 系统设置</h2>
+                    <div class="settings-section">
+                        <h3>API 配置</h3>
+                        <div class="config-group">
+                            <label for="api-base-url">API 基础地址</label>
+                            <input type="text" id="api-base-url" value="http://localhost:8000" placeholder="API 基础 URL">
+                        </div>
+                        <div class="config-group">
+                            <label for="refresh-interval">任务刷新间隔（秒）</label>
+                            <input type="number" id="refresh-interval" value="3" min="1" max="60">
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3>系统信息</h3>
+                        <div id="system-info" class="system-info"></div>
+                    </div>
+
+                    <div class="settings-section">
+                        <button id="save-settings-btn" class="btn btn-primary">💾 保存设置</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Modal for Image Viewer -->
+        <div id="image-modal" class="modal hidden">
+            <div class="modal-content">
+                <button class="modal-close">&times;</button>
+                <img id="modal-image" src="" alt="Panel Image">
+                <div class="modal-info" id="modal-info"></div>
+            </div>
+        </div>
+
+        <!-- Modal for Review & Correction -->
+        <div id="correction-modal" class="modal hidden">
+            <div class="modal-content correction-form">
+                <button class="modal-close">&times;</button>
+                <h2>✏️ 标注纠正</h2>
+                <form id="correction-form">
+                    <div class="form-group">
+                        <label>物种名（拉丁学名）</label>
+                        <input type="text" id="corrected-species" placeholder="例如: Thecopsammatium sp.">
+                    </div>
+                    <div class="form-group">
+                        <label>Panel 标签</label>
+                        <input type="text" id="corrected-label" placeholder="例如: A, B, 1, 2 等">
+                    </div>
+                    <div class="form-group">
+                        <label>审核者</label>
+                        <input type="text" id="reviewer-name" placeholder="您的名字">
+                    </div>
+                    <div class="form-group">
+                        <label>备注</label>
+                        <textarea id="correction-notes" placeholder="可选的备注信息" rows="3"></textarea>
+                    </div>
+                    <div class="form-buttons">
+                        <button type="submit" class="btn btn-primary">✅ 提交纠正</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeCorrectionModal()">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Notification Toast -->
+        <div id="notification" class="notification hidden"></div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

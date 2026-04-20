@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from __future__ import annotations
-
 from .association import (
     assign_panels_to_labels,
     extract_panel_labels,
@@ -17,4 +15,3 @@ __all__ = [
     "label_tokens_from_ocr",
     "match_panels",
 ]
-        labels.append(m.group(1))
