@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import random
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +10,7 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
+from .llm_backends import BaseLLMBackend, LlamaCppGemmaBackend, OllamaGemmaBackend, TransformersGemmaBackend
 from .types import MatchResult
 
 
@@ -47,11 +46,8 @@ Strict output JSON:
 
 @dataclass(slots=True)
 class GemmaRuntime:
-    model: Any
-    processor: Any
-    tokenizer: Any
-    device: str
-    is_multimodal: bool
+    backend: BaseLLMBackend
+    backend_name: str
 
 
 def set_global_seed(seed: int = 42) -> None:
@@ -86,8 +82,6 @@ def load_gemma4_model(
             bnb_4bit_use_double_quant=True,
         )
 
-    mm_error: Exception | None = None
-
     # Try multimodal path first.
     try:
         processor = transformers.AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
@@ -102,13 +96,8 @@ def load_gemma4_model(
             trust_remote_code=True,
         )
         model.eval()
-        return GemmaRuntime(
-            model=model,
-            processor=processor,
-            tokenizer=None,
-            device="cuda" if torch.cuda.is_available() else "cpu",
-            is_multimodal=True,
-        )
+        backend = TransformersGemmaBackend(model=model, processor=processor, tokenizer=None, is_multimodal=True)
+        return GemmaRuntime(backend=backend, backend_name="transformers")
     except Exception as exc:
         mm_error = exc
 
@@ -123,33 +112,68 @@ def load_gemma4_model(
             trust_remote_code=True,
         )
         model.eval()
-        return GemmaRuntime(
-            model=model,
-            processor=None,
-            tokenizer=tokenizer,
-            device="cuda" if torch.cuda.is_available() else "cpu",
-            is_multimodal=False,
-        )
+        backend = TransformersGemmaBackend(model=model, processor=None, tokenizer=tokenizer, is_multimodal=False)
+        return GemmaRuntime(backend=backend, backend_name="transformers")
     except Exception as lm_exc:
         raise RuntimeError(f"Gemma load failed. multimodal_error={mm_error}; text_error={lm_exc}")
 
 
-_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+def load_gemma4_ollama(
+    model_name: str,
+    host: str = "http://127.0.0.1:11434",
+    timeout_sec: int = 120,
+    temperature: float = 0.10,
+    top_p: float = 0.90,
+) -> GemmaRuntime:
+    backend = OllamaGemmaBackend(
+        model=model_name,
+        host=host,
+        timeout_sec=timeout_sec,
+        temperature=temperature,
+        top_p=top_p,
+    )
+    return GemmaRuntime(backend=backend, backend_name="ollama")
 
 
-def _safe_parse_json(text: str) -> dict[str, Any]:
-    match = _JSON_RE.search((text or "").strip())
-    if not match:
-        raise ValueError("No JSON object found in model output.")
-    obj = json.loads(match.group(0))
-    out = {
-        "label": (str(obj.get("label", "")).strip() or None),
-        "species": (str(obj.get("species", "")).strip() or None),
-        "confidence": float(obj.get("confidence", 0.0)),
-        "reasoning": str(obj.get("reasoning", "")).strip() or "No reasoning provided.",
-    }
-    out["confidence"] = max(0.0, min(1.0, round(out["confidence"], 2)))
-    return out
+def load_gemma4_llamacpp(
+    host: str = "http://127.0.0.1:8080",
+    model_name: str | None = None,
+    timeout_sec: int = 120,
+    temperature: float = 0.10,
+    top_p: float = 0.90,
+) -> GemmaRuntime:
+    backend = LlamaCppGemmaBackend(
+        host=host,
+        model=model_name,
+        timeout_sec=timeout_sec,
+        temperature=temperature,
+        top_p=top_p,
+    )
+    return GemmaRuntime(backend=backend, backend_name="llamacpp")
+
+
+def build_gemma_backend_from_config(extra: dict[str, Any]) -> GemmaRuntime:
+    backend = str(extra.get("llm_backend", "transformers")).lower()
+    if backend in {"llama.cpp", "llamacpp", "llama_cpp"}:
+        host = str(extra.get("llama_host", "http://127.0.0.1:8080"))
+        model_name = extra.get("llama_model") or extra.get("ollama_model") or extra.get("gemma_model_path")
+        timeout_sec = int(extra.get("llama_timeout_sec", 120))
+        return load_gemma4_llamacpp(
+            host=host,
+            model_name=str(model_name) if model_name else None,
+            timeout_sec=timeout_sec,
+        )
+    if backend == "ollama":
+        model_name = str(extra.get("ollama_model") or extra.get("gemma_model_path") or "gemma4")
+        host = str(extra.get("ollama_host", "http://127.0.0.1:11434"))
+        timeout_sec = int(extra.get("gemma_timeout_sec", 120))
+        return load_gemma4_ollama(model_name=model_name, host=host, timeout_sec=timeout_sec)
+    return load_gemma4_model(
+        model_path=str(extra.get("gemma_model_path")),
+        use_4bit=bool(extra.get("gemma_use_4bit", True)),
+        bfloat16=bool(extra.get("gemma_bfloat16", True)),
+        device_map=str(extra.get("gemma_device_map", "auto")),
+    )
 
 
 def gemma_match_panel(
@@ -171,95 +195,11 @@ def gemma_match_panel(
         "请判断该panel最可能对应的label与拉丁学名。严格输出JSON，不要输出其他文本。"
     )
 
-    try:
-        with torch.inference_mode():
-            if runtime.is_multimodal:
-                messages = [
-                    {"role": "system", "content": [{"type": "text", "text": prompt}]},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": panel_image},
-                            {"type": "text", "text": user_prompt},
-                        ],
-                    },
-                ]
+    return runtime.backend.infer_panel(panel_image=panel_image, caption_text=caption_text, ocr_labels=ocr_labels, system_prompt=prompt, user_prompt=user_prompt)
 
-                inputs = runtime.processor.apply_chat_template(
-                    messages,
-                    add_generation_prompt=True,
-                    tokenize=True,
-                    return_dict=True,
-                    return_tensors="pt",
-                )
-                inputs = {k: v.to(runtime.model.device) for k, v in inputs.items()}
 
-                output = runtime.model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=True,
-                    temperature=temperature,
-                    top_p=top_p,
-                )
-                generated = output[:, inputs["input_ids"].shape[-1] :]
-                text = runtime.processor.batch_decode(generated, skip_special_tokens=True)[0]
-            else:
-                full_prompt = (
-                    prompt
-                    + "\n\n"
-                    + user_prompt
-                    + "\n\n当前为文本回退模式，请更保守地给出置信度。"
-                )
-                tokens = runtime.tokenizer(
-                    full_prompt,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=4096,
-                ).to(runtime.model.device)
-
-                output = runtime.model.generate(
-                    **tokens,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=True,
-                    temperature=temperature,
-                    top_p=top_p,
-                )
-                gen = output[0][tokens["input_ids"].shape[-1] :]
-                text = runtime.tokenizer.decode(gen, skip_special_tokens=True)
-
-        parsed = _safe_parse_json(text)
-        parsed["fallback_used"] = False
-        parsed["raw_text"] = text
-        return parsed
-    except torch.cuda.OutOfMemoryError:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        return {
-            "label": None,
-            "species": None,
-            "confidence": 0.0,
-            "reasoning": "Gemma inference failed: CUDA OOM.",
-            "fallback_used": True,
-            "error": "cuda_oom",
-        }
-    except json.JSONDecodeError:
-        return {
-            "label": None,
-            "species": None,
-            "confidence": 0.0,
-            "reasoning": "Gemma output JSON parse failed.",
-            "fallback_used": True,
-            "error": "json_parse_error",
-        }
-    except Exception as exc:
-        return {
-            "label": None,
-            "species": None,
-            "confidence": 0.0,
-            "reasoning": f"Gemma inference error: {type(exc).__name__}",
-            "fallback_used": True,
-            "error": str(exc),
-        }
+def gemma_extract_text_json(runtime: GemmaRuntime, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    return runtime.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
 
 
 def apply_gemma_to_matches(

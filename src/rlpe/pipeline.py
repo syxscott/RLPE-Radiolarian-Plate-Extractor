@@ -7,15 +7,16 @@ from typing import Any
 
 import cv2
 
+from .geology_extraction import build_knowledge_graph, link_species_to_geology
 from .config import PipelineConfig
-from .grobid import GrobidClient, parse_captions_from_tei
+from .grobid import GrobidClient
 from .association import match_panels
-from .gemma_postprocess import apply_gemma_to_matches, load_gemma4_model
+from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
 from .layout import choose_best_page, detect_figure_regions, render_pdf_pages
 from .ocr import OCRBackend, normalize_ocr_tokens
+from .scale_bar import detect_scale_bar_length_px, extract_scale_from_caption, extract_scale_from_ocr_text, merge_scale_info
 from .segmentation import PanelSegmenter, SegmentationConfig
 from .taxon import TaxonRecognizer
-from .types import MatchResult
 from .utils import ensure_dir, slugify, stable_id, write_json, write_jsonl
 
 
@@ -24,9 +25,18 @@ class RadiolarianPipeline:
         self.config = config
         self.grobid = GrobidClient(server_url=config.grobid_url)
         self.ocr = OCRBackend(backend=config.ocr_backend, use_gpu=config.use_gpu)
-        self.taxon = TaxonRecognizer(model=config.taxon_model)
+        self.taxon = TaxonRecognizer(
+            model=config.taxon_model,
+            hf_model_path=config.extra.get("taxon_hf_model_path"),
+            lexicon_path=config.extra.get("taxon_lexicon_path"),
+        )
         self.segmenter = PanelSegmenter(
-            config=SegmentationConfig(score_threshold=config.min_panel_score),
+            config=SegmentationConfig(
+                score_threshold=config.min_panel_score,
+                grid_size=int(config.extra.get("sam2_grid_size", 6)),
+                max_point_prompts=int(config.extra.get("sam2_max_point_prompts", 48)),
+                max_box_prompts=int(config.extra.get("sam2_max_box_prompts", 24)),
+            ),
             checkpoint=config.extra.get("sam2_checkpoint"),
             model_cfg=config.extra.get("sam2_model_cfg"),
         )
@@ -36,16 +46,11 @@ class RadiolarianPipeline:
     def _try_init_gemma(self) -> None:
         if not self.config.extra.get("use_gemma4", False):
             return
-        model_path = self.config.extra.get("gemma_model_path")
-        if not model_path:
+        model_path = self.config.extra.get("gemma_model_path") or self.config.extra.get("ollama_model")
+        if not model_path and str(self.config.extra.get("llm_backend", "transformers")).lower() != "ollama":
             return
         try:
-            self.gemma_runtime = load_gemma4_model(
-                model_path=model_path,
-                use_4bit=bool(self.config.extra.get("gemma_use_4bit", True)),
-                bfloat16=bool(self.config.extra.get("gemma_bfloat16", True)),
-                device_map=str(self.config.extra.get("gemma_device_map", "auto")),
-            )
+            self.gemma_runtime = build_gemma_backend_from_config(self.config.extra)
         except Exception as exc:
             self.gemma_runtime = None
             self.config.extra["gemma_init_error"] = str(exc)
@@ -85,7 +90,19 @@ class RadiolarianPipeline:
         pages = render_pdf_pages(pdf_path, self.config.figures_dir() / paper_id, dpi=self.config.render_dpi)
         results: list[dict[str, Any]] = []
 
-        captions_by_figure = {cap.figure_id: cap for cap in tei_captions}
+        # 全文地质信息抽取与物种关系链接（可选使用LLM增强）
+        section_links: dict[str, list[dict[str, Any]]] = {}
+        knowledge_graph: dict[str, Any] | None = None
+        use_geology_llm = bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
+        species_seed = sorted({ent.text for cap in tei_captions for ent in cap.entities if ent.text})
+        if grobid_result.fulltext_sections:
+            section_links = link_species_to_geology(
+                species_names=species_seed,
+                sections=grobid_result.fulltext_sections,
+                llm_runtime=self.gemma_runtime if use_geology_llm else None,
+            )
+            knowledge_graph = build_knowledge_graph(section_links)
+
         if not pages:
             return []
 
@@ -125,6 +142,13 @@ class RadiolarianPipeline:
             ocr_tokens = normalize_ocr_tokens(self.ocr.recognize(region_img))
             taxon_entities = self.taxon.predict(caption.caption or "")
 
+            # 比例尺抽取：caption + OCR + 视觉线段
+            caption_scale = extract_scale_from_caption(caption.caption)
+            ocr_text_block = " ".join(tok.text for tok in ocr_tokens)
+            ocr_scale = extract_scale_from_ocr_text(ocr_text_block)
+            px_len = detect_scale_bar_length_px(region_img)
+            merged_scale = merge_scale_info(caption_scale, ocr_scale, pixel_length=px_len)
+
             for panel_index, panel in enumerate(panels, start=1):
                 x, y, w, h = panel.bbox
                 crop = region_img[y : y + h, x : x + w]
@@ -136,7 +160,17 @@ class RadiolarianPipeline:
                 panel.source_page = region.page_index
                 panel.panel_index = panel_index
 
-            matches = match_panels(paper_id, caption.figure_id, caption, panels, ocr_tokens, taxon_entities)
+            matches = match_panels(
+                paper_id,
+                caption.figure_id,
+                caption,
+                panels,
+                ocr_tokens,
+                taxon_entities,
+                use_neural_matcher=bool(self.config.extra.get("use_neural_matcher", False)),
+                matcher_checkpoint_path=self.config.extra.get("matcher_checkpoint_path"),
+                image_shape=region_img.shape[:2],
+            )
 
             if self.gemma_runtime is not None:
                 matches = apply_gemma_to_matches(
@@ -147,6 +181,16 @@ class RadiolarianPipeline:
                     conf_threshold=float(self.config.extra.get("gemma_conf_threshold", 0.70)),
                     prompt_lang=str(self.config.extra.get("gemma_prompt_lang", "zh")),
                 )
+
+            # 关联地质信息到每个匹配结果（按species名称）
+            for m in matches:
+                geo_list = section_links.get(m.species or "", [])
+                if not geo_list and section_links:
+                    # 兜底：取一个全局地质记录
+                    first_key = next(iter(section_links.keys())) if section_links else None
+                    geo_list = section_links.get(first_key, []) if first_key else []
+                m.metadata["scale_bar"] = merged_scale.to_dict()
+                m.metadata["geology_links"] = geo_list[:5]
 
             for m in matches:
                 results.append(m.to_dict())
@@ -161,6 +205,10 @@ class RadiolarianPipeline:
                     "region": asdict(region),
                     "ocr": [asdict(t) for t in ocr_tokens],
                     "taxa": [asdict(t) for t in taxon_entities],
+                    "fulltext_sections": grobid_result.fulltext_sections,
+                    "geology_links": section_links,
+                    "knowledge_graph": knowledge_graph,
+                    "scale_bar": merged_scale.to_dict(),
                     "panels": [asdict(p) for p in panels],
                     "matches": [m.to_dict() for m in matches],
                 })

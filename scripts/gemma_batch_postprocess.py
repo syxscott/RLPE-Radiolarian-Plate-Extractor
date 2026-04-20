@@ -10,7 +10,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from rlpe.gemma_postprocess import batch_gemma_postprocess_rows, load_gemma4_model
+from rlpe.gemma_postprocess import batch_gemma_postprocess_rows, load_gemma4_model, load_gemma4_ollama
+from rlpe.gemma_postprocess import load_gemma4_llamacpp
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -35,20 +36,41 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Apply Gemma4 postprocess to RLPE rows.")
     parser.add_argument("--input-jsonl", type=Path, required=True)
     parser.add_argument("--output-jsonl", type=Path, required=True)
-    parser.add_argument("--model-path", type=str, required=True)
+    parser.add_argument("--backend", type=str, default="llamacpp", choices=["transformers", "ollama", "llamacpp", "llama.cpp", "llama_cpp"])
+    parser.add_argument("--model-path", type=str, default=None)
+    parser.add_argument("--llama-model", type=str, default=None)
+    parser.add_argument("--llama-host", type=str, default="http://127.0.0.1:8080")
+    parser.add_argument("--ollama-model", type=str, default=None)
+    parser.add_argument("--ollama-host", type=str, default="http://127.0.0.1:11434")
     parser.add_argument("--conf-threshold", type=float, default=0.70)
     parser.add_argument("--prompt-lang", type=str, default="zh", choices=["zh", "en"])
     parser.add_argument("--use-4bit", action="store_true")
     parser.add_argument("--no-bfloat16", action="store_true")
+    parser.add_argument("--timeout-sec", type=int, default=120)
     args = parser.parse_args()
 
     rows = load_jsonl(args.input_jsonl)
-    runtime = load_gemma4_model(
-        model_path=args.model_path,
-        use_4bit=args.use_4bit,
-        bfloat16=not args.no_bfloat16,
-        device_map="auto",
-    )
+    if args.backend in {"llamacpp", "llama.cpp", "llama_cpp"}:
+        runtime = load_gemma4_llamacpp(
+            host=args.llama_host,
+            model_name=args.llama_model or args.model_path or args.ollama_model,
+            timeout_sec=args.timeout_sec,
+        )
+    elif args.backend == "ollama":
+        runtime = load_gemma4_ollama(
+            model_name=args.ollama_model or args.model_path or "gemma4",
+            host=args.ollama_host,
+            timeout_sec=args.timeout_sec,
+        )
+    else:
+        if not args.model_path:
+            raise ValueError("--model-path is required when backend=transformers")
+        runtime = load_gemma4_model(
+            model_path=args.model_path,
+            use_4bit=args.use_4bit,
+            bfloat16=not args.no_bfloat16,
+            device_map="auto",
+        )
     enhanced = batch_gemma_postprocess_rows(
         runtime=runtime,
         rows=rows,

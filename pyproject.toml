@@ -23,6 +23,9 @@ ocr = ["paddleocr", "easyocr"]
 taxon = ["taxonerd", "spacy"]
 sam = ["sam2"]
 gemma = ["transformers", "accelerate", "bitsandbytes", "pillow"]
+service = ["fastapi", "uvicorn", "pydantic"]
+queue = ["celery", "redis"]
+train = ["torch", "transformers", "datasets", "scikit-learn", "scipy"]
 
 [project.scripts]
 rlpe = "rlpe.cli:main"

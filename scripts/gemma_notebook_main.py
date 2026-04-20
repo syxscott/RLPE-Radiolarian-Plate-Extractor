@@ -19,11 +19,15 @@ from rlpe.gemma_postprocess import (
     GEMMA_SYSTEM_PROMPT_ZH,
     gemma_match_panel,
     load_gemma4_model,
+    load_gemma4_ollama,
 )
 
 
 CONFIG = {
-    "MODEL_PATH": "/home/user/models/gemma-4-E4B",  # 用户运行时替换
+    "LLM_BACKEND": "ollama",  # transformers | ollama
+    "MODEL_PATH": "/home/user/models/gemma-4-E4B",  # transformers模式下使用
+    "OLLAMA_MODEL": "gemma-4-31b-it",  # ollama模式下使用
+    "OLLAMA_HOST": "http://127.0.0.1:11434",
     "use_gemma4": True,
     "gemma_conf_threshold": 0.70,
     "gemma_system_prompt_lang": "zh",
@@ -35,6 +39,11 @@ CONFIG = {
 
 
 def build_runtime_from_config(cfg: dict):
+    if str(cfg.get("LLM_BACKEND", "transformers")).lower() == "ollama":
+        return load_gemma4_ollama(
+            model_name=cfg.get("OLLAMA_MODEL") or cfg.get("MODEL_PATH"),
+            host=cfg.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
+        )
     return load_gemma4_model(
         model_path=cfg["MODEL_PATH"],
         use_4bit=True,
