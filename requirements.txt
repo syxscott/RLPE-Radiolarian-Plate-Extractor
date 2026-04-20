@@ -1,0 +1,52 @@
+# RLPE requirements
+# Python >= 3.11
+
+# -------------------------
+# Core pipeline dependencies
+# -------------------------
+requests>=2.31.0
+numpy>=1.26.0
+opencv-python>=4.9.0
+pymupdf>=1.24.0
+pandas>=2.2.0
+tqdm>=4.66.0
+scikit-image>=0.22.0
+pillow>=10.0.0
+
+# -------------------------
+# OCR / Taxonomy
+# -------------------------
+paddleocr>=2.7.0
+easyocr>=1.7.1
+taxonerd>=1.5.3
+spacy>=3.7.0
+
+# -------------------------
+# LLM / Gemma backends
+# -------------------------
+transformers>=4.45.0
+accelerate>=0.33.0
+bitsandbytes>=0.43.0
+
+# -------------------------
+# API / Queue / Service
+# -------------------------
+fastapi>=0.111.0
+uvicorn>=0.30.0
+pydantic>=2.8.0
+celery>=5.4.0
+redis>=5.0.0
+
+# -------------------------
+# Training utilities
+# -------------------------
+datasets>=2.19.0
+scikit-learn>=1.5.0
+scipy>=1.13.0
+
+# -------------------------
+# Notes
+# -------------------------
+# 1) SAM2 should be installed from source repository (editable install).
+# 2) If you only need llama.cpp / Ollama inference, transformers stack can be omitted.
+# 3) torch installation should follow your CUDA environment (recommended via conda).
