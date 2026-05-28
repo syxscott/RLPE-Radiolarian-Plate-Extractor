@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -20,26 +24,33 @@ class OCRBackend:
         self.backend = backend.lower()
         self.use_gpu = use_gpu
         self._engine = None
+        self._lock = threading.Lock()
 
     def _lazy_init(self):
         if self._engine is not None:
             return self._engine
-        if self.backend == "paddleocr":
-            try:
-                from paddleocr import PaddleOCR
-
-                self._engine = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=self.use_gpu)
+        with self._lock:
+            if self._engine is not None:
                 return self._engine
-            except Exception:
-                self.backend = "easyocr"
-        if self.backend == "easyocr":
-            try:
-                import easyocr
+            if self.backend == "paddleocr":
+                try:
+                    from paddleocr import PaddleOCR
 
-                self._engine = easyocr.Reader(["en"], gpu=self.use_gpu)
-                return self._engine
-            except Exception:
-                self._engine = None
+                    self._engine = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=self.use_gpu)
+                    return self._engine
+                except Exception:
+                    logger.warning("PaddleOCR init failed; falling back to EasyOCR")
+                    self.backend = "easyocr"
+            if self.backend == "easyocr":
+                try:
+                    import easyocr
+
+                    self._engine = easyocr.Reader(["en"], gpu=self.use_gpu)
+                    return self._engine
+                except Exception:
+                    logger.warning("EasyOCR init failed; OCR disabled")
+                    self.backend = None  # prevent repeated retries
+                    self._engine = None
         return self._engine
 
     def recognize(self, image: np.ndarray | str | Path) -> list[OCRToken]:

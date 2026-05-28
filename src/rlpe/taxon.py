@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,41 +24,45 @@ class TaxonRecognizer:
         self._engine = None
         self._hf_ner = None
         self._lexicon: set[str] = set()
+        self._lock = threading.Lock()
 
     def _lazy_init(self):
         if self._engine is not None:
             return self._engine
-        try:
-            from taxonerd import TaxoNERD
-
-            self._engine = TaxoNERD(model=self.model)
-        except Exception:
-            self._engine = None
-
-        if self.hf_model_path and self._hf_ner is None:
+        with self._lock:
+            if self._engine is not None:
+                return self._engine
             try:
-                from transformers import pipeline
+                from taxonerd import TaxoNERD
 
-                self._hf_ner = pipeline(
-                    task="token-classification",
-                    model=self.hf_model_path,
-                    tokenizer=self.hf_model_path,
-                    aggregation_strategy="simple",
-                )
+                self._engine = TaxoNERD(model=self.model)
             except Exception:
-                self._hf_ner = None
+                self._engine = None
 
-        if self.lexicon_path and not self._lexicon:
-            p = Path(self.lexicon_path)
-            if p.exists():
+            if self.hf_model_path and self._hf_ner is None:
                 try:
-                    with p.open("r", encoding="utf-8") as f:
-                        for line in f:
-                            item = line.strip()
-                            if item:
-                                self._lexicon.add(item)
+                    from transformers import pipeline
+
+                    self._hf_ner = pipeline(
+                        task="token-classification",
+                        model=self.hf_model_path,
+                        tokenizer=self.hf_model_path,
+                        aggregation_strategy="simple",
+                    )
                 except Exception:
-                    self._lexicon = set()
+                    self._hf_ner = None
+
+            if self.lexicon_path and not self._lexicon:
+                p = Path(self.lexicon_path)
+                if p.exists():
+                    try:
+                        with p.open("r", encoding="utf-8") as f:
+                            for line in f:
+                                item = line.strip()
+                                if item:
+                                    self._lexicon.add(item)
+                    except Exception:
+                        self._lexicon = set()
         return self._engine
 
     def predict(self, text: str) -> list[TaxonEntity]:

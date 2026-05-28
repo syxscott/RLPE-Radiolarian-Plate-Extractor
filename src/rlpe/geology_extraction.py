@@ -6,7 +6,10 @@ from typing import Any
 
 
 AGE_PATTERN = re.compile(
-    r"\b(Precambrian|Cambrian|Ordovician|Silurian|Devonian|Carboniferous|Permian|Triassic|Jurassic|Cretaceous|Paleocene|Eocene|Oligocene|Miocene|Pliocene|Pleistocene|Holocene|Early\s+[A-Z][a-z]+|Middle\s+[A-Z][a-z]+|Late\s+[A-Z][a-z]+)\b",
+    r"\b(?:Early|Middle|Late|Lower|Upper)\s+[A-Z][a-z]+|"
+    r"\b(?:Precambrian|Cambrian|Ordovician|Silurian|Devonian|Carboniferous|Permian|"
+    r"Triassic|Jurassic|Cretaceous|Paleocene|Eocene|Oligocene|Miocene|Pliocene|"
+    r"Pleistocene|Holocene)\b",
     re.IGNORECASE,
 )
 FORMATION_PATTERN = re.compile(r"\b([A-Z][A-Za-z\-\s]+(?:Formation|Member|Group|Fm\.|Mb\.|Gp\.))\b")
@@ -33,7 +36,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         text = sec.get("text", "")
         if not text:
             continue
-        ages = [m.group(1) for m in AGE_PATTERN.finditer(text)]
+        ages = [m.group(0).strip() for m in AGE_PATTERN.finditer(text)]
         forms = [m.group(1).strip() for m in FORMATION_PATTERN.finditer(text)]
         locs = [m.group(1).strip(" .,;") for m in LOCALITY_PATTERN.finditer(text)]
 

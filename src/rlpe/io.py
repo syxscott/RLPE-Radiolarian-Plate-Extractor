@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 from typing import Any
 
@@ -26,5 +27,5 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
         for line in f:
             line = line.strip()
             if line:
-                rows.append(__import__("json").loads(line))
+                rows.append(json.loads(line))
     return rows

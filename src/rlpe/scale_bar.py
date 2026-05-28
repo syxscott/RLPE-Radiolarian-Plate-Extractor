@@ -9,7 +9,7 @@ import numpy as np
 
 
 SCALE_PATTERN = re.compile(
-    r"(?:scale\s*bar\s*(?:=|:)?\s*|bar\s*=\s*)(\d+(?:\.\d+)?)\s*(μm|um|mm|nm)",
+    r"(?:scale\s*bar\s*(?:=|:)?\s*|bar\s*=\s*)(\d+(?:\.\d+)?)\s*(μm|um|mm|cm|nm)",
     re.IGNORECASE,
 )
 
@@ -111,6 +111,8 @@ def to_um(value: float, unit: str) -> float | None:
         return value
     if u == "mm":
         return value * 1000.0
+    if u == "cm":
+        return value * 10000.0
     if u == "nm":
         return value / 1000.0
     return None

@@ -26,6 +26,7 @@ gemma = ["transformers", "accelerate", "bitsandbytes", "pillow"]
 service = ["fastapi", "uvicorn", "pydantic"]
 queue = ["celery", "redis"]
 train = ["torch", "transformers", "datasets", "scikit-learn", "scipy"]
+opendataloader = ["opendataloader-pdf>=0.0.0"]
 
 [project.scripts]
 rlpe = "rlpe.cli:main"

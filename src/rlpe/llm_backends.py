@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 import requests
 
 
+logger = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
@@ -258,6 +260,7 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             return self._extract_chat_text(data)
         except Exception:
             # 2) 回退到 llama.cpp /completion 接口（纯文本）
+            logger.debug("llama.cpp /v1/chat/completions failed; falling back to /completion (text-only)")
             prompt = self._build_text_prompt(system_prompt, user_prompt)
             completion_payload = {
                 "prompt": prompt,

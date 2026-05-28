@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,20 +28,24 @@ class PanelSegmenter:
         self.checkpoint = checkpoint
         self.model_cfg = model_cfg
         self._predictor = None
+        self._lock = threading.Lock()
 
     def _lazy_init_sam2(self):
         if self._predictor is not None:
             return self._predictor
         if not self.config.use_sam2:
             return None
-        try:
-            from sam2.build_sam import build_sam2
-            from sam2.sam2_image_predictor import SAM2ImagePredictor
+        with self._lock:
+            if self._predictor is not None:
+                return self._predictor
+            try:
+                from sam2.build_sam import build_sam2
+                from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-            model = build_sam2(self.model_cfg or "sam2_hiera_l.yaml", self.checkpoint or "sam2_hiera_large.pt", device="cuda")
-            self._predictor = SAM2ImagePredictor(model)
-        except Exception:
-            self._predictor = None
+                model = build_sam2(self.model_cfg or "sam2_hiera_l.yaml", self.checkpoint or "sam2_hiera_large.pt", device="cuda")
+                self._predictor = SAM2ImagePredictor(model)
+            except Exception:
+                self._predictor = None
         return self._predictor
 
     def segment(self, image_path: str | Path) -> list[PanelCandidate]:
@@ -54,6 +59,15 @@ class PanelSegmenter:
         if predictor is not None:
             return self._segment_with_sam2(image, predictor)
         return self._segment_with_opencv(image)
+
+    def _preprocess_gray(self, image: np.ndarray) -> np.ndarray:
+        """Shared grayscale+blur+threshold preprocessing."""
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        if np.count_nonzero(th) > th.size // 2:
+            th = cv2.bitwise_not(th)
+        return th
 
     def _segment_with_sam2(self, image: np.ndarray, predictor) -> list[PanelCandidate]:
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -112,11 +126,7 @@ class PanelSegmenter:
         h, w = image.shape[:2]
 
         # A. 连通域中心点与外接框（针对密集碎片的高召回提示）
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        if np.mean(th) > 127:
-            th = cv2.bitwise_not(th)
+        th = self._preprocess_gray(image)
         num_labels, _, stats, centroids = cv2.connectedComponentsWithStats(th, connectivity=8)
 
         point_prompts: list[tuple[float, float]] = []
@@ -191,11 +201,7 @@ class PanelSegmenter:
         return out
 
     def _segment_with_opencv(self, image: np.ndarray) -> list[PanelCandidate]:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        if np.mean(thresh) > 127:
-            thresh = cv2.bitwise_not(thresh)
+        thresh = self._preprocess_gray(image)
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thresh, connectivity=8)
         candidates: list[PanelCandidate] = []
         img_area = image.shape[0] * image.shape[1]

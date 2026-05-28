@@ -257,15 +257,19 @@ def batch_gemma_postprocess_rows(
     conf_threshold: float = 0.70,
     prompt_lang: str = "zh",
 ) -> list[dict[str, Any]]:
-    """Apply Gemma to exported rows (dict mode), with progress bar."""
+    """Apply Gemma to exported rows (dict mode), with progress bar.
+
+    Returns a new list of dicts; the input *rows* are not modified.
+    """
     prompt = GEMMA_SYSTEM_PROMPT_ZH if prompt_lang.lower().startswith("zh") else GEMMA_SYSTEM_PROMPT_EN
     out_rows: list[dict[str, Any]] = []
     for row in tqdm(rows, desc="Gemma postprocess"):
-        panel_path = row.get("panel_path")
+        new_row = dict(row)
+        panel_path = new_row.get("panel_path")
         if not panel_path or not Path(panel_path).exists():
-            row["gemma_used"] = False
-            row["gemma_confidence"] = 0.0
-            out_rows.append(row)
+            new_row["gemma_used"] = False
+            new_row["gemma_confidence"] = 0.0
+            out_rows.append(new_row)
             continue
 
         try:
@@ -273,25 +277,25 @@ def batch_gemma_postprocess_rows(
                 result = gemma_match_panel(
                     runtime=runtime,
                     panel_image=im.convert("RGB"),
-                    caption_text=(row.get("caption_text") or row.get("caption_snippet") or ""),
-                    ocr_labels=row.get("ocr_labels", []),
+                    caption_text=(new_row.get("caption_text") or new_row.get("caption_snippet") or ""),
+                    ocr_labels=new_row.get("ocr_labels", []),
                     system_prompt=prompt,
                 )
         except Exception as exc:
-            row["gemma_used"] = False
-            row["gemma_error"] = str(exc)
-            out_rows.append(row)
+            new_row["gemma_used"] = False
+            new_row["gemma_error"] = str(exc)
+            out_rows.append(new_row)
             continue
 
-        row["gemma_confidence"] = float(result.get("confidence", 0.0))
-        row["gemma_reasoning"] = result.get("reasoning", "")
-        if row["gemma_confidence"] >= conf_threshold:
-            row["panel_id"] = result.get("label") or row.get("panel_id")
-            row["species"] = result.get("species") or row.get("species")
-            row["label_text"] = result.get("label") or row.get("label_text")
-            row["gemma_used"] = True
+        new_row["gemma_confidence"] = float(result.get("confidence", 0.0))
+        new_row["gemma_reasoning"] = result.get("reasoning", "")
+        if new_row["gemma_confidence"] >= conf_threshold:
+            new_row["panel_id"] = result.get("label") or new_row.get("panel_id")
+            new_row["species"] = result.get("species") or new_row.get("species")
+            new_row["label_text"] = result.get("label") or new_row.get("label_text")
+            new_row["gemma_used"] = True
         else:
-            row["gemma_used"] = False
-            row["gemma_fallback"] = True
-        out_rows.append(row)
+            new_row["gemma_used"] = False
+            new_row["gemma_fallback"] = True
+        out_rows.append(new_row)
     return out_rows

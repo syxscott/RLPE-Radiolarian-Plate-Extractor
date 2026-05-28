@@ -25,11 +25,13 @@ from ..pipeline import RadiolarianPipeline
 from ..utils import ensure_dir
 
 
-APP_ROOT = Path.cwd()
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# Use project root so dirs are predictable regardless of launch directory.
+APP_ROOT = PROJECT_ROOT
 ensure_dir(APP_ROOT / "static")
 UPLOAD_DIR = ensure_dir(APP_ROOT / "uploads")
 WORK_DIR = ensure_dir(APP_ROOT / "service_work")
+MAX_UPLOAD_SIZE_MB = 256
 RESULT_CACHE: dict[str, dict[str, Any]] = {}
 
 WEB_DIR: Path | None = None
@@ -141,10 +143,15 @@ def health() -> dict[str, Any]:
 async def upload_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    # Read content to check size before writing.
+    content = await file.read()
+    size_mb = len(content) / (1024 * 1024)
+    if size_mb > MAX_UPLOAD_SIZE_MB:
+        raise HTTPException(status_code=413, detail=f"File exceeds {MAX_UPLOAD_SIZE_MB} MB limit.")
     job_id = str(uuid.uuid4())
     save_path = UPLOAD_DIR / f"{job_id}_{file.filename}"
     with save_path.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
+        f.write(content)
 
     now = datetime.now().isoformat()
     RESULT_CACHE[job_id] = {
@@ -274,6 +281,34 @@ def system_info() -> dict[str, Any]:
     }
 
 
+def _safe_value(v: Any) -> Any:
+    """Convert numpy scalars to native Python types for JSON serialization."""
+    if isinstance(v, (int, float, str, bool, type(None))):
+        return v
+    try:
+        import numpy as np
+        if isinstance(v, (np.integer,)):
+            return int(v)
+        if isinstance(v, (np.floating,)):
+            return float(v)
+    except Exception:
+        pass
+    return v
+
+
+def _sanitize_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Recursively convert numpy types in a result row."""
+    out: dict[str, Any] = {}
+    for k, v in row.items():
+        if isinstance(v, dict):
+            out[k] = _sanitize_row(v)
+        elif isinstance(v, list):
+            out[k] = [_sanitize_row(item) if isinstance(item, dict) else _safe_value(item) for item in v]
+        else:
+            out[k] = _safe_value(v)
+    return out
+
+
 def _run_job(job_id: str, pdf_path: Path) -> None:
     RESULT_CACHE[job_id]["status"] = "running"
     RESULT_CACHE[job_id]["progress"] = 10
@@ -298,7 +333,7 @@ def _run_job(job_id: str, pdf_path: Path) -> None:
         normalized_rows: list[dict[str, Any]] = []
         job_root = (WORK_DIR / job_id).resolve()
         for row in rows:
-            normalized = asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row)
+            normalized = _sanitize_row(asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row))
             panel_path = normalized.get("panel_path")
             if panel_path:
                 panel_abs = Path(panel_path).resolve()

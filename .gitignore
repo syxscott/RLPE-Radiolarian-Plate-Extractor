@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project runtime artifacts
+uploads/
+service_work/
+work/
+output/
+
+# Model weights and large binaries
+*.pt
+*.pth
+*.gguf
+*.bin
+*.onnx
+*.safetensors
+
+# Environment and secrets
+.env
+*.key

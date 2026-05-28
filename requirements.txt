@@ -45,8 +45,16 @@ scikit-learn>=1.5.0
 scipy>=1.13.0
 
 # -------------------------
+# -------------------------
+# OpenDataLoader (alternative PDF parsing, requires Java 11+)
+# -------------------------
+# opendataloader-pdf>=0.0.0
+
+# -------------------------
 # Notes
 # -------------------------
 # 1) SAM2 should be installed from source repository (editable install).
 # 2) If you only need llama.cpp / Ollama inference, transformers stack can be omitted.
 # 3) torch installation should follow your CUDA environment (recommended via conda).
+# 4) opendataloader-pdf requires Java 11+. Install with: pip install opendataloader-pdf
+#    Enable in pipeline via extra config: "use_opendataloader": True

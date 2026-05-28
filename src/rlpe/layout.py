@@ -76,10 +76,13 @@ def find_caption_pages(pages: list[PageRecord], figure_number: str | None, windo
 
 
 def detect_figure_regions(page: PageRecord, min_area: int = 8000) -> list[FigureRegion]:
-    image = cv2.imread(page.image_path)
+    image = cv2.imread(page.image_path, cv2.IMREAD_UNCHANGED)
     if image is None:
         return []
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    if image.ndim == 2:
+        gray = image
+    else:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     # Figures are often non-white objects; invert so dark content becomes foreground.
     _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)

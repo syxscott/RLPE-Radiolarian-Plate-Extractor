@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -16,10 +17,15 @@ from .ocr import OCRToken
 from .taxon import TaxonEntity
 from .types import CaptionRecord, MatchResult, PanelCandidate
 
+logger = logging.getLogger(__name__)
+
 
 SUBPANEL_LABEL_PATTERN = re.compile(r"(?:\(|\[)?([A-Z]|[0-9]{1,2})(?:\)|\])?(?=\s*[:\.\-\)]|\s|,)"
 )
 TAXON_LIKE_PATTERN = re.compile(r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b")
+_SINGLE_UPPER = re.compile(r"[A-Z]")
+_SINGLE_DIGITS = re.compile(r"\d{1,2}")
+_SPECIES_QUAL = re.compile(r"\b(sp\.|spp\.|cf\.|aff\.)\b", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -156,7 +162,7 @@ def label_tokens_from_ocr(tokens: list[OCRToken]) -> list[OCRToken]:
     out: list[OCRToken] = []
     for tok in tokens:
         text = tok.text.strip()
-        if re.fullmatch(r"[A-Z]", text) or re.fullmatch(r"\d{1,2}", text):
+        if _SINGLE_UPPER.fullmatch(text) or _SINGLE_DIGITS.fullmatch(text):
             out.append(tok)
     return out
 
@@ -194,23 +200,26 @@ def match_panels(
     assigned_species = [taxa[i] if i < len(taxa) else (taxa[0] if taxa else None) for i in range(len(panels))]
     neural_conf = [0.0] * len(panels)
 
-    # 2) 可选神经图匹配。
+    # 2) 可选神经图匹配。未训练权重或缺少checkpoint时跳过。
     matcher_used = False
-    if use_neural_matcher:
+    if use_neural_matcher and matcher_checkpoint_path:
         try:
             matcher = NeuralGraphMatcher(checkpoint_path=matcher_checkpoint_path)
-            merged_label_tokens = ocr_label_tokens or [OCRToken(text=l, confidence=0.5, bbox=(0, 0, 1, 1)) for l in labels]
-            n_labels, n_species, n_conf = matcher.match(
-                panels=panels,
-                ocr_label_tokens=merged_label_tokens,
-                taxa=taxa,
-                image_shape=image_shape,
-            )
-            if any(v is not None for v in n_labels) or any(v is not None for v in n_species):
-                assigned_labels = n_labels
-                assigned_species = n_species
-                neural_conf = n_conf
-                matcher_used = True
+            if not matcher.is_trained:
+                logger.warning("Neural matcher loaded but not trained; falling back to heuristic matching.")
+            else:
+                merged_label_tokens = ocr_label_tokens or [OCRToken(text=l, confidence=0.5, bbox=(0, 0, 1, 1)) for l in labels]
+                n_labels, n_species, n_conf = matcher.match(
+                    panels=panels,
+                    ocr_label_tokens=merged_label_tokens,
+                    taxa=taxa,
+                    image_shape=image_shape,
+                )
+                if any(v is not None for v in n_labels) or any(v is not None for v in n_species):
+                    assigned_labels = n_labels
+                    assigned_species = n_species
+                    neural_conf = n_conf
+                    matcher_used = True
         except Exception:
             matcher_used = False
 
@@ -329,7 +338,7 @@ def _label_features(token: OCRToken, img_w: int, img_h: int, idx: int) -> list[f
 def _species_features(name: str, idx: int) -> list[float]:
     genus_len = len(name.split(" ")[0]) if name else 0
     words = len(name.split()) if name else 0
-    has_qual = 1.0 if re.search(r"\b(sp\.|spp\.|cf\.|aff\.)\b", name or "", re.IGNORECASE) else 0.0
+    has_qual = 1.0 if _SPECIES_QUAL.search(name or "") else 0.0
     return [
         float(genus_len) / 30.0,
         float(words) / 6.0,
@@ -348,9 +357,9 @@ def _species_features(name: str, idx: int) -> list[float]:
 
 def _label_to_scalar(text: str) -> float:
     t = (text or "").strip()
-    if re.fullmatch(r"[A-Z]", t):
+    if _SINGLE_UPPER.fullmatch(t):
         return (ord(t) - ord("A") + 1) / 26.0
-    if re.fullmatch(r"\d{1,2}", t):
+    if _SINGLE_DIGITS.fullmatch(t):
         return min(1.0, int(t) / 20.0)
     return 0.0
 
