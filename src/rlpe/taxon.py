@@ -120,7 +120,15 @@ class TaxonRecognizer:
     def _fallback_predict(self, text: str) -> list[TaxonEntity]:
         cleaned = self._clean_caption_for_taxon(text)
         pattern = re.compile(
-            r"\b([A-Z][a-zA-Z-]{2,}\s+[a-z][a-zA-Z-]{2,}(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b"
+            r"\b("
+            r"[A-Z][a-zA-Z-]{2,}"
+            r"(?:"
+            r"\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]{2,}"
+            r"|"
+            r"\s+[a-z][a-zA-Z-]{2,}"
+            r")"
+            r"(?:\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?"
+            r")\b"
         )
         entities: list[TaxonEntity] = []
         for m in pattern.finditer(cleaned):
@@ -129,7 +137,12 @@ class TaxonRecognizer:
                 continue
             if words[0].lower() in _NON_TAXON_FIRST_WORDS:
                 continue
-            if words[1].lower() in _NON_TAXON_SECOND_WORDS:
+            epithet_idx = 1
+            if len(words) > 2 and words[1].lower() in ("cf.", "aff."):
+                epithet_idx = 2
+            if epithet_idx >= len(words):
+                continue
+            if words[epithet_idx].lower() in _NON_TAXON_SECOND_WORDS:
                 continue
             entities.append(TaxonEntity(text=m.group(1), start=m.start(1), end=m.end(1), score=0.55))
         return entities
@@ -199,6 +212,13 @@ _NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset({
     "tropical", "arctic", "pacific", "atlantic", "indian",
     "remarks", "note", "notes", "from", "with", "without",
     "northeastern", "northwestern", "southeastern", "southwestern",
+    # Caption-header nouns that look like binomials but never are.
+    # "Plate 1 Scanning electron microscope pictures..." — the
+    # "Scanning electron" pair matches the regex but is not a taxon.
+    "scanning", "electron", "microscope", "transmission", "light",
+    "secondary", "photomicrograph", "photomicrographs", "marker",
+    "sample", "section", "locality", "thin", "thins", "stereo",
+    "backscattered", "overview", "detail",
 })
 
 # Common 2-3 letter non-Latin epithets that the binomial regex used to match.
