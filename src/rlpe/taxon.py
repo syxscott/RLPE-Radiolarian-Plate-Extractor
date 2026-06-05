@@ -225,6 +225,11 @@ _NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset({
     # through the binomial regex as "Auto-generated figure".
     "auto", "auto-generated", "automated", "generated", "placeholder",
     "undefined", "unknown", "missing", "empty", "n/a", "na",
+    # Synthetic captions built from body-text plate references also
+    # need a sentinel header ("(Reconstructed from systematic
+    # descriptions)") that the binomial regex used to match as the
+    # species "Reconstructed from".
+    "reconstructed", "reconstructed from", "synthesized", "synthetic",
     "copyright", "published", "springer", "elsevier", "wiley",
     "downloaded", "downloadedfrom", "rights", "reserved",
 })
