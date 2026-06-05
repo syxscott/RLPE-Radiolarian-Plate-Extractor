@@ -20,6 +20,18 @@ class SegmentationConfig:
     max_point_prompts: int = 48
     max_box_prompts: int = 24
     dedup_iou_threshold: float = 0.7
+    # Reject connected components whose area is too large to be a
+    # single specimen. On dense plates the morphological close in
+    # ``_preprocess_enhanced`` merges the entire top half of the image
+    # into one giant blob (Bandini 2011 plate 5: 975x507 covering 21
+    # specimens). A real specimen is < ~20% of the image, so anything
+    # bigger is a multi-specimen blob, not a single panel.
+    max_single_panel_area_frac: float = 0.20
+    # Reject very thin / wide strips. The enhanced path occasionally
+    # returns the entire top row of a grid plate as a single 0.95 x
+    # 0.05 strip; those aren't panels, they're "all the panels in
+    # this row merged together".
+    max_aspect_ratio: float = 4.0
 
 
 class PanelSegmenter:
@@ -263,6 +275,15 @@ class PanelSegmenter:
                     continue
                 if w * h > img_area * 0.9:
                     continue
+                # Reject CCs that are clearly multi-specimen blobs (the
+                # enhanced path's morphological close frequently merges
+                # the top half of a dense plate into one giant CC).
+                if area > img_area * self.config.max_single_panel_area_frac:
+                    continue
+                if w * h > 0 and max(w, h) > 0:
+                    aspect = max(w, h) / max(1, min(w, h))
+                    if aspect > self.config.max_aspect_ratio:
+                        continue
                 # Reject tiny fragments: radiolarian specimens in this corpus
                 # are typically 80+ pixels on the short side. CCs smaller than
                 # that on either axis are almost always text/labels, scale
