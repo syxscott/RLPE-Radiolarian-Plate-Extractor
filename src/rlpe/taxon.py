@@ -219,6 +219,14 @@ _NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset({
     "secondary", "photomicrograph", "photomicrographs", "marker",
     "sample", "section", "locality", "thin", "thins", "stereo",
     "backscattered", "overview", "detail",
+    # Pipeline placeholder text (OpenDataLoader / GROBID fallback). When
+    # the upstream tool can't extract a real caption it returns strings
+    # like "Auto-generated figure for page 17" — these used to slip
+    # through the binomial regex as "Auto-generated figure".
+    "auto", "auto-generated", "automated", "generated", "placeholder",
+    "undefined", "unknown", "missing", "empty", "n/a", "na",
+    "copyright", "published", "springer", "elsevier", "wiley",
+    "downloaded", "downloadedfrom", "rights", "reserved",
 })
 
 # Common 2-3 letter non-Latin epithets that the binomial regex used to match.

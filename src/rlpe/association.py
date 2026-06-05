@@ -27,6 +27,37 @@ _SINGLE_UPPER = re.compile(r"[A-Z]")
 _SINGLE_DIGITS = re.compile(r"\d{1,2}")
 _SPECIES_QUAL = re.compile(r"\b(sp\.|spp\.|cf\.|aff\.)\b", re.IGNORECASE)
 
+# Captions that are clearly pipeline placeholders, not real figure
+# descriptions. The fallback path in pipeline.py emits strings like
+# "Auto-generated figure for page 17" when OpenDataLoader / GROBID
+# can't extract a real caption; ``extract_taxa_from_caption`` used to
+# match "Auto-generated figure" as a binomial and tag every panel with
+# that bogus species. Reject these at the boundary.
+_PLACEHOLDER_CAPTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE) for p in (
+        r"^auto[-_ ]generated\b",
+        r"^auto[-_ ]generated\s+figure\b",
+        r"^placeholder\b",
+        r"^n/?a\b",
+        r"^undefined\b",
+        r"^missing\s+caption\b",
+        r"^no\s+caption\b",
+    )
+)
+
+
+def is_placeholder_caption(text: str | None) -> bool:
+    """Return True if the caption text is a pipeline placeholder rather
+    than a real figure description. The pipeline emits "Auto-generated
+    figure for page N" when the upstream extractor returns no caption;
+    we don't want that to be treated as a taxon source."""
+    if not text:
+        return True
+    s = str(text).strip()
+    if not s:
+        return True
+    return any(p.match(s) for p in _PLACEHOLDER_CAPTION_PATTERNS)
+
 
 @dataclass(slots=True)
 class MatchBundle:
@@ -138,6 +169,8 @@ class NeuralGraphMatcher:
 def extract_panel_labels(caption_text: str) -> list[str]:
     if not caption_text:
         return []
+    if is_placeholder_caption(caption_text):
+        return []
     labels: list[str] = []
     # Prefer explicit subpanel markers like (A), A., B-, 1), etc.
     for m in SUBPANEL_LABEL_PATTERN.finditer(caption_text):
@@ -149,6 +182,8 @@ def extract_panel_labels(caption_text: str) -> list[str]:
 
 def extract_taxa_from_caption(caption_text: str) -> list[str]:
     if not caption_text:
+        return []
+    if is_placeholder_caption(caption_text):
         return []
     taxa: list[str] = []
     for m in TAXON_LIKE_PATTERN.finditer(caption_text):
@@ -283,6 +318,45 @@ def match_panels(
     # 1) 默认规则分配（可回退）。
     assigned_labels = assign_panels_to_labels(panels, labels, ocr_tokens)
     neural_conf = [0.0] * len(panels)
+
+    # Caption is a pipeline placeholder (e.g. "Auto-generated figure for
+    # page 17"). We can't extract labels or species from it, and any
+    # positional fallback would just tag every panel with the first
+    # taxon in the placeholder string ("Auto-generated figure"). Bail
+    # out with empty species for all panels — the caller can either
+    # skip the figure or fall back to per-panel OCR/vision matching.
+    if is_placeholder_caption(caption.caption):
+        matches: list[MatchResult] = []
+        for idx, panel in enumerate(panels):
+            raw_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
+            panel_id = _normalize_panel_label(raw_id)
+            matches.append(
+                MatchResult(
+                    paper_id=paper_id,
+                    figure_id=figure_id,
+                    panel_id=panel_id,
+                    species=None,
+                    label_text=panel_id,
+                    panel_path=panel.image_path,
+                    bbox=list(panel.bbox),
+                    confidence=float(panel.score),
+                    caption_snippet=caption.caption[:240] if caption.caption else None,
+                    ocr_text=None,
+                    paper_metadata=paper_metadata,
+                    metadata={
+                        "panel_score": panel.score,
+                        "ocr_count": len(ocr_tokens),
+                        "taxon_count": len(taxon_entities),
+                        "figure_number": caption.figure_number,
+                        "page_index": caption.page_index,
+                        "matcher_used": False,
+                        "matcher_type": "skipped-placeholder-caption",
+                        "matcher_conf": 0.0,
+                        "caption_pairs_used": False,
+                    },
+                )
+            )
+        return matches
 
     # 1b) M3 stage-1 caption pairs drive a much more accurate panel→species
     # mapping. If we have structured (label, species) pairs from the LLM caption

@@ -20,6 +20,9 @@ from rlpe.association import (  # noqa: E402
     _label_sort_key,
     match_panels,
     assign_panels_to_labels,
+    extract_panel_labels,
+    extract_taxa_from_caption,
+    is_placeholder_caption,
 )
 from rlpe.types import CaptionRecord, PanelCandidate  # noqa: E402
 
@@ -262,6 +265,69 @@ def test_assign_panels_to_labels_uses_caption_labels_fallback():
     panels = [_panel(None), _panel(None), _panel(None)]
     out = assign_panels_to_labels(panels, labels=["1", "2", "3"], ocr_tokens=[])
     assert out == ["1", "2", "3"]
+
+
+# ---------------------------------------------------------------------------
+# is_placeholder_caption + extractors skip placeholder text
+# ---------------------------------------------------------------------------
+
+
+def test_is_placeholder_caption_recognises_auto_generated():
+    """The pipeline emits "Auto-generated figure for page N" when the
+    upstream extractor (GROBID / OpenDataLoader) returns no caption.
+    The binomial regex used to match "Auto-generated figure" as a
+    species — gate it at the boundary."""
+    assert is_placeholder_caption("Auto-generated figure for page 17") is True
+    assert is_placeholder_caption("auto-generated figure for page 1") is True
+    assert is_placeholder_caption("AUTO-GENERATED FIGURE FOR PAGE 99") is True
+    # Variants we also want to reject.
+    assert is_placeholder_caption("placeholder caption") is True
+    assert is_placeholder_caption("N/A") is True
+    assert is_placeholder_caption("missing caption") is True
+    # Real captions are kept.
+    assert is_placeholder_caption("Explanation of Plate 1. fig. 1. Foo bar") is False
+    assert is_placeholder_caption("figs 1-3. Entactinia itsukichiensis") is False
+
+
+def test_is_placeholder_caption_handles_empty():
+    assert is_placeholder_caption(None) is True
+    assert is_placeholder_caption("") is True
+    assert is_placeholder_caption("   ") is True
+
+
+def test_extract_taxa_from_caption_rejects_placeholder():
+    """The species extractor must not return 'Auto-generated figure' as a
+    taxon when the caption is a placeholder."""
+    out = extract_taxa_from_caption("Auto-generated figure for page 17")
+    assert out == []
+    out = extract_taxa_from_caption("Explanation of Plate 1. fig. 1. Entactinia itsukichiensis")
+    assert "Entactinia itsukichiensis" in out
+
+
+def test_extract_panel_labels_rejects_placeholder():
+    out = extract_panel_labels("Auto-generated figure for page 17")
+    assert out == []
+
+
+def test_match_panels_skips_placeholder_caption():
+    """When the caption is a placeholder, match_panels must NOT tag any
+    panel with 'Auto-generated figure' as a species (regression that
+    produced 63 bogus rows for Hollis 2006 in the 4-paper batch test)."""
+    caption = _caption("Auto-generated figure for page 17")
+    panels = [_panel("1"), _panel("2"), _panel(None)]
+    matches = match_panels(
+        paper_id="p1",
+        figure_id="fig1",
+        caption=caption,
+        panels=panels,
+        ocr_tokens=[],
+        taxon_entities=[],
+    )
+    assert len(matches) == 3
+    # Every species is None — no positional fallback to "Auto-generated".
+    for m in matches:
+        assert m.species is None
+        assert (m.metadata or {}).get("matcher_type") == "skipped-placeholder-caption"
 
 
 if __name__ == "__main__":
