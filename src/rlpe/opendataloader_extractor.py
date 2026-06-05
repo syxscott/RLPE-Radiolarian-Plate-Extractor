@@ -369,6 +369,20 @@ def _iter_all_elements(kids: list[dict[str, Any]]):
             yield from _iter_all_elements(children)
 
 
+def _collect_images(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Recursively gather every image element from the content tree."""
+    out: list[dict[str, Any]] = []
+    for el in _iter_all_elements(kids):
+        if isinstance(el, dict) and el.get("type") == "image":
+            out.append(el)
+    return out
+
+
+def _images_page_index(images: list[dict[str, Any]]) -> set[int]:
+    """Return the set of page numbers that contain at least one image."""
+    return {int(img.get("page number", 0) or 0) for img in images if int(img.get("page number", 0) or 0) > 0}
+
+
 def _merge_nearby_images(
     images: list[dict[str, Any]], gap_pt: float = 72.0
 ) -> list[list[dict[str, Any]]]:
@@ -553,6 +567,35 @@ _PLATE_CAPTION_RE = _re.compile(
     _re.IGNORECASE,
 )
 
+# Match an inline plate figure reference inside a body paragraph.
+# Pouille 2014 has no real "Plate N" captions; the species list lives
+# in the systematic paleontology descriptions, e.g.:
+#   "Genus species AUTHOR (Pl. 1, figs 5–7)"
+#   "Genus species AUTHOR (Plate 2, figure 7)"
+#   "Genus species (Pl. 3. fig. 11)"
+# We detect these and reconstruct a per-plate caption by concatenating
+# all matching "Pl. N" / "Plate N" mentions found in the body.
+_PLATE_INLINE_REF_RE = _re.compile(
+    r"\b(?:[Pp]l(?:ate)?\.?)\s*(\d+)\s*[,.]?\s*[Ff]ig(?:s|ure)?\.?\s*\d+[a-z\-]*",
+)
+# Match a Genus species (or Genus? sp. cf./aff. species) preceding the
+# plate reference — e.g. "Syntagentactinia biocculosa ... (Pl. 1, figs 5–7)"
+# or "Syntagentactinia? sp. cf. S. excelsa (Pl. 1, figs 1–4)".
+# We grab the species name(s) from the start of the line, then look right-
+# ward for the plate ref. Pouille 2014 is the canonical example.
+_SPECIES_NAME_RE = _re.compile(
+    r"([A-Z][a-z]+"          # Genus
+    r"(?:"
+    r"\s+\?\s+sp\."          # Genus? sp.
+    r"(?:\s+[A-Z]\.)?"        #   S.
+    r"(?:\s+(?:cf\.|aff\.)\s+[A-Z]?[a-z][a-z\-]+)?"  #   cf./aff. S. species
+    r"|"
+    r"\s+[a-z][a-z\-]+"        # Genus species
+    r"(?:\s+[a-z][a-z\-]+)*"  # optional third epithet
+    r")"
+    r")"
+)
+
 
 def _collect_following_text(kids: list[dict[str, Any]], start_idx: int,
                              same_page: int, max_items: int = 4) -> str:
@@ -605,14 +648,26 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
     few siblings (paragraph + list) so the downstream caption parser sees
     the actual species list, not just ``Plate 1``.
 
+    When no real "Plate N" / "Explanation of Plate N" caption is found
+    for a given plate (e.g. Pouille 2014, where the species live in the
+    systematic paleontology descriptions), we fall back to **reconstructing**
+    a caption by harvesting every "Pl. N, fig. M (Species)" mention from
+    the body text. This synthesises a caption shaped like:
+        "Plate 1. (Reconstructed from systematic descriptions)
+         Syntagentactinia biocculosa ... (Pl. 1, figs 5–7)
+         Syntagentactinia? angulata n. sp. ... (Pl. 1, figs 12–14b) ..."
+    so the downstream caption parser has *something* to match against.
+
     Returns a list of dicts with keys:
       - ``plate_number`` (int)
-      - ``page_number``  (int, 1-indexed)
+      - ``page_number``  (int, 1-indexed; the earliest body page where
+                         the plate was referenced)
       - ``content``      (str, full text)
       - ``element``      (original dict, in case the caller needs more)
     Sorted by (plate_number, page_number).
     """
     found: list[dict[str, Any]] = []
+    seen_plates: set[int] = set()
     for idx, kid in enumerate(kids):
         if not isinstance(kid, dict):
             continue
@@ -626,6 +681,9 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not m:
             continue
         plate_number = int(m.group(1))
+        if plate_number in seen_plates:
+            continue
+        seen_plates.add(plate_number)
         page = int(kid.get("page number", 0) or 0)
         # For heading-type matches, expand by appending following paragraphs
         # / lists on the same page (Hollis 2006 has Plate 1 + description
@@ -640,8 +698,143 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "content": content,
             "element": kid,
         })
+
+    # Reconstruction pass: for plates without a real caption, scan the
+    # body paragraphs for inline "Pl. N, fig. M" mentions and assemble
+    # a synthetic caption from the species preceding each mention.
+    # We only keep reconstructed plates whose number is plausibly a
+    # paper-internal plate — i.e. it doesn't exceed the highest plate
+    # number already detected (e.g. real caption says "Plate 3", so
+    # reconstructed "Plate 6" must be a citation to another paper) and
+    # there is at least one image on the pages where the plate is
+    # referenced. The cap-on-real-plate-number filter is the load-bearing
+    # one: without it, "De Wever et al. (2001) pl. 6, fig. 3" gets
+    # misread as plate 6 of *this* paper.
+    images_by_page = _images_page_index(_collect_images(kids))
+    # Sorted real plate caption pages; used to bound the image-window
+    # search so a "Plate 5 (Pl. 5, fig. 3)" body mention on page 4
+    # doesn't accidentally grab the image of plate 7.
+    real_plate_pages = sorted({p["page_number"] for p in found})
+    max_real_plate = max(seen_plates) if seen_plates else 0
+    # Bump the cap a little so the very last plate of the paper (whose
+    # only mention is in the body, not in a standalone caption header)
+    # still gets a chance to be reconstructed.
+    plate_cap = max_real_plate + 1 if max_real_plate else 0
+    for plate_number, mentions in _harvest_inline_plate_refs(kids).items():
+        if plate_number in seen_plates:
+            continue
+        if not mentions:
+            continue
+        if plate_cap and plate_number > plate_cap:
+            continue
+        ref_pages = sorted({m[2] for m in mentions})
+        ref_page = ref_pages[0]
+        # The plate's image is somewhere between the body mention page
+        # and the *next* real plate's caption page. The figure may sit
+        # a page or two after the body description (Pouille 2014 plate
+        # 1 is described on p4 with the figure on p5).
+        next_plate_page = next(
+            (pp for pp in real_plate_pages if pp > ref_page), None
+        )
+        page_lo = ref_page
+        page_hi = next_plate_page if next_plate_page is not None else ref_page + 3
+        has_image = any(page_lo <= p <= page_hi for p in images_by_page)
+        if not has_image:
+            continue
+        seen_plates.add(plate_number)
+        lines: list[str] = [f"Plate {plate_number}. (Reconstructed from systematic descriptions)"]
+        for sp, plate_ref, page in mentions:
+            lines.append(f"{sp} ({plate_ref})")
+        earliest_page = ref_pages[0]
+        found.append({
+            "plate_number": plate_number,
+            "page_number": earliest_page,
+            "content": "\n".join(lines),
+            "element": None,
+        })
     found.sort(key=lambda d: (d["plate_number"], d["page_number"]))
     return found
+
+
+def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tuple[str, str, int]]]:
+    """Walk the body paragraphs looking for inline ``Pl. N, fig M``
+    references and capture the species name preceding each ref.
+
+    Returns a dict ``{plate_number: [(species_text, full_ref, page), ...]}``
+    where ``full_ref`` is the matched text (e.g. ``"Pl. 1, figs 5–7"``)
+    and ``page`` is the 1-indexed page where the mention was found.
+    """
+    out: dict[int, list[tuple[str, str, int]]] = {}
+    for k in kids:
+        if not isinstance(k, dict):
+            continue
+        if k.get("type") != "paragraph":
+            continue
+        text = (k.get("content") or "")
+        if not text:
+            continue
+        page = int(k.get("page number", 0) or 0)
+        for m in _PLATE_INLINE_REF_RE.finditer(text):
+            plate_number = int(m.group(1))
+            ref = m.group(0)
+            # Walk left from the match to find the species name. Look
+            # for a binomial that starts a sentence/line OR follows
+            # typical parens/commas.
+            left_start = max(0, m.start() - 250)
+            prefix = text[left_start:m.start()]
+            sp_match = None
+            # Try each line in the prefix (the species is usually on the
+            # same line as the plate ref, e.g. "Genus species (Pl. N, ...)")
+            for piece in _re.split(r"[\n;\.]+", prefix)[-3:]:
+                sp_match = _SPECIES_NAME_RE.search(piece)
+                if sp_match:
+                    break
+            if not sp_match:
+                # Last resort: a single Genus
+                gen_match = _re.search(r"([A-Z][a-z]+)\s+\?", prefix[-80:])
+                if gen_match:
+                    species = gen_match.group(1) + " ?"
+                else:
+                    continue
+            else:
+                species = sp_match.group(1)
+            # Reject false positives: parenthetical authorship that
+            # precedes the plate ref (e.g. "Nazarov in (Pl. 1, fig. 15)"
+            # in Pouille 2014 — "Nazarov in" is an author citation, not
+            # a species). The literal "Genus in" / "Genus & Author"
+            # patterns are how paleontology formats citations inline.
+            if _looks_like_author_citation(species):
+                continue
+            out.setdefault(plate_number, []).append((species, ref, page))
+    return out
+
+
+# Author-citation words that frequently follow a surname in a parenthetical
+# paleontology citation ("Nazarov in Nazarov & Ormiston 1985", "Smith &
+# Jones 2001", etc.) and that we should NOT treat as a species epithet.
+_AUTHOR_CITATION_WORDS = frozenset({
+    "in", "and", "&", "et", "al", "al.", "of", "de", "von", "van",
+    "in Nazarov", "in Ormiston",
+})
+
+
+def _looks_like_author_citation(species: str) -> bool:
+    """Heuristic: a captured "species" that is actually a citation.
+
+    "Nazarov in" / "Nazarov & Jones" / "Smith in" are typical
+    author-citation patterns. A real species name is *Genus epithet*
+    (two words, lowercase second word); anything else is suspect.
+    """
+    if not species:
+        return True
+    parts = species.split()
+    if len(parts) < 2:
+        return True
+    if parts[-1].lower() in _AUTHOR_CITATION_WORDS:
+        return True
+    if any(p == "&" for p in parts):
+        return True
+    return False
 
 
 def _images_within_page_range(
