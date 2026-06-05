@@ -15,7 +15,7 @@ except Exception:  # pragma: no cover
 
 from .ocr import OCRToken
 from .taxon import TaxonEntity
-from .types import CaptionRecord, MatchResult, PanelCandidate
+from .types import CaptionRecord, MatchResult, PanelCandidate, PaperMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +190,8 @@ def match_panels(
     use_neural_matcher: bool = False,
     matcher_checkpoint_path: str | None = None,
     image_shape: tuple[int, int] | None = None,
+    paper_metadata: PaperMetadata | None = None,
+    caption_pairs: list | None = None,
 ) -> list[MatchResult]:
     labels = caption.panel_labels or extract_panel_labels(caption.caption)
     taxa = [t.text for t in taxon_entities] or extract_taxa_from_caption(caption.caption)
@@ -199,6 +201,24 @@ def match_panels(
     assigned_labels = assign_panels_to_labels(panels, labels, ocr_tokens)
     assigned_species = [taxa[i] if i < len(taxa) else (taxa[0] if taxa else None) for i in range(len(panels))]
     neural_conf = [0.0] * len(panels)
+
+    # 1b) M3 stage-1 caption pairs drive a much more accurate panel→species
+    # mapping. If we have structured (label, species) pairs from the LLM caption
+    # parser, build a label→species lookup and override the order-based
+    # heuristic. Falls back silently if pairs are empty or don't match.
+    pair_lookup: dict[str, str] = {}
+    caption_pairs_used = False
+    if caption_pairs:
+        for cp in caption_pairs:
+            sp = getattr(cp, "species", None)
+            if not sp:
+                continue
+            lbls = getattr(cp, "labels", None) or []
+            for lbl in lbls:
+                if lbl:
+                    pair_lookup[str(lbl).strip()] = sp
+        if pair_lookup:
+            caption_pairs_used = True
 
     # 2) 可选神经图匹配。未训练权重或缺少checkpoint时跳过。
     matcher_used = False
@@ -229,6 +249,11 @@ def match_panels(
     for idx, panel in enumerate(panels):
         panel_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
         best_species = assigned_species[idx] if idx < len(assigned_species) else (taxa[0] if taxa else None)
+        # Caption-pair override: if M3 gave us a structured (label, species) map
+        # and the panel's label is in it, prefer that species over the
+        # order-based fallback.
+        if caption_pairs_used and panel_id and panel_id in pair_lookup:
+            best_species = pair_lookup[panel_id]
         ocr_text = " ".join(tok.text for tok in ocr_tokens if _token_in_panel(tok, panel))
         label_text = None
         if panel_id and panel_id in panel_label_tokens:
@@ -256,6 +281,7 @@ def match_panels(
                 confidence=confidence,
                 caption_snippet=caption.caption[:240] if caption.caption else None,
                 ocr_text=ocr_text or None,
+                paper_metadata=paper_metadata,
                 metadata={
                     "panel_score": panel.score,
                     "ocr_count": len(ocr_tokens),
@@ -265,6 +291,7 @@ def match_panels(
                     "matcher_used": matcher_used,
                     "matcher_type": "neural-graph" if matcher_used else "heuristic",
                     "matcher_conf": neural_conf[idx] if idx < len(neural_conf) else 0.0,
+                    "caption_pairs_used": caption_pairs_used,
                 },
             )
         )

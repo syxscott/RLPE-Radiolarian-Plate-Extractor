@@ -118,11 +118,49 @@ class TaxonRecognizer:
         return self._merge_entities(entities)
 
     def _fallback_predict(self, text: str) -> list[TaxonEntity]:
-        pattern = re.compile(r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s*(?:sp\.|spp\.|cf\.|aff\.))?)\b")
+        cleaned = self._clean_caption_for_taxon(text)
+        pattern = re.compile(
+            r"\b([A-Z][a-zA-Z-]{2,}\s+[a-z][a-zA-Z-]{2,}(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b"
+        )
         entities: list[TaxonEntity] = []
-        for m in pattern.finditer(text or ""):
+        for m in pattern.finditer(cleaned):
+            words = m.group(1).split()
+            if len(words) < 2:
+                continue
+            if words[0].lower() in _NON_TAXON_FIRST_WORDS:
+                continue
+            if words[1].lower() in _NON_TAXON_SECOND_WORDS:
+                continue
             entities.append(TaxonEntity(text=m.group(1), start=m.start(1), end=m.end(1), score=0.55))
         return entities
+
+    @staticmethod
+    def _clean_caption_for_taxon(text: str) -> str:
+        """Strip the leading "Explanation of Plate N." header that confuses the
+        binomial regex. Radiolarian plate captions always start with that exact
+        phrase, and the rest of the caption is a list of "fig N. Species X"
+        entries. Removing the header eliminates the "Explanation of" false
+        positive at the head of the list."""
+        if not text:
+            return ""
+        s = text
+        # "Explanation of Plate 1. ..."  /  "Explanation of Plate 1, ..."
+        s = re.sub(
+            r"^\s*Explanation\s+of\s+Plate\s+\d+\s*[\.:,]?\s*",
+            "",
+            s,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        # "Plate 1. ..."  /  "Plate 1 — ..."
+        s = re.sub(
+            r"^\s*Plate\s+\d+\s*[\.:,\-—–]?\s*",
+            "",
+            s,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        return s
 
     def _lexicon_predict(self, text: str) -> list[TaxonEntity]:
         if not text or not self._lexicon:
@@ -146,3 +184,27 @@ class TaxonRecognizer:
             if old is None or e.score > old.score:
                 merged[key] = e
         return sorted(merged.values(), key=lambda x: (x.start, x.end))
+
+
+# Words that often start a figure caption but are never a genus name.
+# These either start the header ("Explanation of Plate N.") or refer to a
+# caption-internal non-taxonomic noun ("Scale bar", "Fig. caption").
+_NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset({
+    "explanation", "scale", "figure", "fig", "figs", "plate", "pl",
+    "text", "image", "photo", "photograph", "drawing", "line",
+    "caption", "all", "bar", "see", "shown", "above", "below",
+    "early", "late", "middle", "upper", "lower", "type", "genus",
+    "species", "order", "family", "class", "subclass",
+    "north", "south", "east", "west", "central",
+    "tropical", "arctic", "pacific", "atlantic", "indian",
+    "remarks", "note", "notes", "from", "with", "without",
+    "northeastern", "northwestern", "southeastern", "southwestern",
+})
+
+# Common 2-3 letter non-Latin epithets that the binomial regex used to match.
+# Anything here is a stopword / preposition / article, never a species epithet.
+_NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset({
+    "of", "in", "on", "by", "an", "at", "to", "or", "is", "as",
+    "bar", "fig", "figs", "no", "all", "the", "and", "or",
+    "sp", "spp", "cf", "aff", "nov", "gen", "comb",
+})
