@@ -195,9 +195,46 @@ _CAPTION_CLAUSE_RE = re.compile(
     r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?",
 )
 
+# Pouille-style "Species (Pl. N, figs M)" clause. Used as a fallback
+# when the OpenDataLoader pass synthesised a caption shaped like
+#   "Syntagentactinia biocculosa (Pl. 1, figs 5)
+#    Syntagentactinia? angulata n. sp. (Pl. 1, figs 12–14b) ..."
+# i.e. species name FIRST, then the parenthetical plate/fig reference.
+# _CAPTION_CLAUSE_RE only matches the inverse "fig N. Species" form.
+# Group 1: species (with optional "?" uncertainty marker and a third
+#          epithet for trinomial names). Group 2: optional modifier
+#          (n. sp., sp., cf., aff., spp., sp. nov.). Group 3: figure
+#          label list ("5" or "12-14b" or "8-11, 14").
+_POUILE_CLAUSE_RE = re.compile(
+    r"^([A-Z][a-z]+"                       # Genus (capitalized)
+    r"(?:"                                  # optional uncertainty or epithet
+    r"\s*\?\s+sp\."                        #   "? sp."
+    r"|"
+    r"\s*\?\s+[a-z][a-z\-]+"               #   "? epithet"
+    r"|"
+    r"\s+[a-z][a-z\-]+"                    #   plain epithet
+    r")*"
+    r")"
+    r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.))?"  # optional modifier
+    r"\s*"
+    r"\([^)]*?"                             # opening paren
+    r"[Pp](?:l|late)\.?\s*\d+"             # Pl. N
+    r"\s*,\s*"
+    r"[Ff]igs?\.?\s*"
+    r"(\d+[a-z]?"                          # first fig num
+    r"(?:\s*[\-–—]\s*\d+[a-z]?)?"
+    r"(?:\s*,\s*\d+[a-z]?"
+    r"(?:\s*[\-–—]\s*\d+[a-z]?)?"
+    r")*"
+    r")\s*\)"
+)
+
 
 def _regex_expand_label_list(s: str) -> list[str]:
-    """Expand "1-3" → ["1","2","3"]; "1, 3" → ["1","3"]; "13, 16" → ["13","16"].
+    """Expand "1-3" → ["1","2","3"]; "1, 3" → ["1","3"]; "13, 16" → ["13","16"];
+    "12-14b" → ["12","13","14b"] (trailing letter applies only to the last
+    label of the range — bandini/pouille papers use "figs 12-14b" for a
+    single sub-figure that spans the plate, not "figs 12b, 13b, 14b").
 
     The pre-existing ``_expand_label_range`` (defined later in this file) only
     handles ``A-D`` and ``1-5`` ranges, not comma-separated lists. We need a
@@ -208,19 +245,25 @@ def _regex_expand_label_list(s: str) -> list[str]:
         chunk = chunk.strip().strip(".").strip()
         if not chunk:
             continue
-        m = re.match(r"(\d+)\s*[–\-—]\s*(\d+)$", chunk)
+        # Range with optional letter suffix on the upper bound:
+        # "1-3" or "12-14b" — the suffix applies only to the last label.
+        m = re.match(r"(\d+)\s*[–\-—]\s*(\d+)([a-z]?)$", chunk)
         if m:
             try:
                 lo, hi = int(m.group(1)), int(m.group(2))
                 if lo > hi:
                     lo, hi = hi, lo
-                out.extend(str(x) for x in range(lo, hi + 1))
+                expanded = [str(x) for x in range(lo, hi)]
+                last = str(hi) + m.group(3)
+                expanded.append(last)
+                out.extend(expanded)
             except Exception:
                 out.append(chunk)
         else:
-            m2 = re.match(r"(\d+)$", chunk)
+            # Single number, possibly with a letter suffix ("5a", "14b").
+            m2 = re.match(r"(\d+)([a-z]?)$", chunk)
             if m2:
-                out.append(m2.group(1))
+                out.append(m2.group(1) + m2.group(2))
             else:
                 out.append(chunk)
     seen: set[str] = set()
@@ -283,6 +326,70 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             confidence=0.7,
             notes="regex_fallback",
             raw_text=m.group(0)[:120],
+        ))
+
+    # Pouille-style caption fallback: when the OpenDataLoader pass
+    # couldn't find a real "Plate N" header (Pouille 2014 has none) it
+    # reconstructs a synthetic caption shaped like
+    #   "Plate 1. (Reconstructed from systematic descriptions)
+    #    Syntagentactinia biocculosa (Pl. 1, figs 5)
+    #    Syntagentactinia? angulata n. sp. (Pl. 1, figs 12–14b) ..."
+    # where the species comes BEFORE the "(Pl. N, figs M)" reference.
+    # _CAPTION_CLAUSE_RE only matches the inverse "Fig. N. Species" form,
+    # so without this pass the regex parser returns zero pairs and the
+    # order-based fallback tags every panel with taxa[0].
+    seen_lines: set[str] = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line in seen_lines:
+            continue
+        seen_lines.add(line)
+        m = _POUILE_CLAUSE_RE.match(line)
+        if not m:
+            continue
+        species = m.group(1).strip()
+        modifier = (m.group(2) or "").strip()
+        labels_raw = m.group(3)
+        # Filter: skip the synthetic header line "Plate N. (Reconstructed ...)"
+        # (matched by the regex when the only "fig" mention is in the
+        # reconstructed-from marker) and obvious non-species rows.
+        if "Reconstructed" in species or "Reconstructed" in modifier:
+            continue
+        if "indet" in species.lower() or "& species" in species.lower():
+            continue
+        labels = _regex_expand_label_list(labels_raw)
+        if not labels:
+            continue
+        # Dedup: skip if any of the expanded labels is already assigned
+        # to an earlier species. We dedup the base number (e.g. "14"
+        # from "14b") so a later clause that mentions "fig 14" can be
+        # safely skipped.
+        base_labels: set[str] = set()
+        for lbl in labels:
+            base = re.match(r"(\d+)", lbl)
+            if base:
+                base_labels.add(base.group(1))
+        if base_labels & seen_labels:
+            continue
+        # Also: if any expanded label was already used as the base of
+        # another species, skip. This handles "fig 14" coming after
+        # "figs 12-14b" — "14" is the base of "14b" which was already
+        # taken.
+        if any(lbl in seen_labels for lbl in base_labels):
+            continue
+        for lbl in labels:
+            seen_labels.add(lbl)
+        # And remember the base numbers so subsequent "fig 14" mentions
+        # don't get assigned too.
+        for lbl in base_labels:
+            seen_labels.add(lbl)
+        pairs.append(CaptionPair(
+            labels=labels,
+            species=species,
+            modifier=modifier,
+            confidence=0.65,
+            notes="regex_fallback_pouille",
+            raw_text=line[:120],
         ))
     return pairs
 

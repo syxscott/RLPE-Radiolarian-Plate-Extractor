@@ -251,6 +251,31 @@ def _label_in_pair_lookup(label: str | None, pair_lookup: dict[str, str]) -> str
     return None
 
 
+def _add_label_base_aliases(cp: Any, pair_lookup: dict[str, str]) -> None:
+    """For a caption pair whose labels include letter-suffixed entries
+    like ``"14b"``, also index the species under the bare base number
+    ``"14"``. This rescues OCR misreads that drop the trailing letter
+    (panel labelled ``14`` on the figure but the caption key is
+    ``14b``) — a common case in Bandini/Pouille plates where the last
+    sub-figure of a range is the only one with the suffix.
+    """
+    sp = getattr(cp, "species", None)
+    if not sp:
+        return
+    for lbl in getattr(cp, "labels", None) or []:
+        if not lbl:
+            continue
+        m = re.match(r"^(\d+)([a-z])$", str(lbl))
+        if m:
+            base = m.group(1)
+            # Only add the bare base if no other species owns it
+            # (the LLM/regex parser should have already given the same
+            # species the base number when expanding a range, but
+            # deduplicate defensively).
+            if base not in pair_lookup:
+                pair_lookup[base] = sp
+
+
 def deduplicate_panels_nms(
     panels: list,
     iou_threshold: float = 0.6,
@@ -440,6 +465,7 @@ def match_panels(
             for lbl in lbls:
                 if lbl:
                     pair_lookup[str(lbl).strip()] = sp
+            _add_label_base_aliases(cp, pair_lookup)
         if pair_lookup:
             caption_pairs_used = True
             caption_pairs_source = "m3_llm"
@@ -459,6 +485,7 @@ def match_panels(
                 for lbl in getattr(cp, "labels", None) or []:
                     if lbl:
                         pair_lookup[str(lbl).strip()] = sp
+                _add_label_base_aliases(cp, pair_lookup)
             if pair_lookup:
                 caption_pairs_used = True
                 caption_pairs_source = "regex"
