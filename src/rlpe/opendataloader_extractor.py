@@ -567,6 +567,25 @@ _PLATE_CAPTION_RE = _re.compile(
     _re.IGNORECASE,
 )
 
+# Match "Fig. 1", "Fig 1", "Figure 1" — covers review/synthesis papers
+# that use "Fig." numbering instead of "Plate" (e.g. Wever 2006, where
+# the six "Fig. 1..6" paragraphs are the only figure captions in the PDF
+# and there are no "Plate N" headers to anchor on). The match anchors
+# at the START of the paragraph so body-text mentions like
+# "(see Fig. 1)" are not picked up.
+#
+# We further require the "Fig. N" prefix to be followed by a caption-
+# like delimiter (". " or " " + capital letter, possibly with a
+# sub-figure letter like "1a") and the whole content to be at least
+# 25 chars. This rejects body-text paragraphs that happen to start
+# with a "Fig. N" reference, e.g. "Fig. 1), PR-SB23 (Plate 6, Fig. 10)"
+# (Bandini 2011 p37) or "Fig. 14 continued c" (Bandini 2011 p34) or
+# the short list-items "Fig. 26", "Fig. 34" (Bandini 2011 p8).
+_FIG_CAPTION_RE = _re.compile(
+    r"^\s*Fig(?:ure)?\s*\.?\s*(\d+)([a-z]?)\s*([.\s])\s*(\S)",
+    _re.IGNORECASE,
+)
+
 # Match an inline plate figure reference inside a body paragraph.
 # Pouille 2014 has no real "Plate N" captions; the species list lives
 # in the systematic paleontology descriptions, e.g.:
@@ -667,7 +686,18 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
     Sorted by (plate_number, page_number).
     """
     found: list[dict[str, Any]] = []
+    # Plate-kind captions only — used by the reconstruction pass to
+    # compute the cap (so body "(Pl. N, fig. M)" mentions don't get
+    # misread as plates of *this* paper) and to dedup reconstructed
+    # entries against real ones. Fig-kind captions are NOT in this
+    # set: a paper that uses "Fig. 1..6" for chart figures and
+    # "Plate 1..3" for micrograph plates (e.g. Pouille 2014) must
+    # still let the reconstruction pass synthesise Plate 1, 2 even
+    # though Fig 1, 2 are real captions of charts.
     seen_plates: set[int] = set()
+    # Per-kind dedup — keeps "Plate 1" and "Fig. 1" as separate
+    # captions when a paper uses both numbering conventions.
+    seen_plates_with_kind: set[tuple[int, str]] = set()
     for idx, kid in enumerate(kids):
         if not isinstance(kid, dict):
             continue
@@ -677,13 +707,38 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         content = (kid.get("content") or "").strip()
         if not content:
             continue
+        # Try Plate N first (preferred — radiolarian-plate papers use this
+        # convention). Fall back to Fig. N for review/synthesis papers
+        # that use "Fig. 1..6" numbering instead (Wever 2006 et al.).
+        # Each kind is tracked separately so a paper that uses BOTH
+        # conventions (e.g. Plate 1..3 + Fig. 1..6 charts) keeps both
+        # sets of captions rather than collapsing them on the same int.
         m = _PLATE_CAPTION_RE.match(content)
+        kind = "plate" if m else None
+        if not m:
+            m = _FIG_CAPTION_RE.match(content)
+            kind = "fig" if m else None
         if not m:
             continue
-        plate_number = int(m.group(1))
-        if plate_number in seen_plates:
+        # Fig-kind matches need an extra content-quality check: the
+        # regex also matches body-text paragraphs that happen to start
+        # with "Fig. N" (e.g. "Fig. 14 continued c", "Fig. 26", or a
+        # species description starting with "Fig. N Archaeodictyomitra
+        # montisserei(SQUINABOL) Pl. 8"). Reject:
+        #   1. too-short matches (< 25 chars) — almost always a list
+        #      reference or a continuation marker, not a real caption.
+        #   2. body-text species descriptions: any "(UPPERCASE_WORD)"
+        #      author citation within the first 200 chars is a strong
+        #      signal this is a species list, not a figure caption.
+        if kind == "fig" and not _looks_like_fig_caption(content):
             continue
-        seen_plates.add(plate_number)
+        plate_number = int(m.group(1))
+        dedup_key = (plate_number, kind or "plate")
+        if dedup_key in seen_plates_with_kind:
+            continue
+        if kind == "plate":
+            seen_plates.add(plate_number)
+        seen_plates_with_kind.add(dedup_key)
         page = int(kid.get("page number", 0) or 0)
         # For heading-type matches, expand by appending following paragraphs
         # / lists on the same page (Hollis 2006 has Plate 1 + description
@@ -697,6 +752,7 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "page_number": page,
             "content": content,
             "element": kid,
+            "kind": kind,
         })
 
     # Reconstruction pass: for plates without a real caption, scan the
@@ -816,6 +872,31 @@ _AUTHOR_CITATION_WORDS = frozenset({
     "in", "and", "&", "et", "al", "al.", "of", "de", "von", "van",
     "in Nazarov", "in Ormiston",
 })
+
+# Detect an inline "(SURNAME)" style author citation in the head of a
+# paragraph — a strong signal that a "Fig. N" match is body text (a
+# species description), not a figure caption. Used by
+# _looks_like_fig_caption to filter out Bandini-style body paragraphs
+# like "Fig. 21 Archaeodictyomitra montisserei (SQUINABOL) Pl. 8 ..."
+_FIG_HEAD_AUTHOR_CITE_RE = _re.compile(r"\(([A-Z]{3,})\)")
+
+
+def _looks_like_fig_caption(content: str) -> bool:
+    """Return True if a paragraph whose text starts with "Fig. N" is
+    actually a figure caption (not body text).
+
+    Rejects two common false-positive patterns:
+      1. too-short matches (< 25 chars) — typically list references
+         like "Fig. 26" or continuation markers like "Fig. 14 continued c".
+      2. body-text species descriptions — a paragraph whose first 200
+         chars contain a "(UPPERCASE)" author citation is almost
+         always a species list / description, not a caption.
+    """
+    if len(content) < 25:
+        return False
+    if _FIG_HEAD_AUTHOR_CITE_RE.search(content[:200]):
+        return False
+    return True
 
 
 def _looks_like_author_citation(species: str) -> bool:
