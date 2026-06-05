@@ -270,21 +270,17 @@ class OpenDataLoaderExtractor:
         # by anchoring the figure_id to the plate number.
         plate_captions = _find_plate_captions(kids)
         if plate_captions:
-            plate_pairs = _build_figures_from_plate_captions(
+            plate_pairs, claimed_image_ids = _build_figures_from_plate_captions(
                 plate_captions, images, output_dir, paper_id
             )
             # Always also include plate-less figures (so the geological/stratigraphic
             # index figures, like "Fig. 2 distribution map", still get processed).
-            plates_in_set = {
-                p.metadata.get("plate_number") for p in plate_pairs if p.metadata.get("plate_number") is not None
-            }
-            plate_pages: set[int] = set()
-            for p in plate_pairs:
-                if p.image_paths:
-                    plate_pages.add(p.page_number)
+            # Use the exact claimed image IDs (not just their page numbers) so an
+            # image on a "plate page" but linked to a different plate is not
+            # accidentally re-surfaced as a leftover.
             leftover_images = [
                 img for img in images
-                if int(img.get("page number", 0) or 0) not in plate_pages
+                if int(img.get("id", -1)) not in claimed_image_ids
             ]
             if leftover_images:
                 # Build a single fallback figure for unassigned images so the
@@ -614,7 +610,7 @@ def _build_figures_from_plate_captions(
     images: list[dict[str, Any]],
     output_dir: Path,
     paper_id: str,
-) -> list[FigureCaptionPair]:
+) -> tuple[list[FigureCaptionPair], set[int]]:
     """Build FigureCaptionPair list by linking each plate caption to nearby images.
 
     The convention we use for linking:
@@ -626,6 +622,12 @@ def _build_figures_from_plate_captions(
         caption is on the same page as Plate A's figure, A still claims the
         figure. We process plates in caption order and skip images already
         claimed by an earlier plate.
+
+    Returns a tuple of (pairs, claimed_image_ids) so the caller can
+    exclude the *exact* images that have already been linked from the
+    leftover / unassigned bucket — not just the page number, which is
+    too coarse when a plate caption on page P uses images spanning
+    [P, P+1] (Bandini 2011 plate 1: caption p12, actual plate image p13).
     """
     pairs: list[FigureCaptionPair] = []
     n = len(plate_captions)
@@ -683,7 +685,7 @@ def _build_figures_from_plate_captions(
             merged_bbox=merged_bbox,
             metadata={"plate_number": cap["plate_number"]},
         ))
-    return pairs
+    return pairs, claimed_image_ids
 
 
 def _resolve_image_paths(images: list[dict[str, Any]], output_dir: Path) -> list[str]:
