@@ -135,11 +135,63 @@ def _extract_balanced_objects(text: str) -> list[Any]:
 # "fig N. Species Name", separated by periods, semicolons, or newlines.
 # Same pattern family as the LLM prompt example, but deterministic.
 # Range separator: hyphen-minus (-), en-dash (–), or em-dash (—).
+# Handles "Fig. 1 Svinitzium cf. kamoense" (cf./aff. mid-binomial),
+# "Fig. 4 Hiscocapsa lugeoni" (plain binomial), and
+# "Fig. 6 Praewilliriedellum sp." (genus + sp.).
+# Common Unicode ligatures that appear in OCR'd caption text from
+# OpenDataLoader/GROBID. Normalised to ASCII before regex matching so the
+# patterns below stay ASCII-only. Notable: "ﬁgs" (U+FB01 + gs) is the most
+# common form seen on radiolarian plate captions — a single-character
+# ligature is the difference between a parse success and a silent failure.
+_LIGATURE_MAP: dict[str, str] = {
+    "ﬀ": "ff",
+    "ﬁ": "fi",
+    "ﬂ": "fl",
+    "ﬃ": "ffi",
+    "ﬄ": "ffl",
+    "Ĳ": "IJ",
+    "ĳ": "ij",
+    # Curly quotes / dashes
+    "’": "'",
+    "‘": "'",
+    "“": '"',
+    "”": '"',
+    "–": "-",
+    "—": "-",
+    "…": "...",
+    " ": " ",
+}
+
+
+def _normalize_caption_text(text: str) -> str:
+    """Normalise ligatures and curly punctuation in a caption to their ASCII
+    equivalents before regex matching. Without this, the U+FB01 ligature in
+    "ﬁgs" makes ``_CAPTION_CLAUSE_RE`` miss every clause and the parser
+    returns zero pairs."""
+    if not text:
+        return text
+    return "".join(_LIGATURE_MAP.get(ch, ch) for ch in text)
+
+
+# Regex-based caption parser. Handles the convention used in most OA
+# radiolarian papers, where each clause is "figs X-Y. Species Name" or
+# "fig N. Species Name", separated by periods, semicolons, or newlines.
+# Same pattern family as the LLM prompt example, but deterministic.
+# Range separator: hyphen-minus (-), en-dash (–), or em-dash (—).
+# Handles "Fig. 1 Svinitzium cf. kamoense" (cf./aff. mid-binomial),
+# "Fig. 4 Hiscocapsa lugeoni" (plain binomial), and
+# "Fig. 6 Praewilliriedellum sp." (genus + sp.).
 _CAPTION_CLAUSE_RE = re.compile(
     r"(?:[Ff]igs?\.?)\s*"
     r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"  # label list "1-3, 5, 7-9"
     r"\s*[\.:]?\s*"
-    r"([A-Z][a-zA-Z-]+(?:\s+[a-z][a-zA-Z-]+)?)"  # binomial "Genus species" (no modifier)
+    r"([A-Z][a-zA-Z-]+"  # Genus (capitalized)
+    r"(?:"  # optionally followed by epithet, possibly with cf./aff. between
+    r"(?:\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+)"  # cf./aff. + species
+    r"|"
+    r"(?:\s+[a-z][a-zA-Z-]+)"  # plain species epithet
+    r")?"
+    r")"
     r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?",
 )
 
@@ -192,12 +244,16 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     """
     if not caption_text:
         return []
+    # Normalise ligatures ("ﬁgs" → "figs") and curly punctuation first;
+    # otherwise the U+FB01 ligature in OpenDataLoader output makes
+    # _CAPTION_CLAUSE_RE miss every clause and return zero pairs.
+    text = _normalize_caption_text(caption_text)
     # Strip leading "Explanation of Plate N." so the regex doesn't anchor on
     # the word "Explanation" (which is not a real label).
     text = re.sub(
         r"^\s*Explanation\s+of\s+Plate\s+\d+\s*[\.:,]?\s*",
         "",
-        caption_text,
+        text,
         count=1,
         flags=re.IGNORECASE,
     )
