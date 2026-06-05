@@ -85,7 +85,8 @@ chmod +x run_web_server.sh
 | 模式 | 适用场景 | 后端 | 备注 |
 |---|---|---|---|
 | 规则流水线 | 快速批处理 | CPU + OpenCV + GROBID | 默认可跑 |
-| llama.cpp | 你当前环境 | http://127.0.0.1:8080 | 推荐 |
+| **MiniMax M3 API** | **云端多模态，1M 上下文** | **https://api.minimaxi.com/anthropic** | **推荐有预算时使用** |
+| llama.cpp | 本地量化 | http://127.0.0.1:8080 | 数据不出内网 |
 | Ollama | 本地 GGUF 管理 | http://127.0.0.1:11434 | 兼容性好 |
 | Transformers | HF 权重 | 本地 GPU | 适合权重模型 |
 
@@ -211,14 +212,153 @@ python scripts/run_pipeline.py \
 
 ---
 
-## 开启 Gemma 4 增强（推荐）
+## 开启 LLM 增强（推荐）
 
-Gemma模块是在规则匹配之后运行，作为最终决策层。
+Gemma / MiniMax M3 模块是在规则匹配之后运行，作为最终决策层。
 
-- 高于阈值：采用Gemma结果
+- 高于阈值：采用 LLM 结果
 - 低于阈值：自动回退规则结果
 
-### 方式A：Transformers后端（Hugging Face）
+### 后端对比与选择
+
+| 后端 | 适用 | 硬件要求 | 质量 | 配置入口 |
+|---|---|---|---|---|
+| **🌟 MiniMax M3 API** | **生产环境首选** | **无（云端）** | **⭐⭐⭐⭐⭐** | **[方式A](#方式aminimax-m3-api云端多模态强烈推荐)** |
+| Transformers | 本地权重 + 24G 显存 | 24G GPU | ⭐⭐⭐⭐ | [方式B](#方式btransformers后端hugging-face) |
+| llama.cpp | 本地量化 (Q4) | 32G RAM / 24G GPU | ⭐⭐⭐ | [方式C](#方式cllamacpp-后端推荐你当前环境) |
+| Ollama | 本地 GGUF 管理 | 16G+ RAM | ⭐⭐⭐ | [方式E](#方式eollama后端gguf推荐你的本地权重) |
+| 不用 LLM | 纯规则流水线 | 任意 | ⭐⭐ | 不传 `--use-gemma4` |
+
+> 💡 **2026-06 新增 MiniMax M3 选项**：原生多模态 + 1M 上下文 + 扩展思考，无需 GPU。
+> 如果你的笔记本没有独显，或者不想部署本地模型，**强烈推荐用 MiniMax API**。
+
+### 方式A：MiniMax M3 API（云端多模态，**强烈推荐**）
+
+> 2026-06 起，MiniMax M3（稀宇科技）开放 API，原生多模态 + 1M 上下文 + 扩展思考。
+> Anthropic 兼容协议，`https://api.minimaxi.com/anthropic`，模型名 `MiniMax-M3`。
+> 适合不想自己部署 GPU、或需要更高质量多模态推理的场景。
+
+#### D.1 准备工作
+
+1. 订阅 Token Plan（Plus/Max/Ultra）：<https://platform.minimaxi.com/user-center/payment/token-plan>
+2. 复制 `.env.example` 为 `.env`，填入订阅 Key：
+
+   ```bash
+   cp .env.example .env
+   # 编辑 .env，替换 ANTHROPIC_API_KEY=...
+   ```
+
+3. 安装依赖（首次）：
+
+   ```bash
+   pip install 'anthropic>=0.40,<0.50' python-dotenv
+   ```
+
+#### D.2 快速验证（先跑通再上批量）
+
+```bash
+python scripts/test_MiniMax_api.py
+# 可选：指定 panel
+python scripts/test_MiniMax_api.py --panel path/to/panel.png
+# 关闭扩展思考
+python scripts/test_MiniMax_api.py --no-thinking
+```
+
+输出会显示 `request_id / model_version / cost_cny / 累计用量`。
+
+#### D.3 在主流程中启用
+
+```bash
+python scripts/run_pipeline.py \
+    --pdf-dir /path/to/pdfs \
+    --work-dir /path/to/work \
+    --use-gemma4 \
+    --llm-backend MiniMax \
+    --MiniMax-api-key "$ANTHROPIC_API_KEY" \
+    --MiniMax-endpoint https://api.minimaxi.com/anthropic \
+    --MiniMax-model MiniMax-M3 \
+    --MiniMax-thinking-budget 1024 \
+    --gemma-conf-threshold 0.70
+```
+
+不显式传 `--MiniMax-api-key` 时，会自动读取 `ANTHROPIC_API_KEY` 环境变量（或 `.env`）。
+
+#### D.4 关键参数
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--MiniMax-max-concurrent` | 8 | 信号量限流，避免触发 QPS 上限 |
+| `--MiniMax-max-retries` | 3 | 429/5xx 指数退避重试 |
+| `--MiniMax-thinking-budget` | 1024 | 扩展思考 token 预算，0 表示关闭 |
+| `--MiniMax-max-output-tokens` | 2048 | 思考 + 文本总上限 |
+| `--MiniMax-fallback-default` | `rules` | 失败默认动作（headless） |
+| `--MiniMax-interactive` | off | CLI 模式下弹出选择菜单 |
+| `--data-outbound-policy` | `api_full` | `api_full` / `api_redacted` / `local_only` |
+
+#### D.5 失败回退（关键设计）
+
+当 MiniMax API 报错时，pipeline 会：
+
+1. **CLI 模式**（`--MiniMax-interactive`）：在终端弹出 4 选 1 菜单
+   ```
+   [MiniMax API ERROR]
+     type    : RateLimitError
+     message : ...
+     context : paper=P001 figure=fig1 affected_panels=3
+   ============================================================
+   Choose fallback action:
+     [1] gemma4  -> switch to local Gemma4 backend (if available)
+     [2] rules   -> skip LLM, keep rule-pipeline results
+     [3] stop    -> abort the whole pipeline
+     [4] retry   -> retry the same MiniMax call once
+   Enter 1/2/3/4 (default=2):
+   ```
+
+2. **Web 模式**：前端轮询 `GET /jobs/{job_id}/MiniMax-fallback`，弹出模态框后调用
+   `POST /jobs/{job_id}/MiniMax-fallback {action: "gemma4"|"rules"|"stop"|"retry"}`。
+
+3. **Headless 模式**（`--MiniMax-interactive` 未启用）：直接走 `--MiniMax-fallback-default`。
+
+回退目标支持：本地 llama.cpp / Ollama / Transformers 任一（按 `PipelineConfig.extra` 中配置的优先级自动选）。
+
+#### D.6 成本估算（参考）
+
+按官方 2026-06 定价（输入 2.1 元 / 百万 tokens，输出 8.4 元 / 百万 tokens）：
+
+| 数据量 | figure 数 | 估算成本 |
+|---|---|---|
+| 100 篇 PDF | ~600 | **¥10** |
+| 1000 篇 PDF | ~6 000 | **¥102** |
+| 10 000 篇 PDF | ~60 000 | **¥1 020** |
+
+#### D.7 数据合规
+
+> ⚠️ **本版本仅实现 `api_full` 模式**。`api_redacted` 和 `local_only` 是接口预留，
+> redacted 剥离逻辑在下一版本实现（v0.4.x）。当前请**勿**在敏感文献上使用
+> `api_redacted`——它目前等价于 `api_full`，所有数据仍会外发。
+
+默认 `data_outbound_policy=api_full`（panel 图像 + caption + OCR + GROBID 段落外发）。
+M3 权重开源后（官方承诺发布后 10 天），可切到 `local_only`：本地部署，完全不出网。
+
+#### D.8 复现性
+
+`metadata` 中会写入：
+- `MiniMax_request_id` （API 返回）
+- `MiniMax_model_version`
+- `MiniMax_sampling` （temperature / top_p / thinking_budget）
+- `MiniMax_cost_cny` （本次调用）
+- `MiniMax_fallback_action` （若走了回退）
+
+#### D.9 切换默认后端的建议路径
+
+1. **Phase 0**：用 `scripts/test_MiniMax_api.py` 验证你的 Key 与网络。
+2. **小批量对照**：在 20~50 篇 PDF 上同输入跑 `MiniMax` vs 本地 `Gemma4`，看 `match_acc / species_f1 / 延迟 / 成本`。
+3. **生产化**：保留 Gemma4 作为兜底，M3 作为默认（`--llm-backend MiniMax --MiniMax-fallback-default gemma4`）。
+4. **M3 开源后**：评估本地部署的成本，决定是否长期切到 `local_only`。
+
+---
+
+### 方式B：Transformers后端（Hugging Face）
 
 ```bash
 python scripts/run_pipeline.py \
@@ -238,7 +378,7 @@ python scripts/run_pipeline.py \
 - 默认启用bfloat16
 - 若要关闭bfloat16：`--gemma-no-bfloat16`
 
-### 方式A2：llama.cpp 后端（推荐你当前环境）
+### 方式C：llama.cpp 后端（推荐你当前环境）
 
 你现在使用的是 llama.cpp，本地地址为 `http://127.0.0.1:8080`。RLPE 已支持通过该地址调用模型。
 
@@ -263,7 +403,7 @@ python scripts/run_pipeline.py \
 - panel 图像会以 base64 方式随请求发送（若模型/服务支持视觉输入）
 - 如果是纯文本模型，系统会自动走文本回退路径
 
-### 方式B：离线增强已有结果
+### 方式D：离线增强已有结果
 
 ```bash
 python scripts/gemma_batch_postprocess.py \
@@ -278,7 +418,7 @@ python scripts/gemma_batch_postprocess.py \
 	--use-4bit
 ```
 
-### 方式C：Ollama后端（GGUF，推荐你的本地权重）
+### 方式E：Ollama后端（GGUF，推荐你的本地权重）
 
 你的权重文件：`/home/user/shenyaxuan/ollama-models/gemma-4-31B-it-Q4_K_M.gguf`
 

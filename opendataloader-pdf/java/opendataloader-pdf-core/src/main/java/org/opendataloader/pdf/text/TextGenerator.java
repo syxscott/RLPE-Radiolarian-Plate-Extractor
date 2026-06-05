@@ -1,0 +1,249 @@
+/*
+ * Copyright 2025-2026 Hancom Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opendataloader.pdf.text;
+
+import org.opendataloader.pdf.api.Config;
+import org.verapdf.wcag.algorithms.entities.IObject;
+import org.verapdf.wcag.algorithms.entities.SemanticHeaderOrFooter;
+import org.verapdf.wcag.algorithms.entities.SemanticHeading;
+import org.verapdf.wcag.algorithms.entities.SemanticParagraph;
+import org.verapdf.wcag.algorithms.entities.SemanticTextNode;
+import org.verapdf.wcag.algorithms.entities.content.ImageChunk;
+import org.verapdf.wcag.algorithms.entities.lists.ListItem;
+import org.verapdf.wcag.algorithms.entities.lists.PDFList;
+import org.verapdf.wcag.algorithms.entities.tables.tableBorders.TableBorder;
+import org.verapdf.wcag.algorithms.entities.tables.tableBorders.TableBorderCell;
+import org.verapdf.wcag.algorithms.entities.tables.tableBorders.TableBorderRow;
+
+import java.io.Closeable;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
+
+/**
+ * Generates a plain text representation of the extracted PDF contents.
+ */
+public class TextGenerator implements Closeable {
+
+    private static final Logger LOGGER = Logger.getLogger(TextGenerator.class.getCanonicalName());
+    private static final String INDENT = "  ";
+
+    private final java.io.Writer textWriter;
+    private final String textFileName;
+    private final String lineSeparator = System.lineSeparator();
+    private final String textPageSeparator;
+    private final boolean includeHeaderFooter;
+
+    public TextGenerator(File inputPdf, Config config) throws IOException {
+        String cutPdfFileName = inputPdf.getName();
+        this.textFileName = config.getOutputFolder() + File.separator + cutPdfFileName.substring(0, cutPdfFileName.length() - 3) + "txt";
+        this.textWriter = new FileWriter(textFileName, StandardCharsets.UTF_8);
+        this.textPageSeparator = config.getTextPageSeparator();
+        this.includeHeaderFooter = config.isIncludeHeaderFooter();
+    }
+
+    /**
+     * Creates a TextGenerator that writes to an arbitrary Writer (e.g., stdout).
+     */
+    public TextGenerator(java.io.Writer writer, Config config) {
+        this.textFileName = null;
+        this.textWriter = writer;
+        this.textPageSeparator = config.getTextPageSeparator();
+        this.includeHeaderFooter = config.isIncludeHeaderFooter();
+    }
+
+    public void writeToText(List<List<IObject>> contents) {
+        try {
+            for (int pageIndex = 0; pageIndex < contents.size(); pageIndex++) {
+                writePageSeparator(pageIndex);
+                List<IObject> pageContents = contents.get(pageIndex);
+                writeContents(pageContents, 0);
+                if (pageIndex < contents.size() - 1) {
+                    textWriter.write(lineSeparator);
+                }
+            }
+            LOGGER.log(Level.INFO, "Created {0}", textFileName);
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Unable to create text output: " + e.getMessage());
+        }
+    }
+
+    private void writePageSeparator(int pageIndex) throws IOException {
+        if (!textPageSeparator.isEmpty()) {
+            textWriter.write(textPageSeparator.contains(Config.PAGE_NUMBER_STRING)
+                ? textPageSeparator.replace(Config.PAGE_NUMBER_STRING, String.valueOf(pageIndex + 1))
+                : textPageSeparator);
+            textWriter.write(lineSeparator);
+        }
+    }
+
+    private void writeContents(List<IObject> contents, int indentLevel) throws IOException {
+        for (int index = 0; index < contents.size(); index++) {
+            write(contents.get(index), indentLevel);
+            if (index < contents.size() - 1) {
+                textWriter.write(lineSeparator);
+            }
+        }
+    }
+
+    private void write(IObject object, int indentLevel) throws IOException {
+        if (object instanceof SemanticHeaderOrFooter) {
+            if (includeHeaderFooter) {
+                writeHeaderOrFooter((SemanticHeaderOrFooter) object, indentLevel);
+            }
+        } else if (object instanceof SemanticHeading) {
+            writeMultiline(((SemanticHeading) object).getValue(), indentLevel);
+        } else if (object instanceof SemanticParagraph) {
+            writeMultiline(((SemanticParagraph) object).getValue(), indentLevel);
+        } else if (object instanceof SemanticTextNode) {
+            writeMultiline(((SemanticTextNode) object).getValue(), indentLevel);
+        } else if (object instanceof PDFList) {
+            writeList((PDFList) object, indentLevel);
+        } else if (object instanceof TableBorder) {
+            writeTable((TableBorder) object, indentLevel);
+        }
+    }
+
+    private void writeHeaderOrFooter(SemanticHeaderOrFooter headerOrFooter, int indentLevel) throws IOException {
+        writeContents(headerOrFooter.getContents(), indentLevel);
+    }
+
+    private void writeList(PDFList list, int indentLevel) throws IOException {
+        for (ListItem item : list.getListItems()) {
+            String indent = indent(indentLevel);
+            String itemText = compactWhitespace(collectPlainText(item.getContents()));
+            if (!itemText.isEmpty()) {
+                textWriter.write(indent);
+                textWriter.write(itemText);
+                textWriter.write(lineSeparator);
+            }
+            if (!item.getContents().isEmpty()) {
+                writeContents(item.getContents(), indentLevel + 1);
+            }
+        }
+    }
+
+    private void writeTable(TableBorder table, int indentLevel) throws IOException {
+        String indent = indent(indentLevel);
+        for (TableBorderRow row : table.getRows()) {
+            String rowText = Arrays.stream(row.getCells())
+                .map(cell -> compactWhitespace(collectPlainText(cell.getContents())))
+                .filter(text -> !text.isEmpty())
+                .collect(Collectors.joining("\t"));
+            if (rowText.isEmpty()) {
+                continue;
+            }
+            textWriter.write(indent);
+            textWriter.write(rowText);
+            textWriter.write(lineSeparator);
+        }
+    }
+
+    private String collectPlainText(List<IObject> contents) {
+        StringBuilder builder = new StringBuilder();
+        for (IObject content : contents) {
+            String piece = extractPlainText(content);
+            if (piece.isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+            builder.append(piece);
+        }
+        return builder.toString();
+    }
+
+    private String extractPlainText(IObject content) {
+        if (content instanceof SemanticHeaderOrFooter) {
+            if (includeHeaderFooter) {
+                return collectPlainText(((SemanticHeaderOrFooter) content).getContents());
+            }
+            return "";
+        } else if (content instanceof SemanticHeading) {
+            return sanitize(((SemanticHeading) content).getValue());
+        } else if (content instanceof SemanticParagraph) {
+            return sanitize(((SemanticParagraph) content).getValue());
+        } else if (content instanceof SemanticTextNode) {
+            return sanitize(((SemanticTextNode) content).getValue());
+        } else if (content instanceof PDFList) {
+            PDFList list = (PDFList) content;
+            return list.getListItems().stream()
+                .map(item -> compactWhitespace(collectPlainText(item.getContents())))
+                .filter(text -> !text.isEmpty())
+                .collect(Collectors.joining(" "));
+        } else if (content instanceof TableBorder) {
+            TableBorder table = (TableBorder) content;
+            return Arrays.stream(table.getRows())
+                .map(row -> Arrays.stream(row.getCells())
+                    .map(cell -> compactWhitespace(collectPlainText(cell.getContents())))
+                    .filter(text -> !text.isEmpty())
+                    .collect(Collectors.joining(" ")))
+                .filter(text -> !text.isEmpty())
+                .collect(Collectors.joining(" "));
+        }
+        return "";
+    }
+
+    private void writeMultiline(String value, int indentLevel) throws IOException {
+        if (value == null) {
+            return;
+        }
+        String sanitized = sanitize(value);
+        String indent = indent(indentLevel);
+        String[] lines = sanitized.split("\r?\n", -1);
+        for (String line : lines) {
+            if (line.isBlank()) {
+                continue;
+            }
+            textWriter.write(indent);
+            textWriter.write(line);
+            textWriter.write(lineSeparator);
+        }
+    }
+
+    private String indent(int level) {
+        if (level <= 0) {
+            return "";
+        }
+        return INDENT.repeat(level);
+    }
+
+    private String sanitize(String value) {
+        return value == null ? "" : value.replace("\u0000", " ");
+    }
+
+    private String compactWhitespace(String value) {
+        if (value == null) {
+            return "";
+        }
+        String sanitized = sanitize(value);
+        return sanitized.replaceAll("\\s+", " ").trim();
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (textWriter != null) {
+            textWriter.close();
+        }
+    }
+}

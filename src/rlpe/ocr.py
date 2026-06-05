@@ -65,6 +65,10 @@ class OCRBackend:
         if image is None:
             return []
 
+        return self._ocr_array(image)
+
+    def _ocr_array(self, image: np.ndarray) -> list[OCRToken]:
+        engine = self._engine  # guaranteed non-None by caller
         tokens: list[OCRToken] = []
         try:
             if self.backend == "paddleocr":
@@ -87,6 +91,53 @@ class OCRBackend:
         except Exception:
             return []
         return tokens
+
+    def recognize_panel(
+        self,
+        image: np.ndarray | str | Path,
+        bbox: tuple[int, int, int, int],
+        padding: int = 4,
+    ) -> list[OCRToken]:
+        """OCR a single panel sub-region.
+
+        ``bbox`` is ``(x, y, w, h)`` in ``image`` pixel coordinates. The crop
+        is padded by ``padding`` pixels on every side (default 4) so the OCR
+        engine has a small margin to work with, and tokens are returned with
+        their bbox translated back to ``image`` coordinates.
+        """
+        engine = self._lazy_init()
+        if engine is None:
+            return []
+        if isinstance(image, (str, Path)):
+            import cv2
+            image = cv2.imread(str(image))
+        if image is None:
+            return []
+        import cv2
+        h_img, w_img = image.shape[:2]
+        x, y, w, h = bbox
+        x0 = max(0, int(x) - padding)
+        y0 = max(0, int(y) - padding)
+        x1 = min(w_img, int(x + w) + padding)
+        y1 = min(h_img, int(y + h) + padding)
+        if x1 <= x0 or y1 <= y0:
+            return []
+        crop = image[y0:y1, x0:x1]
+        if crop.size == 0:
+            return []
+        local_tokens = self._ocr_array(crop)
+        # Translate token bboxes back to image coordinates
+        out: list[OCRToken] = []
+        for tok in local_tokens:
+            tx, ty, tw, th = tok.bbox
+            out.append(
+                OCRToken(
+                    text=tok.text,
+                    confidence=tok.confidence,
+                    bbox=(x0 + tx, y0 + ty, tw, th),
+                )
+            )
+        return out
 
 
 def normalize_ocr_tokens(tokens: list[OCRToken]) -> list[OCRToken]:

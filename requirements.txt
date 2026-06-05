@@ -29,6 +29,12 @@ accelerate>=0.33.0
 bitsandbytes>=0.43.0
 
 # -------------------------
+# MiniMax M3 API (Anthropic-compatible)
+# -------------------------
+anthropic>=0.40.0,<0.50
+python-dotenv>=1.0.0
+
+# -------------------------
 # API / Queue / Service
 # -------------------------
 fastapi>=0.111.0

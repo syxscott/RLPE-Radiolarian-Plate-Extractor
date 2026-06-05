@@ -1,0 +1,59 @@
+# RLPE conda environment
+# 用法：
+#   conda env create -f environment.yml          （首次创建）
+#   conda env update -f environment.yml --prune  （更新已有 env）
+#   conda env remove -n rlpe && conda env create -f environment.yml  （重建）
+#
+# 跨平台：Linux (x86_64) / macOS (x86_64, arm64) / Windows (x86_64)
+# 不支持：Linux ARM64（paddlepaddle 没有 aarch64 官方包）
+name: rlpe
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  # --- Runtime ---
+  - python=3.11
+  - pip
+  - numpy>=1.26
+  - opencv>=4.9
+  - pandas>=2.2
+  - tqdm>=4.66
+  - scikit-image>=0.22
+  - pillow>=10.0
+  - requests>=2.31
+  - curl  # for health-check scripts
+  - ca-certificates  # for HTTPS to api.minimaxi.com
+
+  # --- OCR / Taxonomy ---
+  # 注意：paddlepaddle 必须用 pip，不能用 conda（conda 没有官方包）
+  # 必须在 pip 子段里指定精确版本，Linux x86_64 才装得上
+  - pip:
+      # 核心 web / 推理
+      - pymupdf>=1.24
+      - fastapi>=0.111
+      - uvicorn[standard]>=0.30   # 包含 httptools / uvloop
+      - pydantic>=2.8
+      - python-multipart>=0.0.9
+      - python-dotenv>=1.0
+
+      # MiniMax M3 (Anthropic-compatible SDK)
+      - "anthropic>=0.40,<0.50"
+
+      # OCR (CPU 版本；GPU 用 paddlepaddle-gpu)
+      - paddlepaddle==2.6.0
+      - paddleocr>=2.7
+      - easyocr>=1.7.1
+
+      # Taxon NER
+      - spacy>=3.7,<3.8
+      - https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
+      - taxonerd>=1.5.3
+
+      # 队列 / 异步
+      - celery>=5.4
+      - redis>=5.0
+
+      # 训练工具 (可选)
+      - datasets>=2.19
+      - scikit-learn>=1.5
+      - scipy>=1.13

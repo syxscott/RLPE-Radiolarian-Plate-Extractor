@@ -308,20 +308,40 @@ class RadiolarianPipeline:
                 except Exception:
                     logger.debug("progress_cb(figure) failed", exc_info=True)
 
-            # Load the first image as the region image.
-            region_img = cv2.imread(pair.image_paths[0])
-            if region_img is None:
+            # Pick the LARGEST image as the primary region. OpenDataLoader
+            # sometimes returns several images per plate (an index map of
+            # sample localities, a couple of field outcrop photos, and the
+            # actual SEM micrograph plate). The pipeline previously picked
+            # ``image_paths[0]`` which is whatever happens to be first in
+            # the JSON — for Bandini 2011 Plate 1 that was the 466x424
+            # index map, so the segmenter saw 1 panel instead of the 31
+            # specimens in the 975x1227 actual plate. Selecting by pixel
+            # area fixes that without any per-paper special cases.
+            primary_path: str | None = None
+            primary_area: int = 0
+            for cand_path in pair.image_paths:
+                if not cand_path:
+                    continue
+                cand = cv2.imread(cand_path)
+                if cand is None:
+                    continue
+                area = int(cand.shape[0]) * int(cand.shape[1])
+                if area > primary_area:
+                    primary_area = area
+                    primary_path = cand_path
+                    region_img = cand
+            if primary_path is None:
                 continue
 
             h_img, w_img = region_img.shape[:2]
             region = FigureRegion(
                 page_index=pair.page_number,
                 bbox=(0, 0, int(w_img), int(h_img)),
-                crop_path=pair.image_paths[0],
+                crop_path=primary_path,
                 score=0.85,
                 region_id=f"od_{paper_id}_p{pair.page_number:03d}_{fig_idx:02d}",
                 kind="figure",
-                metadata={"source": "opendataloader"},
+                metadata={"source": "opendataloader", "primary_image": primary_path},
             )
 
             # Build caption record from OpenDataLoader output.

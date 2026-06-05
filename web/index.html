@@ -64,6 +64,10 @@
                         <div class="config-group">
                             <label for="grobid-url">GROBID 服务地址</label>
                             <input type="text" id="grobid-url" value="http://localhost:8070" placeholder="GROBID 服务 URL">
+                            <label class="checkbox-label" style="margin-top:8px">
+                                <input type="checkbox" id="use-opendataloader" checked>
+                                使用 OpenDataLoader-pdf（无需 GROBID 服务，默认开启）
+                            </label>
                         </div>
                         <div class="config-group">
                             <label for="ocr-backend">OCR 引擎</label>
@@ -86,23 +90,62 @@
                         <h3>LLM 增强选项（可选）</h3>
                         <label class="checkbox-label">
                             <input type="checkbox" id="use-gemma4">
-                            启用 Gemma 4 后处理增强
+                            启用 LLM 后处理增强（面板→标签→物种决策）
                         </label>
                         <div id="gemma-config" class="gemma-config hidden">
                             <div class="config-group">
                                 <label for="llm-backend">LLM 后端</label>
                                 <select id="llm-backend">
-                                    <option value="transformers">Transformers (本地 GPU)</option>
-                                    <option value="ollama">Ollama</option>
+                                    <option value="MiniMax" selected>🌟 MiniMax M3（云端 API，强烈推荐）</option>
                                     <option value="llamacpp">llama.cpp 服务</option>
+                                    <option value="ollama">Ollama</option>
+                                    <option value="transformers">Transformers (本地 GPU)</option>
                                 </select>
                             </div>
-                            <div class="config-group">
+
+                            <!-- llama.cpp / ollama fields -->
+                            <div id="llm-local-config" class="config-group">
                                 <label for="llm-host">LLM 服务地址</label>
-                                <input type="text" id="llm-host" value="http://127.0.0.1:8080" placeholder="LLM 服务 URL">
+                                <input type="text" id="llm-host" value="http://127.0.0.1:8080" placeholder="llamacpp:8080 / ollama:11434">
                             </div>
+
+                            <!-- MiniMax M3 API fields -->
+                            <div id="MiniMax-config" class="config-section hidden">
+                                <div class="config-group">
+                                    <label for="MiniMax-api-key">API Key（订阅 Token Plan Key）</label>
+                                    <input type="password" id="MiniMax-api-key" placeholder="不填则从 .env 读取 ANTHROPIC_API_KEY">
+                                </div>
+                                <div class="config-group">
+                                    <label for="MiniMax-endpoint">API Endpoint</label>
+                                    <input type="text" id="MiniMax-endpoint" value="https://api.minimaxi.com/anthropic">
+                                </div>
+                                <div class="config-group">
+                                    <label for="MiniMax-model">模型名</label>
+                                    <input type="text" id="MiniMax-model" value="MiniMax-M3">
+                                </div>
+                                <div class="config-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="MiniMax-enable-thinking" checked>
+                                        启用扩展思考（extended thinking）
+                                    </label>
+                                </div>
+                                <div class="config-group">
+                                    <label for="MiniMax-thinking-budget">思考 Token 预算</label>
+                                    <input type="number" id="MiniMax-thinking-budget" value="1024" min="0" max="32000" step="64">
+                                </div>
+                                <div class="config-group">
+                                    <label for="MiniMax-fallback-default">失败回退（headless 默认）</label>
+                                    <select id="MiniMax-fallback-default">
+                                        <option value="rules" selected>规则流水线（推荐）</option>
+                                        <option value="gemma4">切换到本地 Gemma4</option>
+                                        <option value="stop">停止整个任务</option>
+                                        <option value="retry">重试一次</option>
+                                    </select>
+                                </div>
+                            </div>
+
                             <div class="config-group">
-                                <label for="gemma-conf-threshold">Gemma 置信度阈值</label>
+                                <label for="gemma-conf-threshold">LLM 置信度阈值（低于此值回退规则）</label>
                                 <input type="number" id="gemma-conf-threshold" value="0.7" min="0" max="1" step="0.05">
                             </div>
                         </div>
@@ -117,6 +160,31 @@
                             <input type="checkbox" id="save-intermediate">
                             保存中间结果（用于调试）
                         </label>
+                    </div>
+
+                    <div class="config-section" id="paleodb-section">
+                        <h3>🦴 古生物数据库比对（可选）</h3>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="use-paleodb">
+                            启用 Paleobiology Database (PBDB) 物种比对
+                        </label>
+                        <p class="config-hint" style="margin: 0 0 8px 0; color: var(--text-muted); font-size: 0.85rem;">
+                            比对匹配到的物种名，附带分类层级（界→种）与出现记录（产地、年代、坐标）。完全离线/可选，不勾选时不会发起任何外部请求。
+                        </p>
+                        <div id="paleodb-config" class="config-section hidden" style="margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.02); border-radius: 4px;">
+                            <div class="config-group">
+                                <label for="paleodb-max-occurrences">每个物种最多获取出现记录数</label>
+                                <input type="number" id="paleodb-max-occurrences" value="25" min="1" max="500" step="1">
+                            </div>
+                            <div class="config-group">
+                                <label for="paleodb-endpoint">PBDB 接口地址（可选，留空使用默认）</label>
+                                <input type="text" id="paleodb-endpoint" placeholder="https://paleobiodb.org/data1.2">
+                            </div>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="paleodb-offline">
+                                仅使用本地缓存（不联网）
+                            </label>
+                        </div>
                     </div>
                 </div>
 
@@ -134,6 +202,10 @@
                 <div class="card">
                     <h2>📋 处理任务列表</h2>
                     <div class="jobs-toolbar">
+                        <label class="checkbox-label" title="全选当前可见任务">
+                            <input type="checkbox" id="jobs-select-all">
+                            <span>全选</span>
+                        </label>
                         <input type="text" id="job-search" placeholder="搜索任务 ID...">
                         <select id="job-filter">
                             <option value="">全部状态</option>
@@ -141,15 +213,45 @@
                             <option value="running">处理中</option>
                             <option value="done">已完成</option>
                             <option value="failed">失败</option>
+                            <option value="cancelled">已取消</option>
                         </select>
                         <button id="refresh-jobs-btn" class="btn btn-small">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
     刷新
 </button>
+                        <button id="delete-selected-btn" class="btn btn-small btn-danger" disabled>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+    删除选中 <span id="delete-selected-count">(0)</span>
+</button>
                     </div>
                     <div id="jobs-list" class="jobs-list"></div>
                 </div>
             </section>
+
+            <!-- Delete Confirmation Modal -->
+            <div id="delete-modal" class="modal hidden">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>⚠️ 确认删除</h3>
+                        <button class="modal-close" onclick="closeDeleteModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p id="delete-modal-summary"></p>
+                        <div id="delete-modal-jobs" class="delete-modal-jobs"></div>
+                        <div class="delete-modal-option">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="delete-modal-files" checked>
+                                <span>同时删除磁盘文件（service_work / work 目录）</span>
+                            </label>
+                            <p class="delete-modal-hint">取消勾选则只从缓存中移除，文件保留在磁盘上。</p>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="closeDeleteModal()">取消</button>
+                        <button class="btn btn-danger" id="delete-modal-confirm" onclick="confirmDelete()">确认删除</button>
+                    </div>
+                </div>
+            </div>
 
             <!-- Results Tab -->
             <section id="results-tab" class="tab-pane">

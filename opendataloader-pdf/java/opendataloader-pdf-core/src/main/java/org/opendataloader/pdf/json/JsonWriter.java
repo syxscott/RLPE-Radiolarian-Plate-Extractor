@@ -1,0 +1,122 @@
+/*
+ * Copyright 2025-2026 Hancom Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opendataloader.pdf.json;
+
+import com.fasterxml.jackson.core.JsonEncoding;
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
+import org.opendataloader.pdf.containers.StaticLayoutContainers;
+import org.verapdf.as.ASAtom;
+import org.verapdf.cos.COSDictionary;
+import org.verapdf.cos.COSObjType;
+import org.verapdf.cos.COSObject;
+import org.verapdf.cos.COSTrailer;
+import org.verapdf.gf.model.impl.cos.GFCosInfo;
+import org.verapdf.pd.PDDocument;
+import org.verapdf.tools.StaticResources;
+import org.opendataloader.pdf.hybrid.ElementMetadata;
+import org.opendataloader.pdf.json.serializers.SerializerUtil;
+import org.verapdf.wcag.algorithms.entities.IObject;
+import org.verapdf.wcag.algorithms.entities.content.LineArtChunk;
+import org.verapdf.wcag.algorithms.semanticalgorithms.containers.StaticContainers;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+public class JsonWriter {
+    private static final Logger LOGGER = Logger.getLogger(JsonWriter.class.getCanonicalName());
+    private static JsonGenerator getJsonGenerator(String fileName) throws IOException {
+        JsonFactory jsonFactory = new JsonFactory();
+        return jsonFactory.createGenerator(new File(fileName), JsonEncoding.UTF8)
+                .setPrettyPrinter(new DefaultPrettyPrinter())
+                .setCodec(ObjectMapperHolder.getObjectMapper());
+    }
+
+    public static void writeToJson(File inputPDF, String outputFolder, List<List<IObject>> contents) throws IOException {
+        writeToJson(inputPDF, outputFolder, contents, Collections.emptyMap(), null);
+    }
+
+    public static void writeToJson(File inputPDF, String outputFolder, List<List<IObject>> contents,
+                                   Map<Long, ElementMetadata> elementMetadata) throws IOException {
+        writeToJson(inputPDF, outputFolder, contents, elementMetadata, null);
+    }
+
+    public static void writeToJson(File inputPDF, String outputFolder, List<List<IObject>> contents,
+                                   Map<Long, ElementMetadata> elementMetadata,
+                                   Map<String, Object> hybridInfo) throws IOException {
+        StaticLayoutContainers.resetImageIndex();
+        String jsonFileName = outputFolder + File.separator + inputPDF.getName().substring(0, inputPDF.getName().length() - 3) + "json";
+        try (JsonGenerator jsonGenerator = getJsonGenerator(jsonFileName)) {
+            jsonGenerator.writeStartObject();
+            writeDocumentInfo(jsonGenerator, inputPDF.getName());
+
+            if (hybridInfo != null && !hybridInfo.isEmpty()) {
+                writeHybridBlock(jsonGenerator, hybridInfo);
+            }
+
+            SerializerUtil.setElementMetadata(elementMetadata);
+            try {
+                jsonGenerator.writeArrayFieldStart(JsonName.KIDS);
+                for (int pageNumber = 0; pageNumber < StaticContainers.getDocument().getNumberOfPages(); pageNumber++) {
+                    for (IObject content : contents.get(pageNumber)) {
+                        if (!(content instanceof LineArtChunk)) {
+                            jsonGenerator.writePOJO(content);
+                        }
+                    }
+                }
+                jsonGenerator.writeEndArray();
+            } finally {
+                SerializerUtil.clearElementMetadata();
+            }
+
+            jsonGenerator.writeEndObject();
+            LOGGER.log(Level.INFO, "Created {0}", jsonFileName);
+        } catch (Exception ex) {
+            LOGGER.log(Level.WARNING, "Unable to create JSON output: " + ex.getMessage());
+        }
+    }
+
+    private static void writeHybridBlock(JsonGenerator generator, Map<String, Object> hybridInfo) throws IOException {
+        generator.writeObjectFieldStart(JsonName.HYBRID);
+        for (Map.Entry<String, Object> entry : hybridInfo.entrySet()) {
+            generator.writePOJOField(entry.getKey(), entry.getValue());
+        }
+        generator.writeEndObject();
+    }
+
+    private static void writeDocumentInfo(JsonGenerator generator, String pdfName) throws IOException {
+        PDDocument document = StaticResources.getDocument();
+        generator.writeStringField(JsonName.FILE_NAME, pdfName);
+        generator.writeNumberField(JsonName.NUMBER_OF_PAGES, document.getNumberOfPages());
+        COSTrailer trailer = document.getDocument().getTrailer();
+        COSObject object = trailer.getKey(ASAtom.INFO);
+        GFCosInfo info = new GFCosInfo((COSDictionary)
+                (object != null && object.getType() == COSObjType.COS_DICT ?
+                        object.getDirectBase() : COSDictionary.construct().get()));
+        generator.writeStringField(JsonName.AUTHOR, info.getAuthor() != null ? info.getAuthor() : info.getXMPCreator());
+        generator.writeStringField(JsonName.TITLE, info.getTitle() != null ? info.getTitle() : info.getXMPTitle());
+        generator.writeStringField(JsonName.CREATION_DATE, info.getCreationDate() != null ?
+                info.getCreationDate() : info.getXMPCreateDate());
+        generator.writeStringField(JsonName.MODIFICATION_DATE, info.getModDate() != null ?
+                info.getModDate() : info.getXMPModifyDate());
+    }
+}

@@ -9,7 +9,11 @@ import numpy as np
 
 
 SCALE_PATTERN = re.compile(
-    r"(?:scale\s*bar\s*(?:=|:)?\s*|bar\s*=\s*)(\d+(?:\.\d+)?)\s*(μm|um|mm|cm|nm)",
+    r"(?:scale\s*bar(?:\s*(?:length|=|:))?\s*|bar\s*=\s*|bars?\s+are\s+|"
+    r"scale\s+bar\s+of\s+|"
+    r"(?<![A-Za-z0-9_]))"  # bare-number form, not preceded by word char
+    r"(\d+(?:\.\d+)?)\s*(?:[–—\-]\s*(\d+(?:\.\d+)?)\s*)?"
+    r"(μm|µm|um|microns?|micron|mm|cm|nm)",
     re.IGNORECASE,
 )
 
@@ -34,8 +38,17 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
     if not m:
         return ScaleInfo()
     val = float(m.group(1))
-    unit = normalize_unit(m.group(2))
-    return ScaleInfo(value=val, unit=unit, source="caption", confidence=0.8)
+    unit = normalize_unit(m.group(3))
+    info = ScaleInfo(value=val, unit=unit, source="caption", confidence=0.8)
+    # Range form: 5–10 µm → use midpoint
+    if m.group(2):
+        try:
+            hi = float(m.group(2))
+            info.value = (val + hi) / 2.0
+            info.confidence = 0.7
+        except Exception:
+            pass
+    return info
 
 
 def extract_scale_from_ocr_text(ocr_text: str) -> ScaleInfo:
@@ -45,8 +58,16 @@ def extract_scale_from_ocr_text(ocr_text: str) -> ScaleInfo:
     if not m:
         return ScaleInfo()
     val = float(m.group(1))
-    unit = normalize_unit(m.group(2))
-    return ScaleInfo(value=val, unit=unit, source="ocr", confidence=0.7)
+    unit = normalize_unit(m.group(3))
+    info = ScaleInfo(value=val, unit=unit, source="ocr", confidence=0.7)
+    if m.group(2):
+        try:
+            hi = float(m.group(2))
+            info.value = (val + hi) / 2.0
+            info.confidence = 0.6
+        except Exception:
+            pass
+    return info
 
 
 def detect_scale_bar_length_px(image: np.ndarray) -> float | None:
@@ -99,8 +120,8 @@ def merge_scale_info(caption_info: ScaleInfo, ocr_info: ScaleInfo, pixel_length:
 
 
 def normalize_unit(unit: str) -> str:
-    u = unit.lower().strip()
-    if u in {"μm", "um"}:
+    u = (unit or "").lower().strip()
+    if u in {"μm", "µm", "um", "micron", "microns"}:
         return "um"
     return u
 

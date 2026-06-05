@@ -37,6 +37,18 @@ function formatDate(date) {
     return d.toLocaleString('zh-CN');
 }
 
+function formatElapsed(sec) {
+    if (sec == null) return 'N/A';
+    sec = Math.max(0, Math.floor(sec));
+    if (sec < 60) return `${sec} 秒`;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m < 60) return `${m} 分 ${s} 秒`;
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${h} 时 ${mm} 分`;
+}
+
 function resolveAssetUrl(path) {
     if (!path) return '';
     if (/^https?:\/\//i.test(path)) return path;
@@ -176,9 +188,42 @@ document.getElementById('process-btn').addEventListener('click', async () => {
     let uploadedCount = 0;
 
     try {
+        // Collect LLM options from the form (returns null if "启用 LLM 增强" is unchecked,
+        // throws if any field is invalid)
+        let llmOptions = null;
+        try {
+            llmOptions = _buildLLMOptions();
+        } catch (validationErr) {
+            showNotification(validationErr.message, 'error');
+            return;
+        }
+        // Collect Paleobiology Database options (returns null if checkbox is off)
+        let paleodbOptions = null;
+        try {
+            paleodbOptions = _buildPaleodbOptions();
+        } catch (validationErr) {
+            showNotification(validationErr.message, 'error');
+            return;
+        }
+        // PDF figure extractor (GROBID vs OpenDataLoader). When the user checks
+        // the box, the pipeline uses OpenDataLoader-pdf in-process — no GROBID
+        // server required.
+        const useOpenDataLoader = document.getElementById('use-opendataloader')?.checked ?? false;
+        // Merge LLM + PBDB + extractor options into a single JSON body
+        let combinedOptions = null;
+        const baseOpts = { use_opendataloader: useOpenDataLoader };
+        if (llmOptions || paleodbOptions) {
+            combinedOptions = { ...baseOpts, ...(llmOptions || {}), ...(paleodbOptions || {}) };
+        } else if (useOpenDataLoader) {
+            combinedOptions = baseOpts;
+        }
+
         for (const file of uploadedFiles) {
             const formData = new FormData();
             formData.append('file', file);
+            if (combinedOptions) {
+                formData.append('options', JSON.stringify(combinedOptions));
+            }
 
             const response = await fetch(`${CONFIG.apiBaseUrl}/jobs/upload`, {
                 method: 'POST',
@@ -186,7 +231,18 @@ document.getElementById('process-btn').addEventListener('click', async () => {
             });
 
             if (!response.ok) {
-                throw new Error(`上传失败: ${response.statusText}`);
+                // Try to read the server's JSON error body (Pydantic validation
+                // error messages live in `detail`).
+                let errMsg = `上传失败: HTTP ${response.status} ${response.statusText}`;
+                try {
+                    const errBody = await response.json();
+                    if (errBody && errBody.detail) {
+                        errMsg = `上传失败: ${errBody.detail}`;
+                    }
+                } catch (_) {
+                    // Body wasn't JSON; keep the status-text fallback
+                }
+                throw new Error(errMsg);
             }
 
             const data = await response.json();
@@ -214,14 +270,123 @@ document.getElementById('process-btn').addEventListener('click', async () => {
 });
 
 // ==================== Config Toggles ==================== //
+function _syncLLMBackendVisibility() {
+    const backend = document.getElementById('llm-backend').value;
+    const localConfig = document.getElementById('llm-local-config');
+    const MiniMaxConfig = document.getElementById('MiniMax-config');
+    if (backend === 'MiniMax') {
+        localConfig.classList.add('hidden');
+        MiniMaxConfig.classList.remove('hidden');
+    } else {
+        localConfig.classList.remove('hidden');
+        MiniMaxConfig.classList.add('hidden');
+    }
+}
+
 document.getElementById('use-gemma4').addEventListener('change', (e) => {
     const gemmaConfig = document.getElementById('gemma-config');
     if (e.target.checked) {
         gemmaConfig.classList.remove('hidden');
+        _syncLLMBackendVisibility();
     } else {
         gemmaConfig.classList.add('hidden');
     }
 });
+
+document.getElementById('llm-backend').addEventListener('change', _syncLLMBackendVisibility);
+
+// ==================== Paleobiology Database (PBDB) options ==================== //
+document.getElementById('use-paleodb').addEventListener('change', (e) => {
+    const paleodbConfig = document.getElementById('paleodb-config');
+    if (e.target.checked) {
+        paleodbConfig.classList.remove('hidden');
+    } else {
+        paleodbConfig.classList.add('hidden');
+    }
+});
+
+function _buildPaleodbOptions() {
+    const enabled = document.getElementById('use-paleodb').checked;
+    if (!enabled) return null;
+    const opts = { use_paleodb: true };
+    const maxRaw = document.getElementById('paleodb-max-occurrences').value.trim();
+    const maxOcc = parseInt(maxRaw, 10);
+    if (maxRaw === '' || isNaN(maxOcc) || maxOcc < 1) {
+        throw new Error(`PBDB 最大出现记录数必须是 ≥1 的整数，当前值: "${maxRaw}"`);
+    }
+    if (maxOcc > 500) {
+        throw new Error(`PBDB 最大出现记录数不能超过 500，当前值: ${maxOcc}`);
+    }
+    opts.paleodb_max_occurrences = maxOcc;
+    const endpoint = document.getElementById('paleodb-endpoint').value.trim();
+    if (endpoint) opts.paleodb_endpoint = endpoint;
+    opts.paleodb_offline = document.getElementById('paleodb-offline').checked;
+    return opts;
+}
+
+// ==================== Build LLM options from form ==================== //
+function _buildLLMOptions() {
+    const useGemma = document.getElementById('use-gemma4').checked;
+    if (!useGemma) return null;
+
+    const backend = document.getElementById('llm-backend').value;
+
+    // Validate conf threshold up-front so the user gets immediate feedback
+    // instead of a server round-trip.
+    const confRaw = document.getElementById('gemma-conf-threshold').value.trim();
+    const confThreshold = parseFloat(confRaw);
+    if (confRaw === '' || isNaN(confThreshold) || confThreshold < 0 || confThreshold > 1) {
+        throw new Error(`LLM 置信度阈值必须在 [0, 1]，当前值: "${confRaw}"`);
+    }
+
+    const options = {
+        use_gemma4: true,
+        llm_backend: backend,
+        gemma_conf_threshold: confThreshold,
+    };
+
+    if (backend === 'MiniMax') {
+        // MiniMax M3 API path
+        const apiKey = document.getElementById('MiniMax-api-key').value.trim();
+        if (apiKey) options.MiniMax_api_key = apiKey;
+        const endpoint = document.getElementById('MiniMax-endpoint').value.trim();
+        if (endpoint) options.MiniMax_endpoint = endpoint;
+        const model = document.getElementById('MiniMax-model').value.trim();
+        if (model) options.MiniMax_model = model;
+        options.MiniMax_enable_thinking = document.getElementById('MiniMax-enable-thinking').checked;
+
+        // Validate thinking budget up-front
+        const thinkingRaw = document.getElementById('MiniMax-thinking-budget').value.trim();
+        const thinkingBudget = parseInt(thinkingRaw, 10);
+        if (thinkingRaw === '' || isNaN(thinkingBudget) || thinkingBudget < 0) {
+            throw new Error(`思考 Token 预算必须是非负整数，当前值: "${thinkingRaw}"`);
+        }
+        if (thinkingBudget > 32_000) {
+            throw new Error(`思考 Token 预算不能超过 32000，当前值: ${thinkingBudget}`);
+        }
+        // If enable_thinking is true, budget must be > 0
+        if (options.MiniMax_enable_thinking && thinkingBudget === 0) {
+            throw new Error(`启用扩展思考时，思考 Token 预算必须 > 0`);
+        }
+        options.MiniMax_thinking_budget_tokens = thinkingBudget;
+
+        options.MiniMax_fallback_default = document.getElementById('MiniMax-fallback-default').value;
+        // Web mode always uses non-interactive popup (block on event.wait)
+        options.MiniMax_interactive = false;
+    } else {
+        // Local backend path
+        const host = document.getElementById('llm-host').value.trim();
+        if (host) {
+            if (backend === 'llamacpp') {
+                options.llama_host = host;
+            } else if (backend === 'ollama') {
+                options.ollama_host = host;
+            }
+        }
+    }
+
+    return options;
+}
 
 // ==================== Jobs Management ==================== //
 async function loadJobs() {
@@ -260,7 +425,9 @@ function renderJobsList() {
     }
     
     jobsList.innerHTML = jobs.map(job => `
-        <div class="job-card">
+        <div class="job-card" data-job-id="${job.job_id}">
+            <input type="checkbox" class="job-card-checkbox" data-job-id="${job.job_id}"
+                   onchange="onJobSelectionChange()" ${selectedJobIds.has(job.job_id) ? 'checked' : ''}>
             <div class="job-header">
                 <div class="job-id">ID: ${job.job_id.substring(0, 12)}...</div>
                 <span class="job-status status-${job.status}">${getStatusLabel(job.status)}</span>
@@ -278,6 +445,16 @@ function renderJobsList() {
                     <span class="job-detail-label">进度:</span>
                     <span class="job-detail-value">${job.progress || 0}%</span>
                 </div>
+                ${job.stage ? `
+                <div class="job-detail-item">
+                    <span class="job-detail-label">阶段:</span>
+                    <span class="job-detail-value">${job.stage}</span>
+                </div>` : ''}
+                ${job.elapsed_sec != null ? `
+                <div class="job-detail-item">
+                    <span class="job-detail-label">已用时:</span>
+                    <span class="job-detail-value">${formatElapsed(job.elapsed_sec)}</span>
+                </div>` : ''}
                 ${job.detail ? `
                 <div class="job-detail-item">
                     <span class="job-detail-label">说明:</span>
@@ -302,6 +479,11 @@ function renderJobsList() {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     取消
                 </button>
+                ${(job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') ? `
+                <button class="btn btn-small btn-danger" onclick="deleteSingleJob('${job.job_id}')" title="删除任务及文件">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                    删除
+                </button>` : ''}
             </div>
         </div>
     `).join('');
@@ -312,9 +494,212 @@ function getStatusLabel(status) {
         'queued': '队列中',
         'running': '处理中',
         'done': '已完成',
-        'failed': '失败'
+        'failed': '失败',
+        'cancelled': '已取消'
     };
     return labels[status] || status;
+}
+
+// ==================== Delete Jobs ==================== //
+// In-memory set of selected job IDs. Persists across re-renders so
+// filter changes don't lose the selection.
+const selectedJobIds = new Set();
+
+function onJobSelectionChange() {
+    // Sync checkboxes -> Set and visual highlight
+    document.querySelectorAll('.job-card-checkbox').forEach(cb => {
+        const id = cb.dataset.jobId;
+        if (cb.checked) selectedJobIds.add(id);
+        else selectedJobIds.delete(id);
+        const card = cb.closest('.job-card');
+        if (card) card.classList.toggle('selected', cb.checked);
+    });
+    updateDeleteSelectedButton();
+    syncSelectAllCheckbox();
+}
+
+function updateDeleteSelectedButton() {
+    const btn = document.getElementById('delete-selected-btn');
+    const count = document.getElementById('delete-selected-count');
+    if (!btn || !count) return;
+    const n = selectedJobIds.size;
+    btn.disabled = n === 0;
+    count.textContent = `(${n})`;
+}
+
+function syncSelectAllCheckbox() {
+    const allCb = document.getElementById('jobs-select-all');
+    if (!allCb) return;
+    const visibleCbs = Array.from(document.querySelectorAll('.job-card-checkbox'));
+    if (visibleCbs.length === 0) {
+        allCb.checked = false;
+        allCb.indeterminate = false;
+        return;
+    }
+    const checkedCount = visibleCbs.filter(cb => cb.checked).length;
+    allCb.checked = checkedCount === visibleCbs.length;
+    allCb.indeterminate = checkedCount > 0 && checkedCount < visibleCbs.length;
+}
+
+function onSelectAllToggle() {
+    const allCb = document.getElementById('jobs-select-all');
+    if (!allCb) return;
+    document.querySelectorAll('.job-card-checkbox').forEach(cb => {
+        cb.checked = allCb.checked;
+    });
+    onJobSelectionChange();
+}
+
+function openDeleteModalForSelection() {
+    if (selectedJobIds.size === 0) return;
+    const ids = Array.from(selectedJobIds);
+    openDeleteModal(ids);
+}
+
+async function openDeleteModal(jobIds) {
+    const modal = document.getElementById('delete-modal');
+    const summary = document.getElementById('delete-modal-summary');
+    const list = document.getElementById('delete-modal-jobs');
+    const confirmBtn = document.getElementById('delete-modal-confirm');
+
+    const n = jobIds.length;
+    const bytes = await estimateSelectedBytes(jobIds);
+    const sizeStr = bytes > 0 ? `，预计释放 ${formatBytes(bytes)}` : '';
+    summary.innerHTML = `将删除 <strong>${n}</strong> 个任务${sizeStr}。此操作不可撤销。`;
+
+    // Build per-job list with filename and a remove button
+    list.innerHTML = jobIds.map(id => {
+        const job = jobsData[id];
+        const filename = job?.filename || '(无文件)';
+        return `<div class="job-row" data-row-id="${id}">
+            <span class="job-row-id">${escapeHtml(id.substring(0, 12))}...</span>
+            <span class="job-row-name" title="${escapeHtml(filename)}">${escapeHtml(filename)}</span>
+        </div>`;
+    }).join('');
+
+    // Reset the files checkbox and prepare confirm button
+    document.getElementById('delete-modal-files').checked = true;
+    confirmBtn.disabled = false;
+    confirmBtn.dataset.jobIds = JSON.stringify(jobIds);
+
+    modal.classList.remove('hidden');
+}
+
+function closeDeleteModal() {
+    const modal = document.getElementById('delete-modal');
+    if (modal) modal.classList.add('hidden');
+    const confirmBtn = document.getElementById('delete-modal-confirm');
+    if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '确认删除';
+    }
+}
+
+async function estimateSelectedBytes(jobIds) {
+    // Best-effort size estimate by summing job directory sizes when available.
+    // Falls back to 0 if directories cannot be stat'd (e.g. cli_ jobs).
+    let total = 0;
+    for (const id of jobIds) {
+        try {
+            // We don't have a "size" endpoint, so skip; the server returns
+            // bytes_freed in the response. UI will show post-hoc if needed.
+        } catch (_) { /* noop */ }
+    }
+    return total;
+}
+
+function formatBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+async function confirmDelete() {
+    const confirmBtn = document.getElementById('delete-modal-confirm');
+    const jobIds = JSON.parse(confirmBtn.dataset.jobIds || '[]');
+    const deleteFiles = document.getElementById('delete-modal-files').checked;
+    if (jobIds.length === 0) return;
+
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '删除中...';
+
+    try {
+        let resp, data;
+        if (jobIds.length === 1) {
+            const url = `${CONFIG.apiBaseUrl}/jobs/${encodeURIComponent(jobIds[0])}?delete_files=${deleteFiles}`;
+            resp = await fetch(url, { method: 'DELETE' });
+            data = await resp.json();
+        } else {
+            resp = await fetch(`${CONFIG.apiBaseUrl}/jobs/batch-delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ job_ids: jobIds, delete_files: deleteFiles }),
+            });
+            data = await resp.json();
+        }
+
+        if (!resp.ok) {
+            alert(`删除失败: ${data.detail || resp.statusText}`);
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = '确认删除';
+            return;
+        }
+
+        // Remove from local state and re-render
+        for (const id of jobIds) {
+            selectedJobIds.delete(id);
+            delete jobsData[id];
+        }
+        renderJobsList();
+        // Also refresh results table (it reads from same data source)
+        if (typeof loadResults === 'function') await loadResults();
+
+        closeDeleteModal();
+
+        // Summary toast
+        const freed = data.bytes_freed ? `，释放 ${formatBytes(data.bytes_freed)}` : '';
+        const msg = jobIds.length === 1
+            ? `已删除任务 (${data.status})${freed}`
+            : `已删除 ${data.deleted} 个任务${freed}`;
+        showToast(msg, 'success');
+    } catch (err) {
+        console.error('Delete failed', err);
+        alert(`删除失败: ${err}`);
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '确认删除';
+    }
+}
+
+function showToast(message, type = 'info') {
+    // Minimal toast — uses a div if available, otherwise alert fallback.
+    const existing = document.getElementById('rlpe-toast');
+    if (existing) existing.remove();
+    const el = document.createElement('div');
+    el.id = 'rlpe-toast';
+    el.textContent = message;
+    el.style.cssText = `
+        position: fixed; bottom: 24px; right: 24px; z-index: 2000;
+        padding: 12px 20px; border-radius: 8px; color: white; font-size: 14px;
+        background: ${type === 'success' ? '#28a745' : type === 'error' ? '#dc3545' : '#333'};
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2); animation: slideUp 0.3s ease;
+    `;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3500);
+}
+
+function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function deleteSingleJob(jobId) {
+    openDeleteModal([jobId]);
 }
 
 async function viewJobDetails(jobId) {
@@ -377,6 +762,14 @@ async function viewJobDetails(jobId) {
                     <div class="job-detail-item">
                         <span class="label">进度</span>
                         <span class="value">${job.progress || 0}%</span>
+                    </div>
+                    <div class="job-detail-item">
+                        <span class="label">阶段</span>
+                        <span class="value">${job.stage || '—'}</span>
+                    </div>
+                    <div class="job-detail-item">
+                        <span class="label">已用时</span>
+                        <span class="value">${job.elapsed_sec != null ? formatElapsed(job.elapsed_sec) : '—'}</span>
                     </div>
                     <div class="job-detail-item">
                         <span class="label">说明</span>
@@ -463,6 +856,10 @@ document.getElementById('refresh-jobs-btn')?.addEventListener('click', loadJobs)
 
 document.getElementById('job-search')?.addEventListener('input', renderJobsList);
 document.getElementById('job-filter')?.addEventListener('change', renderJobsList);
+
+// Bulk-delete wiring
+document.getElementById('jobs-select-all')?.addEventListener('change', onSelectAllToggle);
+document.getElementById('delete-selected-btn')?.addEventListener('click', openDeleteModalForSelection);
 
 // ==================== Results ==================== //
 async function loadResults() {

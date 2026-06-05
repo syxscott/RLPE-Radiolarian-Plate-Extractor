@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -106,6 +107,13 @@ class OpenDataLoaderExtractor:
             figures = self._extract_figures(data, out, paper_id)
             sections = _extract_fulltext_sections(data)
             paper_metadata = _extract_paper_metadata_from_json(data, sections)
+            # OCR caption fallback: many PDFs (Pouille 2014, Wever 2006)
+            # produce figures with empty ``caption_text`` because the
+            # PDF text layer doesn't include the figure caption. For
+            # any figure with an empty caption, OCR the area below
+            # the figure on the page so downstream caption parsing
+            # has something to work with.
+            figures = self._ocr_missing_captions(figures, pdf_path)
             return OpenDataLoaderResult(
                 paper_id=paper_id, json_data=data, output_dir=out,
                 figures=figures, fulltext_sections=sections,
@@ -119,6 +127,105 @@ class OpenDataLoaderExtractor:
                 figures=[], fulltext_sections=[],
                 success=False, error=str(exc),
             )
+
+    # -- caption OCR fallback ------------------------------------------------
+
+    def _ocr_missing_captions(
+        self,
+        figures: list[FigureCaptionPair],
+        pdf_path: Path,
+    ) -> list[FigureCaptionPair]:
+        """For any figure with an empty ``caption_text``, render the page
+        area below the figure and OCR it to recover the caption.
+
+        OpenDataLoader frequently returns figures whose caption text is
+        empty — typically when the PDF text layer is missing or when
+        the caption paragraph is rendered as a path/glyph rather than
+        as selectable text. Without a caption the downstream
+        caption_parser has nothing to work with, so every panel of
+        that figure ends up with ``species=None`` (or, worse, with
+        the placeholder "Auto-generated figure" species).
+
+        The fix is conservative: only OCR when the upstream caption
+        is missing AND the figure has a ``merged_bbox`` we can use
+        to locate the caption on the page. The cropped region is
+        the band immediately below the figure, plus a small overlap
+        at the bottom in case the caption wraps over the image.
+        """
+        if not figures:
+            return figures
+        # Bail out early if EasyOCR isn't installed.
+        try:
+            import easyocr  # noqa: F401
+        except Exception:
+            logger.info("EasyOCR unavailable; skipping caption OCR fallback")
+            return figures
+
+        try:
+            import fitz  # PyMuPDF
+            import numpy as np
+        except Exception:
+            logger.info("PyMuPDF unavailable; skipping caption OCR fallback")
+            return figures
+
+        ocr_engine = None
+        ocr_lock = threading.Lock()
+        try:
+            with ocr_lock:
+                if ocr_engine is None:
+                    import easyocr
+                    ocr_engine = easyocr.Reader(["en"], gpu=False, verbose=False)
+        except Exception:
+            logger.warning("EasyOCR init failed; caption OCR fallback disabled")
+            return figures
+
+        try:
+            doc = fitz.open(str(pdf_path))
+        except Exception:
+            logger.warning("PyMuPDF could not open %s; caption OCR fallback disabled", pdf_path)
+            return figures
+
+        out: list[FigureCaptionPair] = []
+        # Cache the OCR result by (page_index, bbox_key) so we don't
+        # re-render and re-OCR the same page band multiple times.
+        ocr_cache: dict[tuple[int, str], str | None] = {}
+        try:
+            for fig in figures:
+                if fig.caption_text and fig.caption_text.strip():
+                    out.append(fig)
+                    continue
+                if not fig.merged_bbox or fig.page_number < 1:
+                    out.append(fig)
+                    continue
+                page_index = fig.page_number - 1  # PyMuPDF is 0-indexed
+                if page_index < 0 or page_index >= len(doc):
+                    out.append(fig)
+                    continue
+                bbox_key = f"{fig.merged_bbox[0]:.1f},{fig.merged_bbox[1]:.1f},{fig.merged_bbox[2]:.1f},{fig.merged_bbox[3]:.1f}"
+                cache_key = (fig.page_number, bbox_key)
+                if cache_key in ocr_cache:
+                    recovered = ocr_cache[cache_key]
+                else:
+                    recovered = _ocr_caption_band(
+                        doc, page_index, fig.merged_bbox, ocr_engine, np
+                    )
+                    ocr_cache[cache_key] = recovered
+                if recovered:
+                    fig.metadata = dict(fig.metadata or {})
+                    fig.metadata["caption_recovered_via"] = "ocr_fallback"
+                    fig.metadata["caption_recovered_confidence"] = 0.6
+                    fig = FigureCaptionPair(
+                        figure_id=fig.figure_id,
+                        page_number=fig.page_number,
+                        image_paths=fig.image_paths,
+                        caption_text=recovered,
+                        merged_bbox=fig.merged_bbox,
+                        metadata=fig.metadata,
+                    )
+                out.append(fig)
+        finally:
+            doc.close()
+        return out
 
     # -- internals ----------------------------------------------------------
 
@@ -348,6 +455,92 @@ def _bbox_left(el: dict[str, Any]) -> float:
 def _bbox_top(el: dict[str, Any]) -> float:
     bb = el.get("bounding box")
     return float(bb[3]) if bb and len(bb) >= 4 else 0.0
+
+
+# ---- caption OCR fallback --------------------------------------------------
+
+
+def _ocr_caption_band(
+    doc: Any,
+    page_index: int,
+    merged_bbox_pdf: tuple[float, float, float, float],
+    ocr_engine: Any,
+    np_module: Any,
+) -> str | None:
+    """Render the page band below ``merged_bbox_pdf`` and OCR it for a
+    caption.
+
+    Parameters
+    ----------
+    doc
+        An open ``fitz.Document``.
+    page_index
+        0-based page index.
+    merged_bbox_pdf
+        ``(left, bottom, right, top)`` in PDF-native points (origin at
+        bottom-left, y axis pointing up).
+    ocr_engine
+        An ``easyocr.Reader`` instance.
+    np_module
+        The ``numpy`` module (passed in to keep this function import-
+        free so the fallback can be skipped when numpy isn't available).
+
+    Returns
+    -------
+    The recovered caption text, or ``None`` if OCR didn't produce
+    anything that looks like a caption.
+    """
+    try:
+        page = doc[page_index]
+        page_w = float(page.rect.width)
+        page_h = float(page.rect.height)
+        left, bottom, right, top = merged_bbox_pdf
+        # The caption sits BELOW the figure in PDF-native coords, i.e.
+        # y < ``bottom`` (since y axis points up). In PyMuPDF's top-
+        # left origin that's ``y > page_h - bottom``. We render from
+        # the bottom of the figure down to ~30pt above the page bottom.
+        cap_top_pdf = max(0.0, bottom - 200.0)  # 200pt max caption height
+        cap_bottom_pdf = max(0.0, bottom - 8.0)  # 8pt gap below figure
+        # Convert to PyMuPDF y (top-left origin, y going down).
+        y0 = page_h - cap_bottom_pdf
+        y1 = page_h - cap_top_pdf
+        x0 = max(0.0, left - 4.0)
+        x1 = min(page_w, right + 4.0)
+        if y1 <= y0 or x1 <= x0:
+            return None
+        clip = fitz.Rect(x0, y0, x1, y1)
+        # 3x scale so EasyOCR has enough resolution on small fonts.
+        mat = fitz.Matrix(3.0, 3.0)
+        pix = page.get_pixmap(matrix=mat, clip=clip, colorspace=fitz.csRGB, alpha=False)
+        img = np_module.frombuffer(pix.samples, dtype=np_module.uint8).reshape(
+            pix.height, pix.width, 3
+        )
+        # EasyOCR expects BGR.
+        import cv2
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        try:
+            results = ocr_engine.readtext(img_bgr)
+        except Exception:
+            return None
+        if not results:
+            return None
+        # Sort by y then x and join with spaces; drop very low-confidence
+        # detections (EasyOCR occasionally returns junk at <0.2).
+        results = sorted(
+            [r for r in results if r[2] >= 0.2],
+            key=lambda r: (min(p[1] for p in r[0]), min(p[0] for p in r[0])),
+        )
+        text = " ".join(r[1] for r in results).strip()
+        if not text:
+            return None
+        # Heuristic: a real figure caption has multiple words and is at
+        # least ~30 chars. Anything shorter is probably a stray number
+        # or scale bar misread.
+        if len(text) < 25:
+            return None
+        return text
+    except Exception:
+        return None
 
 
 # -- plate caption detection -----------------------------------------------

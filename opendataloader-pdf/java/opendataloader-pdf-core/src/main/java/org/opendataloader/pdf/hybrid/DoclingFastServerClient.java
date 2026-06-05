@@ -1,0 +1,314 @@
+/*
+ * Copyright 2025-2026 Hancom Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opendataloader.pdf.hybrid;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import okhttp3.MediaType;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+/**
+ * HTTP client for docling-fast-server API.
+ *
+ * <p>This client communicates with the optimized FastAPI server (opendataloader-pdf-hybrid)
+ * which provides 3.3x faster performance than docling-serve by using a DocumentConverter
+ * singleton pattern.
+ *
+ * <p>The API is compatible with docling-serve, using the same /v1/convert/file endpoint
+ * and response format.
+ *
+ * @see HybridClient
+ * @see HybridConfig
+ */
+public class DoclingFastServerClient implements HybridClient {
+
+    private static final Logger LOGGER = Logger.getLogger(DoclingFastServerClient.class.getCanonicalName());
+
+    /** Default URL for docling-fast-server. */
+    public static final String DEFAULT_URL = "http://localhost:5002";
+
+    private static final String CONVERT_ENDPOINT = "/v1/convert/file";
+    private static final String HEALTH_ENDPOINT = "/health";
+    private static final int HEALTH_CHECK_TIMEOUT_MS = 3000;
+    private static final String DEFAULT_FILENAME = "document.pdf";
+    private static final MediaType MEDIA_TYPE_PDF = MediaType.parse("application/pdf");
+
+    private final String baseUrl;
+    private final OkHttpClient httpClient;
+    private final ObjectMapper objectMapper;
+
+    /**
+     * Creates a new DoclingFastServerClient with the specified configuration.
+     *
+     * @param config The hybrid configuration containing URL and timeout settings.
+     */
+    public DoclingFastServerClient(HybridConfig config) {
+        this.baseUrl = config.getEffectiveUrl("docling-fast");
+        this.objectMapper = new ObjectMapper();
+        this.httpClient = new OkHttpClient.Builder()
+            .connectTimeout(config.getTimeoutMs(), TimeUnit.MILLISECONDS)
+            .readTimeout(config.getTimeoutMs(), TimeUnit.MILLISECONDS)
+            .writeTimeout(config.getTimeoutMs(), TimeUnit.MILLISECONDS)
+            .build();
+    }
+
+    /**
+     * Creates a new DoclingFastServerClient with a custom OkHttpClient (for testing).
+     *
+     * @param baseUrl      The base URL of the docling-fast-server instance.
+     * @param httpClient   The OkHttp client to use for requests.
+     * @param objectMapper The Jackson ObjectMapper for JSON parsing.
+     */
+    DoclingFastServerClient(String baseUrl, OkHttpClient httpClient, ObjectMapper objectMapper) {
+        this.baseUrl = baseUrl;
+        this.httpClient = httpClient;
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public void checkAvailability() throws IOException {
+        OkHttpClient healthClient = httpClient.newBuilder()
+            .connectTimeout(HEALTH_CHECK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            .readTimeout(HEALTH_CHECK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            .build();
+
+        Request healthRequest = new Request.Builder()
+            .url(baseUrl + HEALTH_ENDPOINT)
+            .get()
+            .build();
+
+        Response response;
+        try {
+            response = healthClient.newCall(healthRequest).execute();
+        } catch (IOException e) {
+            throw new IOException(
+                "Hybrid server is not available at " + baseUrl + "\n"
+                + "To start the local hybrid server:\n"
+                + "  1. Install: pip install \"opendataloader-pdf[hybrid]\"\n"
+                + "  2. Start:   opendataloader-pdf-hybrid --port 5002\n"
+                + "To use a remote server or custom port: --hybrid-url http://host:port\n"
+                + "Or run without --hybrid flag for Java-only processing.", e);
+        }
+        try (response) {
+            if (!response.isSuccessful()) {
+                throw new IOException(
+                    "Hybrid server at " + baseUrl + " returned HTTP " + response.code()
+                    + " during health check.\n"
+                    + "The server is reachable but may be starting up or unhealthy.");
+            }
+        }
+    }
+
+    @Override
+    public HybridResponse convert(HybridRequest request) throws IOException {
+        Request httpRequest = buildConvertRequest(request);
+        LOGGER.log(Level.FINE, "Sending request to {0}", baseUrl + CONVERT_ENDPOINT);
+
+        try (Response response = httpClient.newCall(httpRequest).execute()) {
+            return parseResponse(response);
+        }
+    }
+
+    @Override
+    public CompletableFuture<HybridResponse> convertAsync(HybridRequest request) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return convert(request);
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to convert", e);
+            }
+        });
+    }
+
+    /**
+     * Gets the base URL of this client.
+     *
+     * @return The base URL.
+     */
+    public String getBaseUrl() {
+        return baseUrl;
+    }
+
+    /**
+     * Builds a multipart/form-data HTTP request for the convert endpoint.
+     */
+    private Request buildConvertRequest(HybridRequest request) {
+        MultipartBody.Builder bodyBuilder = new MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("files", DEFAULT_FILENAME,
+                RequestBody.create(request.getPdfBytes(), MEDIA_TYPE_PDF));
+
+        // Add page range if specified
+        if (request.getPageNumbers() != null && !request.getPageNumbers().isEmpty()) {
+            int minPage = request.getPageNumbers().stream().min(Integer::compareTo).orElse(1);
+            int maxPage = request.getPageNumbers().stream().max(Integer::compareTo).orElse(Integer.MAX_VALUE);
+            bodyBuilder.addFormDataPart("page_ranges", minPage + "-" + maxPage);
+        }
+
+        return new Request.Builder()
+            .url(baseUrl + CONVERT_ENDPOINT)
+            .post(bodyBuilder.build())
+            .build();
+    }
+
+    /**
+     * Parses the HTTP response into a HybridResponse.
+     */
+    private HybridResponse parseResponse(Response response) throws IOException {
+        if (!response.isSuccessful()) {
+            ResponseBody body = response.body();
+            String bodyStr = body != null ? body.string() : "";
+            throw new IOException("Docling Fast Server request failed with status " + response.code() +
+                ": " + bodyStr);
+        }
+
+        ResponseBody body = response.body();
+        if (body == null) {
+            throw new IOException("Empty response body");
+        }
+
+        String responseStr = body.string();
+        JsonNode root = objectMapper.readTree(responseStr);
+
+        // Check for API error status
+        JsonNode statusNode = root.get("status");
+        String status = statusNode != null ? statusNode.asText() : "";
+        if ("failure".equals(status)) {
+            JsonNode errorsNode = root.get("errors");
+            String errorMessage = errorsNode != null ? errorsNode.toString() : "Unknown error";
+            throw new IOException("Docling Fast Server processing failed: " + errorMessage);
+        }
+
+        // Log partial_success status
+        if ("partial_success".equals(status)) {
+            JsonNode errorsNode = root.get("errors");
+            LOGGER.log(Level.WARNING, "Backend returned partial_success: {0}",
+                errorsNode != null ? errorsNode.toString() : "no error details");
+        }
+
+        // Extract document content
+        JsonNode documentNode = root.get("document");
+        if (documentNode == null) {
+            throw new IOException("Invalid response: missing 'document' field");
+        }
+
+        JsonNode jsonContent = documentNode.get("json_content");
+
+        // Extract per-page content from json_content if available
+        Map<Integer, JsonNode> pageContents = extractPageContents(jsonContent);
+
+        // Extract failed pages (1-indexed) from partial_success responses
+        List<Integer> failedPages = extractFailedPages(root);
+
+        // Extract per-step pipeline timings (layout, ocr, table_structure, etc.)
+        JsonNode timingsNode = root.get("timings");
+
+        return new HybridResponse(null, null, jsonContent, pageContents, failedPages, timingsNode);
+    }
+
+    /**
+     * Extracts per-page content from the DoclingDocument JSON structure.
+     *
+     * <p>The DoclingDocument stores page information in the "pages" object,
+     * keyed by page number (as string). This method extracts the content
+     * elements for each page based on the "prov" (provenance) information.
+     */
+    private Map<Integer, JsonNode> extractPageContents(JsonNode jsonContent) {
+        Map<Integer, JsonNode> pageContents = new HashMap<>();
+
+        if (jsonContent == null) {
+            return pageContents;
+        }
+
+        // The pages node contains page metadata keyed by page number
+        JsonNode pagesNode = jsonContent.get("pages");
+        if (pagesNode != null && pagesNode.isObject()) {
+            Iterator<String> fieldNames = pagesNode.fieldNames();
+            while (fieldNames.hasNext()) {
+                String pageNumStr = fieldNames.next();
+                try {
+                    int pageNum = Integer.parseInt(pageNumStr);
+                    pageContents.put(pageNum, pagesNode.get(pageNumStr));
+                } catch (NumberFormatException ignored) {
+                    // Skip non-numeric page keys
+                }
+            }
+        }
+
+        return pageContents;
+    }
+
+    /**
+     * Extracts the list of failed page numbers from the response.
+     *
+     * <p>When the backend returns partial_success, the failed_pages array contains
+     * 1-indexed page numbers that failed during processing (e.g., due to Invalid code point
+     * errors in PDF font encoding).
+     */
+    private List<Integer> extractFailedPages(JsonNode root) {
+        JsonNode failedPagesNode = root.get("failed_pages");
+        if (failedPagesNode == null || !failedPagesNode.isArray() || failedPagesNode.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Integer> failedPages = new ArrayList<>();
+        for (JsonNode pageNode : failedPagesNode) {
+            if (pageNode.isNumber() && pageNode.canConvertToInt()) {
+                failedPages.add(pageNode.asInt());
+            }
+        }
+        return failedPages;
+    }
+
+    /**
+     * Shuts down the HTTP client and releases all resources.
+     *
+     * <p>This gracefully shuts down the dispatcher's executor service,
+     * allowing the JVM to exit cleanly. Idle connections are evicted
+     * from the connection pool.
+     */
+    public void shutdown() {
+        // Gracefully shutdown the dispatcher - allows pending requests to complete
+        httpClient.dispatcher().executorService().shutdown();
+        // Evict idle connections from pool (does not affect the server)
+        httpClient.connectionPool().evictAll();
+        // Close the cache if present
+        if (httpClient.cache() != null) {
+            try {
+                httpClient.cache().close();
+            } catch (Exception ignored) {
+                // Ignore cache close errors
+            }
+        }
+    }
+}

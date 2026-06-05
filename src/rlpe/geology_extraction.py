@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Any
 
 
@@ -14,13 +14,20 @@ AGE_PATTERN = re.compile(
 )
 FORMATION_PATTERN = re.compile(r"\b([A-Z][A-Za-z\-\s]+(?:Formation|Member|Group|Fm\.|Mb\.|Gp\.))\b")
 LOCALITY_PATTERN = re.compile(r"\b(?:from|at|in)\s+([A-Z][A-Za-z\-\s]{2,80})\b")
+COORDINATE_PATTERN = re.compile(
+    r"\b(\d{1,3}(?:\.\d+)?)\s*°?\s*([NSns])?[,\s]+(\d{1,3}(?:\.\d+)?)\s*°?\s*([EWew])?\b"
+)
 
 
 @dataclass(slots=True)
 class GeologyRecord:
-    age: str | None = None
+    age: str | None = None                              # period name (e.g. "Permian")
+    chronostratigraphy: str | None = None               # most specific stage (e.g. "Changhsingian")
+    chronostratigraphy_rank: str | None = None          # "period" | "epoch" | "age"
     formation: str | None = None
     locality: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     section_type: str | None = None
     section_title: str | None = None
     evidence_text: str | None = None
@@ -32,6 +39,12 @@ class GeologyRecord:
 
 def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[GeologyRecord]:
     out: list[GeologyRecord] = []
+    # Lazy import to avoid circular
+    try:
+        from .stratigraphy import find_ages_in_text, classify_age_string
+    except Exception:
+        find_ages_in_text = None
+        classify_age_string = None
     for sec in sections:
         text = sec.get("text", "")
         if not text:
@@ -40,22 +53,99 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         forms = [m.group(1).strip() for m in FORMATION_PATTERN.finditer(text)]
         locs = [m.group(1).strip(" .,;") for m in LOCALITY_PATTERN.finditer(text)]
 
-        if not ages and not forms and not locs:
+        # Stratigraphy enrichment — find stage names (Changhsingian, Wuchiapingian, …)
+        chrono = None
+        chrono_rank = None
+        if find_ages_in_text is not None:
+            try:
+                cls_list = find_ages_in_text(text)
+                # Pick the most specific one (rank="age" > "epoch" > "period")
+                rank_order = {"age": 3, "epoch": 2, "period": 1}
+                best = max(
+                    [c for c in cls_list if c.confidence > 0],
+                    key=lambda c: rank_order.get(c.rank or "", 0),
+                    default=None,
+                )
+                if best is not None:
+                    chrono = best.age or best.period
+                    chrono_rank = best.rank
+            except Exception:
+                pass
+        # Coordinate parsing
+        lat, lon = _extract_first_coord(text)
+        if lat is None and lon is None and COORDINATE_PATTERN.search(text):
+            m = COORDINATE_PATTERN.search(text)
+            if m:
+                try:
+                    lat = float(m.group(1))
+                    if m.group(2) and m.group(2).upper() == "S":
+                        lat = -lat
+                    lon = float(m.group(3))
+                    if m.group(4) and m.group(4).upper() == "W":
+                        lon = -lon
+                except Exception:
+                    pass
+
+        if not ages and not forms and not locs and chrono is None and lat is None:
             continue
 
         # 以句子级片段做证据，先走规则抽取。
+        # If we have chrono from stratigraphy, use that as age.
+        primary_age = chrono if chrono else (ages[0] if ages else None)
         for age in (ages or [None]):
             rec = GeologyRecord(
-                age=age,
+                age=age or primary_age,
+                chronostratigraphy=chrono,
+                chronostratigraphy_rank=chrono_rank,
                 formation=forms[0] if forms else None,
                 locality=locs[0] if locs else None,
+                latitude=lat,
+                longitude=lon,
                 section_type=sec.get("section_type"),
                 section_title=sec.get("title"),
                 evidence_text=text[:300],
-                confidence=0.55,
+                confidence=0.7 if chrono else 0.55,
             )
             out.append(rec)
+        # If no ages were found but chrono was, still emit a record
+        if not ages and chrono:
+            rec = GeologyRecord(
+                age=primary_age,
+                chronostratigraphy=chrono,
+                chronostratigraphy_rank=chrono_rank,
+                formation=forms[0] if forms else None,
+                locality=locs[0] if locs else None,
+                latitude=lat,
+                longitude=lon,
+                section_type=sec.get("section_type"),
+                section_title=sec.get("title"),
+                evidence_text=text[:300],
+                confidence=0.7,
+            )
+            if rec not in out:
+                out.append(rec)
     return dedup_geology_records(out)
+
+
+def _extract_first_coord(text: str) -> tuple[float | None, float | None]:
+    """Best-effort coordinate extraction. Returns ``(lat, lon)`` or ``(None, None)``."""
+    if not text:
+        return None, None
+    m = COORDINATE_PATTERN.search(text)
+    if not m:
+        return None, None
+    try:
+        lat = float(m.group(1))
+        if m.group(2) and m.group(2).upper() == "S":
+            lat = -lat
+        lon = float(m.group(3))
+        if m.group(4) and m.group(4).upper() == "W":
+            lon = -lon
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            return None, None
+        return lat, lon
+    except Exception:
+        return None, None
 
 
 def link_species_to_geology(
@@ -154,9 +244,9 @@ def build_knowledge_graph(links: dict[str, list[dict[str, Any]]]) -> dict[str, A
 
 
 def dedup_geology_records(records: list[GeologyRecord]) -> list[GeologyRecord]:
-    out: dict[tuple[str | None, str | None, str | None, str | None], GeologyRecord] = {}
+    out: dict[tuple[Any, ...], GeologyRecord] = {}
     for rec in records:
-        key = (rec.age, rec.formation, rec.locality, rec.section_title)
+        key = (rec.age, rec.chronostratigraphy, rec.formation, rec.locality, rec.section_title)
         old = out.get(key)
         if old is None or rec.confidence > old.confidence:
             out[key] = rec

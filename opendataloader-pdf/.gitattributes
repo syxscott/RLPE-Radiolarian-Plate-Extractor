@@ -1,0 +1,16 @@
+# Unify all text files to LF line endings
+* text eol=lf
+
+# Binary files should not have line ending conversions
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.class binary
+*.jar binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary

@@ -39,4 +39,9 @@ output/
 
 # Environment and secrets
 .env
+.env.local
 *.key
+
+# API integration logs
+MiniMax_usage.log
+MiniMax_costs.log

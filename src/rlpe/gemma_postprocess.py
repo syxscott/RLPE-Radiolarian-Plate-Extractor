@@ -154,6 +154,10 @@ def load_gemma4_llamacpp(
 
 def build_gemma_backend_from_config(extra: dict[str, Any]) -> GemmaRuntime:
     backend = str(extra.get("llm_backend", "transformers")).lower()
+    if backend in {"MiniMax", "MiniMax-m3", "MiniMax_api", "minimax"}:
+        from .llm_backends import build_MiniMax_backend_from_env_or_config
+        runtime_backend = build_MiniMax_backend_from_env_or_config(extra)
+        return GemmaRuntime(backend=runtime_backend, backend_name="MiniMax")
     if backend in {"llama.cpp", "llamacpp", "llama_cpp"}:
         host = str(extra.get("llama_host", "http://127.0.0.1:8080"))
         model_name = extra.get("llama_model") or extra.get("ollama_model") or extra.get("gemma_model_path")
@@ -238,6 +242,18 @@ def apply_gemma_to_matches(
         gemma_conf = float(out.get("confidence", 0.0))
         match.metadata["gemma_confidence"] = gemma_conf
         match.metadata["gemma_reasoning"] = out.get("reasoning", "")
+        # Propagate MiniMax / Ollama / Transformers error info so the
+        # FallbackHandler popup can show the real reason (not "no detailed error").
+        if out.get("error"):
+            match.metadata["gemma_error"] = str(out.get("error"))
+        if out.get("error_type"):
+            match.metadata["gemma_error_type"] = str(out.get("error_type"))
+        if out.get("request_id"):
+            match.metadata["MiniMax_request_id"] = str(out.get("request_id"))
+        if out.get("cost_cny") is not None:
+            match.metadata["MiniMax_cost_cny"] = float(out.get("cost_cny"))
+        if out.get("model_version"):
+            match.metadata["MiniMax_model_version"] = str(out.get("model_version"))
 
         if gemma_conf >= conf_threshold:
             match.panel_id = out.get("label") or match.panel_id
@@ -247,7 +263,17 @@ def apply_gemma_to_matches(
             match.metadata["gemma_used"] = True
         else:
             match.metadata["gemma_used"] = False
-            match.metadata["gemma_fallback"] = True
+            # Distinguish "M3 said this is not a radiolarian specimen" from a
+            # real low-confidence verdict.  A "not a specimen" answer is a
+            # normal pipeline outcome (the panel was just a page header /
+            # placeholder), not a fallback error to surface to the user.
+            if out.get("is_radiolarian") is False:
+                match.metadata["m3_rejected_non_radiolarian"] = True
+                match.metadata["gemma_reasoning"] = (
+                    out.get("reasoning") or "M3: not a radiolarian specimen"
+                )
+            else:
+                match.metadata["gemma_fallback"] = True
     return matches
 
 
@@ -289,6 +315,18 @@ def batch_gemma_postprocess_rows(
 
         new_row["gemma_confidence"] = float(result.get("confidence", 0.0))
         new_row["gemma_reasoning"] = result.get("reasoning", "")
+        # Propagate error info from MiniMax / Ollama / Transformers backends
+        # so downstream tools (e.g. FallbackHandler) can see the real reason.
+        if result.get("error"):
+            new_row["gemma_error"] = str(result.get("error"))
+        if result.get("error_type"):
+            new_row["gemma_error_type"] = str(result.get("error_type"))
+        if result.get("request_id"):
+            new_row["MiniMax_request_id"] = str(result.get("request_id"))
+        if result.get("cost_cny") is not None:
+            new_row["MiniMax_cost_cny"] = float(result.get("cost_cny"))
+        if result.get("model_version"):
+            new_row["MiniMax_model_version"] = str(result.get("model_version"))
         if new_row["gemma_confidence"] >= conf_threshold:
             new_row["panel_id"] = result.get("label") or new_row.get("panel_id")
             new_row["species"] = result.get("species") or new_row.get("species")
