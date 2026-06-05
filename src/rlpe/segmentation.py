@@ -61,13 +61,46 @@ class PanelSegmenter:
         return self._segment_with_opencv(image)
 
     def _preprocess_gray(self, image: np.ndarray) -> np.ndarray:
-        """Shared grayscale+blur+threshold preprocessing."""
+        """Shared grayscale+blur+threshold preprocessing.
+
+        Two paths are produced and the caller picks the better one:
+          - ``th_otsu``   : plain Otsu (fast; works for sparse plates like pl01)
+          - ``th_enhanced``: morphological open→close→erode + adaptive threshold
+                             (handles dense plates like pl04 where specimens
+                             touch, scale bars merge into the blob, and the
+                             background has SEM metadata text strips)
+        ``_segment_with_opencv`` runs both and merges the results so that
+        dense plates aren't silently under-segmented.
+        """
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        if np.count_nonzero(th) > th.size // 2:
-            th = cv2.bitwise_not(th)
-        return th
+        _, th_otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        if np.count_nonzero(th_otsu) > th_otsu.size // 2:
+            th_otsu = cv2.bitwise_not(th_otsu)
+        return th_otsu
+
+    @staticmethod
+    def _preprocess_enhanced(gray: np.ndarray) -> np.ndarray:
+        """Morphological pipeline for dense plates with touching specimens.
+
+        Steps (M3-suggested):
+          1. Morphological OPEN with 5x5 rect → removes scale bars / labels
+          2. Morphological CLOSE with 9x9 ellipse → fills lattice pores
+          3. 3x3 erode → breaks spine-to-spine bridges between specimens
+          4. Adaptive Gaussian threshold (block=51, C=5) → handles the
+             non-uniform background that defeats global Otsu
+        """
+        kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        img_open = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel_open)
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        img_closed = cv2.morphologyEx(img_open, cv2.MORPH_CLOSE, kernel_close)
+        kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        img_eroded = cv2.erode(img_closed, kernel_erode, iterations=1)
+        binary = cv2.adaptiveThreshold(
+            img_eroded, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 51, 5,
+        )
+        return binary
 
     def _segment_with_sam2(self, image: np.ndarray, predictor) -> list[PanelCandidate]:
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -201,16 +234,62 @@ class PanelSegmenter:
         return out
 
     def _segment_with_opencv(self, image: np.ndarray) -> list[PanelCandidate]:
-        thresh = self._preprocess_gray(image)
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thresh, connectivity=8)
-        candidates: list[PanelCandidate] = []
+        """OpenCV panel segmentation. Uses Otsu as the baseline and the
+        M3-suggested morphology+adaptive path as a *supplement* (not a
+        duplicate). Anything the enhanced path finds that the Otsu path
+        missed is added, provided it doesn't overlap an Otsu panel
+        (IoU < 0.1) — otherwise we'd double-count the same specimen.
+
+        The enhanced path is the fix for plates where:
+          - specimens touch (e.g. Plate 4 of Feng 2007)
+          - scale bars / labels merge with the specimen blob
+          - SEM metadata strips overlay the bottom row
+          - the background is non-uniform (defeats Otsu)
+        """
+        thresh_otsu = self._preprocess_gray(image)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        thresh_enh = self._preprocess_enhanced(gray)
+
         img_area = image.shape[0] * image.shape[1]
-        for i in range(1, num_labels):
-            x, y, w, h, area = stats[i]
-            if area < self.config.min_area:
-                continue
-            if area > img_area * 0.95:
-                continue
-            candidates.append(PanelCandidate(panel_id=None, bbox=(int(x), int(y), int(w), int(h)), score=min(1.0, area / img_area), metadata={"method": "opencv"}))
-        candidates.sort(key=lambda c: (c.bbox[1], c.bbox[0]))
-        return candidates
+
+        def _ccs(thresh: np.ndarray, source: str) -> list[PanelCandidate]:
+            out: list[PanelCandidate] = []
+            num_labels, _, stats, _ = cv2.connectedComponentsWithStats(thresh, connectivity=8)
+            for i in range(1, num_labels):
+                x, y, w, h, area = stats[i]
+                if area < self.config.min_area:
+                    continue
+                if area > img_area * 0.95:
+                    continue
+                if w * h > img_area * 0.9:
+                    continue
+                # Reject tiny fragments: radiolarian specimens in this corpus
+                # are typically 80+ pixels on the short side. CCs smaller than
+                # that on either axis are almost always text/labels, scale
+                # bars, or partial-specimen noise (Plate 4 of Feng 2007
+                # otherwise produces 10-15 such fragments from the enhanced
+                # path). 80px is well below the smallest real specimen in
+                # the test corpus (pl01 minimum short side is 175 px).
+                if min(w, h) < 80:
+                    continue
+                out.append(
+                    PanelCandidate(
+                        panel_id=None,
+                        bbox=(int(x), int(y), int(w), int(h)),
+                        score=min(1.0, area / img_area),
+                        metadata={"method": source},
+                    )
+                )
+            return out
+
+        otsu_panels = _ccs(thresh_otsu, "opencv-otsu")
+        enh_panels = _ccs(thresh_enh, "opencv-enhanced")
+
+        # Keep all Otsu panels (baseline) + only the enhanced panels that
+        # don't overlap any Otsu panel (i.e. genuinely new specimens).
+        accepted = list(otsu_panels)
+        for ep in enh_panels:
+            if all(self._iou(ep.bbox, op.bbox) < 0.1 for op in otsu_panels):
+                accepted.append(ep)
+        accepted.sort(key=lambda c: (c.bbox[1], c.bbox[0]))
+        return accepted
