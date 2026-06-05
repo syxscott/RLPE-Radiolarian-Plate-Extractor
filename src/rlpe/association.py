@@ -158,6 +158,22 @@ def extract_taxa_from_caption(caption_text: str) -> list[str]:
     return taxa
 
 
+def _label_sort_key(label: str) -> tuple[int, str]:
+    """Sort panel labels like "1", "2", ..., "10", "A", "B".
+
+    Pure-numeric labels sort by their integer value; alphabetic labels
+    sort after numerics (alphabet labels are usually figure-level markers
+    that come after numbered sub-panels).
+    """
+    s = str(label).strip()
+    if s.isdigit():
+        return (0, "")
+    try:
+        return (1, s)
+    except Exception:
+        return (2, s)
+
+
 def label_tokens_from_ocr(tokens: list[OCRToken]) -> list[OCRToken]:
     out: list[OCRToken] = []
     for tok in tokens:
@@ -168,15 +184,36 @@ def label_tokens_from_ocr(tokens: list[OCRToken]) -> list[OCRToken]:
 
 
 def assign_panels_to_labels(panels: list[PanelCandidate], labels: list[str], ocr_tokens: list[OCRToken]) -> list[str | None]:
+    """Assign each panel a textual label ("1", "2", ... or "A", "B", ...).
+
+    Priority:
+      1. ``panel.panel_id`` if it's a non-empty plain label (set by SAM2
+         detection or by classical CV with text-OCR hints).
+      2. The i-th element of ``labels`` (the caption-derived label list).
+      3. OCR text tokens on the panel.
+
+    The previous implementation always used ``labels[i]``, which
+    re-shuffled labels whenever the panel order didn't exactly match the
+    order the labels appeared in the caption (e.g. labels extracted from
+    ``DP2/8024`` or other DP catalog numbers). Using panel_id directly
+    fixes the common "panel N gets the wrong species" failure mode.
+    """
     if not panels:
         return []
     if not labels:
-        # Fallback to OCR labels if available.
         ocr_labels = [tok.text.strip() for tok in label_tokens_from_ocr(ocr_tokens)]
         labels = ocr_labels
     out: list[str | None] = []
-    for i, _ in enumerate(panels):
-        out.append(labels[i] if i < len(labels) else None)
+    for i, panel in enumerate(panels):
+        pid = panel.panel_id
+        if pid and (pid.isdigit() or len(pid) <= 3):
+            # Panel already has a sensible id (digit, or short letter).
+            out.append(str(pid).strip())
+            continue
+        if i < len(labels) and labels[i]:
+            out.append(labels[i])
+            continue
+        out.append(None)
     return out
 
 
@@ -199,7 +236,6 @@ def match_panels(
 
     # 1) 默认规则分配（可回退）。
     assigned_labels = assign_panels_to_labels(panels, labels, ocr_tokens)
-    assigned_species = [taxa[i] if i < len(taxa) else (taxa[0] if taxa else None) for i in range(len(panels))]
     neural_conf = [0.0] * len(panels)
 
     # 1b) M3 stage-1 caption pairs drive a much more accurate panel→species
@@ -208,6 +244,7 @@ def match_panels(
     # heuristic. Falls back silently if pairs are empty or don't match.
     pair_lookup: dict[str, str] = {}
     caption_pairs_used = False
+    caption_pairs_source = ""
     if caption_pairs:
         for cp in caption_pairs:
             sp = getattr(cp, "species", None)
@@ -219,6 +256,59 @@ def match_panels(
                     pair_lookup[str(lbl).strip()] = sp
         if pair_lookup:
             caption_pairs_used = True
+            caption_pairs_source = "m3_llm"
+    # Fallback: when M3 didn't run, build the same lookup via the regex
+    # caption parser that M3 uses internally. This rescues the common case
+    # of "figs 1-2. SpeciesA: ... figs 3-4. SpeciesB: ..." captions where the
+    # old order-based heuristic was mapping every panel to taxa[0] (the
+    # first species in the caption).
+    if not caption_pairs_used and caption.caption:
+        try:
+            from .m3_engine import _regex_parse_caption
+            regex_pairs = _regex_parse_caption(caption.caption)
+            for cp in regex_pairs:
+                sp = getattr(cp, "species", None)
+                if not sp:
+                    continue
+                for lbl in getattr(cp, "labels", None) or []:
+                    if lbl:
+                        pair_lookup[str(lbl).strip()] = sp
+            if pair_lookup:
+                caption_pairs_used = True
+                caption_pairs_source = "regex"
+        except Exception:
+            pass
+
+    # 1c) Assign species. Use the label→species map first (per-panel lookup).
+    # For panels whose label is missing from the map, fall back to "carry
+    # forward the last seen species" (interpolation along the reading order),
+    # which is the right behaviour for the common caption pattern
+    # "figs 1-2. SpeciesA: ... figs 3-4. SpeciesB: ..." where the second
+    # species covers labels 3-4 and a third caption clause covers 5+ etc.
+    if caption_pairs_used and pair_lookup:
+        assigned_species: list[str | None] = []
+        carry: str | None = None
+        sorted_labels = sorted(pair_lookup.keys(), key=lambda s: _label_sort_key(s))
+        for panel_id in assigned_labels:
+            species = None
+            if panel_id and panel_id in pair_lookup:
+                species = pair_lookup[panel_id]
+                carry = species
+            else:
+                # Carry-forward: if labels 1-2 are SpeciesA and 3-4 are
+                # SpeciesB, then any panel whose label is between 2 and 3
+                # (or unset) should fall back to whichever species was
+                # assigned last in reading order.
+                if carry is None and sorted_labels:
+                    carry = pair_lookup[sorted_labels[0]]
+                species = carry
+            assigned_species.append(species)
+    else:
+        # Last-resort fallback: position-based, but DO NOT collapse the tail
+        # onto taxa[0]. Any panel beyond the available species list gets
+        # None (so the caller can see it's unassigned) rather than a wrong
+        # first-species tag.
+        assigned_species = [taxa[i] if i < len(taxa) else None for i in range(len(panels))]
 
     # 2) 可选神经图匹配。未训练权重或缺少checkpoint时跳过。
     matcher_used = False
