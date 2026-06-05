@@ -139,6 +139,97 @@ class OCRBackend:
             )
         return out
 
+    def recognize_panel_label(
+        self,
+        image: np.ndarray | str | Path,
+        bbox: tuple[int, int, int, int],
+        label_corner: str = "auto",
+    ) -> list[OCRToken]:
+        """OCR the small label area inside a single panel.
+
+        Plate labels ("1", "2a", "Fig. 3") are usually a short text in one
+        of the panel's corners. OCR'ing the full panel image dilutes that
+        signal with the specimen's body — EasyOCR/PaddleOCR sometimes
+        returns the body's texture as a higher-confidence token than the
+        actual label. Cropping a tight corner band (max 25% of the panel's
+        shorter side) and OCR'ing that gives a much cleaner label read.
+
+        ``label_corner``: ``"tl"`` (top-left, default for radiolarian
+        plates), ``"tr"``, ``"bl"``, ``"br"``, or ``"auto"`` which tries
+        all four corners and returns the corner with the highest
+        confidence numeric label.
+        """
+        engine = self._lazy_init()
+        if engine is None:
+            return []
+        if isinstance(image, (str, Path)):
+            import cv2
+            image = cv2.imread(str(image))
+        if image is None:
+            return []
+        import cv2
+        h_img, w_img = image.shape[:2]
+        x, y, w, h = bbox
+        # Crop the panel first
+        x0 = max(0, int(x))
+        y0 = max(0, int(y))
+        x1 = min(w_img, int(x + w))
+        y1 = min(h_img, int(y + h))
+        if x1 <= x0 or y1 <= y0:
+            return []
+        panel = image[y0:y1, x0:x1]
+        if panel.size == 0:
+            return []
+        ph, pw = panel.shape[:2]
+        # Corner band size: take the top-left 25% (or 30px min, 80px max)
+        band = max(20, min(int(min(ph, pw) * 0.25), 80))
+        corners: list[tuple[str, tuple[int, int, int, int]]] = [
+            ("tl", (0, 0, band, band)),
+            ("tr", (max(0, pw - band), 0, pw, band)),
+            ("bl", (0, max(0, ph - band), band, ph)),
+            ("br", (max(0, pw - band), max(0, ph - band), pw, ph)),
+        ]
+        if label_corner != "auto" and label_corner in {"tl", "tr", "bl", "br"}:
+            corners = [c for c in corners if c[0] == label_corner]
+        best_tokens: list[OCRToken] = []
+        best_score: float = -1.0
+        for name, (cx0, cy0, cx1, cy1) in corners:
+            sub = panel[cy0:cy1, cx0:cx1]
+            if sub.size == 0:
+                continue
+            tokens = self._ocr_array(sub)
+            if not tokens:
+                continue
+            # Score: max confidence of any short text token (looks label-like)
+            score = 0.0
+            for tok in tokens:
+                t = tok.text.strip()
+                if not t or len(t) > 8:
+                    continue
+                # Boost numeric / alphanumeric labels
+                if any(ch.isdigit() for ch in t):
+                    score = max(score, tok.confidence + 0.1)
+                else:
+                    score = max(score, tok.confidence)
+            if score > best_score:
+                best_score = score
+                # Translate bboxes back to image coordinates
+                best_tokens = [
+                    OCRToken(
+                        text=tok.text,
+                        confidence=tok.confidence,
+                        bbox=(
+                            x0 + cx0 + tok.bbox[0],
+                            y0 + cy0 + tok.bbox[1],
+                            tok.bbox[2],
+                            tok.bbox[3],
+                        ),
+                        metadata={"label_corner": name},
+                    )
+                    for tok in tokens
+                ]
+        return best_tokens
+
 
 def normalize_ocr_tokens(tokens: list[OCRToken]) -> list[OCRToken]:
     out: list[OCRToken] = []

@@ -385,6 +385,12 @@ class RadiolarianPipeline:
         if not results:
             logger.info("OpenDataLoader produced no matches; falling back to GROBID+layout.")
             return self._process_one_pdf_grobid(paper_id, pdf_path)
+        # Cross-figure panel reassignment: orphan figures (no species, no real
+        # caption) sitting between two real plate figures on adjacent pages
+        # are likely a sub-image of one of those plates. Move their panels
+        # to the nearest real plate figure so they participate in caption
+        # matching and aren't silently dropped.
+        results = self._cross_figure_reassign(results)
         return results
 
     # -----------------------------------------------------------------------
@@ -616,6 +622,17 @@ class RadiolarianPipeline:
         px_len = detect_scale_bar_length_px(region_img)
         merged_scale = merge_scale_info(caption_scale, ocr_scale, pixel_length=px_len)
 
+        # NMS pass on the panel list: merge near-duplicate detections
+        # from the segmenter (e.g. SAM2 returned the full specimen and
+        # OpenCV returned the same specimen split into two boxes). This
+        # must run before per-panel OCR so we don't pay for OCR'ing a
+        # duplicate.
+        from .association import deduplicate_panels_nms
+        pre = len(panels)
+        panels = deduplicate_panels_nms(panels, iou_threshold=0.6, label_match=False)
+        if len(panels) != pre:
+            logger.info("NMS dedup: %d → %d panels for %s", pre, len(panels), figure_id)
+
         for panel_index, panel in enumerate(panels, start=1):
             x, y, w, h = panel.bbox
             crop = region_img[y : y + h, x : x + w]
@@ -636,6 +653,39 @@ class RadiolarianPipeline:
                     panel.metadata = panel.metadata or {}
                     panel.metadata["panel_ocr_text"] = " ".join(t.text for t in panel_tokens)
                     panel.metadata["panel_ocr_token_count"] = len(panel_tokens)
+            except Exception:
+                pass
+            # Label-region re-read: plate labels ("1", "2a", "Fig. 3")
+            # live in a corner of the panel. OCR'ing the full panel
+            # dilutes that signal with the specimen's body. Crop the
+            # corner band, OCR it, and use the highest-confidence short
+            # numeric/alphanumeric token to override the panel's
+            # existing panel_id (which came from positional assignment
+            # or SAM2 prompt order).
+            try:
+                with self._ocr_lock:
+                    label_tokens = self.ocr.recognize_panel_label(region_img, (x, y, w, h))
+                if label_tokens:
+                    panel.metadata = panel.metadata or {}
+                    panel.metadata["label_region_ocr"] = " ".join(
+                        t.text for t in label_tokens
+                    )
+                    # Pick the best short label-like token
+                    best = None
+                    for tok in label_tokens:
+                        t = (tok.text or "").strip()
+                        if not t or len(t) > 6:
+                            continue
+                        if best is None or tok.confidence > best.confidence:
+                            best = tok
+                    if best is not None:
+                        from .association import _normalize_panel_label
+                        norm = _normalize_panel_label(best.text)
+                        if norm and (norm.isdigit() or len(norm) <= 3):
+                            # Only override if the new label looks like
+                            # a real label (digit / short letter).
+                            panel.panel_id = norm
+                            panel.metadata["label_region_picked"] = best.text
             except Exception:
                 pass
 
@@ -1169,6 +1219,106 @@ class RadiolarianPipeline:
                 results.append(m)
 
         return results
+
+    def _cross_figure_reassign(
+        self, results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Reassign panels from orphan figures to the nearest real plate figure.
+
+        Background: OpenDataLoader sometimes extracts a real plate image as
+        one figure and a smaller sub-image of the same plate (an index map,
+        a thumbnail, a half-resolution duplicate) as a separate "figure".
+        The sub-image goes through the pipeline and produces N panels with
+        no species (because its caption is either empty or a placeholder).
+        The actual species live on the plate figure's caption, two pages
+        away. Without reassignment, those N panels are silently lost.
+
+        Strategy: a figure is "orphan" if (a) it has 0 species matched,
+        (b) its caption is missing/empty/placeholder, and (c) it sits
+        between two real plate figures (or within 3 pages of one). Move
+        its panels to the nearest plate figure.
+        """
+        if not results:
+            return results
+
+        # Group by figure
+        by_figure: dict[str, list[dict[str, Any]]] = {}
+        for r in results:
+            by_figure.setdefault(r.get("figure_id", ""), []).append(r)
+
+        # Identify "real plate" figures vs orphans. A real plate figure
+        # has a non-placeholder caption OR at least one panel with a
+        # species assignment.
+        figure_caption: dict[str, str] = {}
+        figure_page: dict[str, int] = {}
+        figure_species_count: dict[str, int] = {}
+        for fid, panels in by_figure.items():
+            cap = ""
+            page = 0
+            sp_count = 0
+            for r in panels:
+                meta = r.get("metadata") or {}
+                if not cap:
+                    cap = (r.get("caption_snippet") or "")
+                if not page:
+                    page = int(meta.get("page_index") or 0)
+                if r.get("species"):
+                    sp_count += 1
+            figure_caption[fid] = cap
+            figure_page[fid] = page
+            figure_species_count[fid] = sp_count
+
+        def _is_orphan(fid: str) -> bool:
+            cap = figure_caption.get(fid, "") or ""
+            if not cap:
+                return True
+            if _looks_like_placeholder_caption(cap):
+                return True
+            if figure_species_count.get(fid, 0) == 0:
+                # No species matched AND caption is non-empty (not
+                # placeholder) — could still be a real plate that the
+                # caption-parser missed. We keep it as a real plate
+                # in that case so we don't accidentally drain it.
+                return False
+            return False
+
+        real_plates = [fid for fid in by_figure if not _is_orphan(fid)]
+        orphans = [fid for fid in by_figure if _is_orphan(fid)]
+        if not real_plates or not orphans:
+            return results
+
+        reassigned: list[dict[str, Any]] = []
+        for r in results:
+            fid = r.get("figure_id", "")
+            if fid in orphans and real_plates:
+                # Find the nearest real plate by absolute page diff.
+                rp = figure_page.get(fid, 0)
+                nearest = min(
+                    real_plates,
+                    key=lambda f: abs(figure_page.get(f, 0) - rp),
+                )
+                # Reassign only if the page gap is small (<=3).
+                if abs(figure_page.get(nearest, 0) - rp) <= 3:
+                    new = dict(r)
+                    new["figure_id"] = nearest
+                    new["metadata"] = dict(r.get("metadata") or {})
+                    new["metadata"]["reassigned_from_figure"] = fid
+                    new["metadata"]["reassigned_reason"] = (
+                        "orphan figure, caption empty/placeholder, "
+                        f"merged into plate figure {nearest}"
+                    )
+                    reassigned.append(new)
+                    continue
+            reassigned.append(r)
+        if len(reassigned) != len(results):
+            return results
+        moved = sum(
+            1 for r in reassigned
+            if (r.get("metadata") or {}).get("reassigned_from_figure")
+        )
+        if moved:
+            logger.info("Cross-figure reassignment: moved %d panels from orphan figures.", moved)
+        return reassigned
 
 
 # ---- module-level helpers -----------------------------------------------

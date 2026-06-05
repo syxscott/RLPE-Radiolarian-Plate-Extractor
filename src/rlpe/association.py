@@ -251,6 +251,72 @@ def _label_in_pair_lookup(label: str | None, pair_lookup: dict[str, str]) -> str
     return None
 
 
+def deduplicate_panels_nms(
+    panels: list,
+    iou_threshold: float = 0.6,
+    label_match: bool = True,
+) -> list:
+    """NMS-style merge of near-duplicate panel detections.
+
+    Two panels are duplicates if:
+      * their bboxes have IoU >= ``iou_threshold`` AND
+      * either (``label_match`` is False) OR their normalised labels are
+        equal (or both have no label).
+
+    When duplicates are found, the panel with the higher score is kept.
+    The kept panel's score is bumped by +0.02 if it had a label and the
+    dropped panel had the same label (signals "this is the real one,
+    confirmed by OCR").
+
+    This is the second-pass dedup that runs AFTER the segmenter's
+    intra-method dedup. The segmenter removes exact-overlap boxes from
+    a single method (e.g. SAM2 vs OpenCV), but doesn't catch
+    cross-method duplicates (e.g. SAM2 returns the full specimen and
+    OpenCV enhanced returns the same specimen split into two boxes).
+    """
+    if not panels:
+        return []
+    kept: list = []
+    # Sort by score descending so the highest-confidence panel wins
+    for panel in sorted(panels, key=lambda p: p.score, reverse=True):
+        is_dup = False
+        for k in kept:
+            iou = _iou_panels(panel.bbox, k.bbox)
+            if iou < iou_threshold:
+                continue
+            if label_match:
+                pl = _normalize_panel_label(panel.panel_id)
+                kl = _normalize_panel_label(k.panel_id)
+                if pl != kl:
+                    # Different labels with strong overlap is rare
+                    # (one is probably the right one); keep both but
+                    # the higher-scored one wins the slot.
+                    continue
+            is_dup = True
+            break
+        if is_dup:
+            continue
+        kept.append(panel)
+    # Sort by bbox y then x for downstream display
+    kept.sort(key=lambda p: (p.bbox[1], p.bbox[0]))
+    return kept
+
+
+def _iou_panels(a, b) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ax2, ay2 = ax + aw, ay + ah
+    bx2, by2 = bx + bw, by + bh
+    ix1, iy1 = max(ax, bx), max(ay, by)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    union = aw * ah + bw * bh - inter
+    return inter / max(1, union)
+
+
 def label_tokens_from_ocr(tokens: list[OCRToken]) -> list[OCRToken]:
     out: list[OCRToken] = []
     for tok in tokens:
