@@ -174,6 +174,48 @@ def _label_sort_key(label: str) -> tuple[int, str]:
         return (2, s)
 
 
+def _normalize_panel_label(label: str | None) -> str | None:
+    """Normalise a panel label so OCR misreads don't break caption lookup.
+
+    Two normalisations:
+      1. Strip leading zeros ("00" → "0", "04" → "4") — PaddleOCR commonly
+         reads "3" as "03" or "0" as "00" when the glyph is small.
+      2. Strip trailing zero-padding for double-digit OCR ("30" misread
+         of "3" stays as "3" if "3" is in the pair_lookup). The
+         caller decides whether to keep or drop by trying both forms.
+
+    Returns the cleanest single label (or None for empty input).
+    """
+    if label is None:
+        return None
+    s = str(label).strip()
+    if not s:
+        return None
+    # Don't normalise alphabetic labels ("A", "B" stay as-is).
+    if not s.isdigit():
+        return s
+    return str(int(s))  # "00" → "0", "04" → "4", "3" → "3"
+
+
+def _label_in_pair_lookup(label: str | None, pair_lookup: dict[str, str]) -> str | None:
+    """Try the label, then its leading-zero-stripped form, against
+    ``pair_lookup``. Returns the matching key (the value is then
+    ``pair_lookup[matched]``) or None.
+
+    Without this fallback, OCR misreads like "00" never match the
+    caption's "0" key and the panel gets species=None for no good
+    reason. With it, we tolerate the common "leading-zero" OCR error.
+    """
+    if not label:
+        return None
+    if label in pair_lookup:
+        return label
+    norm = _normalize_panel_label(label)
+    if norm and norm in pair_lookup:
+        return norm
+    return None
+
+
 def label_tokens_from_ocr(tokens: list[OCRToken]) -> list[OCRToken]:
     out: list[OCRToken] = []
     for tok in tokens:
@@ -197,6 +239,10 @@ def assign_panels_to_labels(panels: list[PanelCandidate], labels: list[str], ocr
     order the labels appeared in the caption (e.g. labels extracted from
     ``DP2/8024`` or other DP catalog numbers). Using panel_id directly
     fixes the common "panel N gets the wrong species" failure mode.
+
+    All label assignments go through ``_normalize_panel_label`` so that
+    OCR misreads like "00" (for "0") and "04" (for "4") are flattened
+    back to the canonical "0" / "4" form before any caption lookup.
     """
     if not panels:
         return []
@@ -205,13 +251,13 @@ def assign_panels_to_labels(panels: list[PanelCandidate], labels: list[str], ocr
         labels = ocr_labels
     out: list[str | None] = []
     for i, panel in enumerate(panels):
-        pid = panel.panel_id
+        pid = _normalize_panel_label(panel.panel_id)
         if pid and (pid.isdigit() or len(pid) <= 3):
             # Panel already has a sensible id (digit, or short letter).
-            out.append(str(pid).strip())
+            out.append(pid)
             continue
         if i < len(labels) and labels[i]:
-            out.append(labels[i])
+            out.append(_normalize_panel_label(labels[i]) or labels[i])
             continue
         out.append(None)
     return out
@@ -279,30 +325,20 @@ def match_panels(
         except Exception:
             pass
 
-    # 1c) Assign species. Use the label→species map first (per-panel lookup).
-    # For panels whose label is missing from the map, fall back to "carry
-    # forward the last seen species" (interpolation along the reading order),
-    # which is the right behaviour for the common caption pattern
-    # "figs 1-2. SpeciesA: ... figs 3-4. SpeciesB: ..." where the second
-    # species covers labels 3-4 and a third caption clause covers 5+ etc.
+    # 1c) Assign species. STRICT mode: only assign if the panel's label
+    # (or its leading-zero-normalised form) is in the caption-derived
+    # pair_lookup. We deliberately do NOT carry-forward the last seen
+    # species to panels whose label is unknown — the previous carry-forward
+    # behaviour wrongly tagged 14 SEM-metadata fragments on Feng 2007
+    # Plate 1 as "Entactinia reticulata" just because they were sorted
+    # after the panel labelled "4". When the caption has only 4 entries
+    # (figs 1-4) and we detect 17 panels, the extra 13 should be None,
+    # not the last seen species.
     if caption_pairs_used and pair_lookup:
         assigned_species: list[str | None] = []
-        carry: str | None = None
-        sorted_labels = sorted(pair_lookup.keys(), key=lambda s: _label_sort_key(s))
         for panel_id in assigned_labels:
-            species = None
-            if panel_id and panel_id in pair_lookup:
-                species = pair_lookup[panel_id]
-                carry = species
-            else:
-                # Carry-forward: if labels 1-2 are SpeciesA and 3-4 are
-                # SpeciesB, then any panel whose label is between 2 and 3
-                # (or unset) should fall back to whichever species was
-                # assigned last in reading order.
-                if carry is None and sorted_labels:
-                    carry = pair_lookup[sorted_labels[0]]
-                species = carry
-            assigned_species.append(species)
+            matched_key = _label_in_pair_lookup(panel_id, pair_lookup)
+            assigned_species.append(pair_lookup[matched_key] if matched_key else None)
     else:
         # Last-resort fallback: position-based, but DO NOT collapse the tail
         # onto taxa[0]. Any panel beyond the available species list gets
@@ -337,13 +373,16 @@ def match_panels(
 
     matches: list[MatchResult] = []
     for idx, panel in enumerate(panels):
-        panel_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
+        raw_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
+        panel_id = _normalize_panel_label(raw_id)
         best_species = assigned_species[idx] if idx < len(assigned_species) else (taxa[0] if taxa else None)
         # Caption-pair override: if M3 gave us a structured (label, species) map
-        # and the panel's label is in it, prefer that species over the
-        # order-based fallback.
-        if caption_pairs_used and panel_id and panel_id in pair_lookup:
-            best_species = pair_lookup[panel_id]
+        # and the panel's label (or its leading-zero-stripped form) is in
+        # it, prefer that species over the order-based fallback.
+        if caption_pairs_used:
+            matched_key = _label_in_pair_lookup(panel_id, pair_lookup)
+            if matched_key:
+                best_species = pair_lookup[matched_key]
         ocr_text = " ".join(tok.text for tok in ocr_tokens if _token_in_panel(tok, panel))
         label_text = None
         if panel_id and panel_id in panel_label_tokens:
