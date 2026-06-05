@@ -554,12 +554,56 @@ _PLATE_CAPTION_RE = _re.compile(
 )
 
 
-def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return elements (paragraph OR caption) whose text starts with
-    ``Plate N`` / ``Explanation of Plate N``.
+def _collect_following_text(kids: list[dict[str, Any]], start_idx: int,
+                             same_page: int, max_items: int = 4) -> str:
+    """Return the concatenated ``content`` of up to ``max_items`` siblings
+    after ``start_idx`` on the same page, stopping at the next ``heading``
+    or ``image`` / ``table``. Used to expand a bare ``Plate N`` heading
+    into a full caption by appending the description paragraph and the
+    species list that usually follow it (Hollis 2006 plates 1-3)."""
+    parts: list[str] = []
+    end = min(len(kids), start_idx + 1 + max_items * 2)
+    for j in range(start_idx + 1, end):
+        sib = kids[j]
+        if not isinstance(sib, dict):
+            continue
+        sib_type = sib.get("type", "")
+        if sib_type in ("heading", "image", "table"):
+            break
+        sib_page = int(sib.get("page number", 0) or 0)
+        if sib_page != same_page:
+            break
+        if sib_type in ("paragraph",):
+            text = (sib.get("content") or "").strip()
+            if text:
+                parts.append(text)
+        elif sib_type in ("list",):
+            # Flatten list items into a single text block
+            items: list[str] = []
+            for item in sib.get("list items", []) or []:
+                if isinstance(item, dict):
+                    txt = (item.get("content") or "").strip()
+                    if txt:
+                        items.append(txt)
+            if items:
+                parts.append("\n".join(items))
+        if len(parts) >= max_items:
+            break
+    return "\n\n".join(parts)
 
-    OpenDataLoader sometimes surfaces plate captions as ``type=caption`` (with a
-    ``content`` field) and other times as ``type=paragraph``; we accept both.
+
+def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return elements whose text starts with ``Plate N`` /
+    ``Explanation of Plate N``.
+
+    OpenDataLoader surfaces plate captions as one of:
+      * ``type=caption`` (with a ``content`` field) — already complete text
+      * ``type=paragraph`` — Bandini-style: full caption with species list
+      * ``type=heading`` — Hollis-style: bare ``Plate N`` followed by a
+        description paragraph and a list of species on the same page
+    For heading-type matches we expand the content by appending the next
+    few siblings (paragraph + list) so the downstream caption parser sees
+    the actual species list, not just ``Plate 1``.
 
     Returns a list of dicts with keys:
       - ``plate_number`` (int)
@@ -569,11 +613,11 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
     Sorted by (plate_number, page_number).
     """
     found: list[dict[str, Any]] = []
-    for kid in kids:
+    for idx, kid in enumerate(kids):
         if not isinstance(kid, dict):
             continue
         etype = kid.get("type", "")
-        if etype not in ("paragraph", "caption"):
+        if etype not in ("paragraph", "caption", "heading"):
             continue
         content = (kid.get("content") or "").strip()
         if not content:
@@ -583,6 +627,13 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         plate_number = int(m.group(1))
         page = int(kid.get("page number", 0) or 0)
+        # For heading-type matches, expand by appending following paragraphs
+        # / lists on the same page (Hollis 2006 has Plate 1 + description
+        # + species list as three separate elements).
+        if etype == "heading":
+            extra = _collect_following_text(kids, idx, page, max_items=3)
+            if extra:
+                content = content + "\n\n" + extra
         found.append({
             "plate_number": plate_number,
             "page_number": page,
