@@ -111,6 +111,8 @@ class PanelMetadata(BaseModel):
     geology_links: list[GeologyLinkRecord] = Field(default_factory=list)
     m3_diagnostic: dict[str, Any] = Field(default_factory=dict)
     extraction_source: str = ""
+    reassigned_from_figure: str | None = None
+    reassigned_reason: str | None = None
 
 
 class PanelRecord(BaseModel):

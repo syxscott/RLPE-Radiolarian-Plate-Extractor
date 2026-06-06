@@ -215,6 +215,30 @@
           "default": null,
           "title": "Panel Score"
         },
+        "reassigned_from_figure": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reassigned From Figure"
+        },
+        "reassigned_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reassigned Reason"
+        },
         "scale_bar": {
           "anyOf": [
             {

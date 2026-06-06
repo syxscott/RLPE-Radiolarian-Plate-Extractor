@@ -69,6 +69,29 @@ class TestPanelRecord:
                 confidence=0.0,
             )
 
+    def test_reassignment_metadata_fields_round_trip(self):
+        """Runtime cross-figure reassignment adds reassigned_from_figure and
+        reassigned_reason to metadata. These must be part of the published
+        schema or the export step rejects the record."""
+        r = PanelRecord(
+            paper_id="p1",
+            figure_id="f1",
+            panel_id="1",
+            species=None,
+            panel_path=None,
+            bbox=None,
+            confidence=0.5,
+            metadata={
+                "reassigned_from_figure": "od_fig_X_p001_01",
+                "reassigned_reason": "neighbor caption match",
+            },
+        )
+        assert r.metadata.reassigned_from_figure == "od_fig_X_p001_01"
+        assert r.metadata.reassigned_reason == "neighbor caption match"
+        # round-trip through JSON
+        d = json.loads(r.model_dump_json())
+        assert d["metadata"]["reassigned_from_figure"] == "od_fig_X_p001_01"
+
 
 class TestRunOutput:
     def _provenance(self) -> ProvenanceRecord:
