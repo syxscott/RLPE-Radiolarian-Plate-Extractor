@@ -90,6 +90,27 @@ def _norm_species(s: str | None) -> str:
     return " ".join(s.split()).rstrip(".,;")
 
 
+_PLACEHOLDER_MATCHER_TYPES = frozenset(
+    {
+        "skipped-placeholder-caption",  # upstream failed to parse a real caption
+        "skipped-page-render",  # fallback segmenter with no caption context
+    }
+)
+
+
+def _is_real_prediction(p: dict[str, Any]) -> bool:
+    """A real prediction has either a non-empty species or was produced
+    by a non-placeholder matcher type. Skipped-placeholder-caption rows
+    carry no signal — including them in the eval over-counts false
+    positives and inflates the denominator."""
+    if (p.get("species") or "").strip():
+        return True
+    mt = (p.get("metadata") or {}).get("matcher_type") or ""
+    if mt in _PLACEHOLDER_MATCHER_TYPES:
+        return False
+    return True
+
+
 def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> EvaluationReport:
     """Score predictions against a gold set.
 
@@ -109,15 +130,24 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
         m.paper_id = g.paper_id
         m.n_gold += 1
 
-    # Build a list of predictions per (paper_id, panel_id), then pick
-    # the best one (highest confidence; if tied, prefer non-empty species).
-    pred_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    # Build a list of predictions per (paper_id, figure_id, panel_id).
+    # The figure_id is in the key so that the same panel label appearing
+    # in two different figures (e.g. "1" in fig_1 and "1" in fig_2) is
+    # treated as two distinct predictions. Without this, a single pred
+    # "1" would falsely satisfy gold entries in every figure that
+    # contains a panel labeled "1".
+    pred_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    n_skipped = 0
     for p in predictions:
+        if not _is_real_prediction(p):
+            n_skipped += 1
+            continue
         pid = p.get("paper_id")
+        fid = p.get("figure_id") or ""
         plabel = p.get("panel_id")
         if not pid or not plabel:
             continue
-        pred_groups.setdefault((pid, plabel), []).append(p)
+        pred_groups.setdefault((pid, fid, plabel), []).append(p)
 
     def _best_pred(preds: list[dict[str, Any]]) -> dict[str, Any] | None:
         if not preds:
@@ -133,9 +163,14 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
     for g in gold:
         m = by_paper[g.paper_id]
         gold_species = _norm_species(g.species)
-        # Find a matching prediction
+        # Find a matching prediction. Restrict to predictions in the
+        # same figure so panel labels in different figures don't collide.
         matched_pred: dict[str, Any] | None = None
-        for (pid, plabel), preds in pred_groups.items():
+        for (pid, fid, plabel), preds in pred_groups.items():
+            if pid != g.paper_id:
+                continue
+            if fid and g.figure_id and fid != g.figure_id:
+                continue
             if match_panel(g, pid, plabel):
                 cand = _best_pred(preds)
                 if cand is None:
@@ -167,14 +202,23 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
             if gold_species:
                 m.species_fn += 1
 
-    # n_pred_panels per paper (count unique panel labels, not raw rows)
+    # n_pred_panels per paper (count unique (figure, panel) pairs)
     pred_per_paper: dict[str, int] = defaultdict(int)
-    for (pid, _plabel) in pred_groups.keys():
+    for (pid, _fid, _plabel) in pred_groups.keys():
         pred_per_paper[pid] += 1
     for pid, n in pred_per_paper.items():
         if pid not in by_paper:
             by_paper[pid] = PaperMetrics(paper_id=pid)
         by_paper[pid].n_pred_panels = n
+
+    if n_skipped:
+        # surface this in the report so users see why pred count != raw row count
+        agg = by_paper  # populated below; this is just a debug log
+        print(
+            f"[eval] filtered {n_skipped} placeholder-caption rows "
+            f"({n_skipped}/{len(predictions)} = "
+            f"{100*n_skipped/max(1,len(predictions)):.1f}% of raw predictions)"
+        )
 
     # Aggregate
     total_gold = sum(m.n_gold for m in by_paper.values())
@@ -200,6 +244,14 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
 
 
 def load_predictions_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Load a predictions JSONL into a flat list of dicts.
+
+    We pass through ``metadata`` so :func:`_is_real_prediction` can
+    filter out placeholder-caption rows when scoring, and ``figure_id``
+    so predictions of the same panel label in different figures don't
+    collide in :func:`evaluate`. The full record is kept available for
+    downstream consumers.
+    """
     out: list[dict[str, Any]] = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -209,8 +261,10 @@ def load_predictions_jsonl(path: Path) -> list[dict[str, Any]]:
             d = json.loads(line)
             out.append({
                 "paper_id": d.get("paper_id"),
+                "figure_id": d.get("figure_id"),
                 "panel_id": d.get("panel_id"),
                 "species": d.get("species"),
+                "metadata": d.get("metadata") or {},
             })
     return out
 

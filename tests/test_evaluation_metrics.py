@@ -22,8 +22,13 @@ from rlpe.evaluation import (
 GOLD_DIR = Path(__file__).resolve().parents[1] / "data" / "gold"
 
 
-def _pred(paper_id, panel_id, species):
-    return {"paper_id": paper_id, "panel_id": panel_id, "species": species}
+def _pred(paper_id, panel_id, species, matcher_type="heuristic"):
+    return {
+        "paper_id": paper_id,
+        "panel_id": panel_id,
+        "species": species,
+        "metadata": {"matcher_type": matcher_type},
+    }
 
 
 class TestEvaluate:
@@ -135,12 +140,59 @@ class TestLoadPredictions:
         preds = load_predictions_jsonl(path)
         assert len(preds) == 2
         assert preds[0]["paper_id"] == "p1"
+        # metadata is now passed through so _is_real_prediction can filter
+        assert "metadata" in preds[0]
 
     def test_skip_empty_lines(self, tmp_path):
         path = tmp_path / "p.jsonl"
         path.write_text('\n{"paper_id":"p1","panel_id":"1","species":"A"}\n\n')
         preds = load_predictions_jsonl(path)
         assert len(preds) == 1
+
+
+class TestPlaceholderFilter:
+    """Real pipeline output often contains rows where the upstream caption
+    parser failed (matcher_type='skipped-placeholder-caption'). These rows
+    carry no species and no real signal. The eval harness filters them out
+    so they don't inflate the denominator."""
+
+    def test_skipped_placeholder_does_not_count_as_pred(self, capsys):
+        gold = [GoldPanel("p1", "f1", "1", "Genus species")]
+        preds = [
+            _pred("p1", "1", None, matcher_type="skipped-placeholder-caption"),
+            # the real prediction comes from a different (real) source
+            _pred("p1", "1", "Genus species", matcher_type="heuristic"),
+        ]
+        report = evaluate(preds, gold)
+        # species_tp should be 1 — the placeholder row was filtered out
+        m = report.papers["p1"]
+        assert m.species_tp == 1
+        assert m.species_fp == 0
+        assert m.species_fn == 0
+        # the filter message is surfaced
+        out = capsys.readouterr().out
+        assert "filtered 1 placeholder" in out
+
+    def test_only_placeholder_records_means_no_match(self, capsys):
+        gold = [GoldPanel("p1", "f1", "1", "Genus")]
+        preds = [
+            _pred("p1", "1", None, matcher_type="skipped-placeholder-caption"),
+        ]
+        report = evaluate(preds, gold)
+        m = report.papers["p1"]
+        # No real prediction → species_fn counts the missed gold species
+        assert m.species_fn == 1
+        assert m.species_tp == 0
+
+    def test_heuristic_with_species_survives_filter(self, capsys):
+        gold = [GoldPanel("p1", "f1", "1", "Genus")]
+        preds = [_pred("p1", "1", "Genus", matcher_type="heuristic")]
+        report = evaluate(preds, gold)
+        # No filter log printed when nothing is filtered
+        out = capsys.readouterr().out
+        assert "filtered" not in out
+        m = report.papers["p1"]
+        assert m.species_tp == 1
 
 
 class TestEvaluateRun:

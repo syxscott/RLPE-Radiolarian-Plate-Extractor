@@ -77,6 +77,39 @@ class TestMatchPanel:
         gold = GoldPanel("p1", "f1", "5b", "Genus")
         assert match_panel(gold, "p1", "5")
 
+    def test_numeric_label_no_collapse(self):
+        """Critical regression: a pure-digit pred label like "1" must NOT
+        match gold "10", "11", "12", ... (those are different panels)."""
+        gold = GoldPanel("p1", "f1", "10", "Genus")
+        # "1" must not match "10" — the panels are distinct
+        assert not match_panel(gold, "p1", "1")
+        # exact match still works
+        assert match_panel(gold, "p1", "10")
+        # other two-digit labels still don't match
+        assert not match_panel(gold, "p1", "11")
+        assert not match_panel(gold, "p1", "100")
+
+    def test_single_letter_label_no_collapse(self):
+        """Same rule for letter labels: "A" must not match "A1"."""
+        gold = GoldPanel("p1", "f1", "A1", "Genus")
+        assert not match_panel(gold, "p1", "A")
+        # exact letter match still works
+        gold2 = GoldPanel("p1", "f1", "A", "Genus")
+        assert match_panel(gold2, "p1", "A")
+
+    def test_alphanumeric_label_still_prefix_matches(self):
+        """The fix must not regress the alphanumeric case ("12a" / "12b")."""
+        gold_12 = GoldPanel("p1", "f1", "12", "Genus")
+        gold_12a = GoldPanel("p1", "f1", "12a", "Genus")
+        # "12a" matches gold "12" (pred is more specific)
+        assert match_panel(gold_12, "p1", "12a")
+        # "12" matches gold "12a" (gold is more specific)
+        assert match_panel(gold_12a, "p1", "12")
+        # "12a" matches gold "12a" (exact)
+        assert match_panel(gold_12a, "p1", "12a")
+        # "12a" does NOT match gold "12b" — these are different panels
+        assert not match_panel(gold_12a, "p1", "12b")
+
 
 class TestWriteGold:
     def test_round_trip(self, tmp_path):
