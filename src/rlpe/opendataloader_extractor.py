@@ -595,7 +595,7 @@ _FIG_CAPTION_RE = _re.compile(
 # We detect these and reconstruct a per-plate caption by concatenating
 # all matching "Pl. N" / "Plate N" mentions found in the body.
 _PLATE_INLINE_REF_RE = _re.compile(
-    r"\b(?:[Pp]l(?:ate)?\.?)\s*(\d+)\s*[,.]?\s*[Ff]ig(?:s|ure)?\.?\s*\d+[a-z\-]*",
+    r"\b(?:[Pp]l(?:ate)?\.?)\s*(\d+)\s*[,.]?\s*[Ff]ig(?:s|ure)?\.?\s*(\d+)(?:[a-z\-–—]+\d+)*",
 )
 # Match a Genus species (or Genus? sp. cf./aff. species) preceding the
 # plate reference — e.g. "Syntagentactinia biocculosa ... (Pl. 1, figs 5–7)"
@@ -605,9 +605,11 @@ _PLATE_INLINE_REF_RE = _re.compile(
 _SPECIES_NAME_RE = _re.compile(
     r"([A-Z][a-z]+"          # Genus
     r"(?:"
-    r"\s+\?\s+sp\."          # Genus? sp.
-    r"(?:\s+[A-Z]\.)?"        #   S.
-    r"(?:\s+(?:cf\.|aff\.)\s+[A-Z]?[a-z][a-z\-]+)?"  #   cf./aff. S. species
+    r"[?.]?\s+sp\."          # "Genus? sp." (?, period, or no marker — OCR
+                              #  often prints "Polyentactinia. sp." instead of
+                              #  "Polyentactinia sp.")
+    r"(?:\s+(?:[A-Z]\.|[A-Z]))?"  #   S. (abbrev genus) OR " sp. A" form
+    r"(?:\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+)?"  # cf./aff. S. species
     r"|"
     r"\s+[a-z][a-z\-]+"        # Genus species
     r"(?:\s+[a-z][a-z\-]+)*"  # optional third epithet
@@ -839,14 +841,23 @@ def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tup
             left_start = max(0, m.start() - 250)
             prefix = text[left_start:m.start()]
             sp_match = None
-            # Try each line in the prefix (the species is usually on the
-            # same line as the plate ref, e.g. "Genus species (Pl. N, ...)")
-            for piece in _re.split(r"[\n;\.]+", prefix)[-3:]:
-                sp_match = _SPECIES_NAME_RE.search(piece)
-                if sp_match:
+            # Find ALL species matches in the prefix and take the
+            # closest non-author-citation one. Splitting on ".\n;" was
+            # wrong here: "Syntagentactinia? sp. cf. S. excelsa" has
+            # internal periods ("sp.", "S.") that get treated as
+            # sentence ends, fragmenting the species across pieces.
+            # Taking findall instead avoids the fragmentation, but
+            # the new "last match" strategy can land on an author
+            # citation like "Nazarov in" if it appears in the
+            # parenthetical author info. Filter those out.
+            for candidate in reversed(list(_SPECIES_NAME_RE.finditer(prefix))):
+                cand_species = candidate.group(1)
+                if not _looks_like_author_citation(cand_species):
+                    sp_match = candidate
                     break
             if not sp_match:
-                # Last resort: a single Genus
+                # Last resort: a single Genus followed by "?" — used
+                # in "Genus? sp." inline references.
                 gen_match = _re.search(r"([A-Z][a-z]+)\s+\?", prefix[-80:])
                 if gen_match:
                     species = gen_match.group(1) + " ?"

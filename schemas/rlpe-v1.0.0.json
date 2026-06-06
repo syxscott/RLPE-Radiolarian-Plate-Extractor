@@ -1,0 +1,674 @@
+{
+  "$defs": {
+    "GeologyLinkRecord": {
+      "additionalProperties": false,
+      "description": "A geology-fact link associated with a panel's caption context.",
+      "properties": {
+        "age": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Age"
+        },
+        "chronostratigraphy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chronostratigraphy"
+        },
+        "chronostratigraphy_rank": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chronostratigraphy Rank"
+        },
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "evidence_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Text"
+        },
+        "formation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formation"
+        },
+        "latitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latitude"
+        },
+        "locality": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locality"
+        },
+        "longitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Longitude"
+        },
+        "section_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Title"
+        },
+        "section_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Type"
+        }
+      },
+      "title": "GeologyLinkRecord",
+      "type": "object"
+    },
+    "PanelMetadata": {
+      "additionalProperties": false,
+      "description": "Per-panel diagnostic metadata (no business data here).",
+      "properties": {
+        "caption_pairs_used": {
+          "default": false,
+          "title": "Caption Pairs Used",
+          "type": "boolean"
+        },
+        "extraction_source": {
+          "default": "",
+          "title": "Extraction Source",
+          "type": "string"
+        },
+        "figure_number": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Figure Number"
+        },
+        "geology_links": {
+          "items": {
+            "$ref": "#/$defs/GeologyLinkRecord"
+          },
+          "title": "Geology Links",
+          "type": "array"
+        },
+        "m3_diagnostic": {
+          "additionalProperties": true,
+          "title": "M3 Diagnostic",
+          "type": "object"
+        },
+        "matcher_conf": {
+          "default": 0.0,
+          "title": "Matcher Conf",
+          "type": "number"
+        },
+        "matcher_type": {
+          "default": "heuristic",
+          "title": "Matcher Type",
+          "type": "string"
+        },
+        "matcher_used": {
+          "default": false,
+          "title": "Matcher Used",
+          "type": "boolean"
+        },
+        "ocr_count": {
+          "default": 0,
+          "title": "Ocr Count",
+          "type": "integer"
+        },
+        "page_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Index"
+        },
+        "panel_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Panel Score"
+        },
+        "scale_bar": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScaleBarRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "taxon_count": {
+          "default": 0,
+          "title": "Taxon Count",
+          "type": "integer"
+        }
+      },
+      "title": "PanelMetadata",
+      "type": "object"
+    },
+    "PanelRecord": {
+      "additionalProperties": false,
+      "description": "A single panel in a single figure of a single paper.\n\nThis is the canonical record published as JSONL. Each downstream view\n(analysis/ML/archive) is a projection of this record.",
+      "properties": {
+        "bbox": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bbox"
+        },
+        "caption_snippet": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Caption Snippet"
+        },
+        "confidence": {
+          "title": "Confidence",
+          "type": "number"
+        },
+        "figure_id": {
+          "title": "Figure Id",
+          "type": "string"
+        },
+        "label_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label Text"
+        },
+        "metadata": {
+          "$ref": "#/$defs/PanelMetadata"
+        },
+        "ocr_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ocr Text"
+        },
+        "panel_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Panel Id"
+        },
+        "panel_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Panel Path"
+        },
+        "paper_id": {
+          "title": "Paper Id",
+          "type": "string"
+        },
+        "paper_metadata": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PaperMetadataRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "species": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Species"
+        }
+      },
+      "required": [
+        "paper_id",
+        "figure_id",
+        "panel_id",
+        "species",
+        "panel_path",
+        "confidence"
+      ],
+      "title": "PanelRecord",
+      "type": "object"
+    },
+    "PaperMetadataRecord": {
+      "additionalProperties": false,
+      "description": "Bibliographic metadata for the source paper.",
+      "properties": {
+        "abstract": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Abstract"
+        },
+        "authors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Authors",
+          "type": "array"
+        },
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "doi": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Doi"
+        },
+        "issue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issue"
+        },
+        "journal": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Journal"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        },
+        "page_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Count"
+        },
+        "pages": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pages"
+        },
+        "publisher": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Publisher"
+        },
+        "source": {
+          "default": "",
+          "title": "Source",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Volume"
+        },
+        "year": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Year"
+        }
+      },
+      "title": "PaperMetadataRecord",
+      "type": "object"
+    },
+    "ProvenanceRecord": {
+      "additionalProperties": false,
+      "description": "Provenance metadata stamped onto every exported run.",
+      "properties": {
+        "config_snapshot": {
+          "additionalProperties": true,
+          "title": "Config Snapshot",
+          "type": "object"
+        },
+        "git_commit": {
+          "title": "Git Commit",
+          "type": "string"
+        },
+        "git_dirty": {
+          "title": "Git Dirty",
+          "type": "boolean"
+        },
+        "host": {
+          "title": "Host",
+          "type": "string"
+        },
+        "input_sha256": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Input Sha256",
+          "type": "object"
+        },
+        "pipeline_version": {
+          "title": "Pipeline Version",
+          "type": "string"
+        },
+        "python_version": {
+          "title": "Python Version",
+          "type": "string"
+        },
+        "schema_version": {
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "timestamp_utc": {
+          "title": "Timestamp Utc",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_version",
+        "schema_version",
+        "git_commit",
+        "git_dirty",
+        "timestamp_utc",
+        "host",
+        "python_version"
+      ],
+      "title": "ProvenanceRecord",
+      "type": "object"
+    },
+    "ScaleBarRecord": {
+      "additionalProperties": false,
+      "description": "A scale-bar measurement attached to a panel/figure.",
+      "properties": {
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "pixel_length": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pixel Length"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "um_per_px": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Um Per Px"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "title": "ScaleBarRecord",
+      "type": "object"
+    }
+  },
+  "$id": "https://rlpe.local/schemas/rlpe-v1.0.0.json",
+  "additionalProperties": false,
+  "description": "Canonical export shape of a Radiolarian Literature Plate Extractor run. Each RunOutput carries a ProvenanceRecord and a list of PanelRecord entries. Downstream views (analysis/ML/archive) are projections of this shape.",
+  "properties": {
+    "panels": {
+      "items": {
+        "$ref": "#/$defs/PanelRecord"
+      },
+      "title": "Panels",
+      "type": "array"
+    },
+    "provenance": {
+      "$ref": "#/$defs/ProvenanceRecord"
+    },
+    "schema_version": {
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "provenance"
+  ],
+  "title": "RLPE RunOutput",
+  "type": "object"
+}

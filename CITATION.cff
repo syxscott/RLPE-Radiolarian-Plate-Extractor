@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: |
+  If you use RLPE in your research, please cite the software itself
+  and the canonical schema version. A Zenodo DOI is forthcoming.
+title: "RLPE — Radiolarian Literature Plate Extractor"
+version: 1.1.0
+date-released: 2026-06-06
+url: "https://github.com/anthropics/RLPE-Radiolarian-Plate-Extractor"
+repository-code: "https://github.com/anthropics/RLPE-Radiolarian-Plate-Extractor"
+license: MIT
+keywords:
+  - radiolaria
+  - paleontology
+  - PDF extraction
+  - panel segmentation
+  - species identification
+  - darwin core
+  - reproducible research
+authors:
+  - family-names: "Scott"
+    given-names: "Syx"
+    affiliation: "RLPE Project"
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+contact:
+  - family-names: "Scott"
+    email: "syxscott@users.noreply.github.com"
+references:
+  - type: software
+    title: "RLPE v1.1.0 — published JSON Schema"
+    version: "1.0.0"
+    date-released: 2026-06-06
+    url: "schemas/rlpe-v1.0.0.json"

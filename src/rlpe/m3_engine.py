@@ -183,7 +183,7 @@ def _normalize_caption_text(text: str) -> str:
 # "Fig. 6 Praewilliriedellum sp." (genus + sp.).
 _CAPTION_CLAUSE_RE = re.compile(
     r"(?:[Ff]igs?\.?)\s*"
-    r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"  # label list "1-3, 5, 7-9"
+    r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"  # label list
     r"\s*[\.:]?\s*"
     r"([A-Z][a-zA-Z-]+"  # Genus (capitalized)
     r"(?:"  # optionally followed by epithet, possibly with cf./aff. between
@@ -193,6 +193,29 @@ _CAPTION_CLAUSE_RE = re.compile(
     r")?"
     r")"
     r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?",
+)
+
+# Danelian-style "1) Species; 2-3) Species" caption clauses. Each
+# clause starts a new line with a bare number + ")" (no "Fig." prefix).
+# This is line-anchored to prevent the regex from matching stray
+# numbers in the prose (e.g. the "1" inside "100 µm" in Danelian 2006
+# Plate 1's preamble). Group 1: label list. Group 2: species. Group 3:
+# optional modifier. Species accepts either a full binomial
+# ("Archaeodictyomitra apiarium") or an abbreviated form ("A. apiarium",
+# "E. ptyctum") — common in Danelian when a genus was just named.
+_DANELIAN_CLAUSE_RE = re.compile(
+    r"^\s*"
+    r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"
+    r"\s*[)\.:]\s+"
+    r"((?:[A-Z][a-zA-Z-]+|\b[A-Z]\.)"  # full Genus OR "A." abbrev
+    r"(?:"  # optional epithet / sp. / cf. / aff.
+    r"\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+"
+    r"|"
+    r"\s+[a-z][a-zA-Z-]+"
+    r")*"
+    r")"
+    r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.))?",
+    re.MULTILINE,
 )
 
 # Pouille-style "Species (Pl. N, figs M)" clause. Used as a fallback
@@ -208,7 +231,9 @@ _CAPTION_CLAUSE_RE = re.compile(
 _POUILE_CLAUSE_RE = re.compile(
     r"^([A-Z][a-z]+"                       # Genus (capitalized)
     r"(?:"                                  # optional uncertainty or epithet
-    r"\s*\?\s+sp\."                        #   "? sp."
+    r"\s*\??\.?\s+sp\."                    #   "? sp." or ". sp." (OCR misreads space as ".")
+    r"(?:\s+(?:[A-Z]\.|[A-Z]))?"           #     S. abbrev OR " sp. A" form
+    r"(?:\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+)?"
     r"|"
     r"\s*\?\s+[a-z][a-z\-]+"               #   "? epithet"
     r"|"
@@ -219,7 +244,7 @@ _POUILE_CLAUSE_RE = re.compile(
     r"\s*"
     r"\([^)]*?"                             # opening paren
     r"[Pp](?:l|late)\.?\s*\d+"             # Pl. N
-    r"\s*,\s*"
+    r"\s*[,\.]\s*"                         # separator ("," or ".")
     r"[Ff]igs?\.?\s*"
     r"(\d+[a-z]?"                          # first fig num
     r"(?:\s*[\-–—]\s*\d+[a-z]?)?"
@@ -390,6 +415,56 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             confidence=0.65,
             notes="regex_fallback_pouille",
             raw_text=line[:120],
+        ))
+
+    # Danelian-style caption fallback: each species clause starts a
+    # new line with a bare number + ")" (no "Fig." prefix), e.g.
+    #   "1) Acastea sp.cf. A. remusa HULL, Mg-100;
+    #    2-3) Archaeodictyomitra apiarium (RÜST), Mg-2; ..."
+    # _CAPTION_CLAUSE_RE requires a "Fig" anchor which these clauses
+    # don't have, and a non-anchored scan matches the wrong "1" in
+    # "100 µm for all figures" (line above). Danelian's clauses are
+    # all on one long line (separated by ";") so a single finditer
+    # pass with MULTILINE only finds the first one — split on ";"
+    # and match each clause independently.
+    danelian_clauses: list[str] = []
+    danelian_lead_re = re.compile(
+        r"\d+(?:\s*[,\-–—]\s*\d+)*\s*[)\.:]\s+[A-Z]"
+    )
+    for chunk in re.split(r"[;\n]", text):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        # Only consider chunks that start with a label (possibly a
+        # range like "2-3" or a list like "2, 3") + ")" / "."
+        if not danelian_lead_re.match(chunk):
+            continue
+        danelian_clauses.append(chunk)
+    for clause in danelian_clauses:
+        m = _DANELIAN_CLAUSE_RE.match(clause)
+        if not m:
+            continue
+        labels_raw = m.group(1)
+        species = m.group(2).strip()
+        modifier = (m.group(3) or "").strip()
+        if not species:
+            continue
+        if "indet" in species.lower() or "& species" in species.lower():
+            continue
+        labels = _regex_expand_label_list(labels_raw)
+        if not labels:
+            continue
+        if any(lbl in seen_labels for lbl in labels):
+            continue
+        for lbl in labels:
+            seen_labels.add(lbl)
+        pairs.append(CaptionPair(
+            labels=labels,
+            species=species,
+            modifier=modifier,
+            confidence=0.65,
+            notes="regex_fallback_danelian",
+            raw_text=clause[:120],
         ))
     return pairs
 

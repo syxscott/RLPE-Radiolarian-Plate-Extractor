@@ -57,6 +57,12 @@ scipy>=1.13.0
 # opendataloader-pdf>=0.0.0
 
 # -------------------------
+# Published JSON Schema (contract)
+# -------------------------
+pydantic>=2.5
+jsonschema>=4.21
+
+# -------------------------
 # Notes
 # -------------------------
 # 1) SAM2 should be installed from source repository (editable install).
