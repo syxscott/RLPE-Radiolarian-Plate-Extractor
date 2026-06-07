@@ -28,8 +28,8 @@ sys.path.insert(0, str(SRC))
 from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 from rlpe.opendataloader_extractor import _find_plate_captions  # noqa: E402
 
-PREDICTIONS_IN = ROOT / "work" / "combined_7_v11.jsonl"
-PREDICTIONS_OUT = ROOT / "work" / "combined_7_v12.jsonl"
+PREDICTIONS_IN = ROOT / "work" / "combined_9_v16_FINAL.jsonl"
+PREDICTIONS_OUT = ROOT / "work" / "combined_9_v17_FINAL.jsonl"
 
 OD_JSON_BY_PAPER = {
     "4f1bf415485765b8": ROOT / "work" / "all7_rerun" / "output" / "od_output"
@@ -47,6 +47,10 @@ OD_JSON_BY_PAPER = {
     "2225994d55021328": next(
         (ROOT / "work" / "pouille_recon" / "od_output" / "4dc5b4d95e910e95").glob("*.json")
     ),
+    "5d5264c7bf0b0a43": ROOT / "work" / "beccaro_only_out" / "output"
+        / "od_output" / "5d5264c7bf0b0a43" / "beccaro2006.json",
+    "2e85364a3c605326": ROOT / "work" / "bragin_only_out" / "output"
+        / "od_output" / "2e85364a3c605326" / "bragin2025.json",
 }
 
 
@@ -268,7 +272,7 @@ def main() -> int:
                     "caption_snippet": "",
                     "ocr_text": "",
                     "metadata": {
-                        "matcher_type": "all-reparsed-2026-06-07",
+                        "matcher_type": "all-reparsed-2026-06-07-v17",
                     },
                 })
 

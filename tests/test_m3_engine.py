@@ -18,6 +18,7 @@ from rlpe.m3_engine import (  # noqa: E402
     _coerce_bbox,
     _expand_label_range,
     _normalize_caption_text,
+    _normalize_species,
     _regex_parse_caption,
     _safe_json_loads,
 )
@@ -256,3 +257,95 @@ def test_regex_parse_caption_handles_curly_quotes():
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
+
+
+# ----- _normalize_species regression tests (N2 + N3 fixes) -----
+# These cover the per-corpus gold-convention rules added in 2026-06-07:
+#   * bandini 2011 uses bare "Nassellaria gen" / "Spumellaria gen"
+#     (not the baum-style "indet.")
+#   * bandini 2011 uses bare "sp" (not "sp." with period)
+#   * bandini 2011 trims subspecies ("mitra gr", "unumaense
+#     pustulatum", "diamphidius hipposidericus") to species-only
+#   * hollis 2006 uses "gr." with period (Haliomma gr. b) and
+#     trinomial autonyms (Lamptonium fabaeforme fabaeforme) — both
+#     must be preserved
+#   * baum 2008 uses "gen. et sp. indet." → "indet."
+
+
+def test_normalize_bandini_gen_preserved():
+    """bandini 2011 gold uses bare 'Nassellaria gen' / 'Spumellaria
+    gen' (no 'indet.', no trailing period). The aggressive fold to
+    'indet.' used to mis-align 4 bandini panels. Now only folds when
+    'indet' is present in the input."""
+    assert _normalize_species("Nassellaria gen") == "Nassellaria gen"
+    assert _normalize_species("Spumellaria gen") == "Spumellaria gen"
+
+
+def test_normalize_baum_indet_folded():
+    """baum 2008 gold uses 'Spumellaria indet. A' / 'indet. B'."""
+    assert _normalize_species("Spumellaria gen. et sp. indet") == "Spumellaria indet."
+    assert _normalize_species("Spumellaria indet. A") == "Spumellaria indet. A"
+
+
+def test_normalize_bandini_gr_stripped():
+    """bandini 2011 caption uses 'mitra gr.' subgenus-group marker;
+    gold records species-only 'Archaeodictyomitra mitra'. Strip the
+    bare 'gr' (no period). Hollis 2006's 'Haliomma gr. b' (with
+    period) is preserved."""
+    assert _normalize_species("Archaeodictyomitra mitra gr") == "Archaeodictyomitra mitra"
+    assert _normalize_species("Transhsuum maxwelli gr") == "Transhsuum maxwelli"
+    assert _normalize_species("Transhsuum cf. maxwelli gr") == "Transhsuum cf. maxwelli"
+    assert _normalize_species("Haliomma gr. b") == "Haliomma gr. b"
+    assert _normalize_species("Haliomma gr. A-K47/4") == "Haliomma gr. A-K47/4"
+
+
+def test_normalize_subspecies_preserved_corpus_specific():
+    """The trinomial "epithet2" tail is preserved at the normalize
+    layer because the gold convention differs by corpus:
+      * bandini 2011 records species-only when the caption has
+        trinomial (`Eucyrtidiellum unumaense pustulatum` -> gold
+        `Eucyrtidiellum unumaense`) — but only for 2 panels; the
+        other 3 `mitra gr` / `maxwelli gr` panels are handled by
+        the bare `gr` strip rule.
+      * beccaro 2006 KEEPS trinomials (`Eucyrtidiellum unumaense
+        dentatum`, `Mirifusus dianae minor`, `Ristola altissima
+        nodosa`).
+      * hollis 2006 KEEPS the trinomial autonym (`Lamptonium
+        fabaeforme fabaeforme`).
+    A global 3-token-strip rule would mis-align beccaro's 3 panels
+    and hollis's autonym. Only the bare `gr` tail is stripped
+    (covered by a separate test above). The 2 bandini `pustulatum`
+    / `hipposidericus` cases remain as residual mismatches and
+    require paper_id-aware normalize to fix.
+    """
+    # bandini trinomial (still mm — corpus-specific, not fixed here)
+    assert _normalize_species("Eucyrtidiellum unumaense pustulatum") == "Eucyrtidiellum unumaense pustulatum"
+    assert _normalize_species("Deviatus diamphidius hipposidericus") == "Deviatus diamphidius hipposidericus"
+    # beccaro trinomial (must preserve)
+    assert _normalize_species("Eucyrtidiellum unumaense dentatum") == "Eucyrtidiellum unumaense dentatum"
+    assert _normalize_species("Mirifusus dianae minor") == "Mirifusus dianae minor"
+    assert _normalize_species("Ristola altissima nodosa") == "Ristola altissima nodosa"
+    # hollis autonym (must preserve)
+    assert _normalize_species("Lamptonium fabaeforme fabaeforme") == "Lamptonium fabaeforme fabaeforme"
+    assert _normalize_species("Ristola altissima altissima") == "Ristola altissima altissima"
+
+
+def test_normalize_bandini_sp_no_period_preserved():
+    """The historical v9 normalize auto-added a period to bare "sp"
+    / "spp" / "indet" / "nov". This is preserved: the rule below
+    keeps the periodised form in the normalize output. The eval
+    harness strips trailing period before comparing to gold, so
+    bandini/danelian/beccaro's bare "sp" gold still matches.
+
+    Hollis 2006's "Haliomma gr. b" (with period) is unaffected by
+    this rule because "gr" is not in the `(sp|spp|indet|nov)`
+    whitelist."""
+    # Historical v9 behaviour — "sp" / "spp" / "indet" / "nov" all
+    # get a period added back if missing.
+    assert _normalize_species("Archaeodictyomitra sp") == "Archaeodictyomitra sp."
+    assert _normalize_species("Pseudoeucyrtis sp") == "Pseudoeucyrtis sp."
+    # Already-periodised input is preserved.
+    assert _normalize_species("Ferresium sp.") == "Ferresium sp."
+    # 'spp' / 'indet' / 'nov' get periods.
+    assert _normalize_species("Archaeodictyomitra spp") == "Archaeodictyomitra spp."
+    assert _normalize_species("Spumellaria indet") == "Spumellaria indet."

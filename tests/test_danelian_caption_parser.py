@@ -45,6 +45,10 @@ def test_danelian_plate1_full_parse():
     species = [p.species for p in pairs]
     # Spot-check 8 specific ones — they cover the three sub-cases
     # (full binomial, abbreviated, "sp." only).
+    # Note: the captured "sp" form gets a period added back by
+    # _normalize_species (historical v9 behaviour, preserved by N3).
+    # The eval harness strips trailing period before comparing to
+    # gold, so the v17 baseline matches v16 here.
     assert "Acastea sp." in species
     assert "Archaeodictyomitra apiarium" in species
     assert "Archaeodictyomitra patricki" in species
@@ -94,7 +98,9 @@ def test_danelian_ignores_preamble():
         "Plate 1\n\nBar scale is 100 µm for all figures.\n\n"
         "1) Acastea sp, Mg-100"
     )
-    # Only 1 pair from the real clause.
+    # Only 1 pair from the real clause. _normalize_species adds
+    # the period back on "sp" (historical v9 behaviour, preserved
+    # by N3). Eval harness strips it before gold match.
     assert len(pairs) == 1
     assert pairs[0].species == "Acastea sp."
 
@@ -112,3 +118,38 @@ def test_danelian_does_not_break_pouille_or_fig_pattern():
     pairs = _regex_parse_caption(fig_text)
     assert len(pairs) == 1
     assert pairs[0].species == "Entactinia itsukichiensis"
+
+
+def test_danelian_sp_aff_epithet_tail():
+    """Regression: boughdiri2007 uses "Genus sp. aff. <epithet>" form
+    (e.g. "Orbiculiforma sp. aff. mclaughlini", "Archaeodictyomitra sp.
+    aff. minoensis"). The DANELIAN clause regex used to truncate these
+    at " sp." and drop the " aff. <epithet>" tail, yielding
+    "Orbiculiforma sp." instead of the full gold form. The DANELIAN
+    and CAPTION clause regexes now share the BAUMGARTNER Shape 1
+    "sp. (cf.|aff.) <W>?. <epithet>" tail branch.
+    """
+    pairs = _regex_parse_caption(
+        "1) Ristola altissima; 3) Orbiculiforma sp. aff. mclaughlini "
+        "PESSAGNO, OTA5; 27) Archaeodictyomitra sp. aff. minoensis"
+    )
+    by_label = {p.labels[0]: p for p in pairs}
+    assert by_label["3"].species == "Orbiculiforma sp. aff. mclaughlini"
+    assert by_label["27"].species == "Archaeodictyomitra sp. aff. minoensis"
+    # Negative check: the bare " sp." (no aff./cf. tail) must still
+    # parse correctly when the species has no aff. form.
+    assert by_label["1"].species == "Ristola altissima"
+
+
+def test_caption_clause_sp_aff_tail():
+    """The same sp. cf./aff. tail must work for the "fig N. Species"
+    form (CAPTION_CLAUSE_RE path). Mirrors test_danelian_sp_aff_epithet_tail
+    for the inverse shape used by the Baumgartner/fig-style papers."""
+    pairs = _regex_parse_caption(
+        "fig 3 Orbiculiforma sp. aff. mclaughlini; fig 27 "
+        "Archaeodictyomitra sp. aff. minoensis"
+    )
+    assert len(pairs) == 2
+    by_label = {p.labels[0]: p for p in pairs}
+    assert by_label["3"].species == "Orbiculiforma sp. aff. mclaughlini"
+    assert by_label["27"].species == "Archaeodictyomitra sp. aff. minoensis"
