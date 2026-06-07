@@ -275,3 +275,41 @@ def test_feng2007_paragraph_caption_does_not_collect_following_paragraph():
             "paragraph→paragraph body text was collected, but the "
             "kinds=(list,) expansion rule should prevent this"
         )
+
+
+class TestDanelianQuestionMarkPrefix:
+    """The Danelian caption parser must accept an optional "?" prefix on
+    the genus (uncertainty marker), as in boughdiri2007 items 16 and 17:
+        16) ?Sethocapsa sp.
+        17) ?Archaeodictyomitra sp.
+    Without the prefix support the parser drops both clauses, costing
+    boughdiri 2/27 panels (recall drops from 14/27 to 12/27).
+    """
+
+    def test_danelian_clause_with_question_prefix(self):
+        from rlpe.m3_engine import _DANELIAN_CLAUSE_RE
+
+        # Item 16
+        m = _DANELIAN_CLAUSE_RE.match("16) ?Sethocapsa sp.")
+        assert m is not None
+        assert m.group(1) == "16"
+        # The "?" is captured in group 2, the species in group 3
+        assert m.group(2) == "?"
+        assert m.group(3) == "Sethocapsa sp"
+
+        # Item 17
+        m = _DANELIAN_CLAUSE_RE.match("17) ?Archaeodictyomitra sp.")
+        assert m is not None
+        assert m.group(1) == "17"
+        assert m.group(2) == "?"
+        assert m.group(3) == "Archaeodictyomitra sp"
+
+    def test_danelian_clause_without_question_prefix_still_works(self):
+        """Regression guard: the existing "no-?" clauses must still match."""
+        from rlpe.m3_engine import _DANELIAN_CLAUSE_RE
+
+        m = _DANELIAN_CLAUSE_RE.match("1) Ristola altissima altissima")
+        assert m is not None
+        assert m.group(1) == "1"
+        assert m.group(2) == ""  # no "?"
+        assert m.group(3) == "Ristola altissima altissima"

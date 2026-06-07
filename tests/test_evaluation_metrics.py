@@ -81,6 +81,21 @@ class TestEvaluate:
         report = evaluate(preds, gold)
         assert report.papers["p1"].species_tp == 1
 
+    def test_question_prefix_normalization(self):
+        """The leading "?" is an uncertainty marker on the genus and
+        is non-significant. Gold may have "?Sethocapsa sp." while
+        predictions have "Sethocapsa sp" (or vice versa); both must
+        count as a species TP."""
+        gold = [GoldPanel("p1", "f1", "1", "?Sethocapsa sp.")]
+        preds = [_pred("p1", "1", "Sethocapsa sp")]
+        report = evaluate(preds, gold)
+        assert report.papers["p1"].species_tp == 1
+        # Reverse: gold without "?", pred with "?" also matches.
+        gold2 = [GoldPanel("p1", "f1", "1", "Sethocapsa sp")]
+        preds2 = [_pred("p1", "1", "?Sethocapsa sp")]
+        report2 = evaluate(preds2, gold2)
+        assert report2.papers["p1"].species_tp == 1
+
     def test_case_insensitive_match(self):
         gold = [GoldPanel("p1", "f1", "1", "Genus Species")]
         preds = [_pred("p1", "1", "genus species")]

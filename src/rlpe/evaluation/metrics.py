@@ -86,8 +86,13 @@ class EvaluationReport:
 def _norm_species(s: str | None) -> str:
     if not s:
         return ""
-    # Normalize whitespace and trim trailing punctuation
-    return " ".join(s.split()).rstrip(".,;")
+    # Normalize whitespace, strip a single leading "?" uncertainty marker
+    # (boughdiri2007 items 16-17: "?Sethocapsa sp."), and trim trailing
+    # punctuation. The leading "?" may appear in gold but not in
+    # predictions (or vice versa) depending on whether the caption
+    # parser captures it; treating it as a non-significant token makes
+    # the eval robust to that asymmetry.
+    return " ".join(s.split()).lstrip("?").rstrip(".,;").lstrip()
 
 
 _PLACEHOLDER_MATCHER_TYPES = frozenset(

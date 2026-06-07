@@ -210,6 +210,9 @@ _DANELIAN_CLAUSE_RE = re.compile(
     r"^\s*"
     r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"
     r"\s*[)\.:]\s+"
+    r"(\??)"  # optional "?" uncertainty marker on the genus
+              # (boughdiri2007 items 16, 17: "?Sethocapsa sp.",
+              # "?Archaeodictyomitra sp.")
     r"((?:[A-Z][a-zA-Z-]+|\b[A-Z]\.)"  # full Genus OR "A." abbrev
     r"(?:"  # optional epithet / sp. / cf. / aff.
     r"\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+"
@@ -516,8 +519,10 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         if not m:
             continue
         labels_raw = m.group(1)
-        species = m.group(2).strip()
-        modifier = (m.group(3) or "").strip()
+        # Group 2: optional "?" prefix (uncertainty marker on genus).
+        # Group 3: the species itself. Group 4: the sp./cf./aff. modifier.
+        species = m.group(3).strip()
+        modifier = (m.group(4) or "").strip()
         if not species:
             continue
         if "indet" in species.lower() or "& species" in species.lower():
