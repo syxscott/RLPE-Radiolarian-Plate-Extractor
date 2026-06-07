@@ -273,8 +273,11 @@ _BAUMGARTNER_CLAUSE_RE = re.compile(
     r"\s+spp?\."                          #   " sp." / " spp."
     r"(?:"                                #   optional modifier tail
     r"\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+"  #   " cf. W. epithet"
-    r"(?:\s+[a-z][a-z\-]{2,})?"           #     optional 2nd epithet
+    r"(?:\s*(?:\.\s*[A-Z]|\s+[a-z][a-z\-]{2,}))?"  # optional trailing ". X" identifier
+                                                       # (e.g. "W. sp. S") or 2nd epithet
     r")?"
+    # standalone trailing identifier (e.g. "Williriedellum sp. S" with no cf./aff.)
+    r"(?:\s+[A-Z](?=[\s,;.(]|$))?"
     r"|"
     # Shape 2: " cf./aff. <W>. <epithet>" without leading "sp."
     r"\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+"

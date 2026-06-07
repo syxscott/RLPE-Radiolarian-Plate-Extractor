@@ -149,3 +149,21 @@ def test_baumgartner_uncertainty_marker_after_genus():
     assert "Stichomitra (?)" in by_label.get("1", "")
     assert "Acaeniotyle (?)" in by_label.get("2", "")
     assert "Hiscocapsa (?)" in by_label.get("3", "")
+
+
+def test_baumgartner_trailing_single_letter_species_identifier():
+    """One-letter species identifiers like "S" in "Williriedellum sp. S"
+    or "W. sp. S" must be preserved in the captured species — without
+    this, the eval fails to match gold that records the "sp. S"
+    identifier (baum2008 panels 3, 4). The trailing identifier is
+    " <uppercase_letter>" optionally preceded by "." for the
+    cf./aff. shape (". S" after the cf.-epithet)."""
+    pairs = _regex_parse_caption(
+        "3- Williriedellum sp. S (= Tricolocapsa sp. S, sensu); "
+        "4- Williriedellum sp. cf. W. sp. S (= Tricolocapsa sp. S)"
+    )
+    by_label = {lbl: p.species for p in pairs for lbl in p.labels}
+    # Panel 3: trailing "S" after "sp."
+    assert by_label.get("3") == "Williriedellum sp. S"
+    # Panel 4: trailing "S" after "W. sp." (dot, space, S)
+    assert by_label.get("4") == "Williriedellum sp. cf. W. sp. S"

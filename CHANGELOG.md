@@ -207,25 +207,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines of metrics.py) without moving any metric. Removed
   both functions and their tests. Aggregate F1 unchanged at
   69.6% — confirms the fallback was inert.
+- **Baumgartner trailing single-letter species identifier** in
+  `_BAUMGARTNER_CLAUSE_RE`: baum2008 panels 3 and 4 use
+  "Williriedellum sp. S" and "Williriedellum sp. cf. W. sp. S"
+  where the trailing "S" is a one-letter species identifier
+  (a "sp. S" species placeholder, common in Mesozoic
+  radiolarian literature for undescribed species). The
+  cf./aff. modifier tail required a lowercase-starting
+  second epithet (`[a-z][a-z\-]{2,}`) and a non-space
+  preceding `\.[A-Z]`, neither of which matches " S"
+  (space + uppercase letter). The fix adds a 2nd-epithet
+  alternation that matches `\.\s*[A-Z]` (allowing optional
+  space between the dot and the letter) and a standalone
+  trailing-identifier group `(?:\s+[A-Z](?=[\s,;.(]|$))?`
+  for the "sp. S" shape (no leading cf./aff.). 1 new
+  regression test in `tests/test_baumgartner_caption_parser.py`.
+  After re-parsing the baum2008 captions and refreshing the
+  predictions, baum F1 moves from 47.8% to 63.6% (+15.8pp),
+  recall 36.1% to 55.7% (+19.6pp). Aggregate 7-paper F1
+  moves from 70.0% to 71.5% (+1.5pp), recall from 57.3% to
+  59.6% (+2.3pp).
+- **`scripts/refresh_baum_predictions.py`**: re-parses the
+  baum2008 OD JSON with the updated regex and refreshes the
+  baum rows in `combined_7_v8.jsonl`, producing
+  `combined_7_v9.jsonl`. The other 6 papers are copied
+  unchanged. The script can be re-run whenever the baum
+  parser changes, without re-running the full pipeline.
 
 ### Known limitations (documented in `EVALUATION.md`)
 
-- **Cross-page caption/figure association** (boughdiri 51.9%
+- **Cross-page caption/figure association** (boughdiri 59.3%
   recall ceiling): the pipeline associates a caption with the
   figure on the same page. Boughdiri's figure is on page 11 but
-  the caption is on page 10, so 13 of 27 panels are still
-  page-render placeholders. Cross-page association is not
-  implemented. (The Roman-numeral half of this paper's issue
-  is fixed; boughdiri is at 68.3% F1, up from 0%.)
-- **Alphabetic panel labels in SEM cross-references**
-  (bandini2006 0% species F1): pipeline OCRs M, L, O, Y
-  correctly but the gold uses numeric labels.
+  the caption is on page 10, so the remaining 11/27 panels
+  cannot be back-filled from a real caption. Cross-page
+  association is not implemented. (The Roman-numeral half of
+  this paper's issue is fixed; the "?Sethocapsa" half is
+  fixed; boughdiri is at 74.4% F1, up from 0%.)
+- **No gold file for bandini2006**: the prior CHANGELOG entry
+  claimed "pipeline OCRs M, L, O, Y correctly but the gold uses
+  numeric labels" — that was inverted. The paper's actual
+  plate labels are numeric (1, 2, 3, ...); the pipeline's
+  panel-label OCR misreads some as alphabetic on rendered
+  panel crops. There is no `data/gold/bandini2006.jsonl` in
+  the current set; the 0% F1 measurement was against a
+  previous (now removed) gold. Re-scoring bandini2006 against
+  a real gold built from the plate captions would require
+  first fixing the panel-label OCR, which is out of scope for
+  the parser/eval work in this release.
 - **Sub-labels in dense plates** (hollis2006 panel-match 53%):
-  "1a", "1b" sub-labels get merged into "1" by the segmenter.
+  the CHANGELOG previously claimed "1a", "1b" sub-labels get
+  merged into "1" by the segmenter, but an audit of the 7-paper
+  gold found no sub-labels (panel_id) in any paper — all gold
+  panel_ids are pure numerics (1, 2, 3, ...) or pure
+  alphabetic (A, B, C, ...). The hollis2006 panel-match gap
+  is actually a panel-detection gap: 9 panels in pl01, 7 in
+  pl02, and 18 in pl03 are present in gold but not detected
+  by the segmenter. Varying k_close from 3 to 11 still misses
+  them; the underlying cause is sub-80px min-side CCs being
+  rejected by the morphology filter and merged-into-larger-
+  blobs that no k_close setting can break. Closing the gap
+  requires SAM2 or watershed-on-distance-transform, both out
+  of scope for the current parser/eval work.
 - **Baumgartner parser preamble coverage** (baumgartner2008
-  recall 30%): the lookbehind fix correctly rejects "Plate 1 -"
-  preambles, but fails when the preamble and the species are
-  run together with no separator.
+  recall 55.7%): the lookbehind fix correctly rejects "Plate 1 -"
+  preambles, and the trailing-identifier fix now preserves
+  one-letter species identifiers like "Williriedellum sp. S".
+  The remaining gap is panel detection in pl03 (8 of 27 panels
+  still missing) — same root cause as the hollis2006
+  panel-detection gap (sub-80px min-side CCs rejected by
+  morphology filter, and merged-into-larger-blobs that no
+  k_close setting breaks). Closing the gap requires SAM2 or
+  watershed, out of scope.
 
 ## [1.1.0] - 2026-06-06
 
