@@ -874,6 +874,7 @@ python scripts/run_pipeline.py \
 - Celery任务骨架：[src/rlpe/worker/tasks.py](src/rlpe/worker/tasks.py)
 - Docker 镜像（多阶段构建）: [Dockerfile](Dockerfile)
 - GitHub Actions CI（pytest + ruff + mypy + eval smoke）: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+- OpenAPI 快照（v1.1.0，17 paths / 8 schemas）: [docs/openapi-1.1.0.json](docs/openapi-1.1.0.json)。重新生成：`PYTHONPATH=src python scripts/gen_openapi.py`
 
 接口示例：
 
@@ -881,6 +882,8 @@ python scripts/run_pipeline.py \
 - `GET /jobs/{job_id}/status`
 - `GET /jobs/{job_id}/result`
 - `POST /review/correction`（人工校验回流）
+
+完整端点定义见 OpenAPI 快照。`/health` 端点（GET）用于容器健康检查（Dockerfile 的 `HEALTHCHECK` 指令指向此端点）。
 
 ### Docker 部署
 
