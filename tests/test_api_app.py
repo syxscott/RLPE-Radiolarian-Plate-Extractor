@@ -122,3 +122,93 @@ def test_missing_job_status_returns_404(client: TestClient) -> None:
     """A job_id that doesn't exist should 404, not 500."""
     r = client.get("/jobs/nonexistent-id-xyz/status")
     assert r.status_code in (404, 400)
+
+
+class TestUploadJobLifecycle:
+    """End-to-end integration test for the upload → status → cancel flow.
+
+    This test exercises the real wire format of the PDF-processing
+    endpoints that the smoke tests deliberately skip. It does NOT
+    wait for the full pipeline to complete (that takes 30+ minutes
+    per paper on a GPU and would dominate CI time) — it verifies
+    that:
+
+    1. POST /jobs/upload accepts a real PDF and returns a job_id.
+    2. GET /jobs/{job_id}/status returns a valid JobStatus for the
+       new job (status: "queued" or "running", not 404).
+    3. POST /jobs/{job_id}/cancel transitions the job to "cancelled".
+
+    The smallest committed PDF (beccaro2006.pdf, 1.1 MB) is used so
+    the upload completes in <100 ms. The full 30-min pipeline is
+    NOT exercised here; that is covered by manual end-to-end runs
+    in the EVALUATION.md "How to add a new paper" section.
+    """
+
+    @pytest.fixture
+    def small_pdf(self) -> Path:
+        # The smallest committed PDF in data/pdfs/ is beccaro2006.pdf
+        # (1.1 MB). Use it as a real but small payload.
+        candidates = [
+            Path(__file__).resolve().parents[1] / "data" / "pdfs" / "beccaro2006.pdf",
+            Path(__file__).resolve().parents[1] / "data" / "pdfs" / "danelian2006.pdf",
+        ]
+        for c in candidates:
+            if c.exists():
+                return c
+        pytest.skip("no committed PDF available in data/pdfs/")
+
+    def test_upload_returns_queued_status(self, client: TestClient, small_pdf: Path) -> None:
+        with small_pdf.open("rb") as f:
+            r = client.post(
+                "/jobs/upload",
+                files={"file": (small_pdf.name, f, "application/pdf")},
+            )
+        assert r.status_code == 200, f"upload failed: {r.text}"
+        body = r.json()
+        assert "job_id" in body, "response missing job_id"
+        assert body["status"] in ("queued", "running"), (
+            f"unexpected initial status: {body['status']!r}"
+        )
+        assert body.get("filename") == small_pdf.name
+
+    def test_upload_then_status_then_cancel(
+        self, client: TestClient, small_pdf: Path
+    ) -> None:
+        # 1. Upload
+        with small_pdf.open("rb") as f:
+            r = client.post(
+                "/jobs/upload",
+                files={"file": (small_pdf.name, f, "application/pdf")},
+            )
+        assert r.status_code == 200, r.text
+        job_id = r.json()["job_id"]
+
+        # 2. Status should resolve (not 404)
+        r_status = client.get(f"/jobs/{job_id}/status")
+        assert r_status.status_code == 200, r_status.text
+        status_body = r_status.json()
+        # The job may be in "queued", "running", or "done" by the time we
+        # query — all three are valid contract states.
+        assert status_body["status"] in ("queued", "running", "done", "failed")
+        assert status_body["job_id"] == job_id
+
+        # 3. Cancel — only valid for queued/running. If already done/failed,
+        # skip the cancel assertion and just verify the lifecycle completed.
+        r_cancel = client.post(f"/jobs/{job_id}/cancel")
+        if status_body["status"] in ("queued", "running"):
+            assert r_cancel.status_code == 200, r_cancel.text
+            assert r_cancel.json()["status"] == "cancelled"
+        else:
+            # Already done — verify the cancel endpoint refuses it (400).
+            assert r_cancel.status_code == 400
+
+    def test_upload_rejects_non_pdf(self, client: TestClient, tmp_path: Path) -> None:
+        fake = tmp_path / "not-a-pdf.txt"
+        fake.write_text("hello world")
+        with fake.open("rb") as f:
+            r = client.post(
+                "/jobs/upload",
+                files={"file": (fake.name, f, "text/plain")},
+            )
+        assert r.status_code == 400, r.text
+        assert "PDF" in r.text or "pdf" in r.text
