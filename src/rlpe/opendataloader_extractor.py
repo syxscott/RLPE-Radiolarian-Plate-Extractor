@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .utils import ensure_dir, stable_id
+try:
+    import fitz  # PyMuPDF — used for page rendering in the caption-band OCR fallback
+except Exception:  # pragma: no cover
+    fitz = None  # type: ignore[assignment]
+
 from .types import PaperMetadata
+from .utils import ensure_dir, stable_id
 
 logger = logging.getLogger(__name__)
 
@@ -555,8 +561,6 @@ def _ocr_caption_band(
 
 # -- plate caption detection -----------------------------------------------
 
-import re as _re
-
 # Match "Plate 1", "Plate 12", or Roman-numeral "Plate I", "Plate IV" —
 # possibly with leading "Explanation of".
 # Examples seen in OA papers:
@@ -569,10 +573,10 @@ import re as _re
 # group 2 is the Roman numeral string (one of I, II, III, IV, V, VI,
 # VII, VIII, IX, X, XI, XII). At least one of the two groups is
 # guaranteed by the alternation.
-_PLATE_CAPTION_RE = _re.compile(
+_PLATE_CAPTION_RE = re.compile(
     r"^\s*(?:Explanation\s+of\s+)?Plate\s+"
     r"(?:(\d+)|(XIV|XIII|XII|XI{0,2}|IX|IV|V(?:III|II|I)?|I{1,3}))\b",
-    _re.IGNORECASE,
+    re.IGNORECASE,
 )
 
 _ROMAN_TO_INT = {
@@ -609,9 +613,9 @@ def _plate_number_from_match(m: re.Match) -> int:
 # with a "Fig. N" reference, e.g. "Fig. 1), PR-SB23 (Plate 6, Fig. 10)"
 # (Bandini 2011 p37) or "Fig. 14 continued c" (Bandini 2011 p34) or
 # the short list-items "Fig. 26", "Fig. 34" (Bandini 2011 p8).
-_FIG_CAPTION_RE = _re.compile(
+_FIG_CAPTION_RE = re.compile(
     r"^\s*Fig(?:ure)?\s*\.?\s*(\d+)([a-z]?)\s*([.\s])\s*(\S)",
-    _re.IGNORECASE,
+    re.IGNORECASE,
 )
 
 # Match an inline plate figure reference inside a body paragraph.
@@ -622,15 +626,15 @@ _FIG_CAPTION_RE = _re.compile(
 #   "Genus species (Pl. 3. fig. 11)"
 # We detect these and reconstruct a per-plate caption by concatenating
 # all matching "Pl. N" / "Plate N" mentions found in the body.
-_PLATE_INLINE_REF_RE = _re.compile(
-    r"\b(?:[Pp]l(?:ate)?\.?)\s*(\d+)\s*[,.]?\s*[Ff]ig(?:s|ure)?\.?\s*(\d+)(?:[a-z\-–—]+\d+)*",
+_PLATE_INLINE_REF_RE = re.compile(
+    r"\b(?:[Pp]l(?:ate)?\.?)\s*(\d+)\s*[,.]?\s*[Ff]ig(?:s|ure)?\.?\s*(\d+)(?:[a-z\-–—]*\d*[a-z]?)*",
 )
 # Match a Genus species (or Genus? sp. cf./aff. species) preceding the
 # plate reference — e.g. "Syntagentactinia biocculosa ... (Pl. 1, figs 5–7)"
 # or "Syntagentactinia? sp. cf. S. excelsa (Pl. 1, figs 1–4)".
 # We grab the species name(s) from the start of the line, then look right-
 # ward for the plate ref. Pouille 2014 is the canonical example.
-_SPECIES_NAME_RE = _re.compile(
+_SPECIES_NAME_RE = re.compile(
     r"([A-Z][a-z]+"          # Genus
     r"(?:"
     r"[?.]?\s+sp\."          # "Genus? sp." (?, period, or no marker — OCR
@@ -639,7 +643,7 @@ _SPECIES_NAME_RE = _re.compile(
     r"(?:\s+(?:[A-Z]\.|[A-Z]))?"  #   S. (abbrev genus) OR " sp. A" form
     r"(?:\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+)?"  # cf./aff. S. species
     r"|"
-    r"\s+[a-z][a-z\-]+"        # Genus species
+    r"[?.]?\s+[a-z][a-z\-]+"   # "Genus? species" (Pouille) or "Genus species"
     r"(?:\s+[a-z][a-z\-]+)*"  # optional third epithet
     r")"
     r")"
@@ -914,7 +918,7 @@ def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tup
             if not sp_match:
                 # Last resort: a single Genus followed by "?" — used
                 # in "Genus? sp." inline references.
-                gen_match = _re.search(r"([A-Z][a-z]+)\s+\?", prefix[-80:])
+                gen_match = re.search(r"([A-Z][a-z]+)\s+\?", prefix[-80:])
                 if gen_match:
                     species = gen_match.group(1) + " ?"
                 else:
@@ -945,7 +949,7 @@ _AUTHOR_CITATION_WORDS = frozenset({
 # species description), not a figure caption. Used by
 # _looks_like_fig_caption to filter out Bandini-style body paragraphs
 # like "Fig. 21 Archaeodictyomitra montisserei (SQUINABOL) Pl. 8 ..."
-_FIG_HEAD_AUTHOR_CITE_RE = _re.compile(r"\(([A-Z]{3,})\)")
+_FIG_HEAD_AUTHOR_CITE_RE = re.compile(r"\(([A-Z]{3,})\)")
 
 
 def _looks_like_fig_caption(content: str) -> bool:
@@ -1181,10 +1185,8 @@ def _infer_section_type(title: str) -> str:
 
 # ---- paper-level metadata scrape from OpenDataLoader JSON -----------------
 
-import re as _re
-
-_DOI_RE = _re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Za-z0-9]+\b")
-_YEAR_RE = _re.compile(r"\b(19[5-9]\d|20[0-4]\d)\b")
+_DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Za-z0-9]+\b")
+_YEAR_RE = re.compile(r"\b(19[5-9]\d|20[0-4]\d)\b")
 _ABSTRACT_MARKERS = ("abstract", "summary", "摘要", "概要")
 _INTRO_MARKERS = ("introduction", "1.", "1 ")
 
@@ -1305,8 +1307,8 @@ def _extract_paper_metadata_from_json(
                 continue
             if any(mk in low[:40] for mk in _ABSTRACT_MARKERS):
                 in_abstract = True
-                stripped = _re.sub(
-                    r"^\s*(abstract|summary|摘要|概要)[:\s\-—]*", "", p, flags=_re.IGNORECASE
+                stripped = re.sub(
+                    r"^\s*(abstract|summary|摘要|概要)[:\s\-—]*", "", p, flags=re.IGNORECASE
                 )
                 if stripped:
                     abstract_parts.append(stripped)
@@ -1328,10 +1330,10 @@ def _extract_paper_metadata_from_json(
 
     # Keywords: from "Key words: A, B, C" or "Keywords: ..." paragraph
     for p in paras:
-        m = _re.match(r"^\s*(?:key\s*words|keywords|关键词)\s*[:：\-—]\s*(.+)$", p, _re.IGNORECASE)
+        m = re.match(r"^\s*(?:key\s*words|keywords|关键词)\s*[:：\-—]\s*(.+)$", p, re.IGNORECASE)
         if m:
             kw_text = m.group(1)
-            parts = _re.split(r"[,;，；、]", kw_text)
+            parts = re.split(r"[,;，；、]", kw_text)
             for kw in parts:
                 kw = kw.strip().rstrip(".")
                 if kw and kw not in meta.keywords:
@@ -1343,14 +1345,14 @@ def _extract_paper_metadata_from_json(
     # number is the journal title.
     for p in paras:
         if "doi.org" in p.lower():
-            m = _re.match(r"^\s*([A-Z][A-Za-z\.\s\-]+?)\s+\d+", p)
+            m = re.match(r"^\s*([A-Z][A-Za-z\.\s\-]+?)\s+\d+", p)
             if m:
                 cand = m.group(1).strip().rstrip(".,")
                 if 4 < len(cand) < 100:
                     meta.journal = cand
                     break
         else:
-            m = _re.match(r"^\s*([A-Z][A-Za-z\.\s]+?)\s+\d+\s*(?:\(\d+\))?\s*[:\.]", p)
+            m = re.match(r"^\s*([A-Z][A-Za-z\.\s]+?)\s+\d+\s*(?:\(\d+\))?\s*[:\.]", p)
             if m:
                 cand = m.group(1).strip().rstrip(".,")
                 if 4 < len(cand) < 100:
@@ -1360,7 +1362,7 @@ def _extract_paper_metadata_from_json(
     # Volume / issue / pages: from the same DOI line
     for p in paras:
         if "doi.org" in p.lower():
-            m = _re.search(r"\b(\d+)\s*(?:\((\d+)\))?\s*[:\s]\s*([0-9–—\-]+)", p)
+            m = re.search(r"\b(\d+)\s*(?:\((\d+)\))?\s*[:\s]\s*([0-9–—\-]+)", p)
             if m:
                 try:
                     if meta.volume is None:
