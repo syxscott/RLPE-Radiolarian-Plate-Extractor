@@ -185,7 +185,7 @@ def _normalize_caption_text(text: str) -> str:
 # "Fig. 6 Praewilliriedellum sp." (genus + sp.), and
 # "Figures 1–2 Species" (plural form, Bandini 2006).
 _CAPTION_CLAUSE_RE = re.compile(
-    r"(?:[Ff]ig(?:s|ures)?\.?)\s*"
+    r"(?:[Ff]ig(?:s|ure|ures)?\.?)\s*"
     r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"  # label list
     r"\s*[\.:]?\s*"
     r"([A-Z][a-zA-Z-]+"  # Genus (capitalized)
@@ -200,6 +200,16 @@ _CAPTION_CLAUSE_RE = re.compile(
     r"(?:\?)?"
     r"(?:"  # optionally followed by epithet, possibly with cf./aff. between
     r"(?:\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+)"  # cf./aff. + species
+    r"|"
+    # "Genus (?) epithet" / "Genus (?) sp." — bandini2006 (Karnezeika)
+    # uses "(?)" to mark a tentative genus assignment, placed BETWEEN
+    # the genus and the epithet ("Archaeocenosphaera (?) mellifera",
+    # "Pseudoacanthosphaera (?) sp."). The "(?)" form is structurally
+    # inside the species token, not a leading uncertainty marker; the
+    # leading-genus "?" branch above only matches when "?" comes right
+    # after the genus letters. We accept the "(?)" before the epithet
+    # OR before a bare "sp." (which then flows into the modifier group).
+    r"(?:\s+\(\?\)\s+(?:(?!sp\b|spp\b|cf\b|aff\b|n\b|nov\b)(?=[a-z])[a-z][a-zA-Z-]+|sp\b|spp\b))"
     r"|"
     # Plain epithet — uses a word-boundary negative lookahead to
     # reject the bare modifier keywords ("sp", "spp", "cf", "aff",

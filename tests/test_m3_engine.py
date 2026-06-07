@@ -254,6 +254,71 @@ def test_regex_parse_caption_handles_curly_quotes():
     assert "Entactinia" in pairs[0].species
 
 
+# ----- Singular "Figure" + "(?)" epithet regression tests (N9 fix) -----
+# These cover the bandini2006 (Karnezeika) caption shapes that the
+# v17 _CAPTION_CLAUSE_RE couldn't parse:
+#   1. "Figure N" (SINGULAR, no trailing 's') was not matched — the
+#      `(?:s|ures)?` group only accepted "Figs" and "Figures" (plural),
+#      so "Figure 3" / "Figure 14" / "Figure 18" all silently fell
+#      through. Fixed by switching to `(?:s|ure|ures)?` so all four
+#      forms ("Fig" / "Figs" / "Figure" / "Figures") are accepted.
+#   2. "Genus (?) epithet" / "Genus (?) sp." — bandini2006 marks
+#      tentative genus assignments with "(?)" placed BETWEEN the genus
+#      and the epithet ("Archaeocenosphaera (?) mellifera",
+#      "Pseudoacanthosphaera (?) sp."). The previous regex had no
+#      branch for this; the leading "?" marker is consumed by the
+#      `(?:\?)?` only when it comes right after the genus letters.
+#      Added a new "Genus (?) epithet" branch to the epithet
+#      alternation.
+
+
+def test_caption_clause_singular_figure():
+    """Singular 'Figure N' (without trailing 's') must match — bandini2006
+    Plate 1 uses this shape throughout: 'Figure 3 Acaeniotyle sp. A',
+    'Figure 14 Pseudoacanthosphaera galeata', etc. Previously the regex
+    only matched 'Fig(s|ures)?' so 'Figure' (singular) fell through."""
+    pairs = _regex_parse_caption(
+        "Figure 3 Acaeniotyle sp. A\n"
+        "Figure 14 Pseudoacanthosphaera galeata"
+    )
+    by_label = {p.labels[0]: p for p in pairs}
+    assert "3" in by_label, f"expected label 3 in {list(by_label)}"
+    # _regex_parse_caption folds the trailing identifier into the
+    # species string so the caller sees the gold form ("Acaeniotyle
+    # sp. A") directly — the modifier is cleared.
+    assert by_label["3"].species == "Acaeniotyle sp. A"
+    assert (by_label["3"].modifier or "").strip() == ""
+    assert "14" in by_label
+    assert by_label["14"].species == "Pseudoacanthosphaera galeata"
+
+
+def test_caption_clause_genus_question_mark_epithet():
+    """'Genus (?) epithet' — bandini2006 uses '(?)' to mark a tentative
+    genus assignment, placed BETWEEN the genus and the epithet
+    ('Archaeocenosphaera (?) mellifera', 'Pseudoacanthosphaera (?) sp.').
+    The epithet branch must accept '(?)' before the epithet token."""
+    pairs = _regex_parse_caption(
+        "Figures 5-6 Archaeocenosphaera (?) mellifera\n"
+        "Figures 7-8 Archaeocenosphaera (?) sp."
+    )
+    assert len(pairs) == 2
+    by_label: dict[str, object] = {}
+    for p in pairs:
+        for lbl in p.labels:
+            by_label[lbl] = p
+    pair_5 = by_label.get("5") or by_label.get("5-6")
+    assert pair_5 is not None
+    # Species field carries '(?) mellifera' — _normalize_species strips
+    # the '(?)' marker so the gold form is 'Archaeocenosphaera mellifera'.
+    assert "Archaeocenosphaera" in pair_5.species
+    assert "mellifera" in pair_5.species
+    pair_7 = by_label.get("7") or by_label.get("7-8")
+    assert pair_7 is not None
+    assert "Archaeocenosphaera" in pair_7.species
+    combined_7 = pair_7.species + " " + (pair_7.modifier or "")
+    assert " sp" in combined_7
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
