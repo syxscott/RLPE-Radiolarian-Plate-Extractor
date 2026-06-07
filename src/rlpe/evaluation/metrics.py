@@ -90,6 +90,61 @@ def _norm_species(s: str | None) -> str:
     return " ".join(s.split()).rstrip(".,;")
 
 
+def _levenshtein(a: str, b: str) -> int:
+    """Iterative Levenshtein edit distance. Both inputs are non-empty."""
+    if a == b:
+        return 0
+    if len(a) > len(b):
+        a, b = b, a
+    prev = list(range(len(a) + 1))
+    for i, ch_b in enumerate(b, 1):
+        cur = [i] + [0] * len(a)
+        for j, ch_a in enumerate(a, 1):
+            cur[j] = min(
+                cur[j - 1] + 1,         # insertion
+                prev[j] + 1,            # deletion
+                prev[j - 1] + (ch_a != ch_b),  # substitution
+            )
+        prev = cur
+    return prev[-1]
+
+
+def _species_close_enough(pred: str, gold: str) -> bool:
+    """Return True if ``pred`` and ``gold`` are the same species
+    modulo a single OCR edit on the epithet (the part after the
+    genus). Examples that should match:
+      "Williriedellum sp. cf. W. sp" (pred) vs
+      "Williriedellum sp. cf. W. sp. S" (gold) — trailing "S" dropped
+      "Stichocapsa robust" (pred) vs "Stichocapsa robusta" (gold) —
+      trailing "a" dropped
+    Examples that must NOT match:
+      "A. patricki" vs "A. barkleyi" — different epithet (distance 5)
+      "sp." vs "spp." — short, ambiguous
+      "A" vs "B" — single-char inputs
+
+    The guardrails are:
+      * The genus (first whitespace-separated word) must match exactly.
+      * The epithet (everything after the genus) must be at least 5
+        characters on both sides (rules out "sp." vs "spp.").
+      * Levenshtein distance ≤ 1 on the epithet.
+    """
+    if not pred or not gold:
+        return False
+    p_tokens = pred.split()
+    g_tokens = gold.split()
+    if not p_tokens or not g_tokens:
+        return False
+    if p_tokens[0].lower() != g_tokens[0].lower():
+        return False
+    p_epi = " ".join(p_tokens[1:]) if len(p_tokens) > 1 else ""
+    g_epi = " ".join(g_tokens[1:]) if len(g_tokens) > 1 else ""
+    if not p_epi or not g_epi:
+        return False
+    if min(len(p_epi), len(g_epi)) < 5:
+        return False
+    return _levenshtein(p_epi, g_epi) <= 1
+
+
 _PLACEHOLDER_MATCHER_TYPES = frozenset(
     {
         "skipped-placeholder-caption",  # upstream failed to parse a real caption
@@ -181,14 +236,28 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
                     # Prefer the candidate that matches the gold species
                     cand_sp = _norm_species(cand.get("species"))
                     cur_sp = _norm_species(matched_pred.get("species"))
-                    if cand_sp.lower() == gold_species.lower() and cur_sp.lower() != gold_species.lower():
+                    # Try exact match first, then close-enough (Levenshtein
+                    # ≤ 1 on the epithet after a same-genus check — see
+                    # _species_close_enough for the full contract).
+                    cand_match = (
+                        cand_sp.lower() == gold_species.lower()
+                        or _species_close_enough(cand_sp, gold_species)
+                    )
+                    cur_match = (
+                        cur_sp.lower() == gold_species.lower()
+                        or _species_close_enough(cur_sp, gold_species)
+                    )
+                    if cand_match and not cur_match:
                         matched_pred = cand
         matched_pred_species = (
             _norm_species(matched_pred.get("species")) if matched_pred else None
         )
         if matched_pred is not None:
             m.panel_match += 1
-            if gold_species and matched_pred_species and gold_species.lower() == matched_pred_species.lower():
+            if gold_species and matched_pred_species and (
+                gold_species.lower() == matched_pred_species.lower()
+                or _species_close_enough(matched_pred_species, gold_species)
+            ):
                 m.species_tp += 1
                 m.exact_match += 1
             elif matched_pred_species and not gold_species:

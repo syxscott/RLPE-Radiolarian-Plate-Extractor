@@ -17,6 +17,7 @@ from rlpe.evaluation import (
     write_json_report,
     write_markdown_report,
 )
+from rlpe.evaluation.metrics import _levenshtein, _species_close_enough
 
 
 GOLD_DIR = Path(__file__).resolve().parents[1] / "data" / "gold"
@@ -114,6 +115,69 @@ class TestEvaluate:
         assert m.exact_match == 0
         assert m.panel_match_rate == 1.0
         assert m.exact_match_rate == 0.0
+
+    def test_same_panel_label_in_different_figures_does_not_collide(self):
+        """Regression test for eval bug #3: pred "1" in fig_1 must not
+        match gold "1" in fig_2. Before the fix, pred_groups was keyed
+        on (paper_id, panel_id) only, so a single pred "1" was
+        overcounting against every figure that contained a "1" panel.
+        In bandini2011, where "1" appears in 6 figures, this single
+        bug inflated species recall by ~5x.
+        """
+        gold = [
+            GoldPanel("p1", "fig_1", "1", "Species in fig 1"),
+            GoldPanel("p1", "fig_2", "1", "Species in fig 2"),
+            GoldPanel("p1", "fig_3", "1", "Species in fig 3"),
+        ]
+        # Single prediction: panel "1" in fig_1 only.
+        preds = [{**_pred("p1", "1", "Species in fig 1"),
+                  "figure_id": "fig_1"}]
+        report = evaluate(preds, gold)
+        m = report.papers["p1"]
+        # Only fig_1 should match. fig_2 and fig_3 are NOT matched
+        # (no prediction in those figures), so species_fn = 2.
+        assert m.species_tp == 1
+        assert m.species_fn == 2
+        assert m.species_fp == 0
+        assert m.n_pred_panels == 1
+
+    def test_figure_id_must_match_for_match_to_count(self):
+        """The figure_id gate: a pred in fig_X must NOT count for a
+        gold entry in fig_Y, even with the same panel_id."""
+        gold = [GoldPanel("p1", "fig_1", "1", "Species A")]
+        preds = [{**_pred("p1", "1", "Species A"),
+                  "figure_id": "fig_2"}]  # wrong figure
+        report = evaluate(preds, gold)
+        m = report.papers["p1"]
+        # panel_match counts gold panels that have at least one pred in
+        # the same figure with the right panel_id; the pred is in the
+        # wrong figure so it doesn't count.
+        assert m.panel_match == 0
+        assert m.species_fn == 1
+        assert m.species_tp == 0
+
+    def test_alphabetic_suffix_panel_label_does_not_count_as_match(self):
+        """Regression test for eval bug #1: prefix-match collapse.
+        Gold "5" must NOT match pred "10" (different panel).
+        Gold "5" + pred "5a" IS allowed (alphabetic suffix is a sub-label).
+        """
+        gold = [GoldPanel("p1", "f1", "5", "Species five")]
+        # Numeric suffix: "10" should NOT match gold "5"
+        preds = [{**_pred("p1", "10", "Species ten"),
+                  "figure_id": "f1"}]
+        report = evaluate(preds, gold)
+        m = report.papers["p1"]
+        assert m.panel_match == 0
+        assert m.species_tp == 0
+        assert m.species_fn == 1
+
+        # Alphabetic suffix: "5a" should match gold "5"
+        preds2 = [{**_pred("p1", "5a", "Species five-a"),
+                   "figure_id": "f1"}]
+        report2 = evaluate(preds2, gold)
+        m2 = report2.papers["p1"]
+        assert m2.panel_match == 1
+        assert m2.species_fn == 1  # species doesn't match but panel does
 
 
 class TestPaperMetrics:
@@ -233,3 +297,73 @@ class TestReports:
         data = json.loads(out.read_text())
         assert "p1" in data["papers"]
         assert "aggregate" in data
+
+
+class TestLevenshteinAndCloseEnough:
+    def test_levenshtein_basic(self):
+        assert _levenshtein("robust", "robusta") == 1
+        assert _levenshtein("abc", "abc") == 0
+        assert _levenshtein("abc", "abcd") == 1
+        assert _levenshtein("kitten", "sitting") == 3
+        assert _levenshtein("a", "b") == 1
+        assert _levenshtein("", "") == 0
+
+    def test_close_enough_trailing_letter_drop(self):
+        # OCR drops the trailing "a" in "robusta" → "robust".
+        assert _species_close_enough(
+            "Stichocapsa robust", "Stichocapsa robusta"
+        )
+        # OCR drops a single character at the end of a long epithet.
+        assert _species_close_enough(
+            "Pseudodictyomitra primitiv", "Pseudodictyomitra primitiva"
+        )
+        # OCR drops a single character in the middle of a long epithet.
+        assert _species_close_enough(
+            "Archaeodictyomitra mountisserei",
+            "Archaeodictyomitra montisserei",
+        )
+
+    def test_close_enough_different_genus_does_not_match(self):
+        # Different genus, even with one edit on the epithet.
+        assert not _species_close_enough(
+            "A. patricki", "A. barkleyi"
+        )
+        assert not _species_close_enough(
+            "Genus_one alpha", "Genus_two alpha"
+        )
+
+    def test_close_enough_short_epithet_does_not_match(self):
+        # Single-letter / "sp." style epithets are too short to risk
+        # a 1-edit false positive.
+        assert not _species_close_enough("Foo sp.", "Foo spp.")
+        assert not _species_close_enough("Foo sp", "Foo spp")
+        # 4 chars each is still too short.
+        assert not _species_close_enough("Foo abc", "Foo abd")
+
+    def test_close_enough_more_than_one_edit_does_not_match(self):
+        # 2 edits on the epithet is outside the contract.
+        assert not _species_close_enough(
+            "Williriedellum sp. cf. W. sp", "Williriedellum carpathicum"
+        )
+
+    def test_close_enough_empty_inputs(self):
+        assert not _species_close_enough("", "Stichocapsa robusta")
+        assert not _species_close_enough("Stichocapsa robusta", "")
+        assert not _species_close_enough("", "")
+
+    def test_close_enough_genus_only_inputs(self):
+        # No epithet on one side → no match.
+        assert not _species_close_enough("Periphaena", "Periphaena? duplus")
+
+    def test_species_close_enough_used_in_evaluate(self):
+        """End-to-end: a pred with a 1-edit OCR noise on the epithet
+        is accepted as a TP instead of FP+FN, lifting F1.
+        """
+        gold = [GoldPanel("p1", "f1", "1", "Stichocapsa robusta")]
+        preds = [_pred("p1", "1", "Stichocapsa robust")]
+        report = evaluate(preds, gold)
+        m = report.papers["p1"]
+        assert m.panel_match == 1
+        assert m.species_tp == 1
+        assert m.species_fp == 0
+        assert m.species_fn == 0
