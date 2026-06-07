@@ -63,6 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsm6 \
         libxext6 \
         libxrender1 \
+        curl \
         tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash rlpe
@@ -82,5 +83,11 @@ VOLUME ["/app/work", "/app/data"]
 
 # Default command: start the API service. Override with `docker run ... rlpe:dev <cmd>`.
 EXPOSE 8000
+# The `/health` endpoint in `src/rlpe/api/app.py:329` returns 200 +
+# `{"status": "ok"}` whenever uvicorn is responsive. The HEALTHCHECK lets
+# orchestrators (k8s, docker-compose, ECS) detect a wedged uvicorn
+# without inspecting logs. `curl` is installed in the runtime stage above.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["uvicorn", "rlpe.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
