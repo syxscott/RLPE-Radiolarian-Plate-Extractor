@@ -192,6 +192,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   available) or watershed-on-distance-transform — both
   substantively different from the current morphology path
   and out of scope for the k_close=7 tuning.
+- **Removed dead `_species_close_enough` / `_levenshtein`
+  fallback**: the species Levenshtein-distance fallback
+  (commit f01ab70) was added as a defensive guardrail against
+  1-edit OCR errors on the epithet, with an explicit
+  "no F1 movement on the current 7-paper set" caveat. A
+  follow-up audit of the 38 gold/pred mismatches confirmed
+  the fallback fires on ZERO entries — every real OCR error
+  in the corpus is a ≥3-edit systematic truncation
+  ("Haliomma gr. b" → "Haliomma gr"), not a 1-character typo.
+  The 5-char epithet minimum and the Levenshtein-≤1 contract
+  were correctly defensive, but defensive code that never
+  fires is dead code: it adds complexity (8 unit tests, 50+
+  lines of metrics.py) without moving any metric. Removed
+  both functions and their tests. Aggregate F1 unchanged at
+  69.6% — confirms the fallback was inert.
 
 ### Known limitations (documented in `EVALUATION.md`)
 

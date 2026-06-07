@@ -17,7 +17,10 @@ from rlpe.evaluation import (
     write_json_report,
     write_markdown_report,
 )
-from rlpe.evaluation.metrics import _levenshtein, _species_close_enough
+# _levenshtein and _species_close_enough were removed (commit follow-up):
+# the species-fallback never fires on the real 7-paper eval set, so the
+# dead code (and its 8 unit tests) are deleted. The 7 tests that
+# exercise the actual evaluate() path remain.
 
 
 GOLD_DIR = Path(__file__).resolve().parents[1] / "data" / "gold"
@@ -297,73 +300,3 @@ class TestReports:
         data = json.loads(out.read_text())
         assert "p1" in data["papers"]
         assert "aggregate" in data
-
-
-class TestLevenshteinAndCloseEnough:
-    def test_levenshtein_basic(self):
-        assert _levenshtein("robust", "robusta") == 1
-        assert _levenshtein("abc", "abc") == 0
-        assert _levenshtein("abc", "abcd") == 1
-        assert _levenshtein("kitten", "sitting") == 3
-        assert _levenshtein("a", "b") == 1
-        assert _levenshtein("", "") == 0
-
-    def test_close_enough_trailing_letter_drop(self):
-        # OCR drops the trailing "a" in "robusta" → "robust".
-        assert _species_close_enough(
-            "Stichocapsa robust", "Stichocapsa robusta"
-        )
-        # OCR drops a single character at the end of a long epithet.
-        assert _species_close_enough(
-            "Pseudodictyomitra primitiv", "Pseudodictyomitra primitiva"
-        )
-        # OCR drops a single character in the middle of a long epithet.
-        assert _species_close_enough(
-            "Archaeodictyomitra mountisserei",
-            "Archaeodictyomitra montisserei",
-        )
-
-    def test_close_enough_different_genus_does_not_match(self):
-        # Different genus, even with one edit on the epithet.
-        assert not _species_close_enough(
-            "A. patricki", "A. barkleyi"
-        )
-        assert not _species_close_enough(
-            "Genus_one alpha", "Genus_two alpha"
-        )
-
-    def test_close_enough_short_epithet_does_not_match(self):
-        # Single-letter / "sp." style epithets are too short to risk
-        # a 1-edit false positive.
-        assert not _species_close_enough("Foo sp.", "Foo spp.")
-        assert not _species_close_enough("Foo sp", "Foo spp")
-        # 4 chars each is still too short.
-        assert not _species_close_enough("Foo abc", "Foo abd")
-
-    def test_close_enough_more_than_one_edit_does_not_match(self):
-        # 2 edits on the epithet is outside the contract.
-        assert not _species_close_enough(
-            "Williriedellum sp. cf. W. sp", "Williriedellum carpathicum"
-        )
-
-    def test_close_enough_empty_inputs(self):
-        assert not _species_close_enough("", "Stichocapsa robusta")
-        assert not _species_close_enough("Stichocapsa robusta", "")
-        assert not _species_close_enough("", "")
-
-    def test_close_enough_genus_only_inputs(self):
-        # No epithet on one side → no match.
-        assert not _species_close_enough("Periphaena", "Periphaena? duplus")
-
-    def test_species_close_enough_used_in_evaluate(self):
-        """End-to-end: a pred with a 1-edit OCR noise on the epithet
-        is accepted as a TP instead of FP+FN, lifting F1.
-        """
-        gold = [GoldPanel("p1", "f1", "1", "Stichocapsa robusta")]
-        preds = [_pred("p1", "1", "Stichocapsa robust")]
-        report = evaluate(preds, gold)
-        m = report.papers["p1"]
-        assert m.panel_match == 1
-        assert m.species_tp == 1
-        assert m.species_fp == 0
-        assert m.species_fn == 0
