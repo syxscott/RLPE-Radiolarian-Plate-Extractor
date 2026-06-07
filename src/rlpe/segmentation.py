@@ -97,14 +97,16 @@ class PanelSegmenter:
 
         Steps (M3-suggested):
           1. Morphological OPEN with 5x5 rect → removes scale bars / labels
-          2. Morphological CLOSE with 9x9 ellipse → fills lattice pores
+          2. Morphological CLOSE with 7x7 ellipse → fills lattice pores
+             (reduced from 9x9: the larger kernel merged entire rows of
+             hollis2006 pl03 into single CCs, dropping 3 panels per plate)
           3. 3x3 erode → breaks spine-to-spine bridges between specimens
           4. Adaptive Gaussian threshold (block=51, C=5) → handles the
              non-uniform background that defeats global Otsu
         """
         kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         img_open = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel_open)
-        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         img_closed = cv2.morphologyEx(img_open, cv2.MORPH_CLOSE, kernel_close)
         kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         img_eroded = cv2.erode(img_closed, kernel_erode, iterations=1)
