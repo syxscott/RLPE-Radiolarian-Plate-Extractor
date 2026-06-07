@@ -159,6 +159,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   41.9% to 47.8% (+5.9pp); aggregate 7-paper F1 from 69.2%
   to 69.6% (+0.4pp). 3 new regression tests in
   `tests/test_baumgartner_caption_parser.py`.
+- **k_close 9→7 segmentation tuning, evaluated end-to-end**:
+  on hollis2006 pl03 the larger close kernel was merging entire
+  rows of touching specimens into single connected components.
+  Re-segmented the 7-paper eval set (combined_7_v7.jsonl) with
+  k_close=7: +93 panels detected across 36 figures
+  (bandini +52, feng +19, baum +13, hollis +9, others +0). The
+  aggregate F1 did NOT move (69.6% → 69.6%) because the new
+  panels lack species assignments — the species comes from
+  caption-parser / OCR upstream of segmentation, and a
+  re-segmentation-only re-run cannot synthesize those. To
+  actually lift F1 from the k_close change we need a full
+  pipeline re-run on the 7-paper set; the resegmentation
+  methodology is captured in
+  `scripts/resegment_with_k_close7.py` for future re-evaluation.
 
 ### Known limitations (documented in `EVALUATION.md`)
 
