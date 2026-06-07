@@ -22,6 +22,8 @@ from rlpe.opendataloader_extractor import _find_plate_captions
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OD_DIR = REPO_ROOT / "work" / "batch4_v2" / "out" / "od_output"
 WEVER_DIR = REPO_ROOT / "work" / "wever_check" / "od_output"
+BOUGHDIRI_DIR = REPO_ROOT / "work" / "boughdiri_only_out" / "output" / "od_output"
+FENG_DIR = REPO_ROOT / "work" / "feng_rerun" / "output" / "od_output"
 
 
 def _load_json(path: Path) -> dict:
@@ -98,3 +100,178 @@ def test_fig_caption_regex_rejects_body_text_references():
     assert not _looks_like_fig_caption(
         "Fig. 21 Archaeodictyomitra montisserei (SQUINABOL) Pl. 8 Figs. 4 and 5"
     )
+
+
+def test_plate_caption_regex_matches_roman_numerals():
+    """Regression: boughdiri2007 uses 'Plate I' (Roman) rather than
+    'Plate 1' (Arabic). Before the fix, _PLATE_CAPTION_RE only matched
+    Arabic digits, so _find_plate_captions returned [] for that paper
+    and the pipeline fell into the page-render fallback with
+    placeholders — giving boughdiri 0% species F1 in earlier evals.
+
+    After the fix the regex also matches Roman numerals I..XII and the
+    helper maps them back to 1..12.
+    """
+    from rlpe.opendataloader_extractor import (
+        _PLATE_CAPTION_RE,
+        _plate_number_from_match,
+    )
+
+    # Arabic digits — works as before.
+    for arabic, expected in [("Plate 1", 1), ("Plate 12", 12)]:
+        m = _PLATE_CAPTION_RE.match(arabic)
+        assert m is not None, f"{arabic!r} should match"
+        assert _plate_number_from_match(m) == expected, (
+            f"{arabic!r} should map to {expected}"
+        )
+
+    # Roman numerals I..XII — newly supported.
+    for roman, expected in [
+        ("Plate I", 1), ("Plate II", 2), ("Plate III", 3),
+        ("Plate IV", 4), ("Plate V", 5), ("Plate VI", 6),
+        ("Plate VII", 7), ("Plate VIII", 8), ("Plate IX", 9),
+        ("Plate X", 10), ("Plate XI", 11), ("Plate XII", 12),
+    ]:
+        m = _PLATE_CAPTION_RE.match(roman)
+        assert m is not None, f"{roman!r} should match"
+        assert _plate_number_from_match(m) == expected, (
+            f"{roman!r} should map to {expected}"
+        )
+
+    # Whitespace and "Explanation of" prefix still work for both kinds.
+    assert _PLATE_CAPTION_RE.match("  Plate IV  ") is not None
+    assert _PLATE_CAPTION_RE.match("Explanation of Plate III") is not None
+    assert _PLATE_CAPTION_RE.match("Explanation of Plate VI") is not None
+
+    # Roman XIII..XX are NOT supported (no radiolarian paper in the
+    # gold set has more than 12 plates). If one ever shows up, the
+    # helper returns 0 and the caption is dropped — that is the
+    # documented behaviour and is better than a partial-digit match
+    # that could collide with an Arabic plate number.
+    m_xiii = _PLATE_CAPTION_RE.match("Plate XIII")
+    # The regex may or may not match; if it does, the helper returns
+    # 0 (no entry in _ROMAN_TO_INT) so the caption is harmlessly
+    # filtered out downstream.
+    if m_xiii is not None:
+        assert _plate_number_from_match(m_xiii) == 0
+
+
+def test_boughdiri2007_finds_plate_i_caption():
+    """Integration test: boughdiri2007 has a 'Plate I' heading on
+    page 10 followed by the species-list paragraph. Before the fix
+    the heading was invisible to _find_plate_captions and the species
+    list was orphaned; after the fix the heading is picked up, the
+    following paragraph is appended, and the downstream parser sees
+    the real species list.
+    """
+    fn = _first_json(BOUGHDIRI_DIR / "178d4e1e9d93136c")
+    caps = _find_plate_captions(_load_json(fn)["kids"])
+    plate_caps = [c for c in caps if c.get("kind") == "plate"]
+    assert len(plate_caps) == 1, (
+        f"expected exactly 1 plate caption in boughdiri, "
+        f"got {len(plate_caps)}: {[c['plate_number'] for c in plate_caps]}"
+    )
+    pc = plate_caps[0]
+    assert pc["plate_number"] == 1, (
+        f"Roman 'Plate I' should map to 1, got {pc['plate_number']}"
+    )
+    assert pc["page_number"] == 10
+    # The heading-only match was expanded with the following
+    # paragraphs (heading → paragraph) so the captured content must
+    # include the species list, not just the bare "Plate I" heading.
+    assert "Ristola altissima" in pc["content"]
+    assert "Archaeodictyomitra" in pc["content"]
+
+
+def test_feng2007_plate_caption_expands_paragraph_to_list():
+    """Regression test: feng2007 has the "Explanation of Plate 1" header
+    + first species clause as a ``paragraph`` element, then a ``list``
+    element with the remaining species clauses (the list is a separate
+    OD element because the species panel-list is rendered as a bulleted
+    list in the PDF). Before the fix the paragraph element was matched
+    as the plate caption but only the truncated first sentence
+    ("Explanation of Plate 1. ﬁgs 1–2. ... 4,") was captured, so
+    panels 5–20 of pl01 had no species assignment and feng2007 F1
+    was 69.57%. After the fix the paragraph element is expanded into
+    the following list element so all 20 panels are captured.
+    """
+    fn = _first_json(FENG_DIR / "e28de2b07edc8950")
+    caps = _find_plate_captions(_load_json(fn)["kids"])
+    plate_caps = [c for c in caps if c.get("kind") == "plate"]
+    assert len(plate_caps) >= 1, (
+        f"expected at least 1 plate caption in feng2007, "
+        f"got {len(plate_caps)}"
+    )
+    pl1 = next(c for c in plate_caps if c["plate_number"] == 1)
+    content = pl1["content"]
+    # The first species clause (truncated paragraph) must be present.
+    assert "Explanation of Plate 1" in content
+    assert "Entactinia itsukichiensis" in content
+    # The list-item continuation (paragraph→list expansion) must also
+    # be present — this is the load-bearing part of the test.
+    assert "Entactinia modesta" in content, (
+        "paragraph→list expansion failed: 'Entactinia modesta' is in "
+        "the list element, not the paragraph, and should have been "
+        "appended by _collect_following_text"
+    )
+    assert "Entactinia wangi" in content
+    assert "ﬁgs 9–20" in content
+
+
+def test_feng2007_paragraph_caption_does_not_collect_following_paragraph():
+    """Anti-regression test for the Fig. 1 (geological map) case in
+    feng2007: a paragraph element that starts with "Fig. 1" but is
+    followed by a body-text paragraph (a species description) and a
+    list of citations must NOT collect the body paragraph. Only the
+    list may be appended. The body paragraph is detected by NOT being
+    in the captured content.
+    """
+    fn = _first_json(FENG_DIR / "e28de2b07edc8950")
+    caps = _find_plate_captions(_load_json(fn)["kids"])
+    fig_caps = [c for c in caps if c.get("kind") == "fig"]
+    # feng2007 has Fig. 1 and Fig. 2 as real figure captions for the
+    # geological map and distribution map, both at the start of the
+    # paper. They are followed by body-text species descriptions and
+    # citation lists, not by a species-list for those figures.
+    fig1 = next((c for c in fig_caps if c["plate_number"] == 1), None)
+    if fig1 is None:
+        return  # No Fig. 1 found, nothing to assert
+    content = fig1["content"]
+    # The Fig. 1 caption title must be present.
+    assert content.startswith("Fig. 1.")
+    # The body-text species description that follows must NOT have
+    # been collected (paragraph→paragraph is a body-text transition,
+    # not a caption-content transition). The next element is a
+    # citation list with year-prefixed entries — those are also NOT
+    # part of the Fig. 1 caption and were added by the v1 fix that
+    # collected lists. We accept that for the v2 (post-fix) state the
+    # citation list IS collected (because the structural pattern is
+    # paragraph→list, identical to pl01); we just verify the next
+    # *paragraph* (body text) is NOT collected.
+    # Find the next paragraph after the Fig. 1 paragraph in the OD JSON.
+    from rlpe.opendataloader_extractor import _iter_all_elements
+    data = _load_json(fn)
+    kids = data["kids"]
+    fig1_idx = None
+    for i, k in enumerate(kids):
+        if isinstance(k, dict) and (k.get("content") or "").startswith("Fig. 1."):
+            fig1_idx = i
+            break
+    assert fig1_idx is not None
+    next_para_text = None
+    for j in range(fig1_idx + 1, min(fig1_idx + 5, len(kids))):
+        k2 = kids[j]
+        if not isinstance(k2, dict):
+            continue
+        if k2.get("type") == "paragraph":
+            txt = (k2.get("content") or "").strip()
+            if txt and not txt[0].isdigit():
+                # Body-text paragraph (doesn't start with a year/digit)
+                next_para_text = txt
+                break
+    # If we found a body-text paragraph, assert it was NOT collected.
+    if next_para_text:
+        assert next_para_text not in content, (
+            "paragraph→paragraph body text was collected, but the "
+            "kinds=(list,) expansion rule should prevent this"
+        )

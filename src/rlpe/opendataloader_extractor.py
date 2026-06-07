@@ -557,15 +557,43 @@ def _ocr_caption_band(
 
 import re as _re
 
-# Match "Plate 1", "Plate 12" — possibly with leading "Explanation of".
+# Match "Plate 1", "Plate 12", or Roman-numeral "Plate I", "Plate IV" —
+# possibly with leading "Explanation of".
 # Examples seen in OA papers:
 #   "Plate 1 Scanning electron microscope pictures of radiolarians..."
 #   "Explanation of Plate 3. ﬁgs 1–5. Trilonche crassispinosa..."
 #   "Plate 5, Figs. 1–10. Caption text..."
+#   "Plate I. Caption for Plate I (Boughdiri 2007 et al.)"
+# The Roman-numeral group is optional; the captured integer is the
+# decimal value (I→1, IV→4, etc.). Group 1 is the Arabic digit string,
+# group 2 is the Roman numeral string (one of I, II, III, IV, V, VI,
+# VII, VIII, IX, X, XI, XII). At least one of the two groups is
+# guaranteed by the alternation.
 _PLATE_CAPTION_RE = _re.compile(
-    r"^\s*(?:Explanation\s+of\s+)?Plate\s+(\d+)\b",
+    r"^\s*(?:Explanation\s+of\s+)?Plate\s+"
+    r"(?:(\d+)|(XIV|XIII|XII|XI{0,2}|IX|IV|V(?:III|II|I)?|I{1,3}))\b",
     _re.IGNORECASE,
 )
+
+_ROMAN_TO_INT = {
+    "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6,
+    "VII": 7, "VIII": 8, "IX": 9, "X": 10, "XI": 11, "XII": 12,
+}
+
+
+def _plate_number_from_match(m: re.Match) -> int:
+    """Extract the integer plate number from a _PLATE_CAPTION_RE match.
+
+    The regex captures either an Arabic digit string (group 1) or a
+    Roman numeral (group 2). Exactly one is set per match.
+    """
+    arabic = m.group(1)
+    if arabic is not None:
+        return int(arabic)
+    roman = m.group(2)
+    if roman is not None:
+        return _ROMAN_TO_INT.get(roman.upper(), 0)
+    return 0
 
 # Match "Fig. 1", "Fig 1", "Figure 1" — covers review/synthesis papers
 # that use "Fig." numbering instead of "Plate" (e.g. Wever 2006, where
@@ -619,12 +647,23 @@ _SPECIES_NAME_RE = _re.compile(
 
 
 def _collect_following_text(kids: list[dict[str, Any]], start_idx: int,
-                             same_page: int, max_items: int = 4) -> str:
+                             same_page: int, max_items: int = 4,
+                             kinds: tuple[str, ...] = ("paragraph", "list")) -> str:
     """Return the concatenated ``content`` of up to ``max_items`` siblings
     after ``start_idx`` on the same page, stopping at the next ``heading``
     or ``image`` / ``table``. Used to expand a bare ``Plate N`` heading
     into a full caption by appending the description paragraph and the
-    species list that usually follow it (Hollis 2006 plates 1-3)."""
+    species list that usually follow it (Hollis 2006 plates 1-3).
+
+    The ``kinds`` tuple controls which sibling element types are appended:
+    defaults to ``("paragraph", "list")`` for heading-style matches.
+    For paragraph/caption-style matches the caller passes
+    ``kinds=("list",)`` so a body-text paragraph that happens to follow
+    the caption header (e.g. the next species description) is NOT
+    collected — the feng2007 "Explanation of Plate N" pattern has the
+    species list rendered as a separate ``list`` element, so list-only
+    is the right call there.
+    """
     parts: list[str] = []
     end = min(len(kids), start_idx + 1 + max_items * 2)
     for j in range(start_idx + 1, end):
@@ -637,11 +676,11 @@ def _collect_following_text(kids: list[dict[str, Any]], start_idx: int,
         sib_page = int(sib.get("page number", 0) or 0)
         if sib_page != same_page:
             break
-        if sib_type in ("paragraph",):
+        if sib_type in ("paragraph",) and "paragraph" in kinds:
             text = (sib.get("content") or "").strip()
             if text:
                 parts.append(text)
-        elif sib_type in ("list",):
+        elif sib_type in ("list",) and "list" in kinds:
             # Flatten list items into a single text block
             items: list[str] = []
             for item in sib.get("list items", []) or []:
@@ -734,7 +773,7 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         #      signal this is a species list, not a figure caption.
         if kind == "fig" and not _looks_like_fig_caption(content):
             continue
-        plate_number = int(m.group(1))
+        plate_number = _plate_number_from_match(m)
         dedup_key = (plate_number, kind or "plate")
         if dedup_key in seen_plates_with_kind:
             continue
@@ -742,13 +781,30 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
             seen_plates.add(plate_number)
         seen_plates_with_kind.add(dedup_key)
         page = int(kid.get("page number", 0) or 0)
-        # For heading-type matches, expand by appending following paragraphs
-        # / lists on the same page (Hollis 2006 has Plate 1 + description
-        # + species list as three separate elements).
+        # For heading/paragraph/caption-type matches, expand by appending
+        # following content on the same page. feng2007 has the
+        # "Explanation of Plate 1" header + first species clause as a
+        # ``paragraph`` element, then a ``list`` element with the remaining
+        # species clauses (the list is a separate OD element because the
+        # species panel-list is rendered as a bulleted list in the PDF).
+        # Hollis 2006 has the bare "Plate N" as a heading, followed by a
+        # description paragraph and a list — same expansion logic, but
+        # the description paragraph IS collected because it's a header→
+        # paragraph transition, not a paragraph→paragraph transition.
+        # Paragraph→paragraph is the body-text continuation pattern (e.g.
+        # a "Fig. 1 Geological map" caption immediately followed by a
+        # species description paragraph) so we exclude paragraphs from
+        # the expansion when the matched element is itself a paragraph.
         if etype == "heading":
-            extra = _collect_following_text(kids, idx, page, max_items=3)
-            if extra:
-                content = content + "\n\n" + extra
+            extra = _collect_following_text(kids, idx, page, max_items=3,
+                                            kinds=("paragraph", "list"))
+        elif etype in ("paragraph", "caption"):
+            extra = _collect_following_text(kids, idx, page, max_items=3,
+                                            kinds=("list",))
+        else:
+            extra = ""
+        if extra:
+            content = content + "\n\n" + extra
         found.append({
             "plate_number": plate_number,
             "page_number": page,
@@ -833,7 +889,7 @@ def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tup
             continue
         page = int(k.get("page number", 0) or 0)
         for m in _PLATE_INLINE_REF_RE.finditer(text):
-            plate_number = int(m.group(1))
+            plate_number = int(m.group(1))  # inline refs are always Arabic
             ref = m.group(0)
             # Walk left from the match to find the species name. Look
             # for a binomial that starts a sentence/line OR follows

@@ -177,12 +177,15 @@ def _normalize_caption_text(text: str) -> str:
 # radiolarian papers, where each clause is "figs X-Y. Species Name" or
 # "fig N. Species Name", separated by periods, semicolons, or newlines.
 # Same pattern family as the LLM prompt example, but deterministic.
-# Range separator: hyphen-minus (-), en-dash (–), or em-dash (—).
+# Range separator: hyphen-minus (-), en-dash (–), em-dash (—), or
+# figure-dash (‒) — the latter is used by some publishers (e.g. Bragin 2025)
+# in place of an en-dash for compact numeric ranges like "1‒3".
 # Handles "Fig. 1 Svinitzium cf. kamoense" (cf./aff. mid-binomial),
-# "Fig. 4 Hiscocapsa lugeoni" (plain binomial), and
-# "Fig. 6 Praewilliriedellum sp." (genus + sp.).
+# "Fig. 4 Hiscocapsa lugeoni" (plain binomial),
+# "Fig. 6 Praewilliriedellum sp." (genus + sp.), and
+# "Figures 1–2 Species" (plural form, Bandini 2006).
 _CAPTION_CLAUSE_RE = re.compile(
-    r"(?:[Ff]igs?\.?)\s*"
+    r"(?:[Ff]ig(?:s|ures)?\.?)\s*"
     r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"  # label list
     r"\s*[\.:]?\s*"
     r"([A-Z][a-zA-Z-]+"  # Genus (capitalized)
@@ -218,6 +221,74 @@ _DANELIAN_CLAUSE_RE = re.compile(
     re.MULTILINE,
 )
 
+# Baumgartner-style "1, 2- Species; 3- Species" clause. Used in
+# Baumgartner 2008 (IRIS) and several other Mesozoic papers that use
+# semicolon-separated clauses with a hyphen-minus between the label
+# list and the species. Anchored on a non-digit boundary to avoid
+# matching inside the prose (e.g. the "1" inside "100 µm").
+# The species is constrained to a binomial shape (Genus + optional
+# epithet) so that "Plate 1 - Middle and Upper..." prose doesn't
+# match. Group 1: label list. Group 2: species.
+#
+# LABEL-LIST extensions beyond the original comma-separated form:
+#   * numeric range "8-10" → 8, 9, 10. The dash BEFORE the species is
+#     a separator; the dash INSIDE the label-list is part of the
+#     range. The longest-match rule (Python `re` leftmost-first) plus
+#     the `(?<![\dA-Za-z])` boundary means a range start "8" only
+#     matches when not preceded by another digit; the trailing dash
+#     is consumed by the range, so the species pattern starts at the
+#     first capital letter ("Zhamoidellum").
+#   * zero-width label-to-species gap: "7Williriedellum" with no
+#     space. The dash-separator is made optional so the regex still
+#     fires when the caption is tight-set.
+#   * uncertainty marker "(?)" between genus and epithet:
+#     "Stichomitra (?) sp. cf. S. (?) acuta", "Acaeniotyle (?) sp.".
+#     The "(?)" is treated as a genus-level uncertainty marker and
+#     stripped from the captured species.
+_BAUMGARTNER_CLAUSE_RE = re.compile(
+    r"(?<![A-Za-z]\s)"  # boundary: not preceded by letter+space (preamble like
+                        # "Plate 1 -", "Sample 1 -", "Figure 1 -")
+    r"(?<![\dA-Za-z])"  # boundary: not preceded by digit/letter (in-word match
+                        # like the "1" inside "100 µm")
+    r"(\d+"                       # first label
+    r"(?:"                                # optional additional labels
+    r"\s*[-–—‒]\s*\d+"                    #   " - N" (range)
+    r"|"
+    r"\s*,\s*\d+"                         #   ", N"
+    r")*"
+    r")"
+    r"\s*[-–—‒]?\s*"                      # separator: optional dash, optional spaces
+                                          # (zero-width gap handles "7Williriedellum"
+                                          #  where the caption has no space)
+    r"([A-Z][a-zA-Z\-]{2,}"               # Genus (capitalized, ≥3 chars)
+    r"(?:\s*\(\?\))?"                     # optional "(?)" uncertainty marker after
+                                          # genus: "Stichomitra (?)", "Acaeniotyle (?)"
+    r"(?:"                                # optional epithet (one shape)
+    # Shape 1: " sp."/"spp." with optional "cf./aff. <W>. <epithet>" tail
+    # Handles "Williriedellum sp. S", "Williriedellum sp. cf. W. sp. S",
+    # "Sethocapsa sp. cf. S. dorysphaeroides", "Linaresia sp. cf. L. chrafatensis".
+    r"\s+spp?\."                          #   " sp." / " spp."
+    r"(?:"                                #   optional modifier tail
+    r"\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+"  #   " cf. W. epithet"
+    r"(?:\s+[a-z][a-z\-]{2,})?"           #     optional 2nd epithet
+    r")?"
+    r"|"
+    # Shape 2: " cf./aff. <W>. <epithet>" without leading "sp."
+    r"\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+"
+    r"(?:\s+[a-z][a-z\-]{2,})?"
+    r"|"
+    # Shape 3: " <epithet>" — regular binomial
+    r"\s+[a-z][a-z\-]{2,}"
+    r")"
+    r"?"                                   # epithet is OPTIONAL (Shape 4 below
+                                           # is "genus only" — see the
+                                           # author-citation guardrail in
+                                           # the post-filter below).
+    r"(?:\s+[a-z][a-z\-]{2,})?"           # optional 2nd epithet (Shape 3 only)
+    r")"
+)
+
+
 # Pouille-style "Species (Pl. N, figs M)" clause. Used as a fallback
 # when the OpenDataLoader pass synthesised a caption shaped like
 #   "Syntagentactinia biocculosa (Pl. 1, figs 5)
@@ -247,9 +318,9 @@ _POUILE_CLAUSE_RE = re.compile(
     r"\s*[,\.]\s*"                         # separator ("," or ".")
     r"[Ff]igs?\.?\s*"
     r"(\d+[a-z]?"                          # first fig num
-    r"(?:\s*[\-–—]\s*\d+[a-z]?)?"
+    r"(?:\s*[\-–—‒]\s*\d+[a-z]?)?"
     r"(?:\s*,\s*\d+[a-z]?"
-    r"(?:\s*[\-–—]\s*\d+[a-z]?)?"
+    r"(?:\s*[\-–—‒]\s*\d+[a-z]?)?"
     r")*"
     r")\s*\)"
 )
@@ -465,6 +536,72 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             confidence=0.65,
             notes="regex_fallback_danelian",
             raw_text=clause[:120],
+        ))
+
+    # Baumgartner-style caption fallback: semicolon-separated clauses
+    # shaped like "1, 2- Williriedellum marcucciae; 3- Williriedellum
+    # sp. S; ..." — used in Baumgartner 2008 (IRIS) and other Mesozoic
+    # papers. _CAPTION_CLAUSE_RE requires "Figs" or ":"/".", neither
+    # of which appears in this convention. Run finditer over the full
+    # text; the regex's lookbehind boundary already prevents matches
+    # inside prose like "100 µm for all illustrations".
+    for m in _BAUMGARTNER_CLAUSE_RE.finditer(text):
+        labels_raw = m.group(1)
+        species = m.group(2).strip()
+        if not species:
+            continue
+        # Filter obvious non-species: location words, lithology, etc.
+        if "indet" in species.lower() or "& species" in species.lower():
+            continue
+        if species.lower() in {"sample", "plate", "scale"}:
+            continue
+        # Genus-only matches (no epithet and no "sp.") are accepted if:
+        #   1. The species is followed by an author citation in
+        #      parentheses — e.g. "Archaeodictyomitra (Mizutani)".
+        #   2. The species is followed by an uncertainty marker — e.g.
+        #      "Triactoma" followed by ";" (next clause) or
+        #      "(?)" / "(?) sp." patterns.
+        #   3. The species is preceded by a species-list preamble
+        #      (i.e. NOT the "Plate N - <prose>" preamble, which is
+        #      already blocked by the regex's lookbehind boundary).
+        # The original filter only accepted option (1), which
+        # over-rejected real single-word genera like "Triactoma" in
+        # the baum pl02 caption ("1, 2- Triactoma; 8-10- ..."). Adding
+        # the additional accept paths lifts that without re-enabling
+        # the original "Plate 1 - Middle" false positive (the
+        # lookbehind `(?<![A-Za-z]\s)` on the regex already blocks
+        # that preamble pattern).
+        tokens = species.split()
+        if len(tokens) == 1 and tokens[0][0].isupper():
+            tail = text[m.end():m.end() + 8].lstrip()
+            tail_first = tail[:1]
+            # Accept if the next non-space character is one of:
+            #   "(" — author citation or "(?)" uncertainty marker
+            #   ";" — next clause
+            #   "." — sentence end
+            #   digit — next label
+            #   end-of-text — final clause
+            # Reject otherwise (prose continuation like
+            # "Middle and Upper..." or "Ferresium in Baumgartner...").
+            if tail_first not in ("(", ";", ".", ""):
+                # Special case: a digit at the start of the tail is
+                # the start of the next label.
+                if not (tail_first.isdigit()):
+                    continue
+        labels = _regex_expand_label_list(labels_raw)
+        if not labels:
+            continue
+        if any(lbl in seen_labels for lbl in labels):
+            continue
+        for lbl in labels:
+            seen_labels.add(lbl)
+        pairs.append(CaptionPair(
+            labels=labels,
+            species=species,
+            modifier="",
+            confidence=0.65,
+            notes="regex_fallback_baumgartner",
+            raw_text=m.group(0)[:120],
         ))
     return pairs
 
