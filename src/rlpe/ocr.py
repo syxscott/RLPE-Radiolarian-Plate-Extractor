@@ -143,7 +143,7 @@ class OCRBackend:
         self,
         image: np.ndarray | str | Path,
         bbox: tuple[int, int, int, int],
-        label_corner: str = "auto",
+        label_corner: str = "tl",
     ) -> list[OCRToken]:
         """OCR the small label area inside a single panel.
 
@@ -157,7 +157,11 @@ class OCRBackend:
         ``label_corner``: ``"tl"`` (top-left, default for radiolarian
         plates), ``"tr"``, ``"bl"``, ``"br"``, or ``"auto"`` which tries
         all four corners and returns the corner with the highest
-        confidence numeric label.
+        confidence numeric label. The default is ``"tl"`` because the
+        vast majority of radiolarian plates have their numeric labels
+        in the top-left corner; ``"auto"`` is 4x slower (one OCR call
+        per corner) and is only needed for plates with non-standard
+        label placement.
         """
         engine = self._lazy_init()
         if engine is None:
