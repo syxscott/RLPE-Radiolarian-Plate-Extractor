@@ -900,7 +900,7 @@ docker run --rm -v "$PWD/work:/app/work" rlpe:dev \
 
 # 跑评估
 docker run --rm -v "$PWD:/app" rlpe:dev eval \
-  --pred /app/work/combined_7_v12_FINAL.jsonl \
+  --pred /app/work/combined_9_v16_FINAL.jsonl \
   --gold /app/data/gold/ \
   --output /app/work/eval.json
 ```
@@ -913,9 +913,9 @@ PYTHONPATH=src python -m pytest tests/ -q
 ruff check src/ tests/ scripts/
 PYTHONPATH=src mypy src/rlpe/
 
-# 跑 v12 评估（必须 ≥ 90% F1）
+# 跑 v16 评估（必须 ≥ 95% F1）
 PYTHONPATH=src python scripts/evaluate.py \
-  --pred work/combined_7_v12_FINAL.jsonl \
+  --pred work/combined_9_v16_FINAL.jsonl \
   --gold data/gold/ \
   --output work/eval.json
 ```

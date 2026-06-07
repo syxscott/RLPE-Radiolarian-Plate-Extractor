@@ -9,8 +9,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Gold set expansion to 10 papers / 614 panels** (item 7 of the
-  7-item gap closure from the 2026-06-07 review):
+- **Per-panel miss list in eval JSON** (`mismatches` and `unmatched`
+  fields on each `PaperMetrics`): the eval report now serializes
+  the per-panel miss details, not just aggregate + per-paper fp/fn
+  counts. `mismatches` are panels that were matched by a prediction
+  but the predicted species differed from the gold (or the pred
+  had no species). `unmatched` are gold panels that had no matching
+  prediction at all. Each entry has `{figure_id, panel_id,
+  expected, predicted}` (the `predicted` key is omitted from
+  `unmatched` entries). Empty gold species are excluded from both
+  lists — a "miss" requires a gold species to miss on. 5 new
+  regression tests in `tests/test_evaluation_metrics.py::TestMissLists`.
+  This surfaced the bandini2006 paper_id mismatch (see "Removed"
+  below) — the 4 `mismatches` for panels 5-8 had predicted
+  "Archaeocenosphaera" but expected "Archaeocenosphaera
+  mellifera" / "Archaeocenosphaera sp", which is suspicious
+  because the actual Karnezeika Plate 1 has Dactyliodiscus,
+  not Archaeocenosphaera.
+- **Per-stage performance benchmark** (`scripts/benchmark.py`):
+  wall-clock timings for 5 independently-runnable pipeline stages
+  (PDF metadata / OpenDataLoader / segmentation / OCR / caption
+  parser) on the smallest committed paper. Output is a stable
+  JSON schema (`rlpe-benchmark-1.0`) suitable for diffing in CI.
+  Sample dev-env timings:
+  caption_parser 0.000s, segmentation 0.003s, pdf_metadata 0.067s,
+  ocr 0.667s, opendataloader 3.07s. The OCR stage gracefully
+  degrades when no OCR backend is installed; OpenDataLoader
+  gracefully degrades when the package isn't installed.
+- **OpenAPI 1.1.0 snapshot** (`docs/openapi-1.1.0.json`,
+  17 paths, 8 schemas): static OpenAPI 3.1.0 spec for the
+  FastAPI app, generated from `app.openapi()` with
+  `info.version` synced to `pyproject.toml`. External
+  integrators no longer need to launch uvicorn to see the
+  schema. The regen script `scripts/gen_openapi.py` reads the
+  version directly from `pyproject.toml` (not
+  `importlib.metadata`, which can be stale in dev envs).
+- **LICENSE (MIT)** at repo root. Previously declared in three
+  places (Dockerfile OCI label, CITATION.cff, README badge) but
+  not committed as a top-level file. Copyright: Syx Scott, 2026.
+- **HEALTHCHECK in Dockerfile** (`HEALTHCHECK --interval=30s
+  --timeout=5s --start-period=10s --retries=3 CMD curl -fsS
+  http://localhost:8000/health || exit 1`): container
+  orchestrators (k8s, docker-compose, ECS) can now detect a
+  wedged uvicorn. `curl` is explicitly installed in the runtime
+  stage. The `/health` endpoint in `src/rlpe/api/app.py:329`
+  returns 200 + `{"status": "ok"}` whenever uvicorn is responsive.
+- **API integration test** (`tests/test_api_app.py::TestUploadJobLifecycle`):
+  3 new tests exercise the upload → status → cancel flow against
+  a real committed PDF (`data/pdfs/beccaro2006.pdf`, 1.1 MB).
+  Verifies the wire format of POST /jobs/upload (200 + job_id),
+  GET /jobs/{id}/status (valid JobStatus), POST /jobs/{id}/cancel
+  (200 + status="cancelled" if still queued/running; 400 if
+  already finished), and the 400 rejection of non-PDF uploads.
+  84s test runtime dominated by the first PaddleOCR init; the
+  smoke tests in the same file remain <1s. 337 tests pass total.
+
+### Fixed
+
+- **Three drifts between claim and reality** (audit 2026-06-07):
+  - `pyproject.toml:7` version `0.1.0` → `1.1.0` (matches
+    `CITATION.cff:6` and git tag `v1.1.0`).
+  - `reproduce_eval.sh` was stale: header said "8 papers /
+    519 panels / 94.80% F1" with F1≥0.93 / panel_match≥0.99
+    thresholds, but the current v16 corpus is 9 papers / 554
+    panels / 96.39% F1 with F1≥0.95 / panel_match≥0.99
+    thresholds. Updated.
+  - `Dockerfile` `COPY work/combined_8_v13_FINAL.jsonl` →
+    `COPY work/combined_9_v16_FINAL.jsonl`; the eval example
+    in the Dockerfile + README also updated. `src/rlpe/api/app.py`
+    still has a hardcoded `version="0.2.0"` for the FastAPI
+    `app.version` (separate from `pyproject.toml`) — this is
+    a follow-up, not blocking the v1.1.0 release.
+- **No missing eval-detail regressions** introduced by the
+  per-panel miss list change: 337 tests pass (was 329; +8 new
+  in TestMissLists + TestUploadJobLifecycle).
+
+### Removed
+
+- **bandini2006 gold** (`data/gold/bandini2006.jsonl`,
+  60 panels). The v15 release added this gold against the
+  Karnezeika, Argolis Peninsula PDF, but the paper_id baked
+  into the gold (`19cd1def9ef08554`) does not match the actual
+  SHA1 of `data/pdfs/bandini2006_greece.pdf`
+  (`b3113f9ee26cb9f6c085105237d5621942603ee7`). The species
+  in the gold (Archaeocenosphaera, Triactoma,
+  Pseudoacanthosphaera, Halesium, Pessagnobrachia) are from a
+  different Mesozoic paper with a similar SEM-plate layout, not
+  the Karnezeika paper (which has Dactyliodiscus,
+  Pseudoaulophacus, Patellula, Acanthocircus, Dictyomitra,
+  Stichomitra). This is a data-integrity issue, not a parser
+  bug. The mismatch went undetected in v15 because the gold
+  builder never verified the PDF SHA1. The v16 per-panel miss
+  list surfaced the issue: 4 mismatches on panels 5-8 where
+  predicted "Archaeocenosphaera" was matched against gold
+  "Archaeocenosphaera mellifera" / "Archaeocenosphaera sp"
+  was suspicious because the actual Karnezeika Plate 1 has
+  Acaeniotyle, not Archaeocenosphaera. The gold is preserved
+  at `work/bandini2006.jsonl.removed` for historical reference;
+  the build script `scripts/build_gold_bandini2006.py` is
+  kept (with a `SystemExit` guard and a docstring explaining
+  the mismatch) so a future re-annotation effort can build a
+  corrected gold against the actual Karnezeika paper. The
+  `work/combined_10_v15_FINAL.jsonl` 10-paper corpus is
+  superseded by `work/combined_9_v16_FINAL.jsonl` (913 rows;
+  bandini2006 prediction rows removed). The actual
+  `data/pdfs/bandini2006_greece.pdf` stays in the repo — it's
+  a real paper, just not yet correctly gold-annotated.
+- Aggregate F1 across the remaining 9 papers:
+  **96.39%** (precision 96.39%, recall 96.39%, panel-match
+  100.00%, exact-match 96.39%). Better than the v15 10-paper
+  95.32% by 1.07pp — the v15 aggregate was pulled down by the
+  broken bandini2006 gold. CI threshold in
+  `.github/workflows/ci.yml` updated to F1≥0.95 /
+  panel_match≥0.99; both pass.
+
+### Added (continued from previous Unreleased)
+
+- **Gold set expansion to 9 papers / 554 panels** (item 7 of the
+  7-item gap closure from the 2026-06-07 review, after the
+  bandini2006 removal):
   - `data/gold/beccaro2006.jsonl` (35 panels; UAZ A-F index species
     on Plate 1 of the Rosso Ammonitico Medio paper, 5d5264c7bf0b0a43).
     Beccaro 2006 scores **97.14% F1** on the v15 predictions — the

@@ -1,21 +1,38 @@
 """Build gold annotations for Bandini 2006 ("Upper Cretaceous
 radiolarians from Karnezeika, Argolis Peninsula, Greece").
 
-We annotate only the radiolarian-bearing plates (Plates 1 and 2).
-Plate 3 of this paper is a foraminifera plate (Helvetoglobotruncana,
-Marginotruncana, etc.) — those are out of scope for RLPE.
+STATUS: DEFERRED — paper_id mismatch (see CHANGELOG 2026-06-07
+"bandini2006 gold removed" entry).
 
-Caption format: "Figures N-M Genus epithet AUTHOR YEAR AlXX_YYY
-(Figs. N and M)" — multi-line paragraph with each figure range
-on its own line. Labels are written as "N" (the first number)
-because the gold standard treats "Figures N-M" as panel N
-(higher-resolution: see Plate 1 in particular, where Figures 5-6
-becomes labels 5 and 6).
+The gold file this script generated used paper_id
+`19cd1def9ef08554` for what was supposed to be the Karnezeika
+paper. The actual SHA1 of `data/pdfs/bandini2006_greece.pdf` is
+`b3113f9ee26cb9f6c085105237d5621942603ee7` — a different paper.
+The species in the gold (Archaeocenosphaera, Triactoma,
+Pseudoacanthosphaera, Halesium, Pessagnobrachia) are from a
+Mesozoic paper with similar SEM-plate layout, not the
+Karnezeika paper (which has Dactyliodiscus, Pseudoaulophacus,
+Patellula, Acanthocircus, Dictyomitra, Stichomitra species
+on its radiolarian plates).
 
-This convention is consistent with the gold for hollis2006 (where
-"Figure N" and "Plate 1" panels are labeled 1..N).
+This script is kept as a historical record of what the gold
+*was* and as a starting point for re-annotation work against
+the correct paper. To rebuild against the actual Karnezeika
+PDF, the species list and panel labels must be re-derived
+from `work/bandini2006_only_out/output/od_output/19cd1def9ef08554/bandini2006_greece.json`
+captions (Plates 1-2, the radiolarian plates; Plate 3 is
+foraminifera and out of scope). Plate 1 has only 2 panels
+(`Acaeniotyle rebellis`), Plate 2 has 32 panels.
 
-Figure_id values are from work/bandini2006_only_out/output/manifests/matches.jsonl.
+The original caption format we expected:
+  "Figures N-M Genus epithet AUTHOR YEAR AlXX_YYY
+   (Figs. N and M)"
+— multi-line paragraph with each figure range on its own
+line. The actual Karnezeika captions match this shape; the
+parser coverage on it should be good once the gold is fixed.
+
+The old, mismatched gold is preserved at
+`work/bandini2006.jsonl.removed` for reference.
 """
 from __future__ import annotations
 
@@ -23,11 +40,13 @@ import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-GOLD_DIR = REPO / "data" / "gold"
 
 
-# Paper ID is the content-based SHA1 of the PDF
-PAPER_ID = "19cd1def9ef08554"
+# Paper ID was the content-based SHA1 of the PDF — but the value
+# baked into the old gold (`19cd1def9ef08554`) does not match the
+# actual SHA1 of `data/pdfs/bandini2006_greece.pdf`
+# (`b3113f9ee26cb9f6c085105237d5621942603ee7`). See the docstring.
+PAPER_ID = "b3113f9ee26cb9f6c085105237d5621942603ee7"
 
 
 PLATE_FIGURES = {
@@ -119,22 +138,13 @@ PLATE_FIGURES = {
 
 
 def main() -> int:
-    GOLD_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = GOLD_DIR / "bandini2006.jsonl"
-    rows = []
-    for fid, panels in PLATE_FIGURES.items():
-        for panel_id, species in panels.items():
-            rows.append({
-                "paper_id": PAPER_ID,
-                "figure_id": fid,
-                "panel_id": panel_id,
-                "species": species,
-            })
-    with out_path.open("w") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    print(f"Wrote {len(rows)} rows to {out_path.relative_to(REPO)}")
-    return 0
+    raise SystemExit(
+        "bandini2006 gold is DEFERRED: paper_id mismatch. "
+        "See the docstring at the top of this file and "
+        "CHANGELOG.md (2026-06-07, 'bandini2006 gold removed' entry). "
+        "The old gold is preserved at work/bandini2006.jsonl.removed. "
+        "Re-annotation against the actual Karnezeika PDF is a future task."
+    )
 
 
 if __name__ == "__main__":
