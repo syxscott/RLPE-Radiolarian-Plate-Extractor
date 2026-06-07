@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Trailing specimen identifiers in Danelian-style captions**
+  (hollis2006 plate 3, feng2007): the parser now recovers the
+  "Haliomma gr. b", "Haliomma gr. A-K47/4", and "Corythomelissa sp.
+  A. B-F36/0" forms that hollis2006 uses to disambiguate
+  multi-specimen plates. Three regex changes were required:
+  (1) `_DANELIAN_CLAUSE_RE` accepts `gr.` and `indet.` as modifier
+  keywords (in addition to the existing `sp./spp./cf./aff./n.sp.`);
+  (2) a 5th capturing group was added for a trailing identifier
+  (single letter, digit, or alphanumeric token with optional
+  `-`/`/` separators, optionally followed by a `.`-separated
+  second segment like "A. B-F36/0");
+  (3) the plain-epithet pattern was split into two sub-cases so
+  "Acastea sp," (no period) is still captured as epithet when the
+  modifier cannot match. The parser folds modifier + trailing-id
+  into the species string, so the caller sees the gold form
+  ("Corythomelissa sp. A. B-F36/0"). Aggregate F1: 94.80% → **96.34%**.
+- **Eval normalization for "X gen. et sp. indet" and trailing
+  Author tokens** (hollis2006 plate 1 item 22, plate 2 item 22):
+  `_norm_species` in `rlpe.evaluation.metrics` now collapses the
+  verbose "Spumellaria gen. et sp. indet" form to "Spumellaria indet"
+  and strips a trailing Author token (e.g. "Theocorys? phyzella
+  Foreman") when the rest of the string is a binomial. Both rules
+  are gated to avoid eating real species components (the author
+  strip requires a `<Genus>? <epithet>... <Author>` shape).
+- **GHCR Docker push in CI**: a new `docker` job in
+  `.github/workflows/ci.yml` builds the multi-stage `Dockerfile`
+  and pushes the image to `ghcr.io/${{ github.repository }}` on
+  every push to main, develop, and tagged releases. Tags include
+  `v1.2.3` semver, `1.2` major.minor, and the commit SHA. The job
+  uses Buildx with GHA cache and OCI labels for traceability.
+  PRs from forks skip the push (no GHCR token) but the build is
+  verifiable locally with `docker build -t rlpe:dev .`.
 - **Watershed post-processing in `_segment_with_opencv`** (Phase A.2):
   the OpenCV segmentation path now applies a distance-transform-based
   watershed splitter to large CCs that survive the initial
@@ -67,13 +99,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prediction row whose figure_id doesn't match. Filter rejects
   rows with non-positive bbox width/height. Replaces the
   per-paper `refresh_<paper>_predictions.py` scripts.
-- **`EVALUATION.md` v12 update**: per-paper breakdown table with
-  v12 numbers (baum 100%, feng 86.9%, hollis 86.3%, boughdiri
-  92.6%, bandini 94.0%, bragin 100%, danelian 100%, pouille 100%,
-  aggregate 93.06% / panel_match 100% / exact 93.06%), v9→v12
-  improvement trajectory (71.5% → 93.06% F1, +21.6pp), and the
-  path-forward notes (Phase A.2 SAM2/watershed for the remaining
-  7% miss).
+- **`EVALUATION.md` v14 update**: per-paper breakdown table with
+  v14 numbers (baum 100%, feng 97.6%, hollis 98.6%, boughdiri
+  92.6%, bandini 94.0%, bragin 100%, danelian 97.6%, pouille 100%,
+  aggregate 96.34% / panel_match 100% / exact 96.34%), v9→v14
+  improvement trajectory (71.5% → 96.34% F1, +24.8pp), and the
+  path-forward notes (the 3.66% remaining miss is dominated by
+  bandini2011 cross-page label noise and feng2007 OCR substitution).
 - **Baumgartner caption parser** (`_BAUMGARTNER_CLAUSE_RE` in
   `rlpe.m3_engine`): handles the "1, 2- Species; 3- Species" convention
   found in baumgartner2008, with two separate lookbehinds (Python `re`

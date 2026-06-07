@@ -293,14 +293,19 @@ class TestDanelianQuestionMarkPrefix:
         assert m.group(1) == "16"
         # The "?" is captured in group 2, the species in group 3
         assert m.group(2) == "?"
-        assert m.group(3) == "Sethocapsa sp"
+        # The "sp" token is captured in group 4 (modifier) rather than
+        # group 3 (epithet) so the hollis-style trailing-ID pattern
+        # ("sp. A. B-F36/0") can still match. The parser folds them.
+        assert m.group(3) == "Sethocapsa"
+        assert m.group(4) == " sp."
 
         # Item 17
         m = _DANELIAN_CLAUSE_RE.match("17) ?Archaeodictyomitra sp.")
         assert m is not None
         assert m.group(1) == "17"
         assert m.group(2) == "?"
-        assert m.group(3) == "Archaeodictyomitra sp"
+        assert m.group(3) == "Archaeodictyomitra"
+        assert m.group(4) == " sp."
 
     def test_danelian_clause_without_question_prefix_still_works(self):
         """Regression guard: the existing "no-?" clauses must still match."""

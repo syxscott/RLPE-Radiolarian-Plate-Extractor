@@ -122,8 +122,7 @@ def test_cross_figure_reassign_moves_orphan_to_nearest_plate():
     """An orphan figure (no species, placeholder caption) on page 13
     sitting between two real plates on pages 12 and 15 should be
     absorbed by the nearest real plate."""
-    from rlpe.pipeline import RadiolarianPipeline
-    pipe = RadiolarianPipeline.__new__(RadiolarianPipeline)
+    from rlpe.cross_figure import _cross_figure_reassign_results
     # real plate on p12, orphan on p13, real plate on p15
     results = []
     # Plate 1: 2 panels, 1 with species
@@ -145,7 +144,7 @@ def test_cross_figure_reassign_moves_orphan_to_nearest_plate():
             label_text=str(i+1), panel_id=str(i+1),
         ))
 
-    out = pipe._cross_figure_reassign(results)
+    out = _cross_figure_reassign_results(results)
     figure_ids = [r["figure_id"] for r in out]
     # The 3 orphan panels should have been moved to pl01 (page 12)
     # since that's the nearest real plate.
@@ -160,8 +159,7 @@ def test_cross_figure_reassign_moves_orphan_to_nearest_plate():
 def test_cross_figure_reassign_keeps_orphan_far_from_plate():
     """An orphan figure on page 1 with no real plate anywhere within 3
     pages is left alone (we don't move it to a far-away plate)."""
-    from rlpe.pipeline import RadiolarianPipeline
-    pipe = RadiolarianPipeline.__new__(RadiolarianPipeline)
+    from rlpe.cross_figure import _cross_figure_reassign_results
     results = []
     # Real plate on page 20
     for i, sp in enumerate([None, "SpeciesX"]):
@@ -175,7 +173,7 @@ def test_cross_figure_reassign_keeps_orphan_far_from_plate():
             "fig_orphan", 1, species=None, caption="Auto-generated figure for page 1",
             label_text=None, panel_id=None,
         ))
-    out = pipe._cross_figure_reassign(results)
+    out = _cross_figure_reassign_results(results)
     moved = [r for r in out if r.get("metadata", {}).get("reassigned_from_figure") == "fig_orphan"]
     assert len(moved) == 0  # far away, don't touch
 
@@ -184,8 +182,7 @@ def test_cross_figure_reassign_keeps_figure_with_real_caption_even_if_no_species
     """A figure with a real (non-placeholder) caption but no species
     matched should NOT be treated as orphan — it might be a plate whose
     caption parser missed the species. Leave it alone."""
-    from rlpe.pipeline import RadiolarianPipeline
-    pipe = RadiolarianPipeline.__new__(RadiolarianPipeline)
+    from rlpe.cross_figure import _cross_figure_reassign_results
     results = []
     for i, sp in enumerate([None, "SpeciesY"]):
         results.append(_make_result(
@@ -198,7 +195,7 @@ def test_cross_figure_reassign_keeps_figure_with_real_caption_even_if_no_species
             "fig_real", 13, species=None, caption="Plate 2. Some complicated caption without extracted species.",
             label_text=str(i+1), panel_id=str(i+1),
         ))
-    out = pipe._cross_figure_reassign(results)
+    out = _cross_figure_reassign_results(results)
     moved = [r for r in out if r.get("metadata", {}).get("reassigned_from_figure") == "fig_real"]
     assert len(moved) == 0  # real caption → keep as a real figure
 

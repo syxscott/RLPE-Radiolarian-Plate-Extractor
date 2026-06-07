@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main, develop, feature/**, fix/**]
+    # Tag pushes (e.g. v1.2.3) trigger a GHCR image build with semver tags.
+    tags: ["v*.*.*"]
   pull_request:
     branches: [main, develop]
 
@@ -99,12 +101,12 @@ jobs:
           mypy src/rlpe/ --ignore-missing-imports --no-strict-optional --no-warn-return-any
 
   eval-smoke:
-    name: eval smoke (gold-set + 7-paper v12)
+    name: eval smoke (gold-set + 8-paper v13)
     runs-on: ubuntu-latest
-    # The 7-paper v12 predictions and gold set are committed to the
-    # repo, so a fresh checkout can re-run the eval without re-running
-    # the full pipeline. This guards against metric regressions in
-    # parser/normalization changes.
+    # The 8-paper v13 predictions (7 v12 + 1 bragin synth) and gold set
+    # are committed to the repo, so a fresh checkout can re-run the
+    # eval without re-running the full pipeline. This guards against
+    # metric regressions in parser/normalization changes.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -119,12 +121,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[schema]"
-      - name: Verify v12 predictions are present
+      - name: Verify v13 predictions are present
         run: |
-          test -f work/combined_7_v12_FINAL.jsonl
+          test -f work/combined_8_v13_FINAL.jsonl
           test -f data/gold/bandini2011.jsonl
           test -f data/gold/baumgartner2008.jsonl
           test -f data/gold/boughdiri2007.jsonl
+          test -f data/gold/bragin2025.jsonl
           test -f data/gold/danelian2006.jsonl
           test -f data/gold/feng2007.jsonl
           test -f data/gold/hollis2006.jsonl
@@ -134,10 +137,10 @@ jobs:
           PYTHONPATH: src
         run: |
           python scripts/evaluate.py \
-            --pred work/combined_7_v12_FINAL.jsonl \
+            --pred work/combined_8_v13_FINAL.jsonl \
             --gold data/gold/ \
             --output work/ci_eval.json
-      - name: Assert aggregate F1 ≥ 90%
+      - name: Assert aggregate F1 ≥ 95%
         env:
           PYTHONPATH: src
         run: |
@@ -147,7 +150,66 @@ jobs:
               eval_data = json.load(f)
           f1 = eval_data['aggregate']['species_f1']
           pm = eval_data['aggregate']['panel_match_rate']
-          assert f1 >= 0.90, f'aggregate F1 regressed: {f1:.4f} (must be >= 0.90)'
+          assert f1 >= 0.95, f'aggregate F1 regressed: {f1:.4f} (must be >= 0.95)'
           assert pm >= 0.99, f'panel_match regressed: {pm:.4f} (must be >= 0.99)'
           print(f'PASS: aggregate F1 = {f1:.4f}, panel_match = {pm:.4f}')
           "
+
+  docker:
+    name: Build & push Docker image to GHCR
+    runs-on: ubuntu-latest
+    # Only build on push to main, develop, and tagged releases. PRs from
+    # forks cannot access the GHCR token, so we skip the push step
+    # there and only verify the image builds.
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # Semver tags for v*.*.* releases; SHA + branch tags otherwise.
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+          labels: |
+            org.opencontainers.image.title=RLPE
+            org.opencontainers.image.description=Radiolarian Literature Plate Extractor
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Use the GitHub Actions cache to speed up repeat builds.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

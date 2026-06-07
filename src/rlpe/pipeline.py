@@ -14,34 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 # --- Pre-filters for non-specimen content ----------------------------------
+# ``_looks_like_placeholder_caption`` lives in ``text_filters`` so the
+# evaluation harness and unit tests can import it without dragging in
+# the torch/gemma/paddleocr chain pulled by the full pipeline.
 
-_PLACEHOLDER_CAPTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"page\s+\d+\s*(auto[- ]?generated|placeholder|header|footer)", re.IGNORECASE),
-    re.compile(r"(auto[- ]?generated|placeholder)\s+(image|figure|page)", re.IGNORECASE),
-    # Chinese: 自动生成 (auto-generated), 占位 (placeholder), 页眉/页脚 (header/footer)
-    re.compile(r"(自动生成|占位图|占位|页眉|页脚)"),
-    re.compile(r"^\s*page\s+\d+\s*$", re.IGNORECASE),
-    re.compile(r"^\s*(running\s+head|header|footer)\s*$", re.IGNORECASE),
-    # Copyright/license lines (allow attribution continuation)
-    re.compile(r"^\s*(©|copyright|licen[sc]e|creative\s+commons)[\s.©]", re.IGNORECASE),
-    re.compile(r"\b(scientific|elsevier|springer|wiley|tandfonline)\s*$", re.IGNORECASE),
-)
-
-
-def _looks_like_placeholder_caption(caption_text: str) -> bool:
-    """Heuristic: return True when the caption itself signals non-specimen content.
-
-    The OpenDataLoader extractor sometimes picks up page headers, running
-    titles, or auto-generated watermarks as a "figure" with a short caption.
-    Sending those to M3 wastes API calls and produces confusing "not a
-    specimen" responses that get surfaced as fallback errors.
-    """
-    if not caption_text:
-        return False
-    text = caption_text.strip()
-    if len(text) <= 3:
-        return True
-    return any(p.search(text) for p in _PLACEHOLDER_CAPTION_PATTERNS)
+from .text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
 
 from .association import match_panels
 from .config import PipelineConfig
@@ -1034,15 +1011,11 @@ class RadiolarianPipeline:
 
     @staticmethod
     def _matches_have_fallback_error(matches: list) -> bool:
-        return any(
-            # gemma_error = real API/runtime error
-            # gemma_fallback = M3 returned a low-confidence verdict
-            # We ignore m3_rejected_non_radiolarian — that's a normal
-            # "this isn't a specimen" answer, not an error.
-            (m.metadata.get("gemma_error") or m.metadata.get("gemma_fallback"))
-            and not m.metadata.get("m3_rejected_non_radiolarian")
-            for m in matches
-        )
+        # Thin wrapper kept for backward compatibility. The real
+        # implementation lives in ``text_filters`` so the eval harness
+        # and unit tests can import it without pulling torch / gemma.
+        from .text_filters import matches_have_fallback_error
+        return matches_have_fallback_error(matches)
 
     def _attach_paleodb_metadata(self, matches: list) -> None:
         """Look up each unique species in PBDB and attach taxonomy + occurrences.
@@ -1230,100 +1203,14 @@ class RadiolarianPipeline:
     ) -> list[dict[str, Any]]:
         """Reassign panels from orphan figures to the nearest real plate figure.
 
-        Background: OpenDataLoader sometimes extracts a real plate image as
-        one figure and a smaller sub-image of the same plate (an index map,
-        a thumbnail, a half-resolution duplicate) as a separate "figure".
-        The sub-image goes through the pipeline and produces N panels with
-        no species (because its caption is either empty or a placeholder).
-        The actual species live on the plate figure's caption, two pages
-        away. Without reassignment, those N panels are silently lost.
-
-        Strategy: a figure is "orphan" if (a) it has 0 species matched,
-        (b) its caption is missing/empty/placeholder, and (c) it sits
-        between two real plate figures (or within 3 pages of one). Move
-        its panels to the nearest plate figure.
+        Thin instance wrapper around the module-level helper so the
+        public method is preserved. The real implementation lives in
+        ``rlpe.cross_figure._cross_figure_reassign_results`` so the
+        eval harness and unit tests can call it without importing
+        the full pipeline (and pulling in torch / gemma / paddleocr).
         """
-        if not results:
-            return results
-
-        # Group by figure
-        by_figure: dict[str, list[dict[str, Any]]] = {}
-        for r in results:
-            by_figure.setdefault(r.get("figure_id", ""), []).append(r)
-
-        # Identify "real plate" figures vs orphans. A real plate figure
-        # has a non-placeholder caption OR at least one panel with a
-        # species assignment.
-        figure_caption: dict[str, str] = {}
-        figure_page: dict[str, int] = {}
-        figure_species_count: dict[str, int] = {}
-        for fid, panels in by_figure.items():
-            cap = ""
-            page = 0
-            sp_count = 0
-            for r in panels:
-                meta = r.get("metadata") or {}
-                if not cap:
-                    cap = (r.get("caption_snippet") or "")
-                if not page:
-                    page = int(meta.get("page_index") or 0)
-                if r.get("species"):
-                    sp_count += 1
-            figure_caption[fid] = cap
-            figure_page[fid] = page
-            figure_species_count[fid] = sp_count
-
-        def _is_orphan(fid: str) -> bool:
-            cap = figure_caption.get(fid, "") or ""
-            if not cap:
-                return True
-            if _looks_like_placeholder_caption(cap):
-                return True
-            if figure_species_count.get(fid, 0) == 0:
-                # No species matched AND caption is non-empty (not
-                # placeholder) — could still be a real plate that the
-                # caption-parser missed. We keep it as a real plate
-                # in that case so we don't accidentally drain it.
-                return False
-            return False
-
-        real_plates = [fid for fid in by_figure if not _is_orphan(fid)]
-        orphans = [fid for fid in by_figure if _is_orphan(fid)]
-        if not real_plates or not orphans:
-            return results
-
-        reassigned: list[dict[str, Any]] = []
-        for r in results:
-            fid = r.get("figure_id", "")
-            if fid in orphans and real_plates:
-                # Find the nearest real plate by absolute page diff.
-                rp = figure_page.get(fid, 0)
-                nearest = min(
-                    real_plates,
-                    key=lambda f: abs(figure_page.get(f, 0) - rp),
-                )
-                # Reassign only if the page gap is small (<=3).
-                if abs(figure_page.get(nearest, 0) - rp) <= 3:
-                    new = dict(r)
-                    new["figure_id"] = nearest
-                    new["metadata"] = dict(r.get("metadata") or {})
-                    new["metadata"]["reassigned_from_figure"] = fid
-                    new["metadata"]["reassigned_reason"] = (
-                        "orphan figure, caption empty/placeholder, "
-                        f"merged into plate figure {nearest}"
-                    )
-                    reassigned.append(new)
-                    continue
-            reassigned.append(r)
-        if len(reassigned) != len(results):
-            return results
-        moved = sum(
-            1 for r in reassigned
-            if (r.get("metadata") or {}).get("reassigned_from_figure")
-        )
-        if moved:
-            logger.info("Cross-figure reassignment: moved %d panels from orphan figures.", moved)
-        return reassigned
+        from .cross_figure import _cross_figure_reassign_results
+        return _cross_figure_reassign_results(results)
 
 
 # ---- module-level helpers -----------------------------------------------

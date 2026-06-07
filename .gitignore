@@ -26,8 +26,16 @@ Thumbs.db
 # Project runtime artifacts
 uploads/
 service_work/
-work/
+/work/
 output/
+
+# Exception: committed baseline prediction files used by the eval-smoke
+# CI job. These live in work/ for runtime convenience but are committed
+# as small (4 MB) snapshots so the CI can re-run the eval without
+# re-executing the full pipeline. The git index captures them via
+# `git add -f work/combined_*_FINAL.jsonl`.
+!work/combined_*_FINAL.jsonl
+!work/combined_*_v*.jsonl
 
 # Model weights and large binaries
 *.pt

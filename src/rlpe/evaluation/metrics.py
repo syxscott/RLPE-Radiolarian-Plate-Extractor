@@ -16,6 +16,7 @@ any paper with a gold JSONL.
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -91,7 +92,35 @@ def _norm_species(s: str | None) -> str:
     # predictions (or vice versa) depending on whether the caption
     # parser captures it; treating it as a non-significant token makes
     # the eval robust to that asymmetry.
-    return " ".join(s.split()).lstrip("?").rstrip(".,;").lstrip()
+    s = " ".join(s.split()).lstrip("?").rstrip(".,;").lstrip()
+    # Collapse the verbose "X gen. et sp. indet" form (gold convention in
+    # hollis2006 plate 1 item 22) to the abbreviated "X indet" form that
+    # the caption parser produces. This is purely a gold/prediction
+    # asymmetry fix — both forms are equivalent in the literature, and
+    # the abbreviated form is the IRIS/Modern standard.
+    s = re.sub(
+        r"^(spumellaria|nassellaria)\s+gen(?:\.\s+et\s+sp\.)?\s+indet$",
+        lambda m: m.group(1) + " indet",
+        s,
+        flags=re.IGNORECASE,
+    )
+    # Strip a trailing Author token (e.g. "Theocorys? phyzella Foreman"
+    # in hollis2006 plate 2 item 22). The caption parser does not capture
+    # author names; gold often does for the first appearance of a species.
+    # Only strip if the species already has a binomial (Genus epithet)
+    # shape so we don't accidentally reduce "Genus Species" to "Genus"
+    # (the case-insensitive test would then mismatch the prediction).
+    if re.match(
+        r"^[A-Z][a-z]+\??\s+[a-z][a-zA-Z-]+(\s+[a-z][a-zA-Z-]+)?\s+"
+        r"[A-Z][a-z]+(?:\s+(?:and|et|&)\s+[A-Z][a-z]+)*$",
+        s,
+    ):
+        s = re.sub(
+            r"\s+[A-Z][a-z]+(?:\s+(?:and|et|&)\s+[A-Z][a-z]+)*$",
+            "",
+            s,
+        )
+    return s
 
 
 _PLACEHOLDER_MATCHER_TYPES = frozenset(

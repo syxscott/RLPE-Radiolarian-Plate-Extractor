@@ -189,18 +189,49 @@ _CAPTION_CLAUSE_RE = re.compile(
     r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"  # label list
     r"\s*[\.:]?\s*"
     r"([A-Z][a-zA-Z-]+"  # Genus (capitalized)
-    r"(?:"  # optionally followed by epithet, possibly with cf./aff./? between
+    # Optional "?" uncertainty marker. We always consume the "?" so
+    # the genus token includes it (e.g. "Periphaena?"). After a "?"
+    # the epithet may follow WITHOUT a space (e.g. "Periphaena? duplus"
+    # has a space, but "Trilonche? sp." also has a space). The epithet
+    # pattern below uses `(?:\s+|\s*\?\s*)` to handle both: " sp" via
+    # the leading `\s+` branch, "? sp" via the `\?\s+` branch. We
+    # require the "?" to come right after a letter (no extra space) by
+    # using a non-space boundary below.
+    r"(?:\?)?"
+    r"(?:"  # optionally followed by epithet, possibly with cf./aff. between
     r"(?:\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+)"  # cf./aff. + species
     r"|"
-    r"(?:\?\s+[a-z][a-zA-Z-]+)"  # "Genus? epithet" (hollis2006: "Periphaena? duplus")
-    r"|"
-    r"(?:\s+[a-z][a-zA-Z-]+)"  # plain species epithet
+    # Plain epithet — uses a word-boundary negative lookahead to
+    # reject the bare modifier keywords ("sp", "spp", "cf", "aff",
+    # "n", "nov"). The lookahead fires only at the END of the
+    # epithet token, so "Entactinia sphaericus" still matches but
+    # "Entactinia sp" doesn't (the modifier group then matches
+    # " sp." and the trailing-identifier group can match " 1").
+    r"(?:\s+(?!sp\b|spp\b|cf\b|aff\b|n\b|nov\b)(?=[a-z])[a-z][a-zA-Z-]+)"
     r")?"
-    r"(?:\s+[a-z][a-zA-Z-]+)?"  # optional third epithet (trinomial:
-                                  # "Lamptonium fabaeforme fabaeforme",
-                                  # "Phormocyrtis striata striata")
+    # optional third epithet (trinomial: "Lamptonium fabaeforme fabaeforme",
+    # "Phormocyrtis striata striata"). The same word-boundary exclusion
+    # is needed so the modifier group gets a chance to match " sp." in
+    # "Entactinia sp. 1" — without it the third epithet greedily eats
+    # " sp" and the trailing identifier " 1" never matches. The
+    # `(?=[a-z])` after the negation is critical: a bare `(?!sp\b)` at
+    # the end of the epithet token fires only AFTER `[a-zA-Z-]+` has
+    # matched the modifier keyword's first char (e.g. "s"), so the
+    # engine backtracks to a 1-char match and the lookahead no longer
+    # rejects. Anchoring on the first char of the next word fixes it.
+    r"(?:\s+(?!sp\b|spp\b|cf\b|aff\b|n\b|nov\b)(?=[a-z])[a-z][a-zA-Z-]+)?"
     r")"
-    r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?",
+    r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?"
+    # Trailing identifier after the (modifier+) species. Captures the
+    # "sp. 1" / "sp. A" / "epithet 2" forms that feng2007 uses to
+    # distinguish multiple "sp." specimens in the same genus. The
+    # identifier is a single letter or digit immediately preceded by
+    # whitespace (no other characters between). Boundary: must be
+    # followed by whitespace, comma, semicolon, period, paren, or
+    # end-of-string. Captured as group 4 so _regex_parse_caption can
+    # append it to the species string ("Entactinia sp." + " 1" =
+    # "Entactinia sp. 1") to match the gold convention.
+    r"(\s+(?:[A-Z]|\d+)(?=[\s,;:.()]|$))?",
 )
 
 # Danelian-style "1) Species; 2-3) Species" caption clauses. Each
@@ -234,10 +265,32 @@ _DANELIAN_CLAUSE_RE = re.compile(
     r"|"
     r"\?\s+[a-z][a-zA-Z-]+"  # "Genus? epithet" (hollis2006: "Periphaena? duplus")
     r"|"
-    r"\s+[a-z][a-zA-Z-]+"
+    # Plain epithet. Two sub-cases:
+    #   (a) Real Latin epithet — exclude the bare modifier keywords
+    #       "sp", "spp", "cf", "aff", "gr" when followed by "." (the
+    #       modifier group then matches " sp." and the trailing-ID
+    #       group can match " A. B-F36/0" — hollis2006 plate 3).
+    #   (b) Modifier keyword as epithet — allow "sp", "spp" when NOT
+    #       followed by ".". This handles danelian2006 "Acastea sp,
+    #       Mg-100" (no period) and boughdiri2007 "Sethocapsa sp." (the
+    #       parser needs the "sp" token to flow into the modifier).
+    r"\s+(?:(?!sp\b|spp\b|cf\b|aff\b|gr\b)(?=[a-z])[a-z][a-zA-Z-]+|sp\b(?!\.)|spp\b(?!\.))"
     r")*"
     r")"
-    r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.))?",
+    # Modifier: standard ``n. sp. / sp. / cf. / aff. / spp.`` plus
+    # ``gr.`` (hollis2006 "Haliomma gr. A-K47/4", "Haliomma gr. b")
+    # and ``indet.`` (hollis2006 "Spumellarian gen. et sp. indet.").
+    r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|gr\.|indet\.))?"
+    # Trailing specimen identifier: hollis2006 uses
+    #   "Haliomma gr. b" (single lowercase letter),
+    #   "Haliomma gr. A-K47/4" (alphanumeric + dash + slash), AND
+    #   "Corythomelissa sp. A. B-F36/0" (letter + ". " + alphanumeric).
+    # We accept a leading single letter / digit OR an alphanumeric
+    # token with optional dashes/slashes, optionally followed by a
+    # ``. ``-separated second segment (e.g. ``A. B-F36/0``).
+    r"(\s+(?:[A-Za-z]|\d+|[A-Z]\d*(?:[-/][A-Z0-9]+){0,3})"
+    r"(?:\.\s+[A-Z]\d*(?:[-/][A-Z0-9]+){0,3})?"
+    r"(?=[\s,;:.()]|$))?",
 )
 
 # Baumgartner-style "1, 2- Species; 3- Species" clause. Used in
@@ -483,6 +536,15 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         labels_raw = m.group(1)
         species = (m.group(2) or "").strip()
         modifier = (m.group(3) or "").strip()
+        # Group 4: trailing identifier after the modifier ("sp. 1" →
+        # identifier " 1"). When present, the species is already the
+        # gold form ("Entactinia sp. 1"): the modifier is folded into
+        # the species string and the modifier field is cleared so the
+        # caller doesn't double-count it (e.g. "Entactinia sp. 1 sp.").
+        trailing_id = (m.group(4) or "").strip() if m.lastindex and m.lastindex >= 4 else ""
+        if trailing_id:
+            species = (species + " " + modifier + " " + trailing_id).strip()
+            modifier = ""
         if not species:
             continue
         # Drop "Genus & species indet." type names (not a binomial).
@@ -588,9 +650,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     # label.
     danelian_lead_re = re.compile(
         r"(?:Plate\s+[IVXivx\d]+\.?\s*)?"
-        r"(?:\s*\(\d+(?:\s*[,\-–—]\s*\d+)*\s*\)\s+[A-Z]"
+        r"(?:\s*\(\d+(?:\s*[,\-–—]\s*\d+)*\s*\)\s+\??[A-Z]"
         r"|"
-        r"\d+(?:\s*[,\-–—]\s*\d+)*\s*[)\.:]\s+[A-Z])"
+        r"\d+(?:\s*[,\-–—]\s*\d+)*\s*[)\.:]\s+\??[A-Z])"
     )
     plate_preamble_re = re.compile(
         r"^\s*(?:Plate\s+[IVXivx\d]+\.?\s*)?"
@@ -626,8 +688,21 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             labels_raw = m.group(1)
             # Group 2: optional "?" prefix (uncertainty marker on genus).
             # Group 3: the species itself. Group 4: the sp./cf./aff. modifier.
+            # Group 5: trailing specimen identifier (e.g. "Haliomma gr. b",
+            # "Corythomelissa sp. A. B-F36/0") — folded into the species
+            # string so the caller sees the gold form.
             species = m.group(3).strip()
             modifier = (m.group(4) or "").strip()
+            trailing_id = (
+                (m.group(5) or "").strip()
+                if m.lastindex and m.lastindex >= 5
+                else ""
+            )
+            if modifier:
+                species = (species + " " + modifier).strip()
+                modifier = ""
+            if trailing_id:
+                species = (species + " " + trailing_id).strip()
             if not species:
                 continue
             if "indet" in species.lower() or "& species" in species.lower():

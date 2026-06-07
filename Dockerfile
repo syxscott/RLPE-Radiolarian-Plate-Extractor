@@ -16,7 +16,7 @@
 #
 # Run the eval:
 #   docker run --rm -v "$PWD:/app" rlpe:dev eval \
-#     --pred /app/work/combined_7_v12_FINAL.jsonl \
+#     --pred /app/work/combined_8_v13_FINAL.jsonl \
 #     --gold /app/data/gold/ \
 #     --output /app/work/eval.json
 
@@ -75,7 +75,7 @@ COPY pyproject.toml README.md ./
 COPY scripts ./scripts
 COPY data ./data
 COPY tests ./tests
-COPY work/combined_7_v12_FINAL.jsonl ./work/combined_7_v12_FINAL.jsonl
+COPY work/combined_8_v13_FINAL.jsonl ./work/combined_8_v13_FINAL.jsonl
 
 USER rlpe
 VOLUME ["/app/work", "/app/data"]

@@ -1,7 +1,7 @@
 """Tests for non-specimen placeholder detection in pipeline captions."""
 from __future__ import annotations
 
-from rlpe.pipeline import _looks_like_placeholder_caption
+from rlpe.text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
 
 
 class TestLooksLikePlaceholderCaption:
@@ -56,7 +56,7 @@ class TestStage4SkipLogic:
     """Verify that m3_rejected_non_radiolarian does NOT trigger the FallbackHandler."""
 
     def test_non_radiolarian_flag_does_not_count_as_fallback_error(self):
-        from rlpe.pipeline import RadiolarianPipeline
+        from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
         # Build a fake match dict with m3_rejected_non_radiolarian
         class _FakeMatch:
             def __init__(self):
@@ -66,23 +66,23 @@ class TestStage4SkipLogic:
                 }
         m = _FakeMatch()
         # _matches_have_fallback_error should return False for this match
-        assert RadiolarianPipeline._matches_have_fallback_error([m]) is False
+        assert _matches_have_fallback_error([m]) is False
 
     def test_real_fallback_error_still_triggers(self):
-        from rlpe.pipeline import RadiolarianPipeline
+        from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
         class _FakeMatch:
             def __init__(self):
                 self.metadata = {"gemma_error": "API timeout"}
         m = _FakeMatch()
-        assert RadiolarianPipeline._matches_have_fallback_error([m]) is True
+        assert _matches_have_fallback_error([m]) is True
 
     def test_low_confidence_fallback_still_triggers(self):
-        from rlpe.pipeline import RadiolarianPipeline
+        from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
         class _FakeMatch:
             def __init__(self):
                 self.metadata = {"gemma_fallback": True, "gemma_reasoning": "low conf"}
         m = _FakeMatch()
-        assert RadiolarianPipeline._matches_have_fallback_error([m]) is True
+        assert _matches_have_fallback_error([m]) is True
 
 
 class TestPlaceholderSkipsStage4EvenWhenStage2Passes:

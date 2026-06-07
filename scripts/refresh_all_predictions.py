@@ -52,7 +52,14 @@ OD_JSON_BY_PAPER = {
 
 def _build_label_to_species_for(paper_id: str) -> dict[str, dict[str, str]]:
     """Map plate-number -> {label -> species} for a single paper.
-    Skips kind='fig' captions (those are chart/diagram captions, not plates)."""
+    Skips kind='fig' captions (those are chart/diagram captions, not plates).
+
+    The species field stored in the bucket includes the modifier (" sp.",
+    " spp.", " n. sp.", " cf. X") joined as a single string. The parser
+    keeps ``species`` (genus + epithet) and ``modifier`` (" sp.") in
+    separate fields, but the gold dataset writes them as one
+    ("Archaeodictyomitra spp."), so we collapse them here to match.
+    """
     od_path = OD_JSON_BY_PAPER[paper_id]
     if not od_path.exists():
         return {}
@@ -67,8 +74,12 @@ def _build_label_to_species_for(paper_id: str) -> dict[str, dict[str, str]]:
         pairs = _regex_parse_caption(c["content"])
         bucket = out.setdefault(plate, {})
         for p in pairs:
+            sp = p.species.strip()
+            mod = (p.modifier or "").strip()
+            if mod:
+                sp = (sp + " " + mod).strip()
             for lbl in p.labels:
-                bucket.setdefault(lbl, p.species)
+                bucket.setdefault(lbl, sp)
     return out
 
 
