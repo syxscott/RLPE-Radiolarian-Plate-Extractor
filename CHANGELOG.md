@@ -173,6 +173,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pipeline re-run on the 7-paper set; the resegmentation
   methodology is captured in
   `scripts/resegment_with_k_close7.py` for future re-evaluation.
+- **Residual panel-recall gap analysis (post-k_close=7)**:
+  the per-figure panel count comparison (gold vs v6 k=9 vs v7 k=7)
+  shows the gain concentrates on dense plates:
+  - hollis2006 pl03: 15→22 (+7, recall 56%→81%) — biggest win
+  - baumgartner2008 pl01: 13→22 (+9, 100%→169%, over-detected)
+  - baumgartner2008 pl03: 19→23 (+4, 70%→85%) — still 4 short
+  - feng2007 pl01: 17→24 (+7, 85%→120%)
+  - feng2007 pl04: 30→32 (+2, 188%→200%, very over-segmented)
+  The remaining gaps (hollis2006 pl01 18/22, baum2008 pl03 23/27)
+  are NOT in the close-kernel parameter — varying k_close from
+  3 to 11 gives 18 panels on hollis pl01 and 19 on baum pl03
+  regardless. The 4 missing panels in hollis pl01 are
+  sub-80px min-side CCs (rejected by the morphology-pruned
+  fragment filter); the 8 missing in baum pl03 are merged
+  into larger blobs that no k_close setting breaks apart.
+  Closing these gaps requires either SAM2 (not currently
+  available) or watershed-on-distance-transform — both
+  substantively different from the current morphology path
+  and out of scope for the k_close=7 tuning.
 
 ### Known limitations (documented in `EVALUATION.md`)
 
