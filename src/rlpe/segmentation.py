@@ -31,6 +31,25 @@ class SegmentationConfig:
     # 0.05 strip; those aren't panels, they're "all the panels in
     # this row merged together".
     max_aspect_ratio: float = 4.0
+    # Watershed splitting of multi-specimen CCs. After the Otsu /
+    # enhanced branches produce their initial CCs, any CC whose
+    # area exceeds ``min_area`` and whose area is "non-trivially
+    # large" (e.g. >3x min_area) is passed through the watershed
+    # splitter. A 3x3 dilate-based seed finder + distance transform
+    # identifies local maxima as split seeds; cv2.watershed assigns
+    # each non-boundary pixel to a seed. The result is multiple
+    # sub-panels in place of the merged blob.
+    use_watershed: bool = True
+    # Lower bound for the *shape factor* of a CC before watershed
+    # is invoked. CCs whose area is barely above ``min_area`` (i.e.
+    # just a small isolated specimen, not a merged blob) are not
+    # watershed candidates. Set to 3.0 = "if the CC is at least 3x
+    # the min_area, try splitting it".
+    watershed_area_multiple: float = 3.0
+    # Minimum seed area for watershed split. Seeds smaller than
+    # this are merged into their nearest neighbor (avoids 1-pixel
+    # seeds that would over-segment).
+    watershed_min_seed_area: int = 800
 
 
 class PanelSegmenter:
@@ -114,6 +133,116 @@ class PanelSegmenter:
             cv2.THRESH_BINARY, 51, 5,
         )
         return binary
+
+    @staticmethod
+    def _watershed_split_cc(
+        gray: np.ndarray,
+        binary: np.ndarray,
+        cc_bbox: tuple[int, int, int, int],
+        min_seed_area: int,
+    ) -> list[tuple[int, int, int, int]]:
+        """Split a single connected component via the watershed algorithm.
+
+        Phase A.2 implementation: when the Otsu/enhanced branches return
+        a CC that is large enough to be a merged-blob candidate (e.g. 2
+        touching specimens that the morphology didn't break apart), the
+        watershed algorithm can split it into sub-regions.
+
+        Algorithm (4 steps, all standard watershed):
+          1. Crop the binary mask to the CC's bounding box and zero the
+             background.
+          2. Compute the distance transform of the (cropped) binary
+             mask. Local maxima of the distance transform are the
+             "centers" of the constituent specimens.
+          3. Find the seeds: dilate the distance transform with a 3x3
+             kernel so neighbouring maxima collapse to a single point,
+             threshold at 0.7 * max, then run connected components.
+             Each CC of the thresholded map is a seed.
+          4. Apply cv2.watershed with the seed markers (label 1 = first
+             seed, label 2 = second seed, etc.). The watershed
+             boundaries are marked with -1; positive labels are the
+             sub-regions. The label-0 background (i.e. the area outside
+             the original CC) is masked out before returning bboxes.
+
+        Returns a list of (x, y, w, h) bboxes in the **original image's
+        coordinate system** (not the cropped one — the caller wants
+        global coordinates).
+        """
+        x0, y0, w, h = cc_bbox
+        # Crop the binary mask to the CC's bounding box.
+        crop_bin = binary[y0:y0 + h, x0:x0 + w]
+        if crop_bin.size == 0 or not np.any(crop_bin):
+            return []
+        # Crop the grayscale image too — cv2.watershed needs a 3-channel
+        # 8-bit image (the standard recipe is to convert grayscale to BGR).
+        crop_gray = gray[y0:y0 + h, x0:x0 + w]
+        if crop_gray.ndim == 2:
+            crop_bgr = cv2.cvtColor(crop_gray, cv2.COLOR_GRAY2BGR)
+        else:
+            crop_bgr = crop_gray
+
+        # Distance transform. The "DIST_L2" mask gives Euclidean
+        # distance to the nearest zero pixel; we use the binary CC
+        # as the foreground mask.
+        dist = cv2.distanceTransform(crop_bin, cv2.DIST_L2, 5)
+        # Local-maxima detection. We use a "ridge-extraction"
+        # approach: threshold the distance transform at 70% of its
+        # max value to get the "high-ridge" region, then connected
+        # components that ridge region to find seeds. A single
+        # dist==dilate(dist) local-max test only gives 1-pixel peaks
+        # because the dist values are smoothly varying; ridge
+        # extraction gives a region of ~10-30 pixels per seed.
+        dmax = float(dist.max())
+        if dmax <= 0:
+            return []
+        ridge_mask = (dist > 0.7 * dmax).astype(np.uint8) * 255
+        n_ridges, ridge_labels, ridge_stats, _ = cv2.connectedComponentsWithStats(
+            ridge_mask, connectivity=8,
+        )
+        if n_ridges <= 1:
+            return []  # no real split possible (only 1 ridge = same as 1 blob)
+        # Use each ridge CC as a seed. Place the seed marker value
+        # (ridge_idx + 1) at the ridge's pixels. CV2.watershed
+        # convention:
+        #   marker == 0  → unknown (watershed will assign to nearest seed)
+        #   marker == 1  → seed 1
+        #   marker == 2  → seed 2 (each unique positive value is one seed)
+        # The watershed then EXPANDS each seed into the surrounding
+        # unknown (marker == 0) region, drawing boundaries (marker == -1)
+        # where two seeds meet.
+        n_seeds = n_ridges
+        seed_labels = ridge_labels
+        seed_stats = ridge_stats
+        peak_mask = ridge_mask > 0
+        # Build a markers image: 0 for unknown (watershed to decide),
+        # unique positive value per seed. Background pixels (crop_bin
+        # == 0) and unknown foreground (not yet covered by a seed)
+        # both start at 0.
+        markers = np.zeros(crop_bin.shape, dtype=np.int32)
+        for seed_idx in range(1, n_seeds):
+            sx, sy, sw, sh, sa = seed_stats[seed_idx]
+            if sa < min_seed_area:
+                # Tiny seed: skip — the watershed boundary will eat
+                # most of it and we'll over-segment.
+                continue
+            # Place this seed's marker value (seed_idx + 1) at the
+            # ridge's pixels.
+            markers[seed_labels == seed_idx] = seed_idx + 1
+        # Apply watershed.
+        cv2.watershed(crop_bgr, markers)
+        # Collect sub-region bboxes from the post-watershed labels.
+        sub_bboxes: list[tuple[int, int, int, int]] = []
+        for label in range(2, n_seeds + 1):
+            sub_mask = (markers == label)
+            if not sub_mask.any():
+                continue
+            ys, xs = np.where(sub_mask)
+            if len(xs) == 0:
+                continue
+            sx0, sx1 = int(xs.min()), int(xs.max() + 1)
+            sy0, sy1 = int(ys.min()), int(ys.max() + 1)
+            sub_bboxes.append((sx0 + x0, sy0 + y0, sx1 - sx0, sy1 - sy0))
+        return sub_bboxes
 
     def _segment_with_sam2(self, image: np.ndarray, predictor) -> list[PanelCandidate]:
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -257,9 +386,143 @@ class PanelSegmenter:
           - specimens touch (e.g. Plate 4 of Feng 2007)
           - scale bars / labels merge with the specimen blob
           - SEM metadata strips overlay the bottom row
-          - the background is non-uniform (defeats Otsu)
+
+        Phase A.2: watershed post-processing. Any "large" CC (area
+        >= 3x min_area) that survives the area/aspect filters is
+        passed through ``_watershed_split_cc`` and replaced by its
+        sub-regions. The threshold of "3x min_area" is below the
+        ``max_single_panel_area_frac`` (0.20) so this fires on
+        moderate-size merged blobs, not just the giant ones the
+        area filter already rejects.
         """
         thresh_otsu = self._preprocess_gray(image)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        thresh_enh = self._preprocess_enhanced(gray)
+
+        img_area = image.shape[0] * image.shape[1]
+
+        def _ccs(thresh: np.ndarray, source: str) -> list[PanelCandidate]:
+            out: list[PanelCandidate] = []
+            num_labels, _, stats, _ = cv2.connectedComponentsWithStats(thresh, connectivity=8)
+            for i in range(1, num_labels):
+                x, y, w, h, area = stats[i]
+                if area < self.config.min_area:
+                    continue
+                if area > img_area * 0.95:
+                    continue
+                if w * h > img_area * 0.9:
+                    continue
+                # Reject CCs that are clearly multi-specimen blobs (the
+                # enhanced path's morphological close frequently merges
+                # the top half of a dense plate into one giant CC).
+                if area > img_area * self.config.max_single_panel_area_frac:
+                    continue
+                if w * h > 0 and max(w, h) > 0:
+                    aspect = max(w, h) / max(1, min(w, h))
+                    if aspect > self.config.max_aspect_ratio:
+                        continue
+                # Reject tiny fragments: radiolarian specimens in this corpus
+                # are typically 80+ pixels on the short side. CCs smaller than
+                # that on either axis are almost always text/labels, scale
+                # bars, or partial-specimen noise (Plate 4 of Feng 2007
+                # otherwise produces 10-15 such fragments from the enhanced
+                # path). 80px is well below the smallest real specimen in
+                # the test corpus (pl01 minimum short side is 175 px).
+                if min(w, h) < 80:
+                    continue
+                out.append(
+                    PanelCandidate(
+                        panel_id=None,
+                        bbox=(int(x), int(y), int(w), int(h)),
+                        score=min(1.0, area / img_area),
+                        metadata={"method": source},
+                    )
+                )
+            return out
+
+        otsu_panels = _ccs(thresh_otsu, "opencv-otsu")
+        enh_panels = _ccs(thresh_enh, "opencv-enhanced")
+
+        # Keep all Otsu panels (baseline) + only the enhanced panels that
+        # don't overlap any Otsu panel (i.e. genuinely new specimens).
+        accepted = list(otsu_panels)
+        for ep in enh_panels:
+            if all(self._iou(ep.bbox, op.bbox) < 0.1 for op in otsu_panels):
+                accepted.append(ep)
+
+        # Phase A.2: watershed split on "large" CCs. For each accepted
+        # panel whose area is >= watershed_area_multiple * min_area, run
+        # the watershed splitter. If it returns >=2 sub-regions, replace
+        # the original panel with the sub-regions. The original is
+        # always removed (a CC that we believe to be a merged blob is
+        # almost certainly not a single specimen). The sub-regions are
+        # re-filtered through the same area / aspect / min-short-side
+        # checks as the initial CC pass, so a watershed that "splits"
+        # a CC into two half-sized blobs that are still too large will
+        # discard both halves (better to over-reject than to keep a
+        # merged blob labeled as a panel).
+        if self.config.use_watershed:
+            new_accepted: list[PanelCandidate] = []
+            for c in accepted:
+                x, y, w, h = c.bbox
+                area = w * h
+                if area < self.config.min_area * self.config.watershed_area_multiple:
+                    new_accepted.append(c)
+                    continue
+                # Run watershed on the binary threshold that originally
+                # produced this panel. Fall back to the Otsu binary if
+                # the source is the enhanced path (which is harder to
+                # invert; the Otsu binary contains a superset of the
+                # foreground pixels anyway).
+                if c.metadata.get("method") == "opencv-otsu":
+                    src_bin = thresh_otsu
+                else:
+                    src_bin = thresh_enh
+                sub_bboxes = self._watershed_split_cc(
+                    gray, src_bin, (int(x), int(y), int(w), int(h)),
+                    self.config.watershed_min_seed_area,
+                )
+                if len(sub_bboxes) < 2:
+                    # Watershed found 0 or 1 sub-regions — not a real
+                    # split, keep the original panel as-is.
+                    new_accepted.append(c)
+                    continue
+                # Replace the original panel with the sub-regions,
+                # re-applying the area / aspect / min-short-side
+                # filters. A "split" that produces two half-bigs is
+                # better discarded than kept.
+                sub_added = 0
+                for sb in sub_bboxes:
+                    sx, sy, sw, sh = sb
+                    sa = sw * sh
+                    if sa < self.config.min_area:
+                        continue
+                    if sa > img_area * self.config.max_single_panel_area_frac:
+                        continue
+                    if sw * sh > img_area * 0.9:
+                        continue
+                    aspect = max(sw, sh) / max(1, min(sw, sh))
+                    if aspect > self.config.max_aspect_ratio:
+                        continue
+                    if min(sw, sh) < 80:
+                        continue
+                    new_accepted.append(PanelCandidate(
+                        panel_id=None,
+                        bbox=(int(sx), int(sy), int(sw), int(sh)),
+                        score=min(1.0, sa / img_area),
+                        metadata={"method": c.metadata.get("method", "opencv") + "+watershed"},
+                    ))
+                    sub_added += 1
+                if sub_added == 0:
+                    # All watershed sub-regions were rejected by the
+                    # post-filter; keep the original (which is
+                    # probably a noisy single specimen, not a merged
+                    # blob).
+                    new_accepted.append(c)
+            accepted = new_accepted
+
+        accepted.sort(key=lambda c: (c.bbox[1], c.bbox[0]))
+        return accepted
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         thresh_enh = self._preprocess_enhanced(gray)
 
