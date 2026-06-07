@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import math
 import tempfile
 from pathlib import Path
 
@@ -10,7 +9,6 @@ import pytest
 
 from rlpe.export import (
     _sanitize,
-    export_csv,
     export_json,
     export_jsonl,
     flatten_for_csv,

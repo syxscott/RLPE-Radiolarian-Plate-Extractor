@@ -4,7 +4,6 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass(slots=True)
@@ -238,6 +237,5 @@ _NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset({
 # Anything here is a stopword / preposition / article, never a species epithet.
 _NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset({
     "of", "in", "on", "by", "an", "at", "to", "or", "is", "as",
-    "bar", "fig", "figs", "no", "all", "the", "and", "or",
-    "sp", "spp", "cf", "aff", "nov", "gen", "comb",
+    "bar", "fig", "figs", "no", "all", "the", "and", "sp", "spp", "cf", "aff", "nov", "gen", "comb",
 })

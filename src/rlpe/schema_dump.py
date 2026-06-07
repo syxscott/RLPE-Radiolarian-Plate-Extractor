@@ -17,7 +17,6 @@ from pathlib import Path
 
 from .schema_models import SCHEMA_VERSION, emit_json_schema
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TARGET = REPO_ROOT / "schemas" / f"rlpe-v{SCHEMA_VERSION}.json"
 

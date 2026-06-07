@@ -1,8 +1,6 @@
 """Tests for locality coordinate parsing."""
 from __future__ import annotations
 
-import pytest
-
 from rlpe.geo_coords import (
     parse_all_coordinates,
     parse_coordinate,

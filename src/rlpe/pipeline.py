@@ -43,15 +43,20 @@ def _looks_like_placeholder_caption(caption_text: str) -> bool:
         return True
     return any(p.search(text) for p in _PLACEHOLDER_CAPTION_PATTERNS)
 
-from .geology_extraction import build_knowledge_graph, link_species_to_geology
-from .config import PipelineConfig
-from .grobid import GrobidClient, parse_paper_metadata_from_tei
 from .association import match_panels
+from .config import PipelineConfig
 from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
+from .geology_extraction import build_knowledge_graph, link_species_to_geology
+from .grobid import GrobidClient, parse_paper_metadata_from_tei
 from .layout import choose_best_page, detect_figure_regions, extract_figure_number, render_pdf_pages
 from .m3_engine import CaptionPair, M3Engine, PanelBox, PanelMatch
 from .ocr import OCRBackend, normalize_ocr_tokens
-from .scale_bar import detect_scale_bar_length_px, extract_scale_from_caption, extract_scale_from_ocr_text, merge_scale_info
+from .scale_bar import (
+    detect_scale_bar_length_px,
+    extract_scale_from_caption,
+    extract_scale_from_ocr_text,
+    merge_scale_info,
+)
 from .segmentation import PanelSegmenter, SegmentationConfig
 from .taxon import TaxonRecognizer
 from .types import CaptionEntity, CaptionRecord, FigureRegion, PanelCandidate, PaperMetadata

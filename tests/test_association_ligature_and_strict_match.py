@@ -15,17 +15,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlpe.association import (  # noqa: E402
-    _normalize_panel_label,
     _label_in_pair_lookup,
     _label_sort_key,
-    match_panels,
+    _normalize_panel_label,
     assign_panels_to_labels,
     extract_panel_labels,
     extract_taxa_from_caption,
     is_placeholder_caption,
+    match_panels,
 )
 from rlpe.types import CaptionRecord, PanelCandidate  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # _normalize_panel_label

@@ -15,8 +15,7 @@ genera (e.g. "A. patricki" for Archaeodictyomitra patricki).
 """
 from __future__ import annotations
 
-from rlpe.m3_engine import _regex_parse_caption, CaptionPair
-
+from rlpe.m3_engine import _regex_parse_caption
 
 DANELIAN_PLATE_1 = (
     "Plate 1\n\n"
@@ -46,12 +45,12 @@ def test_danelian_plate1_full_parse():
     species = [p.species for p in pairs]
     # Spot-check 8 specific ones — they cover the three sub-cases
     # (full binomial, abbreviated, "sp." only).
-    assert "Acastea sp" in species
+    assert "Acastea sp." in species
     assert "Archaeodictyomitra apiarium" in species
     assert "Archaeodictyomitra patricki" in species
     assert "A. patricki" in species  # abbreviated genus
     assert "Cinguloturris fusiforma" in species
-    assert "Cinguloturris sp" in species  # "sp.cf." truncated to "sp"
+    assert "Cinguloturris sp." in species  # "sp.cf." truncated to "sp."
     assert "Loopus venustus" in species
     assert "L. venustus" in species  # abbreviated
     # 23 distinct species clauses: 21 unique species, 2-3 / 5-6 ranges
@@ -97,7 +96,7 @@ def test_danelian_ignores_preamble():
     )
     # Only 1 pair from the real clause.
     assert len(pairs) == 1
-    assert pairs[0].species == "Acastea sp"
+    assert pairs[0].species == "Acastea sp."
 
 
 def test_danelian_does_not_break_pouille_or_fig_pattern():

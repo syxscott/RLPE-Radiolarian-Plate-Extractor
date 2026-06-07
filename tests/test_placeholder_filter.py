@@ -1,8 +1,6 @@
 """Tests for non-specimen placeholder detection in pipeline captions."""
 from __future__ import annotations
 
-import pytest
-
 from rlpe.pipeline import _looks_like_placeholder_caption
 
 

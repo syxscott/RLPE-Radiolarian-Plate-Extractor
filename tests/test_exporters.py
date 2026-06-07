@@ -4,10 +4,8 @@ from __future__ import annotations
 import csv
 import json
 import zipfile
-from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from rlpe.exporters import (
     AnalysisOptions,
@@ -19,7 +17,6 @@ from rlpe.exporters import (
     write_parquet,
 )
 from rlpe.provenance import build_provenance
-from rlpe.provenance.stamp import PIPELINE_VERSION
 from rlpe.schema_models import (
     GeologyLinkRecord,
     PanelMetadata,

@@ -5,16 +5,12 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from rlpe.provenance import (
-    PIPELINE_VERSION,
     Provenance,
     build_provenance,
     write_provenance_sidecar,
 )
 from rlpe.provenance.stamp import _sha256_file
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

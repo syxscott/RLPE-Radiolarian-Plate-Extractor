@@ -10,9 +10,13 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-from .llm_backends import BaseLLMBackend, LlamaCppGemmaBackend, OllamaGemmaBackend, TransformersGemmaBackend
+from .llm_backends import (
+    BaseLLMBackend,
+    LlamaCppGemmaBackend,
+    OllamaGemmaBackend,
+    TransformersGemmaBackend,
+)
 from .types import MatchResult
-
 
 GEMMA_SYSTEM_PROMPT_ZH = """
 你是古生物分类学与放射虫图版解析专家，服务于RLPE项目。

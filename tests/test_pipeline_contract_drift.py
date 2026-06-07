@@ -23,7 +23,6 @@ import pytest
 
 from rlpe.schema_models import PanelRecord
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SMOKE_OUTPUT = REPO_ROOT / "work" / "papers_smoke" / "output" / "manifests" / "matches.jsonl"
 

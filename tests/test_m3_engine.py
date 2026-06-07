@@ -7,21 +7,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlpe.m3_engine import (  # noqa: E402
-    M3Engine,
-    _expand_label_range,
-    _coerce_bbox,
-    _safe_json_loads,
-    _regex_parse_caption,
-    _normalize_caption_text,
-    PanelBox,
-    PanelMatch,
-    CaptionPair,
-    Critique,
     _CLASSIFY_PLATE_SYSTEM,
+    _CRITIQUE_SYSTEM,
     _MATCH_PANEL_SYSTEM,
     _PARSE_CAPTION_SYSTEM,
     _SEGMENT_PANELS_SYSTEM,
-    _CRITIQUE_SYSTEM,
+    Critique,
+    M3Engine,
+    PanelMatch,
+    _coerce_bbox,
+    _expand_label_range,
+    _normalize_caption_text,
+    _regex_parse_caption,
+    _safe_json_loads,
 )
 
 

@@ -8,11 +8,11 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import requests
-
 
 logger = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)

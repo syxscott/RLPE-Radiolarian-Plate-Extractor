@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 from .types import FigureRegion, PageRecord
 from .utils import ensure_dir, slugify
-
 
 FIG_REF_PATTERN = re.compile(r"\b(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?)\b", re.IGNORECASE)
 CAPTION_LEAD_PATTERN = re.compile(r"^(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?)\b[:\-\.]?\s*", re.IGNORECASE)

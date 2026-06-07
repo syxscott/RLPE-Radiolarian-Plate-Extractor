@@ -1,10 +1,7 @@
 """Tests for extended scale-bar regex (bare, range, en-dash, Greek mu)."""
 from __future__ import annotations
 
-import pytest
-
 from rlpe.scale_bar import (
-    SCALE_PATTERN,
     ScaleInfo,
     extract_scale_from_caption,
     extract_scale_from_ocr_text,

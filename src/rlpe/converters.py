@@ -20,7 +20,8 @@ from .schema_models import (
     ProvenanceRecord,
     ScaleBarRecord,
 )
-from .types import MatchResult, PaperMetadata as InternalPaperMetadata
+from .types import MatchResult
+from .types import PaperMetadata as InternalPaperMetadata
 
 
 def _scale_bar_from_meta(meta: dict[str, Any]) -> ScaleBarRecord | None:

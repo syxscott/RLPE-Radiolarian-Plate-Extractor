@@ -22,7 +22,6 @@ eval isolates the effect of the segmentation change.
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -31,7 +30,6 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 import cv2
-import numpy as np
 
 from rlpe.segmentation import PanelSegmenter, SegmentationConfig
 

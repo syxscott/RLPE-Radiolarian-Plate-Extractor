@@ -21,15 +21,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import platform
 import socket
 import subprocess
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 PIPELINE_VERSION = "1.1.0"
 SCHEMA_VERSION = "1.0.0"
@@ -113,7 +111,7 @@ def _config_snapshot(config: Any) -> dict[str, Any]:
         return {}
     if isinstance(config, dict):
         return _json_safe(config)
-    if hasattr(config, "to_dict") and callable(getattr(config, "to_dict")):
+    if hasattr(config, "to_dict") and callable(config.to_dict):
         try:
             snap = config.to_dict()
         except Exception:
@@ -173,7 +171,7 @@ def build_provenance(
         git_dirty=dirty,
         config_snapshot=_config_snapshot(config),
         input_sha256=_input_sha256(pdf_paths or []),
-        timestamp_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        timestamp_utc=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         host=_host_string(),
         python_version=platform.python_version(),
     )

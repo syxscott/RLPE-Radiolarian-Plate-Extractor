@@ -1,13 +1,12 @@
 """Tests for stratigraphy classification and ICS table lookup."""
 from __future__ import annotations
 
-import pytest
-
 from rlpe.stratigraphy import (
     _ICS_ROWS as ICS_CHART,
+)
+from rlpe.stratigraphy import (
     classify_age_string,
     find_ages_in_text,
-    ICS_INDEX,
 )
 
 

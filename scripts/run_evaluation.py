@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +19,6 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from rlpe.evaluation import (  # noqa: E402
     evaluate_run,
-    write_json_report,
     write_markdown_report,
 )
 from rlpe.provenance.stamp import (  # noqa: E402
@@ -60,7 +59,7 @@ def main() -> int:
     # Markdown
     md_path = args.output_dir / f"eval_{args.label}.md"
     notes = (
-        f"_Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} "
+        f"_Generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')} "
         f"by rlpe v{PIPELINE_VERSION} (commit {provenance.git_commit})._\n"
     )
     write_markdown_report(report, md_path, title=f"RLPE Evaluation ({args.label})", notes=notes)

@@ -18,7 +18,6 @@ from pathlib import Path
 
 from rlpe.opendataloader_extractor import _find_plate_captions
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OD_DIR = REPO_ROOT / "work" / "batch4_v2" / "out" / "od_output"
 WEVER_DIR = REPO_ROOT / "work" / "wever_check" / "od_output"
@@ -27,7 +26,7 @@ FENG_DIR = REPO_ROOT / "work" / "feng_rerun" / "output" / "od_output"
 
 
 def _load_json(path: Path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -249,7 +248,6 @@ def test_feng2007_paragraph_caption_does_not_collect_following_paragraph():
     # paragraph→list, identical to pl01); we just verify the next
     # *paragraph* (body text) is NOT collected.
     # Find the next paragraph after the Fig. 1 paragraph in the OD JSON.
-    from rlpe.opendataloader_extractor import _iter_all_elements
     data = _load_json(fn)
     kids = data["kids"]
     fig1_idx = None

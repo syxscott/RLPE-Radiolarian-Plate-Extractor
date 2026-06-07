@@ -4,12 +4,8 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from rlpe.paleodb import PaleoDB
-from rlpe.types import OccurrenceSummary, TaxonomyMatch
 
 
 class TestOfflineMode:

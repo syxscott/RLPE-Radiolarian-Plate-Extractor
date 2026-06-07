@@ -11,14 +11,13 @@ from pathlib import Path
 
 import pytest
 
+from rlpe.provenance.stamp import build_provenance
 from rlpe.schema_models import (
     SCHEMA_VERSION,
+    ProvenanceRecord,
     RunOutput,
     emit_json_schema,
 )
-from rlpe.provenance.stamp import build_provenance
-from rlpe.schema_models import ProvenanceRecord
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = REPO_ROOT / "schemas" / f"rlpe-v{SCHEMA_VERSION}.json"

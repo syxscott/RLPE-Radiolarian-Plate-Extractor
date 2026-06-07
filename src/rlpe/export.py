@@ -9,7 +9,6 @@ from typing import Any
 
 from .utils import ensure_dir
 
-
 # ---------------------------------------------------------------------------
 # JSON sanitiser — make rows safe for json.dumps and pd.read_json
 # ---------------------------------------------------------------------------

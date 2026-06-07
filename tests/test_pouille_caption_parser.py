@@ -18,7 +18,7 @@ species per plate, instead of one per fig range).
 """
 from __future__ import annotations
 
-from rlpe.m3_engine import _regex_parse_caption, CaptionPair
+from rlpe.m3_engine import _regex_parse_caption
 
 
 def test_pouille_species_before_label_pattern():
@@ -95,7 +95,7 @@ def test_base_label_alias_rescues_ocr_misread():
     that an OCR that misread "14b" as "14" still maps to the right
     species. This is the _add_label_base_aliases helper in
     association.py, exercised here through match_panels."""
-    from rlpe.association import match_panels, PanelCandidate
+    from rlpe.association import PanelCandidate, match_panels
     from rlpe.types import CaptionRecord
     cap = CaptionRecord(
         paper_id="t", figure_id="f1",

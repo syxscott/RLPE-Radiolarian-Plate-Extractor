@@ -10,10 +10,18 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from rlpe.gemma_postprocess import batch_gemma_postprocess_rows, load_gemma4_model, load_gemma4_ollama
-from rlpe.gemma_postprocess import load_gemma4_llamacpp
-from rlpe.llm_backends import build_MiniMax_backend_from_env_or_config, FallbackHandler, cli_fallback_prompt
-from rlpe.gemma_postprocess import GemmaRuntime
+from rlpe.gemma_postprocess import (
+    GemmaRuntime,
+    batch_gemma_postprocess_rows,
+    load_gemma4_llamacpp,
+    load_gemma4_model,
+    load_gemma4_ollama,
+)
+from rlpe.llm_backends import (
+    FallbackHandler,
+    build_MiniMax_backend_from_env_or_config,
+    cli_fallback_prompt,
+)
 
 
 def load_jsonl(path: Path) -> list[dict]:

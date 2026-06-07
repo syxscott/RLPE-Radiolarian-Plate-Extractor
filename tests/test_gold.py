@@ -7,7 +7,6 @@ import pytest
 
 from rlpe.evaluation import GoldPanel, load_gold, match_panel, write_gold
 
-
 GOLD_DIR = Path(__file__).resolve().parents[1] / "data" / "gold"
 
 

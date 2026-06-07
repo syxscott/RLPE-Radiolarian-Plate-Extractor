@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 

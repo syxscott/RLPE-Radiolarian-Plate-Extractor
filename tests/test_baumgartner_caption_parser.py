@@ -138,17 +138,18 @@ def test_baumgartner_uncertainty_marker_after_genus():
     """Species with a "(?)" uncertainty marker between genus and
     epithet — "Stichomitra (?) sp.", "Acaeniotyle (?) sp.",
     "Hiscocapsa (?) sp." — must be captured. The "(?)" is a
-    genus-level marker; the captured species retains the marker
-    so the round-trip preserves the uncertainty."""
+    genus-level marker; the post-parse _normalize_species pass
+    strips it so the captured species matches the gold convention
+    (which omits the uncertainty marker)."""
     pairs = _regex_parse_caption(
         "1- Stichomitra (?) sp. cf. S. (?) acuta; "
         "2- Acaeniotyle (?) sp.; "
         "3- Hiscocapsa (?) sp."
     )
     by_label = {lbl: p.species for p in pairs for lbl in p.labels}
-    assert "Stichomitra (?)" in by_label.get("1", "")
-    assert "Acaeniotyle (?)" in by_label.get("2", "")
-    assert "Hiscocapsa (?)" in by_label.get("3", "")
+    assert by_label.get("1") == "Stichomitra sp. cf. S. acuta"
+    assert by_label.get("2") == "Acaeniotyle sp."
+    assert by_label.get("3") == "Hiscocapsa sp."
 
 
 def test_baumgartner_trailing_single_letter_species_identifier():

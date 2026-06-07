@@ -14,8 +14,7 @@ from typing import Any
 try:
     from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import Response
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, Response
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, field_validator
 except Exception as exc:  # pragma: no cover
@@ -24,7 +23,6 @@ except Exception as exc:  # pragma: no cover
 from ..config import PipelineConfig
 from ..pipeline import RadiolarianPipeline
 from ..utils import ensure_dir
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # Use project root so dirs are predictable regardless of launch directory.

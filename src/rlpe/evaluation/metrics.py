@@ -15,10 +15,9 @@ any paper with a gold JSONL.
 """
 from __future__ import annotations
 
-import csv
 import json
 from collections import defaultdict
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 

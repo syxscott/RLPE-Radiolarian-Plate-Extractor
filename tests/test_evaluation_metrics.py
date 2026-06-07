@@ -12,11 +12,11 @@ from rlpe.evaluation import (
     PaperMetrics,
     evaluate,
     evaluate_run,
-    load_gold,
     load_predictions_jsonl,
     write_json_report,
     write_markdown_report,
 )
+
 # _levenshtein and _species_close_enough were removed (commit follow-up):
 # the species-fallback never fires on the real 7-paper eval set, so the
 # dead code (and its 8 unit tests) are deleted. The 7 tests that

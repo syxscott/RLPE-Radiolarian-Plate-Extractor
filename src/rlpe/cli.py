@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 # Load .env from the project root so MiniMax API keys, model names, etc.
 # are available without exporting manually.  No-op if python-dotenv is
 # not installed or the file is missing.
 try:
-    from dotenv import load_dotenv, find_dotenv
+    from dotenv import find_dotenv, load_dotenv
     _env_path = find_dotenv(usecwd=True) or str(Path(__file__).resolve().parents[2] / ".env")
     if _env_path and Path(_env_path).exists():
         load_dotenv(_env_path, override=False)

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass
 from typing import Any
-
 
 AGE_PATTERN = re.compile(
     r"\b(?:Early|Middle|Late|Lower|Upper)\s+[A-Z][a-z]+|"
@@ -41,7 +40,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
     out: list[GeologyRecord] = []
     # Lazy import to avoid circular
     try:
-        from .stratigraphy import find_ages_in_text, classify_age_string
+        from .stratigraphy import classify_age_string, find_ages_in_text
     except Exception:
         find_ages_in_text = None
         classify_age_string = None

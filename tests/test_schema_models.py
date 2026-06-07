@@ -15,15 +15,14 @@ from rlpe.converters import (
 )
 from rlpe.provenance.stamp import build_provenance
 from rlpe.schema_models import (
+    SCHEMA_VERSION,
     PanelRecord,
     ProvenanceRecord,
     RunOutput,
-    SCHEMA_VERSION,
     emit_json_schema,
     validate_run_output,
 )
 from rlpe.types import MatchResult, PaperMetadata
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

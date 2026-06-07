@@ -4,12 +4,11 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import requests
 
-from .types import CaptionEntity, CaptionRecord, PaperMetadata
 from .layout import extract_figure_number
+from .types import CaptionEntity, CaptionRecord, PaperMetadata
 from .utils import ensure_dir, stable_id
 
 
