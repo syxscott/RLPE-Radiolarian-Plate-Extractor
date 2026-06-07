@@ -872,6 +872,8 @@ python scripts/run_pipeline.py \
 
 - FastAPI 上传与结果查询接口：[src/rlpe/api/app.py](src/rlpe/api/app.py)
 - Celery任务骨架：[src/rlpe/worker/tasks.py](src/rlpe/worker/tasks.py)
+- Docker 镜像（多阶段构建）: [Dockerfile](Dockerfile)
+- GitHub Actions CI（pytest + ruff + mypy + eval smoke）: [.github/workflows/ci.yml](.github/workflows/ci.yml)
 
 接口示例：
 
@@ -879,6 +881,41 @@ python scripts/run_pipeline.py \
 - `GET /jobs/{job_id}/status`
 - `GET /jobs/{job_id}/result`
 - `POST /review/correction`（人工校验回流）
+
+### Docker 部署
+
+```bash
+# 构建镜像
+docker build -t rlpe:dev .
+
+# 启动 API 服务（端口 8000）
+docker run --rm -p 8000:8000 rlpe:dev
+
+# 单篇 PDF 处理（挂载 work 目录）
+docker run --rm -v "$PWD/work:/app/work" rlpe:dev \
+  run --pdf-dir /app/work/pdfs --work-dir /app/work/run --use-opendataloader
+
+# 跑评估
+docker run --rm -v "$PWD:/app" rlpe:dev eval \
+  --pred /app/work/combined_7_v12_FINAL.jsonl \
+  --gold /app/data/gold/ \
+  --output /app/work/eval.json
+```
+
+### 本地 CI 检查
+
+```bash
+# 跑所有 CI 任务（与 GitHub Actions 一致）
+PYTHONPATH=src python -m pytest tests/ -q
+ruff check src/ tests/ scripts/
+PYTHONPATH=src mypy src/rlpe/
+
+# 跑 v12 评估（必须 ≥ 90% F1）
+PYTHONPATH=src python scripts/evaluate.py \
+  --pred work/combined_7_v12_FINAL.jsonl \
+  --gold data/gold/ \
+  --output work/eval.json
+```
 
 ---
 

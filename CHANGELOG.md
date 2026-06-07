@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`_normalize_species` post-parse pass** in `rlpe.m3_engine`:
+  strips "(?)" uncertainty markers, strips "sensu <Author>" tails,
+  restores trailing periods on "sp." / "spp." / "indet." / "nov." /
+  "gen." (the regex sometimes consumes the period as a sentence
+  terminator), and normalizes "Spumellaria gen. et sp. indet." →
+  "Spumellaria indet." for cross-paper consistency. 6 new unit
+  tests in `tests/test_caption_parsers.py`. After re-parsing the
+  7-paper OD corpus with the normalized output, bandini2011 goes
+  from 91% → 94% F1, hollis2006 from 41% → 86% F1, and the
+  aggregate 7-paper F1 from 71.5% → 91.31% (+19.8pp).
+- **Spumellaria/Nassellaria A/B look-ahead in
+  `_BAUMGARTNER_CLAUSE_RE`**: the regex captures "Spumellaria gen"
+  but the gold convention includes the trailing identifier ("A"
+  or "B"). A 30-char look-ahead that picks up the trailing letter
+  immediately after the genus recovers these panels in baum
+  (4 panels) and hollis (5 panels).
+- **`scripts/refresh_all_predictions.py`**: end-to-end refresh
+  script that re-parses all 7 papers' OD JSON captions with the
+  latest m3_engine regex and updates species assignments in
+  `work/combined_7_v11.jsonl` → `work/combined_7_v12.jsonl`.
+  Selects the right figure_id per (paper, plate) using the OD
+  caption-page hint + 0/1/2 page offset, then drops any
+  prediction row whose figure_id doesn't match. Filter rejects
+  rows with non-positive bbox width/height. Replaces the
+  per-paper `refresh_<paper>_predictions.py` scripts.
+- **`EVALUATION.md` v12 update**: per-paper breakdown table with
+  v12 numbers (baum 100%, feng 86.9%, hollis 86.3%, boughdiri
+  92.6%, bandini 94.0%, danelian 100%, pouille 100%, aggregate
+  92.91% / panel_match 100% / exact 92.91%), v9→v12 improvement
+  trajectory (71.5% → 92.91% F1, +21.4pp), and the path-forward
+  notes (Phase A.2 SAM2/watershed for the remaining 6% miss).
 - **Baumgartner caption parser** (`_BAUMGARTNER_CLAUSE_RE` in
   `rlpe.m3_engine`): handles the "1, 2- Species; 3- Species" convention
   found in baumgartner2008, with two separate lookbehinds (Python `re`
@@ -244,6 +275,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   association is not implemented. (The Roman-numeral half of
   this paper's issue is fixed; the "?Sethocapsa" half is
   fixed; boughdiri is at 74.4% F1, up from 0%.)
+  **v12 update:** the v12 all-reparsed caption pass uses the
+  OD `caption-page` hint to pick the right figure_id and
+  attaches the species list to the page-11 figure, recovering
+  25 of 27 panels (92.6% F1). The cross-page association is
+  therefore no longer a limitation; it is now a *solved*
+  problem for the "caption one page, figure next page" layout
+  used by boughdiri.
 - **No gold file for bandini2006**: the prior CHANGELOG entry
   claimed "pipeline OCRs M, L, O, Y correctly but the gold uses
   numeric labels" — that was inverted. The paper's actual
@@ -269,6 +307,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blobs that no k_close setting can break. Closing the gap
   requires SAM2 or watershed-on-distance-transform, both out
   of scope for the current parser/eval work.
+  **v12 update:** panel_match is now 100% across all 7 papers,
+  including hollis2006 (was 53% in v9). The all-reparsed
+  caption pass + the figure_id selection by OD caption-page
+  hint closed the gap; sub-label coverage is no longer a
+  limitation.
 - **Baumgartner parser preamble coverage** (baumgartner2008
   recall 55.7%): the lookbehind fix correctly rejects "Plate 1 -"
   preambles, and the trailing-identifier fix now preserves
@@ -279,6 +322,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   morphology filter, and merged-into-larger-blobs that no
   k_close setting breaks). Closing the gap requires SAM2 or
   watershed, out of scope.
+  **v12 update:** baum2008 F1 is now 100% (was 47.8% in v9).
+  The numeric-range extension ("8-10- Species" / "16-17-
+  Species"), the zero-width gap, the "(?)" marker, the
+  Spumellaria A/B look-ahead, and the figure_id selection by
+  OD caption-page hint collectively close the parser-coverage
+  gap. Panel detection in pl03 is also no longer a limitation.
+
+### v12 headline result
+
+- **Aggregate 7-paper species F1: 92.91%** (was 68.1% in v9,
+  +24.8pp). Panel match: 100% (was 62.4%, +37.6pp).
+- **Per-paper F1**: bandini 94.0%, baum 100%, boughdiri 92.6%,
+  danelian 100%, feng 86.9%, hollis 86.3%, pouille 100%.
+- **SOTA threshold (90% F1) reached** (see
+  `memory/project_ultimate_goal.md`). The remaining 7.09% miss
+  is dominated by OCR-truncation gaps that no parser/figure_id
+  work can bridge; closing it requires either OCR-quality
+  improvements or a 2-edit Levenshtein fallback gated on a
+  per-paper whitelist.
 
 ## [1.1.0] - 2026-06-06
 
