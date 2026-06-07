@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Watershed post-processing in `_segment_with_opencv`** (Phase A.2):
+  the OpenCV segmentation path now applies a distance-transform-based
+  watershed splitter to large CCs that survive the initial
+  morphology+Otsu pass. The previous baseline relied on a 3x3 erode
+  to break spine-to-spine bridges between specimens; this fails when
+  specimens are bridged by a thicker connection (12+ pixels) or when
+  a single dense-plate row contains 3+ touching specimens. Both cases
+  now split correctly via the standard 4-step watershed (crop, dist
+  transform, ridge-seed finding, cv2.watershed expand). 4 new
+  regression tests in `tests/test_segmentation.py`. All 322 tests
+  pass (was 318; +4 new).
 - **Bragin 2025 `(N) Species` parenthesised caption format**:
   Bragin 2025 ("Oxfordian-Kimmeridgian radiolarians from the
   Nordvik section") uses a parenthesised label form ("(1)
