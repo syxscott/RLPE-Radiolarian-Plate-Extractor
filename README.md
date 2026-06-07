@@ -820,6 +820,9 @@ extra = {
 
 可使用 [scripts/evaluate.py](scripts/evaluate.py) 对预测与gold进行评估。
 
+完整评估方法、当前精度/召回/F1（7 篇论文 508 个 panel，F1 = 69.6%）、
+已知失败模式和改进轨迹见 [EVALUATION.md](EVALUATION.md)。
+
 ### Gemma增强前后对比
 
 在 [src/rlpe/evaluation.py](src/rlpe/evaluation.py) 中使用 `compare_before_after()`，重点字段：
