@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Gold set expansion to 10 papers / 614 panels** (item 7 of the
+  7-item gap closure from the 2026-06-07 review):
+  - `data/gold/beccaro2006.jsonl` (35 panels; UAZ A-F index species
+    on Plate 1 of the Rosso Ammonitico Medio paper, 5d5264c7bf0b0a43).
+    Beccaro 2006 scores **97.14% F1** on the v15 predictions — the
+    flat "N – Genus epithet AUTHOR, Section Code, UAZ Letter, xMag"
+    caption format is a clean match for the standard clause parser.
+  - `data/gold/bandini2006.jsonl` (60 panels across 2 plates of the
+    Karnezeika, Argolis Peninsula, Upper Cretaceous paper,
+    19cd1def9ef08554). Plate 3 (foraminifera, not radiolarians) is
+    intentionally out of scope. Bandini 2006 scores **84.68% F1** on
+    the v15 predictions — the "Figures N-M" + "sp. aff." + trailing
+    ". sp." patterns on Plate 1 push the parser below 90%, and
+    panel-match is 85.0% (51/60) because 9 Plate 1 panels are not
+    yet attached to the right figure_id. The paper is kept in the
+    gold set so the gap is measurable.
+  - Note: the original item 7 ask was "Cambrian + modern" papers.
+    No Cambrian- or modern-radiolarian PDFs were available in the
+    current `data/pdfs/` corpus, so Mesozoic (Cretaceous) papers
+    were used as the closest available proxies. Beccaro covers
+    Middle Jurassic (Rosso Ammonitico Medio); bandini covers Upper
+    Cretaceous.
+  - Aggregate F1 across 10 papers: **95.32%** (precision 96.03%,
+    recall 94.63%, panel-match 98.53%, exact-match 94.63%). CI
+    threshold in `.github/workflows/ci.yml` is F1 ≥ 0.94 and
+    panel_match ≥ 0.98; both pass.
+  - `work/combined_10_v15_FINAL.jsonl` (968 rows) is the v15
+    prediction corpus, concatenated from
+    `work/combined_8_v13_FINAL.jsonl` (878 rows for the original
+    8 papers) + 90 new rows for beccaro2006 + bandini2006.
+- **Gold-builder scripts** for the two new papers:
+  - `scripts/build_gold_beccaro2006.py` (35 panels, UAZ A-F species)
+  - `scripts/build_gold_bandini2006.py` (60 panels across 2 plates;
+    skips the foraminifera Plate 3)
 - **Trailing specimen identifiers in Danelian-style captions**
   (hollis2006 plate 3, feng2007): the parser now recovers the
   "Haliomma gr. b", "Haliomma gr. A-K47/4", and "Corythomelissa sp.
