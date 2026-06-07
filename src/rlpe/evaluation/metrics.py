@@ -35,6 +35,15 @@ class PaperMetrics:
     species_fp: int = 0
     species_fn: int = 0
     exact_match: int = 0
+    # Per-panel miss details so callers can drill into which panels
+    # were unmatched and which matched-but-wrong. A `mismatch` is a
+    # gold panel that was matched by a prediction but the predicted
+    # species differed from the gold species (or the pred had no
+    # species). An `unmatched` is a gold panel that had no matching
+    # prediction at all. Both are lists of plain dicts so they
+    # serialise cleanly through `to_dict()` / `json.dumps`.
+    mismatches: list[dict[str, Any]] = field(default_factory=list)
+    unmatched: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def species_precision(self) -> float:
@@ -68,6 +77,8 @@ class PaperMetrics:
             "species_f1": self.species_f1,
             "panel_match_rate": self.panel_match_rate,
             "exact_match_rate": self.exact_match_rate,
+            "mismatches": self.mismatches,
+            "unmatched": self.unmatched,
         }
 
 
@@ -232,9 +243,20 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
             else:
                 m.species_fp += 1
                 m.species_fn += 1
+                m.mismatches.append({
+                    "figure_id": g.figure_id,
+                    "panel_id": g.panel_id,
+                    "expected": gold_species,
+                    "predicted": matched_pred_species or "",
+                })
         else:
             if gold_species:
                 m.species_fn += 1
+                m.unmatched.append({
+                    "figure_id": g.figure_id,
+                    "panel_id": g.panel_id,
+                    "expected": gold_species,
+                })
 
     # n_pred_panels per paper (count unique (figure, panel) pairs)
     pred_per_paper: dict[str, int] = defaultdict(int)

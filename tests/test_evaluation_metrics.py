@@ -315,3 +315,67 @@ class TestReports:
         data = json.loads(out.read_text())
         assert "p1" in data["papers"]
         assert "aggregate" in data
+
+
+class TestMissLists:
+    """Per-panel miss lists (mismatches, unmatched) on the eval report.
+
+    The miss lists let callers (CI scripts, hand-audits) drill into
+    *which* gold panels were matched-but-wrong or not matched at all
+    without re-diffing predictions and gold by hand. Without this,
+    the 12 bandini2011 misses and the 9 bandini2006 unmatched
+    Plate-1 panels are uncategorizable from the eval output.
+    """
+
+    def test_mismatch_recorded_when_species_differs(self):
+        gold = [GoldPanel("p1", "f1", "1", "Genus species")]
+        preds = [_pred("p1", "1", "Other species")]
+        report = evaluate(preds, gold)
+        m = report.papers["p1"]
+        assert len(m.mismatches) == 1
+        assert m.mismatches[0]["panel_id"] == "1"
+        assert m.mismatches[0]["figure_id"] == "f1"
+        assert m.mismatches[0]["expected"] == "Genus species"
+        assert m.mismatches[0]["predicted"] == "Other species"
+        assert m.unmatched == []
+
+    def test_unmatched_recorded_when_no_pred(self):
+        gold = [GoldPanel("p1", "f1", "5", "Genus species")]
+        preds = [_pred("p1", "1", "Other species")]
+        report = evaluate(preds, gold)
+        m = report.papers["p1"]
+        assert m.mismatches == []
+        assert len(m.unmatched) == 1
+        assert m.unmatched[0]["panel_id"] == "5"
+        assert m.unmatched[0]["expected"] == "Genus species"
+        assert "predicted" not in m.unmatched[0]
+
+    def test_perfect_match_has_no_miss_lists(self):
+        gold = [GoldPanel("p1", "f1", "1", "Genus species")]
+        preds = [_pred("p1", "1", "Genus species")]
+        report = evaluate(preds, gold)
+        m = report.papers["p1"]
+        assert m.mismatches == []
+        assert m.unmatched == []
+
+    def test_miss_lists_appear_in_to_dict(self):
+        gold = [GoldPanel("p1", "f1", "1", "Genus species")]
+        preds = [_pred("p1", "1", "Other species")]
+        report = evaluate(preds, gold)
+        d = report.papers["p1"].to_dict()
+        assert "mismatches" in d
+        assert "unmatched" in d
+        assert d["mismatches"][0]["expected"] == "Genus species"
+
+    def test_unmatched_gold_with_no_species_not_counted(self):
+        """A gold panel with an empty species string is not counted as
+        a missed species in either direction, so it should not appear
+        in the unmatched list. (It is, however, still a panel-miss if
+        no prediction matches by panel_id.)"""
+        gold = [GoldPanel("p1", "f1", "1", "")]
+        preds = []
+        report = evaluate(preds, gold)
+        m = report.papers["p1"]
+        # No species to mismatch on, so neither list records it.
+        assert m.mismatches == []
+        assert m.unmatched == []
