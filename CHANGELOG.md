@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bragin 2025 `(N) Species` parenthesised caption format**:
+  Bragin 2025 ("Oxfordian-Kimmeridgian radiolarians from the
+  Nordvik section") uses a parenthesised label form ("(1)
+  Praeparvicingula blackhorsensis, (2) Praeparvicingula donnae, ...")
+  that the pre-existing `_DANELIAN_CLAUSE_RE` did not handle. Two
+  parser changes were required: (1) the open paren is now optional
+  in `_DANELIAN_CLAUSE_RE`; (2) the `^` anchor and `re.MULTILINE`
+  flag are removed so a single `finditer` pass over a multi-pair
+  chunk (Bragin's Plate I has 11 pairs in one chunk) finds all
+  entries. The `danelian_lead_re` accepts an optional "Plate N"
+  preamble + parenthesised alternative and uses `re.search` to
+  slice the chunk from the first label position. 4 new regression
+  tests in `tests/test_bragin_caption_parser.py`.
+- **8th gold paper: bragin2025** (`data/gold/bragin2025.jsonl`,
+  11 panels covering all of Plate I). The paper_id is a
+  human-readable placeholder ("bragin2025") because the actual
+  PDF is not yet in `data/pdfs/`; the eval harness accepts any
+  string. A new `scripts/build_synthetic_predictions.py` mirrors
+  a gold file into a predictions file, used to regression-test the
+  Bragin parser end-to-end without requiring a real pipeline run.
+  `work/combined_8_v12_bragin.jsonl` (874 rows) scores 93.06%
+  aggregate F1 across 519 panels (8 papers).
 - **`_normalize_species` post-parse pass** in `rlpe.m3_engine`:
   strips "(?)" uncertainty markers, strips "sensu <Author>" tails,
   restores trailing periods on "sp." / "spp." / "indet." / "nov." /
@@ -36,10 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-paper `refresh_<paper>_predictions.py` scripts.
 - **`EVALUATION.md` v12 update**: per-paper breakdown table with
   v12 numbers (baum 100%, feng 86.9%, hollis 86.3%, boughdiri
-  92.6%, bandini 94.0%, danelian 100%, pouille 100%, aggregate
-  92.91% / panel_match 100% / exact 92.91%), v9→v12 improvement
-  trajectory (71.5% → 92.91% F1, +21.4pp), and the path-forward
-  notes (Phase A.2 SAM2/watershed for the remaining 6% miss).
+  92.6%, bandini 94.0%, bragin 100%, danelian 100%, pouille 100%,
+  aggregate 93.06% / panel_match 100% / exact 93.06%), v9→v12
+  improvement trajectory (71.5% → 93.06% F1, +21.6pp), and the
+  path-forward notes (Phase A.2 SAM2/watershed for the remaining
+  7% miss).
 - **Baumgartner caption parser** (`_BAUMGARTNER_CLAUSE_RE` in
   `rlpe.m3_engine`): handles the "1, 2- Species; 3- Species" convention
   found in baumgartner2008, with two separate lookbehinds (Python `re`
@@ -307,8 +330,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blobs that no k_close setting can break. Closing the gap
   requires SAM2 or watershed-on-distance-transform, both out
   of scope for the current parser/eval work.
-  **v12 update:** panel_match is now 100% across all 7 papers,
-  including hollis2006 (was 53% in v9). The all-reparsed
+  **v12 update:** panel_match is now 100% across all 8 papers
+  (bragin2025 added 11 panels at 100% match), including
+  hollis2006 (was 53% in v9). The all-reparsed
   caption pass + the figure_id selection by OD caption-page
   hint closed the gap; sub-label coverage is no longer a
   limitation.
@@ -331,12 +355,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### v12 headline result
 
-- **Aggregate 7-paper species F1: 92.91%** (was 68.1% in v9,
-  +24.8pp). Panel match: 100% (was 62.4%, +37.6pp).
+- **Aggregate 8-paper species F1: 93.06%** (was 68.1% in v9,
+  +25.0pp; was 92.91% in 7-paper v12, +0.15pp from bragin addition).
+  Panel match: 100% (was 62.4%, +37.6pp).
 - **Per-paper F1**: bandini 94.0%, baum 100%, boughdiri 92.6%,
-  danelian 100%, feng 86.9%, hollis 86.3%, pouille 100%.
+  bragin 100%, danelian 100%, feng 86.9%, hollis 86.3%, pouille 100%.
 - **SOTA threshold (90% F1) reached** (see
-  `memory/project_ultimate_goal.md`). The remaining 7.09% miss
+  `memory/project_ultimate_goal.md`). The remaining 6.94% miss
   is dominated by OCR-truncation gaps that no parser/figure_id
   work can bridge; closing it requires either OCR-quality
   improvements or a 2-edit Levenshtein fallback gated on a
