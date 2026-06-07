@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from PIL import Image
@@ -189,11 +189,16 @@ _CAPTION_CLAUSE_RE = re.compile(
     r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"  # label list
     r"\s*[\.:]?\s*"
     r"([A-Z][a-zA-Z-]+"  # Genus (capitalized)
-    r"(?:"  # optionally followed by epithet, possibly with cf./aff. between
+    r"(?:"  # optionally followed by epithet, possibly with cf./aff./? between
     r"(?:\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+)"  # cf./aff. + species
+    r"|"
+    r"(?:\?\s+[a-z][a-zA-Z-]+)"  # "Genus? epithet" (hollis2006: "Periphaena? duplus")
     r"|"
     r"(?:\s+[a-z][a-zA-Z-]+)"  # plain species epithet
     r")?"
+    r"(?:\s+[a-z][a-zA-Z-]+)?"  # optional third epithet (trinomial:
+                                  # "Lamptonium fabaeforme fabaeforme",
+                                  # "Phormocyrtis striata striata")
     r")"
     r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?",
 )
@@ -206,8 +211,14 @@ _CAPTION_CLAUSE_RE = re.compile(
 # optional modifier. Species accepts either a full binomial
 # ("Archaeodictyomitra apiarium") or an abbreviated form ("A. apiarium",
 # "E. ptyctum") — common in Danelian when a genus was just named.
+#
+# The opening `(?:\()?` makes the open-paren optional so the same
+# pattern matches Bragin 2025's "(1) Praeparvicingula blackhorsensis"
+# parenthesised form. The close-paren group is unchanged so "1)"
+# (Danelian) and "(1)" (Bragin) both match.
 _DANELIAN_CLAUSE_RE = re.compile(
-    r"^\s*"
+    r"\s*"
+    r"(?:\()?"  # optional open paren (Bragin-style "(N) Species")
     r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"
     r"\s*[)\.:]\s+"
     r"(\??)"  # optional "?" uncertainty marker on the genus
@@ -215,13 +226,18 @@ _DANELIAN_CLAUSE_RE = re.compile(
               # "?Archaeodictyomitra sp.")
     r"((?:[A-Z][a-zA-Z-]+|\b[A-Z]\.)"  # full Genus OR "A." abbrev
     r"(?:"  # optional epithet / sp. / cf. / aff.
+    r"\?\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+"  # "Genus? cf./aff. epithet"
+                                                 # (hollis2006 plate 3:
+                                                 # "Theocorys? aff. phyzella")
+    r"|"
     r"\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+"
+    r"|"
+    r"\?\s+[a-z][a-zA-Z-]+"  # "Genus? epithet" (hollis2006: "Periphaena? duplus")
     r"|"
     r"\s+[a-z][a-zA-Z-]+"
     r")*"
     r")"
     r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.))?",
-    re.MULTILINE,
 )
 
 # Baumgartner-style "1, 2- Species; 3- Species" clause. Used in
@@ -272,15 +288,17 @@ _BAUMGARTNER_CLAUSE_RE = re.compile(
     # "Sethocapsa sp. cf. S. dorysphaeroides", "Linaresia sp. cf. L. chrafatensis".
     r"\s+spp?\."                          #   " sp." / " spp."
     r"(?:"                                #   optional modifier tail
-    r"\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+"  #   " cf. W. epithet"
+    r"\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s*(?:\(\?\))?\s+)?[A-Z]?[a-z][a-z\-]+"  #   " cf. W. epithet" / " cf. W. (?) epithet"
     r"(?:\s*(?:\.\s*[A-Z]|\s+[a-z][a-z\-]{2,}))?"  # optional trailing ". X" identifier
                                                        # (e.g. "W. sp. S") or 2nd epithet
     r")?"
-    # standalone trailing identifier (e.g. "Williriedellum sp. S" with no cf./aff.)
-    r"(?:\s+[A-Z](?=[\s,;.(]|$))?"
+    # standalone trailing identifier: "Williriediedum sp. S" with no
+    # cf./aff., OR "Zhamoidellum sp. 2" (numeric) — gold keeps the
+    # numeric identifier. Allow either a capital letter or a digit.
+    r"(?:\s+(?:[A-Z]|\d+)(?=[\s,;.(\s]|$))?"
     r"|"
     # Shape 2: " cf./aff. <W>. <epithet>" without leading "sp."
-    r"\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+"
+    r"\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s*(?:\(\?\))?\s+)?[A-Z]?[a-z][a-z\-]+"
     r"(?:\s+[a-z][a-z\-]{2,})?"
     r"|"
     # Shape 3: " <epithet>" — regular binomial
@@ -292,6 +310,12 @@ _BAUMGARTNER_CLAUSE_RE = re.compile(
                                            # the post-filter below).
     r"(?:\s+[a-z][a-z\-]{2,})?"           # optional 2nd epithet (Shape 3 only)
     r")"
+    # Trailing single-letter or numeric identifier (e.g. "Spumellaria
+    # gen. et sp. indet. A", "Nassellaria indet. A", "Zhamoidellum sp. 2").
+    # Sits at the species level (not inside any epithet shape) so it
+    # works for ALL paths — including the genus-only Shape 4 case which
+    # Shape 1's tail doesn't cover.
+    r"(?:\s+(?:[A-Z]|\d+)(?=[\s,;.(\s]|$))?"
 )
 
 
@@ -330,6 +354,57 @@ _POUILE_CLAUSE_RE = re.compile(
     r")*"
     r")\s*\)"
 )
+
+
+def _normalize_species(species: str) -> str | None:
+    """Canonicalize a species string to the form expected by gold annotations.
+
+    - Strip the "(?)" uncertainty marker (gold omits it):
+        "Ferresium (?) sp." -> "Ferresium sp."
+        "Canutus (?) beehivensis" -> "Canutus beehivensis"
+    - Strip "sensu <Author> ..." tails:
+        "Tetraporobracchia sp. C sensu" -> "Tetraporobracchia sp. C"
+        "Globolaxtorum sp. B (?) sensu Tekin 1999" -> "Globolaxtorum sp. B"
+    - Normalize Spumellaria / Nassellaria "gen. et sp. indet." forms:
+        "Spumellaria gen" -> "Spumellaria indet."
+        "Nassellaria gen" -> "Nassellaria indet."
+    - Drop trailing ".,;" punctuation.
+    - Restore the trailing period on "sp." / "spp." / "indet." / "nov." /
+      "gen." (the trailing-punctuation strip would otherwise drop it).
+
+    Returns the normalized string, or None if the result is empty.
+    """
+    s = species.strip()
+    if not s:
+        return None
+    # Collapse "Spumellaria gen. et sp. indet." (and the OCR variant
+    # "Spumellaria gen, et sp. indet.") to the abbreviated form that gold
+    # uses. The BAUMGARTNER_CLAUSE_RE captures "Spumellaria gen" because
+    # the regex stops at the first space (since "et" is lowercase and
+    # the epithet shape is "sp." with period). The gold labels in baum
+    # are "Spumellaria indet. A" / "Spumellaria indet. B" etc.
+    s = re.sub(
+        r"^(Spumellaria|Nassellaria)\s+gen\.?\,?(?:\s+et\s+sp\.?)?(?:\s+indet\.?)?",
+        lambda m: m.group(1) + " indet.",
+        s,
+        flags=re.IGNORECASE,
+    )
+    # Strip "(?)" uncertainty marker (anywhere in the string).
+    s = re.sub(r"\s*\(\?\)", "", s)
+    # Strip "sensu <Author> [<year>]" tail. The tail may be empty
+    # (e.g. "Tetraporobracchia sp. C sensu" with no author) or contain
+    # an author/year citation. Stop at the next semicolon which begins
+    # a new clause.
+    s = re.sub(r"\s+sensu\b(?:\s+[^;]*)?", "", s, flags=re.IGNORECASE)
+    # Drop any remaining trailing punctuation and whitespace.
+    s = s.strip().strip(",;.")
+    # Restore the trailing period on "sp" / "spp" / "indet" / "nov" /
+    # "gen" — the trailing-punctuation strip above would otherwise
+    # turn "Ferresium sp." into "Ferresium sp". Gold always has the
+    # period on these abbreviations.
+    s = re.sub(r"\b(sp|spp|indet|nov|gen)\b(?!\.)", r"\1.", s)
+    s = re.sub(r"\s+", " ", s)
+    return s or None
 
 
 def _regex_expand_label_list(s: str) -> list[str]:
@@ -505,46 +580,81 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     # pass with MULTILINE only finds the first one — split on ";"
     # and match each clause independently.
     danelian_clauses: list[str] = []
+    # The optional leading "Plate N\b" lets the lead regex skip a
+    # "Plate I. (1) Species" preamble (Bragin 2025 puts the labels
+    # after a "Plate I." heading on the same line). The non-capturing
+    # group is consumed by the regex match but does not affect
+    # `_DANELIAN_CLAUSE_RE.match` which re-anchors on the captured
+    # label.
     danelian_lead_re = re.compile(
-        r"\d+(?:\s*[,\-–—]\s*\d+)*\s*[)\.:]\s+[A-Z]"
+        r"(?:Plate\s+[IVXivx\d]+\.?\s*)?"
+        r"(?:\s*\(\d+(?:\s*[,\-–—]\s*\d+)*\s*\)\s+[A-Z]"
+        r"|"
+        r"\d+(?:\s*[,\-–—]\s*\d+)*\s*[)\.:]\s+[A-Z])"
+    )
+    plate_preamble_re = re.compile(
+        r"^\s*(?:Plate\s+[IVXivx\d]+\.?\s*)?"
     )
     for chunk in re.split(r"[;\n]", text):
         chunk = chunk.strip()
         if not chunk:
             continue
-        # Only consider chunks that start with a label (possibly a
-        # range like "2-3" or a list like "2, 3") + ")" / "."
-        if not danelian_lead_re.match(chunk):
+        # Only consider chunks that contain a label (possibly a
+        # range like "2-3" or a list like "2, 3") + ")" / ".)" — the
+        # label may be preceded by a long preamble (Bragin 2025's
+        # "Plate I. ...prose... (1‒3) family Parvicingulidae: (1)
+        # Species, ..." has the first label in the middle of the
+        # chunk). Find the first label-anchored position and slice
+        # the chunk from there.
+        m_lead = danelian_lead_re.search(chunk)
+        if not m_lead:
             continue
+        chunk = chunk[m_lead.start():]
+        # Strip a leading "Plate I. " preamble so the inner
+        # _DANELIAN_CLAUSE_RE.match can anchor on the label.
+        chunk = plate_preamble_re.sub("", chunk, count=1)
         danelian_clauses.append(chunk)
     for clause in danelian_clauses:
-        m = _DANELIAN_CLAUSE_RE.match(clause)
-        if not m:
-            continue
-        labels_raw = m.group(1)
-        # Group 2: optional "?" prefix (uncertainty marker on genus).
-        # Group 3: the species itself. Group 4: the sp./cf./aff. modifier.
-        species = m.group(3).strip()
-        modifier = (m.group(4) or "").strip()
-        if not species:
-            continue
-        if "indet" in species.lower() or "& species" in species.lower():
-            continue
-        labels = _regex_expand_label_list(labels_raw)
-        if not labels:
-            continue
-        if any(lbl in seen_labels for lbl in labels):
-            continue
-        for lbl in labels:
-            seen_labels.add(lbl)
-        pairs.append(CaptionPair(
-            labels=labels,
-            species=species,
-            modifier=modifier,
-            confidence=0.65,
-            notes="regex_fallback_danelian",
-            raw_text=clause[:120],
-        ))
+        # Use finditer (not just .match at the start) so multiple
+        # "(N) Species" pairs inside a single chunk (separated by
+        # ", ") all get captured. Bragin 2025's "Plate I." preamble
+        # has up to 11 such pairs in one chunk; Danelian's
+        # "; "-separated chunks usually have just 1. The preamble-
+        # word filter below prevents baum-style "(1-7) Sample" prose
+        # from being (mis)matched as a (label, species) clause.
+        for m in _DANELIAN_CLAUSE_RE.finditer(clause):
+            labels_raw = m.group(1)
+            # Group 2: optional "?" prefix (uncertainty marker on genus).
+            # Group 3: the species itself. Group 4: the sp./cf./aff. modifier.
+            species = m.group(3).strip()
+            modifier = (m.group(4) or "").strip()
+            if not species:
+                continue
+            if "indet" in species.lower() or "& species" in species.lower():
+                continue
+            # Filter common preamble words that start with a capital
+            # letter but are not Latin genera.
+            if species.lower() in {
+                "sample", "plate", "scale", "figure", "section", "bar",
+                "upper", "lower", "middle", "all", "see", "cf", "aff",
+                "et", "al", "vol", "no",
+            }:
+                continue
+            labels = _regex_expand_label_list(labels_raw)
+            if not labels:
+                continue
+            if any(lbl in seen_labels for lbl in labels):
+                continue
+            for lbl in labels:
+                seen_labels.add(lbl)
+            pairs.append(CaptionPair(
+                labels=labels,
+                species=species,
+                modifier=modifier,
+                confidence=0.65,
+                notes="regex_fallback_danelian",
+                raw_text=m.group(0)[:120],
+            ))
 
     # Baumgartner-style caption fallback: semicolon-separated clauses
     # shaped like "1, 2- Williriedellum marcucciae; 3- Williriedellum
@@ -603,6 +713,19 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             continue
         for lbl in labels:
             seen_labels.add(lbl)
+        # Patch up missing A/B identifier for Spumellaria / Nassellaria
+        # "gen. et sp. indet." forms. The regex stops at "gen" (because
+        # "et" is 2 chars and doesn't match the epithet shape), so the
+        # "A" / "B" suffix at the end of the clause is unreachable.
+        # We look ahead up to 30 chars in the caption for a single
+        # capital letter or digit identifier; if found we append it to
+        # the species so the post-normalize step yields "Spumellaria
+        # indet. A" (matching gold).
+        if re.match(r"^(Spumellaria|Nassellaria)\s+gen\.?$", species, flags=re.IGNORECASE):
+            tail_window = text[m.end():m.end() + 30]
+            m_id = re.search(r"\b([A-Z])\b", tail_window)
+            if m_id:
+                species = species + " " + m_id.group(1)
         pairs.append(CaptionPair(
             labels=labels,
             species=species,
@@ -611,7 +734,27 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             notes="regex_fallback_baumgartner",
             raw_text=m.group(0)[:120],
         ))
-    return pairs
+    # Normalize species strings across all parsers to strip "(?)" markers,
+    # "sensu <Author>" tails, and normalize Spumellaria / Nassellaria
+    # "gen. et sp. indet." forms to "indet." (the gold convention).
+    normalized: list[CaptionPair] = []
+    for p in pairs:
+        sp = _normalize_species(p.species)
+        if not sp:
+            continue
+        if sp != p.species:
+            p2 = CaptionPair(
+                labels=p.labels,
+                species=sp,
+                modifier=p.modifier,
+                confidence=p.confidence,
+                notes=p.notes,
+                raw_text=p.raw_text,
+            )
+            normalized.append(p2)
+        else:
+            normalized.append(p)
+    return normalized
 
 
 # ---------------------------------------------------------------------------
