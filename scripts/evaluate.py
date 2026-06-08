@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
 
 from rlpe.evaluation import evaluate, evaluate_run, write_markdown_report
 from rlpe.evaluation.gold import GoldPanel
+from rlpe.evaluation.image_label_check import run_image_label_check
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -34,6 +35,16 @@ def main() -> int:
         help="A single .jsonl file or a directory of .jsonl files (concatenated).",
     )
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--image-label-check",
+        action="store_true",
+        help=(
+            "Run an additional sanity check: re-OCR each prediction's panel "
+            "image and compare to the predicted panel_id. Reports "
+            "`image_label_match_rate` per paper + aggregate. Adds ~5-15 min "
+            "on a 9-paper corpus because EasyOCR runs on every panel."
+        ),
+    )
     args = parser.parse_args()
 
     if args.gold.is_dir():
@@ -42,12 +53,19 @@ def main() -> int:
         pred = load_jsonl(args.pred)
         gold = [GoldPanel(**g) for g in load_jsonl(args.gold)]
         summary = evaluate(pred, gold)
+    summary_dict = summary.to_dict()
+    if args.image_label_check:
+        image_label_stats = run_image_label_check(
+            predictions=load_jsonl(args.pred),
+            root=ROOT,
+        )
+        summary_dict["image_label_check"] = image_label_stats
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         write_markdown_report(summary, args.output.with_suffix(".md"))
         with args.output.open("w", encoding="utf-8") as f:
-            json.dump(summary.to_dict(), f, indent=2, ensure_ascii=False, sort_keys=True)
-    print(json.dumps(summary.to_dict(), ensure_ascii=False, indent=2))
+            json.dump(summary_dict, f, indent=2, ensure_ascii=False, sort_keys=True)
+    print(json.dumps(summary_dict, ensure_ascii=False, indent=2))
     return 0
 
 

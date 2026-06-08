@@ -561,6 +561,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   improvements or a 2-edit Levenshtein fallback gated on a
   per-paper whitelist.
 
+## [Unreleased 2] - 2026-06-08 — N10 panel_id realignment
+
+The v17 eval reported 98.19% F1 but visually the panel_id values
+were wrong for ~87% of panels (positional fallback to the caption
+label list, not the label visible in the cropped image). Investigation
+of 7 root causes and a full pass through the OCR → panel_id →
+eval → frontend chain.
+
+### Fixed
+
+- **N10a: `recognize_panel_label` band too small** (`src/rlpe/ocr.py`).
+  The label band was 25% of the shorter side capped at 80px —
+  for a typical 102×117 bandini2011 panel that yields a 25px band,
+  too small for EasyOCR to read the label reliably. Increased to
+  50% of the shorter side, floored at 40px and capped at 160px. The
+  wider band still concentrates on the corner while being large
+  enough for OCR to lock on.
+- **N10b: pipeline falls back to full-panel OCR** when corner OCR
+  returns nothing (`src/rlpe/pipeline.py`). Now uses
+  `label_corner="adaptive"` (try explicit corner first, then the
+  other three) and falls back to `recognize_panel` (full panel OCR)
+  if all four corners come up empty. Records
+  `metadata.label_region_fallback = "full_panel"` when this kicks in.
+- **N10c: v18 panel_id reassignment** (`scripts/reassign_panel_id_v18.py`).
+  Re-OCR every panel image in `work/combined_9_v17_FINAL.jsonl` with
+  EasyOCR, update `panel_id` to the OCR'd label, look up the species
+  in `(parsed_caption, panel_id)` for the new panel_id, and write
+  `work/combined_9_v18_FINAL.jsonl`. The script also includes a
+  resilient path resolver that finds the panel image by tail under
+  any `work/*/panels/<paper_id>/<fig>/` directory (the v17 paths
+  were written for a specific run directory layout; some have since
+  moved). v18 reassigned 158 of 264 verifiable panels; the other
+  649/913 rows are either unresolvable (no panel_path, 226) or
+  image-OCR-empty (388) and keep their v17 positional panel_id.
+- **N10d: image-label-check sub-metric in eval**
+  (`src/rlpe/evaluation/image_label_check.py` + `scripts/evaluate.py
+  --image-label-check`). Re-OCR every panel image and compare the
+  predicted `panel_id` to the OCR'd label. The new
+  `image_label_match_rate` exposes the N10 bug: v17 was 16.4%
+  (107/652), v18 is 40.6% (265/652) — a 2.5× improvement. The
+  remaining gap is the 388/652 panels where EasyOCR returns no
+  numeric token (small/faint labels, off-corner placement, etc.).
+  5 new unit tests in `tests/test_image_label_check.py`.
+- **N10e: eval `--image-label-check` CLI flag** in
+  `scripts/evaluate.py`. The metric is opt-in because it adds
+  5-15 min on a 9-paper corpus.
+- **N10f: frontend "图版 OCR" column** (`web/index.html`,
+  `web/js/app.js`, `web/css/style.css`). Each row in the
+  results table now shows a coloured badge next to the
+  panel_id: ✓ green (image-OCR'd, includes the v17→v18
+  reassignment in the tooltip), ⚠ amber (positional fallback,
+  image OCR returned nothing), or — grey (no panel image
+  available for verification). 5 unit tests in
+  `tests/test_evaluation_metrics.py` still pass; 355 tests total.
+
+### Eval impact (N10 visible in numbers)
+
+| pred | species F1 | image_label_match |
+| --- | --- | --- |
+| v17 (positional) | 0.9819 | 107/652 = 16.4% |
+| v18 (image-OCR)  | 0.9216 | 265/652 = 40.6% |
+
+v18 is the **honest** score: the v17 98% string-match was
+matching the positional panel_id against gold panel_id values
+that were also assigned by reading order — visually the wrong
+images carried the right strings. v18 drops 6pp because the
+panel_id is now anchored to the label in the panel image, so
+real mismatches surface. Per-paper v18 F1: bandini 86.4%,
+baum 97.5%, beccaro 97.1%, boughdiri 92.3%, bragin 100%,
+danelian 95.1%, feng 92.5%, hollis 97.2%, pouille 100%.
+
 ## [1.1.0] - 2026-06-06
 
 ### Added

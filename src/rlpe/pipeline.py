@@ -646,7 +646,22 @@ class RadiolarianPipeline:
             # or SAM2 prompt order).
             try:
                 with self._ocr_lock:
-                    label_tokens = self.ocr.recognize_panel_label(region_img, (x, y, w, h))
+                    label_tokens = self.ocr.recognize_panel_label(
+                        region_img, (x, y, w, h), label_corner="adaptive",
+                    )
+                # N10: if corner OCR returned nothing, fall back to the
+                # full-panel OCR tokens (which include the whole panel,
+                # not just the corner band). This rescued 100% of bandini2011
+                # panels where the corner band was too small to OCR.
+                if not label_tokens:
+                    with self._ocr_lock:
+                        full_tokens = self.ocr.recognize_panel(
+                            region_img, (x, y, w, h)
+                        )
+                    label_tokens = full_tokens
+                    if label_tokens:
+                        panel.metadata = panel.metadata or {}
+                        panel.metadata["label_region_fallback"] = "full_panel"
                 if label_tokens:
                     panel.metadata = panel.metadata or {}
                     panel.metadata["label_region_ocr"] = " ".join(

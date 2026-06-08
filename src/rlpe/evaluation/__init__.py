@@ -8,6 +8,7 @@ from .metrics import (
     load_predictions_jsonl,
 )
 from .report import write_json_report, write_markdown_report
+from .image_label_check import ImageLabelStats, run_image_label_check
 
 __all__ = [
     "GOLD_SCHEMA_VERSION",
@@ -22,4 +23,6 @@ __all__ = [
     "load_predictions_jsonl",
     "write_json_report",
     "write_markdown_report",
+    "ImageLabelStats",
+    "run_image_label_check",
 ]

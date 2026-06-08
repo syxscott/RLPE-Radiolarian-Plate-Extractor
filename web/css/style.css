@@ -820,6 +820,27 @@ body {
     transition: var(--transition);
 }
 
+.badge {
+    display: inline-block;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: help;
+}
+.badge-ok {
+    background: #dcfce7;
+    color: #065f46;
+}
+.badge-warn {
+    background: #fef3c7;
+    color: #92400e;
+}
+.badge-muted {
+    background: #f3f4f6;
+    color: #6b7280;
+}
+
 .confidence-badge:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);

@@ -921,11 +921,20 @@ function renderResults() {
         const species = escapeAttr(r.species);
         const panelPath = escapeAttr(r.panel_path);
         const panelPathEscaped = resolveAssetUrl(r.panel_path || '').replace(/'/g, "\\'");
+        const md = r.metadata || {};
+        const ocrSource = md.v18_panel_id_source;
+        const oldPanelId = md.v18_old_panel_id;
+        const ocrCell = ocrSource === 'image_ocr'
+            ? `<span class="badge badge-ok" title="Re-OCR'd from panel image${oldPanelId && oldPanelId !== r.panel_id ? ' (was: ' + escapeAttr(oldPanelId) + ')' : ''}">✓ ${escapeAttr(r.panel_id) || 'N/A'}</span>`
+            : (r.panel_path
+                ? `<span class="badge badge-warn" title="panel_id came from caption list (positional); image OCR did not return a usable label">⚠ ${escapeAttr(r.panel_id) || 'N/A'}</span>`
+                : `<span class="badge badge-muted" title="No panel image available for OCR verification">— ${escapeAttr(r.panel_id) || 'N/A'}</span>`);
         return `
         <tr>
             <td>${escapeAttr(r.paper_id)}</td>
             <td>${escapeAttr(r.figure_id)}</td>
             <td>${escapeAttr(r.panel_id) || 'N/A'}</td>
+            <td>${ocrCell}</td>
             <td>${escapeAttr(r.species) || 'N/A'}</td>
             <td>
                 <span class="confidence-badge ${getConfidenceClass(r.confidence)}">

@@ -913,10 +913,11 @@ PYTHONPATH=src python -m pytest tests/ -q
 ruff check src/ tests/ scripts/
 PYTHONPATH=src mypy src/rlpe/
 
-# 跑 v16 评估（必须 ≥ 95% F1）
+# 跑 v18 评估（必须 ≥ 90% F1，且 image_label_match ≥ 30%）
 PYTHONPATH=src python scripts/evaluate.py \
-  --pred work/combined_9_v16_FINAL.jsonl \
+  --pred work/combined_9_v18_FINAL.jsonl \
   --gold data/gold/ \
+  --image-label-check \
   --output work/eval.json
 ```
 

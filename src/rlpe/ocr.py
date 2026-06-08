@@ -151,17 +151,23 @@ class OCRBackend:
         of the panel's corners. OCR'ing the full panel image dilutes that
         signal with the specimen's body — EasyOCR/PaddleOCR sometimes
         returns the body's texture as a higher-confidence token than the
-        actual label. Cropping a tight corner band (max 25% of the panel's
-        shorter side) and OCR'ing that gives a much cleaner label read.
+        actual label. Cropping a tight corner band gives a much cleaner
+        label read.
 
-        ``label_corner``: ``"tl"`` (top-left, default for radiolarian
-        plates), ``"tr"``, ``"bl"``, ``"br"``, or ``"auto"`` which tries
-        all four corners and returns the corner with the highest
-        confidence numeric label. The default is ``"tl"`` because the
-        vast majority of radiolarian plates have their numeric labels
-        in the top-left corner; ``"auto"`` is 4x slower (one OCR call
-        per corner) and is only needed for plates with non-standard
-        label placement.
+        ``label_corner``: ``"tl"`` (top-left), ``"tr"``, ``"bl"``, ``"br"``,
+        ``"auto"`` (try all four corners), or ``"adaptive"`` (try the
+        explicit corner first, then auto if that returns nothing). The
+        default is ``"tl"`` because the vast majority of radiolarian
+        plates have their numeric labels in the top-left corner; pass
+        ``"adaptive"`` for papers (e.g. bandini2011 plate 1) that put
+        labels in a different corner.
+
+        N10 fix: the band is now 50% of the shorter side, floored at
+        40px and capped at 160px. The previous 25% / 80px cap was too
+        small for typical bandini2011 panels (102x117 → 25px band,
+        too small for EasyOCR to read the label reliably). The wider
+        band still concentrates on the corner while being large enough
+        for OCR to lock on.
         """
         engine = self._lazy_init()
         if engine is None:
@@ -185,16 +191,20 @@ class OCRBackend:
         if panel.size == 0:
             return []
         ph, pw = panel.shape[:2]
-        # Corner band size: take the top-left 25% (or 30px min, 80px max)
-        band = max(20, min(int(min(ph, pw) * 0.25), 80))
+        # N10: 50% of shorter side, floored at 40, capped at 160. The
+        # previous 25% / 80px was too small for sub-200px panels.
+        band = max(40, min(int(min(ph, pw) * 0.50), 160))
         corners: list[tuple[str, tuple[int, int, int, int]]] = [
             ("tl", (0, 0, band, band)),
             ("tr", (max(0, pw - band), 0, pw, band)),
             ("bl", (0, max(0, ph - band), band, ph)),
             ("br", (max(0, pw - band), max(0, ph - band), pw, ph)),
         ]
-        if label_corner != "auto" and label_corner in {"tl", "tr", "bl", "br"}:
+        if label_corner in {"tl", "tr", "bl", "br"}:
             corners = [c for c in corners if c[0] == label_corner]
+        # "adaptive" = try the explicit corner first, then the others.
+        if label_corner == "adaptive":
+            corners = corners + [c for c in corners if c[0] != corners[0][0]]
         best_tokens: list[OCRToken] = []
         best_score: float = -1.0
         for name, (cx0, cy0, cx1, cy1) in corners:
