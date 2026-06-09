@@ -81,6 +81,22 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
 def paper_metadata_from_internal(pm: InternalPaperMetadata | None) -> PaperMetadataRecord | None:
     if pm is None:
         return None
+    # Defensive: ``InternalPaperMetadata.confidence`` is typed as float
+    # but in practice can be None when GROBID TEI parsing failed partway
+    # through (e.g. PDF rendered but no DOI / no abstract → no confidence
+    # populated). Passing None through to the Pydantic model raises a
+    # validation error and breaks the whole export; coerce to 0.0 here
+    # so a partially-populated paper metadata record still makes it into
+    # the JSONL. Matches the defensive pattern used in
+    # ``_scale_bar_from_meta`` and ``_geology_links_from_meta`` above.
+    confidence_val: float
+    if pm.confidence is None:
+        confidence_val = 0.0
+    else:
+        try:
+            confidence_val = float(pm.confidence)
+        except (TypeError, ValueError):
+            confidence_val = 0.0
     return PaperMetadataRecord(
         title=pm.title,
         authors=list(pm.authors or []),
@@ -95,7 +111,7 @@ def paper_metadata_from_internal(pm: InternalPaperMetadata | None) -> PaperMetad
         publisher=pm.publisher,
         page_count=pm.page_count,
         source=pm.source,
-        confidence=pm.confidence,
+        confidence=confidence_val,
     )
 
 

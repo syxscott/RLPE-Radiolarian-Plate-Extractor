@@ -846,6 +846,156 @@ body {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
+/* ==================== Status filter row (results tab) ==================== */
+.status-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    align-items: center;
+}
+.status-filter-btn {
+    padding: 0.4rem 0.9rem;
+    background: var(--bg-lighter);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-base);
+    cursor: pointer;
+    transition: var(--transition);
+}
+.status-filter-btn:hover {
+    background: var(--bg-light);
+    border-color: var(--primary-color);
+}
+.status-filter-btn.active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+.status-filter-count {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.45rem;
+    background: rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
+    font-size: 0.75rem;
+}
+.status-filter-btn.active .status-filter-count {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+/* ==================== Sortable column headers ==================== */
+.results-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    transition: background 0.15s ease;
+}
+.results-table th.sortable:hover {
+    background: rgba(59, 130, 246, 0.08);
+}
+.results-table th.sortable::after {
+    content: '⇅';
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-light);
+    font-size: 0.7rem;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+.results-table th.sortable:hover::after {
+    opacity: 1;
+}
+.results-table th.sort-asc::after {
+    content: '▲';
+    opacity: 1;
+    color: var(--primary-color);
+}
+.results-table th.sort-desc::after {
+    content: '▼';
+    opacity: 1;
+    color: var(--primary-color);
+}
+
+/* ==================== Pagination row ==================== */
+.pagination-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+}
+.pagination-info {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-right: auto;
+}
+.page-size-select {
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: white;
+    font-size: 0.85rem;
+}
+
+/* ==================== Stat card sub-text ==================== */
+.stat-sub {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+/* ==================== Image modal: rich info grid ==================== */
+.modal-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+    text-align: left;
+}
+.modal-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    border-bottom: 1px dashed var(--border-color);
+}
+.modal-row:last-child {
+    border-bottom: none;
+}
+.modal-row-wide {
+    flex-direction: column;
+    align-items: stretch;
+}
+.modal-label {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    min-width: 80px;
+}
+.modal-caption {
+    margin-top: 0.25rem;
+    padding: 0.5rem;
+    background: var(--bg-lighter);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--text-base);
+    max-height: 120px;
+    overflow-y: auto;
+}
+.modal-content img {
+    max-width: 100%;
+    max-height: 60vh;
+    object-fit: contain;
+}
+
 .confidence-high {
     background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
     color: #065f46;
@@ -872,7 +1022,7 @@ body {
 }
 
 .thumbnail-img:hover {
-    transform: scale(1.15) rotate(2deg);
+    transform: scale(1.15);
     box-shadow: 0 8px 20px rgba(59, 130, 246, 0.3);
     border-color: var(--primary-color);
 }

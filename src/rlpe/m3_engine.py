@@ -895,12 +895,18 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # "et" is 2 chars and doesn't match the epithet shape), so the
         # "A" / "B" suffix at the end of the clause is unreachable.
         # We look ahead up to 30 chars in the caption for a single
-        # capital letter or digit identifier; if found we append it to
-        # the species so the post-normalize step yields "Spumellaria
-        # indet. A" (matching gold).
+        # capital letter identifier; if found we append it to the
+        # species so the post-normalize step yields "Spumellaria
+        # indet. A" (matching gold). The previous pattern ``\b([A-Z])\b``
+        # was too loose — it could grab the leading "P" of "Plate", the
+        # "M" of "Mizutani", or any other capital letter that happened
+        # to be in the next 30 chars. Tighten the boundary to require
+        # the identifier to be at the end of the clause: followed by
+        # a clause terminator (``;``, ``.``, or end-of-text), never
+        # by a word that would indicate we matched the wrong capital.
         if re.match(r"^(Spumellaria|Nassellaria)\s+gen\.?$", species, flags=re.IGNORECASE):
             tail_window = text[m.end():m.end() + 30]
-            m_id = re.search(r"\b([A-Z])\b", tail_window)
+            m_id = re.search(r"\b([A-Z])\b(?=\s*[;.,]|\s*$)", tail_window)
             if m_id:
                 species = species + " " + m_id.group(1)
         pairs.append(CaptionPair(
@@ -1426,12 +1432,34 @@ class M3Engine:
             if isinstance(data, dict):
                 results.append(data)
         if not results:
+            # Two distinct failure modes that the pipeline treats very
+            # differently. The previous code conflated them by setting
+            # ``is_radiolarian=False`` for both:
+            #   1. ``last_error`` is set → real API / runtime failure
+            #      (network blip, M3 rejected the image, quota exceeded,
+            #      ...). Pipeline routes this through the FallbackHandler
+            #      so the user can retry or pick a local fallback.
+            #   2. ``last_error`` is None → M3 returned a response but
+            #      nothing parseable survived ``_safe_json_loads`` across
+            #      N self-consistency samples. This is NOT the same as
+            #      "M3 said this isn't a radiolarian" — M3 may simply
+            #      have produced malformed JSON. Leaving
+            #      ``is_radiolarian=True`` (the PanelMatch default) plus
+            #      a ``raw["unparseable"]`` flag lets the pipeline treat
+            #      this as a soft fallback (rule-based species preserved)
+            #      instead of a hard rejection.
+            if last_error:
+                return PanelMatch(
+                    panel_id="?", label=None, species=None, confidence=0.0,
+                    reasoning=f"M3 error: {last_error}",
+                    is_radiolarian=False,
+                    raw={"error": last_error},
+                )
             return PanelMatch(
                 panel_id="?", label=None, species=None, confidence=0.0,
-                reasoning=(f"M3 error: {last_error}" if last_error
-                           else "M3 returned no parseable output"),
-                is_radiolarian=False,
-                raw={"error": last_error} if last_error else {},
+                reasoning="M3 returned no parseable output",
+                is_radiolarian=True,
+                raw={"unparseable": True},
             )
         # Majority-vote on (label, species); keep best confidence.
         votes: dict[tuple[str | None, str | None], list[dict[str, Any]]] = {}

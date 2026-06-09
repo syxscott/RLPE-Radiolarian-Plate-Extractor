@@ -73,7 +73,13 @@ class RadiolarianPipeline:
         # when M3 backend is selected).
         self.m3_engine: M3Engine | None = None
         self._gemma_lock = threading.Lock()
-        self._ocr_lock = threading.Lock()
+        # NOTE: no shared _ocr_lock here. PaddleOCR (the default backend) is
+        # thread-safe for concurrent .ocr() calls — the engine serializes its
+        # own internal state and per-call locks would just serialize our
+        # workers for no benefit. EasyOCR is the exception; for that backend,
+        # ``OCRBackend.recognize`` uses its own engine-instance lock. The
+        # segmenter (SAM2) and gemma runtimes are NOT concurrent-safe, so
+        # they retain per-pipeline locks.
         self._seg_lock = threading.Lock()
         # Fallback handler for MiniMax API errors (None when not using MiniMax)
         self.gemma_fallback_handler = None
@@ -100,7 +106,8 @@ class RadiolarianPipeline:
             return
         model_path = self.config.extra.get("gemma_model_path") or self.config.extra.get("ollama_model")
         backend_name = str(self.config.extra.get("llm_backend", "transformers")).lower()
-        if not model_path and backend_name not in {"ollama", "MiniMax", "minimax", "MiniMax-m3"}:
+        minimax_backends = {"minimax", "minimax-m3", "minimax_api"}
+        if not model_path and backend_name not in (minimax_backends | {"ollama"}):
             return
         try:
             self.gemma_runtime = build_gemma_backend_from_config(self.config.extra)
@@ -108,7 +115,7 @@ class RadiolarianPipeline:
             # invoked ONLY from ``_apply_gemma_with_fallback``; we intentionally
             # do NOT also wire it into ``backend.on_error`` to avoid the
             # handler being called twice for the same error.
-            if backend_name in {"MiniMax", "minimax", "MiniMax-m3"}:
+            if backend_name in minimax_backends:
                 external = self.config.extra.get("_MiniMax_external_handler")
                 if external is not None:
                     handler = external
@@ -137,7 +144,7 @@ class RadiolarianPipeline:
         if self.gemma_runtime is not None:
             want_m3 = self.config.extra.get("m3_enhanced_mode")
             if want_m3 is None:
-                want_m3 = backend_name in {"MiniMax", "minimax", "MiniMax-m3"}
+                want_m3 = backend_name in minimax_backends
             if want_m3:
                 m3_cfg = {
                     k: v for k, v in self.config.extra.items()
@@ -172,6 +179,10 @@ class RadiolarianPipeline:
         ensure_dir(self.config.panels_dir())
         ensure_dir(self.config.manifests_dir())
 
+    def _emit_progress(self, current: int, total: int, message: str) -> None:
+        if self._progress_cb is not None:
+            self._progress_cb(current, total, message)
+
     def run(self) -> list[dict[str, Any]]:
         self.prepare_dirs()
         pdf_files = sorted(self.config.pdf_dir.glob("*.pdf"))
@@ -183,46 +194,56 @@ class RadiolarianPipeline:
         completed = 0
         # Fire one initial tick so the UI can show "started" before the first
         # PDF actually finishes.
-        if self._progress_cb is not None:
-            try:
-                self._progress_cb(0, total, f"Starting pipeline ({total} PDF(s))")
-            except Exception:
-                logger.debug("progress_cb(0) failed", exc_info=True)
+        self._emit_progress(0, total, f"Starting pipeline ({total} PDF(s))")
         with ThreadPoolExecutor(max_workers=max(1, self.config.num_workers)) as pool:
             futures = {pool.submit(self._process_one_pdf, p): p for p in pdf_files}
-            for fut in as_completed(futures):
-                pdf = futures[fut]
-                try:
-                    result_rows = fut.result()
-                    rows.extend(result_rows)
-                except Exception:
-                    logger.exception("PDF processing failed; continuing with remaining PDFs")
-                completed += 1
-                if self._progress_cb is not None:
+            try:
+                for fut in as_completed(futures):
+                    pdf = futures[fut]
+                    if fut.cancelled():
+                        # Future was cancelled (e.g. the API sent a cancel
+                        # request and the executor pre-empted the worker).
+                        # Don't try to extract a result and don't log a
+                        # spurious "PDF processing failed" line.
+                        completed += 1
+                        continue
                     try:
-                        self._progress_cb(
-                            completed, total,
-                            f"Processed {pdf.name} ({len(rows)} matches so far)",
-                        )
+                        result_rows = fut.result()
+                    except (KeyboardInterrupt, SystemExit):
+                        # User-initiated cancellation. Cancel in-flight
+                        # workers and propagate so the CLI exits with a
+                        # proper traceback and the API can flip the job to
+                        # ``cancelled`` (the API's own cancel path doesn't
+                        # go through ``run()``, but the API may also be
+                        # wrapping this method).
+                        for f in futures:
+                            f.cancel()
+                        raise
                     except Exception:
-                        logger.debug("progress_cb tick failed", exc_info=True)
+                        logger.exception("PDF processing failed; continuing with remaining PDFs")
+                    else:
+                        rows.extend(result_rows)
+                    completed += 1
+                    self._emit_progress(
+                        completed, total,
+                        f"Processed {pdf.name} ({len(rows)} matches so far)",
+                    )
+            except (KeyboardInterrupt, SystemExit):
+                # Same handling if the cancel happens between ``as_completed``
+                # yields (e.g. signal handler fires while we're idle waiting
+                # for the next future).
+                for f in futures:
+                    f.cancel()
+                raise
 
         manifest_path = self.config.manifests_dir() / "matches.jsonl"
         write_jsonl(manifest_path, rows)
-        if self._progress_cb is not None:
-            try:
-                self._progress_cb(total, total, f"Done — {len(rows)} matches")
-            except Exception:
-                logger.debug("progress_cb(done) failed", exc_info=True)
+        self._emit_progress(total, total, f"Done — {len(rows)} matches")
         return rows
 
     def _process_one_pdf(self, pdf_path: Path) -> list[dict[str, Any]]:
         paper_id = stable_id(pdf_path)
-        if self._progress_cb is not None:
-            try:
-                self._progress_cb(0, 1, f"Loading {pdf_path.name}…")
-            except Exception:
-                logger.debug("progress_cb(load) failed", exc_info=True)
+        self._emit_progress(0, 1, f"Loading {pdf_path.name}…")
 
         # ------ OpenDataLoader path (opt-in) -----------------------------------
         if self.config.extra.get("use_opendataloader", False):
@@ -231,11 +252,7 @@ class RadiolarianPipeline:
             # ------ GROBID + layout path (default) -----------------------------
             rows = self._process_one_pdf_grobid(paper_id, pdf_path)
 
-        if self._progress_cb is not None:
-            try:
-                self._progress_cb(1, 1, f"Finished {pdf_path.name} ({len(rows)} matches)")
-            except Exception:
-                logger.debug("progress_cb(finish) failed", exc_info=True)
+        self._emit_progress(1, 1, f"Finished {pdf_path.name} ({len(rows)} matches)")
         return rows
 
     # -----------------------------------------------------------------------
@@ -281,14 +298,10 @@ class RadiolarianPipeline:
         for fig_idx, pair in enumerate(figures, start=1):
             if not pair.image_paths:
                 continue
-            if self._progress_cb is not None:
-                try:
-                    self._progress_cb(
-                        fig_idx - 1, n_figs,
-                        f"[{fig_idx}/{n_figs}] {pair.caption_text[:40] if pair.caption_text else pair.figure_id}",
-                    )
-                except Exception:
-                    logger.debug("progress_cb(figure) failed", exc_info=True)
+            self._emit_progress(
+                fig_idx - 1, n_figs,
+                f"[{fig_idx}/{n_figs}] {pair.caption_text[:40] if pair.caption_text else pair.figure_id}",
+            )
 
             # Pick the LARGEST image as the primary region. OpenDataLoader
             # sometimes returns several images per plate (an index map of
@@ -414,14 +427,10 @@ class RadiolarianPipeline:
             return self._fallback_process_without_captions(paper_id, pages)
 
         for idx, caption in enumerate(tei_captions, start=1):
-            if self._progress_cb is not None:
-                try:
-                    self._progress_cb(
-                        idx - 1, max(1, len(tei_captions)),
-                        f"[{idx}/{len(tei_captions)}] {caption.figure_id}",
-                    )
-                except Exception:
-                    logger.debug("progress_cb(grobid-caption) failed", exc_info=True)
+            self._emit_progress(
+                idx - 1, max(1, len(tei_captions)),
+                f"[{idx}/{len(tei_captions)}] {caption.figure_id}",
+            )
 
             best_page = choose_best_page(pages, caption.figure_number, caption.caption, window=self.config.caption_window)
             if best_page is None:
@@ -552,7 +561,8 @@ class RadiolarianPipeline:
         # ---- Classical CV: panel segmentation + OCR + rule-based match ----------
         with self._seg_lock:
             panels = self.segmenter.segment_image(region_img)
-        # If M3 found panels and the classical path found none, use M3 boxes
+        # OCR is intentionally not locked at this layer — see __init__ for
+        # the rationale. Engine init is protected inside OCRBackend itself.
         if (not panels or len(panels) == 0) and m3_panels:
             h_img, w_img = region_img.shape[:2]
             panels = [
@@ -593,8 +603,7 @@ class RadiolarianPipeline:
                 )
             ]
 
-        with self._ocr_lock:
-            ocr_tokens = normalize_ocr_tokens(self.ocr.recognize(region_img))
+        ocr_tokens = normalize_ocr_tokens(self.ocr.recognize(region_img))
         taxon_entities = self.taxon.predict(caption.caption or "")
 
         # Scale bar: caption + OCR + visual line detection
@@ -615,9 +624,28 @@ class RadiolarianPipeline:
         if len(panels) != pre:
             logger.info("NMS dedup: %d → %d panels for %s", pre, len(panels), figure_id)
 
+        h_img, w_img = region_img.shape[:2]
         for panel_index, panel in enumerate(panels, start=1):
             x, y, w, h = panel.bbox
-            crop = region_img[y : y + h, x : x + w]
+            # Clip bbox to image bounds. The segmenter occasionally returns
+            # coords slightly outside the image (e.g. SAM2 prompts at the edge
+            # produce bboxes that go a few pixels past the boundary). Without
+            # this clip, numpy would silently produce a smaller crop than the
+            # recorded bbox suggests, and the bbox stored on the panel would
+            # disagree with the saved panel_path dimensions.
+            x0 = max(0, min(int(x), w_img))
+            y0 = max(0, min(int(y), h_img))
+            x1 = max(x0, min(int(x + w), w_img))
+            y1 = max(y0, min(int(y + h), h_img))
+            if x1 <= x0 or y1 <= y0:
+                # Fully out-of-bounds panel (e.g. from a misaligned M3 hint);
+                # skip rather than save an empty image.
+                continue
+            panel.bbox = (x0, y0, x1 - x0, y1 - y0)
+            x, y, w, h = panel.bbox
+            crop = region_img[y0:y1, x0:x1]
+            if crop.size == 0:
+                continue
             panel_dir = ensure_dir(self.config.panels_dir() / paper_id / (figure_id or f"fig_{figure_index}"))
             panel_path = panel_dir / f"panel_{panel_index:02d}.png"
             cv2.imwrite(str(panel_path), crop)
@@ -629,8 +657,7 @@ class RadiolarianPipeline:
             # Falls back silently to the region-level OCR tokens if the
             # backend fails to initialise.
             try:
-                with self._ocr_lock:
-                    panel_tokens = self.ocr.recognize_panel(region_img, (x, y, w, h))
+                panel_tokens = self.ocr.recognize_panel(region_img, (x, y, w, h))
                 if panel_tokens:
                     panel.metadata = panel.metadata or {}
                     panel.metadata["panel_ocr_text"] = " ".join(t.text for t in panel_tokens)
@@ -645,19 +672,17 @@ class RadiolarianPipeline:
             # existing panel_id (which came from positional assignment
             # or SAM2 prompt order).
             try:
-                with self._ocr_lock:
-                    label_tokens = self.ocr.recognize_panel_label(
-                        region_img, (x, y, w, h), label_corner="adaptive",
-                    )
+                label_tokens = self.ocr.recognize_panel_label(
+                    region_img, (x, y, w, h), label_corner="adaptive",
+                )
                 # N10: if corner OCR returned nothing, fall back to the
                 # full-panel OCR tokens (which include the whole panel,
                 # not just the corner band). This rescued 100% of bandini2011
                 # panels where the corner band was too small to OCR.
                 if not label_tokens:
-                    with self._ocr_lock:
-                        full_tokens = self.ocr.recognize_panel(
-                            region_img, (x, y, w, h)
-                        )
+                    full_tokens = self.ocr.recognize_panel(
+                        region_img, (x, y, w, h)
+                    )
                     label_tokens = full_tokens
                     if label_tokens:
                         panel.metadata = panel.metadata or {}
@@ -855,7 +880,13 @@ class RadiolarianPipeline:
                     m.panel_id = panel_match.label or m.panel_id
                     m.species = panel_match.species or m.species
                     m.label_text = panel_match.label or m.label_text
-                    m.confidence = max(m.confidence, m3_conf)
+                    # Use m3_conf directly, not max(rule_conf, m3_conf). The
+                    # two scores come from different scoring systems (rule-
+                    # based heuristic vs M3 LLM); combining them with max()
+                    # can mask the M3's lower-but-more-honest score and
+                    # inflate downstream thresholds. When M3 is selected we
+                    # trust its verdict and use its confidence verbatim.
+                    m.confidence = m3_conf
                     md["gemma_used"] = True
                     md["gemma_confidence"] = m3_conf
                     md["gemma_reasoning"] = panel_match.reasoning
@@ -922,8 +953,16 @@ class RadiolarianPipeline:
                 caption_pairs=caption_pairs,
             )
             M3Engine.apply_critiques(panel_matches, critiques)
-            # Back-apply to original matches
-            by_id = {pm.panel_id: pm for pm in panel_matches}
+            # Back-apply to original matches. Use a length-stable insertion
+            # that handles duplicate panel_id values (e.g. when two figures
+            # were merged upstream and both contain a panel labeled "1") —
+            # a plain dict comprehension would silently drop all but the
+            # last occurrence and cause a critique to never reach its match.
+            by_id: dict[str, PanelMatch] = {}
+            for pm in panel_matches:
+                cur = by_id.get(pm.panel_id)
+                if cur is None or float(pm.confidence or 0.0) > float(cur.confidence or 0.0):
+                    by_id[pm.panel_id] = pm
             for idx, m in enumerate(matches, start=1):
                 pid = str(m.panel_id or f"P{idx}")
                 pm = by_id.get(pid)
@@ -1170,14 +1209,10 @@ class RadiolarianPipeline:
                 done += 1
                 continue
 
-            if self._progress_cb is not None:
-                try:
-                    self._progress_cb(
-                        done, n_total,
-                        f"[{done + 1}/{n_total}] p{page.page_index:02d} region {ridx}",
-                    )
-                except Exception:
-                    logger.debug("progress_cb(fallback-region) failed", exc_info=True)
+            self._emit_progress(
+                done, n_total,
+                f"[{done + 1}/{n_total}] p{page.page_index:02d} region {ridx}",
+            )
             done += 1
 
             figure_id = f"auto_fig_p{page.page_index:03d}_r{ridx:02d}"

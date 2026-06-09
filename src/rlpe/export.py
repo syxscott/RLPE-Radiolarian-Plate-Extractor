@@ -68,13 +68,28 @@ def _sanitize(obj: Any) -> Any:
     if hasattr(obj, "to_dict") and callable(obj.to_dict):
         try:
             return _sanitize(obj.to_dict())
-        except Exception:
-            pass
+        except Exception as exc:
+            # The to_dict method is the contract for "I know how to
+            # serialise myself". A failure here usually means the
+            # object's internal state is broken (a malformed metadata
+            # field, a numpy scalar in a non-numpy-aware path, etc.).
+            # Logging at debug means operators investigating a bad
+            # export can see which object tripped, without spamming
+            # warnings on the happy path.
+            import logging
+            logging.getLogger(__name__).debug(
+                "export._sanitize: to_dict() failed for %s: %s; "
+                "falling back to vars()", type(obj).__name__, exc,
+            )
     if hasattr(obj, "__dict__"):
         try:
             return _sanitize({k: v for k, v in vars(obj).items()})
-        except Exception:
-            pass
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug(
+                "export._sanitize: vars() failed for %s: %s; "
+                "falling back to repr()", type(obj).__name__, exc,
+            )
     return repr(obj)
 
 

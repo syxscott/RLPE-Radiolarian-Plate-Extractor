@@ -83,8 +83,15 @@ def parse_coordinate(text: str) -> Coordinate | None:
                 lon = -lon
             if _valid(lat, lon):
                 return Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
-        except Exception:
-            pass
+        except (TypeError, ValueError) as exc:
+            # Regex matched a DMS shape but the groups aren't valid
+            # numbers (e.g. OCR noise between the digits). Log at
+            # debug so the failure is observable without spamming
+            # warnings on every paper.
+            import logging
+            logging.getLogger(__name__).debug(
+                "geo_coords: DMS regex matched but conversion failed: %s", exc,
+            )
     # 2. Decimal
     m = _DECIMAL_RE.search(text)
     if m:
@@ -97,8 +104,11 @@ def parse_coordinate(text: str) -> Coordinate | None:
                 lon = -lon
             if _valid(lat, lon):
                 return Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
-        except Exception:
-            pass
+        except (TypeError, ValueError) as exc:
+            import logging
+            logging.getLogger(__name__).debug(
+                "geo_coords: decimal regex matched but conversion failed: %s", exc,
+            )
     return None
 
 

@@ -30,7 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--use-gpu", action="store_true", default=None,
                    help="Enable GPU for OCR and neural modules. "
                         "Default: auto-detect (True if CUDA available, else False).")
-    p.add_argument("--num-workers", type=int, default=4)
+    p.add_argument("--num-workers", type=int, default=4,
+                   help="Number of PDFs to process in parallel. Clamped to [1, 32]: "
+                        "values above 32 saturate GROBID / OCR / CUDA long before "
+                        "they help throughput, and 0 would crash ThreadPoolExecutor.")
     p.add_argument("--min-panel-score", type=float, default=0.8)
     p.add_argument("--render-dpi", type=int, default=200)
     p.add_argument("--save-intermediate", action="store_true")
@@ -92,6 +95,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Number of self-consistency samples for stage 4 (default 1)")
     p.add_argument("--m3-diagnostic-dir", type=str, default=None,
                    help="Dump every M3 call (system prompt + image + result) to this directory for debugging.")
+    p.add_argument("--m3-retry-without-thinking", dest="m3_retry_without_thinking",
+                   action=argparse.BooleanOptionalAction, default=None,
+                   help="If a M3 call returns empty, retry once with extended "
+                        "thinking disabled (default: ON). Disable on slow or "
+                        "constrained backends where the second call is too "
+                        "expensive to be worth the chance of recovery.")
+    p.add_argument("--m3-skip-match-on-empty-caption", dest="m3_skip_match_on_empty_caption",
+                   action=argparse.BooleanOptionalAction, default=None,
+                   help="Skip M3 stage 4 (panel matching) when the caption "
+                        "parser returned no (label->species) pairs (default: "
+                        "ON). Disable if you want M3 to attempt visual-only "
+                        "matching for figures with no caption parseable "
+                        "structure.")
     # ---- Paleobiology Database (opt-in) -------------------------------------
     p.add_argument("--use-paleodb", action="store_true",
                    help="Look up matched species against the Paleobiology Database "
@@ -112,6 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    # Clamp --num-workers to a sane range. ThreadPoolExecutor requires
+    # ``max_workers >= 1``; values above ~32 saturate the OCR / SAM2 /
+    # GROBID stack long before they help throughput. A user typo (e.g.
+    # ``--num-workers 0``) would otherwise crash the pool at submit
+    # time. Silently clamping matches what most CLI tools do.
+    args.num_workers = max(1, min(32, int(args.num_workers)))
     # Resolve --use-gpu: explicit flag wins, else auto-detect CUDA.
     if args.use_gpu is None:
         try:
@@ -189,6 +211,10 @@ def main() -> int:
         cfg.extra["m3_match_samples"] = int(args.m3_match_samples)
     if args.m3_diagnostic_dir:
         cfg.extra["m3_diagnostic_dir"] = str(args.m3_diagnostic_dir)
+    if args.m3_retry_without_thinking is not None:
+        cfg.extra["m3_retry_without_thinking"] = bool(args.m3_retry_without_thinking)
+    if args.m3_skip_match_on_empty_caption is not None:
+        cfg.extra["m3_skip_match_on_empty_caption"] = bool(args.m3_skip_match_on_empty_caption)
     ensure_dir(cfg.work_dir)
     pipeline = RadiolarianPipeline(cfg)
     rows = pipeline.run()

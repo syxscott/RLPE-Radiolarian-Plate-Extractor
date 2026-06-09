@@ -73,6 +73,15 @@ class OpenDataLoaderExtractor:
         self.image_format = image_format
         self.merge_gap_pt = merge_gap_pt
         self._available: bool | None = None
+        # Lazy EasyOCR engine + lock. The previous implementation
+        # declared these as locals inside ``_ocr_missing_captions`` and
+        # the engine was therefore re-instantiated on every call —
+        # EasyOCR model load is several seconds and ~200MB of RAM, so
+        # this turned a single-figure PDF into a multi-second stall
+        # per figure. Cache the engine on the instance instead, with
+        # a double-checked lock so concurrent threads don't double-init.
+        self._ocr_engine = None
+        self._ocr_engine_lock = threading.Lock()
 
     # -- availability -------------------------------------------------------
 
@@ -136,6 +145,33 @@ class OpenDataLoaderExtractor:
 
     # -- caption OCR fallback ------------------------------------------------
 
+    def _get_or_init_ocr_engine(self):
+        """Return the cached EasyOCR reader, initialising it on first call.
+
+        Returns ``None`` if EasyOCR is unavailable or init failed; the
+        caller should treat that as "fallback disabled for this paper".
+        Concurrent threads may race on first call, but EasyOCR's own
+        internal state is set up such that one thread wins and the
+        loser just does a redundant init that we discard.
+        """
+        if self._ocr_engine is not None:
+            return self._ocr_engine
+        with self._ocr_engine_lock:
+            if self._ocr_engine is not None:
+                return self._ocr_engine
+            try:
+                import easyocr
+                self._ocr_engine = easyocr.Reader(
+                    ["en"], gpu=False, verbose=False,
+                )
+            except Exception:
+                logger.warning(
+                    "EasyOCR init failed; caption OCR fallback disabled",
+                    exc_info=True,
+                )
+                self._ocr_engine = None
+        return self._ocr_engine
+
     def _ocr_missing_captions(
         self,
         figures: list[FigureCaptionPair],
@@ -174,15 +210,10 @@ class OpenDataLoaderExtractor:
             logger.info("PyMuPDF unavailable; skipping caption OCR fallback")
             return figures
 
-        ocr_engine = None
-        ocr_lock = threading.Lock()
-        try:
-            with ocr_lock:
-                if ocr_engine is None:
-                    import easyocr
-                    ocr_engine = easyocr.Reader(["en"], gpu=False, verbose=False)
-        except Exception:
-            logger.warning("EasyOCR init failed; caption OCR fallback disabled")
+        ocr_engine = self._get_or_init_ocr_engine()
+        if ocr_engine is None:
+            # Init failed (already logged in ``_get_or_init_ocr_engine``);
+            # skip the OCR fallback for this paper.
             return figures
 
         try:

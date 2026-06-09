@@ -55,6 +55,32 @@ def test_resolve_panel_path_fallback_search(tmp_path):
     assert paper_id in str(resolved)
 
 
+def test_resolve_panel_path_fallback_output_panels_layout(tmp_path):
+    """Some refresh runs (e.g. work/beccaro_only_out) put panels under
+    an extra ``output/`` segment, so the glob pattern must also try
+    ``work/*/output/panels/<paper_id>/<fig>/panel_NN.png``. This was
+    a real bug: beccaro2006's 35 v18 preds pointed at
+    ``work/beccaro2006_only_out/output/panels/...`` (a typo'd path)
+    and the v18 panels actually live at
+    ``work/beccaro_only_out/output/panels/...`` — the path-mismatch
+    glob previously missed them and the OCR coverage reported 0 for
+    beccaro."""
+    paper_id = "abc123"
+    fig = "fig_01"
+    panel = "panel_03.png"
+    work = tmp_path / "work" / "run_x" / "output" / "panels" / paper_id / fig
+    work.mkdir(parents=True)
+    (work / panel).write_bytes(b"")
+    # Pred file wrote a path with a typo'd run dir name
+    fake_pred_path = str(tmp_path / "work" / "run_y_TYPO" / "output" / "panels" / paper_id / fig / panel)
+    resolved = _resolve_panel_path(fake_pred_path, tmp_path)
+    assert resolved is not None, (
+        "fallback glob should find panels under work/*/output/panels/"
+    )
+    assert resolved.name == panel
+    assert paper_id in str(resolved)
+
+
 def test_image_label_stats_rate_property():
     s = ImageLabelStats(paper_id="p1", n_checked=10, n_ocr_has_label=5, n_image_label_match=4)
     assert s.image_label_match_rate == 0.4

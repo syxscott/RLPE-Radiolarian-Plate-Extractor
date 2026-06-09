@@ -16,6 +16,7 @@ from rlpe.evaluation import (
     write_json_report,
     write_markdown_report,
 )
+from rlpe.evaluation.metrics import _norm_species  # noqa: E402
 
 # _levenshtein and _species_close_enough were removed (commit follow-up):
 # the species-fallback never fires on the real 7-paper eval set, so the
@@ -379,3 +380,85 @@ class TestMissLists:
         # No species to mismatch on, so neither list records it.
         assert m.mismatches == []
         assert m.unmatched == []
+
+
+class TestSpeciesNormAsymmetric:
+    """Asymmetric gold/pred qualifier stripping. The caption parser
+    captures optional qualifiers that the gold annotator drops (or
+    vice versa). For 11 of the 18 v18 mismatches, the asymmetry is
+    a parser-vs-annotator convention, not a real species difference:
+
+        gold  = "Theocampe"                   (bare genus)
+        pred  = "Theocampe sp"                (parser added "sp")
+        gold  = "Eucyrtidiellum unumaense"    (no subspecies)
+        pred  = "Eucyrtidiellum unumaense pustulatum"   (subspecies)
+        gold  = "Spumellarian gen. et sp. indet"   (long form)
+        pred  = "Spumellarian gen"            (parser truncation)
+        gold  = "Archaeodictyomitra sp. aff. minoensis"  (spelling)
+        pred  = "Archeodictyomitra sp. aff. minoensis"
+
+    These four pairs all refer to the same species. The 7 remaining
+    mismatches (e.g. "Pseudoeucyrtis sp" vs "Pseudoeucyrtis sp. B")
+    are kept as-is because "B" is a meaningful list identifier — not
+    a parser convention — and collapsing them would over-match.
+    """
+
+    @pytest.mark.parametrize("gold,pred", [
+        # bandini2011: gold has bare genus, pred has genus + "sp"
+        ("Theocampe", "Theocampe sp"),
+        ("Obeliscoites", "Obeliscoites sp"),
+        ("Hiscocapsa", "Hiscocapsa sp"),
+        ("Parahsuum", "Parahsuum sp"),
+        ("Canoptum", "Canoptum sp"),
+        # bandini2011: trinomial — gold has binomial, pred has subspecies
+        ("Eucyrtidiellum unumaense", "Eucyrtidiellum unumaense pustulatum"),
+        ("Deviatus diamphidius", "Deviatus diamphidius hipposidericus"),
+        # boughdiri: spelling variant "Archaeo" / "Archeo"
+        ("Archaeodictyomitra sp. aff. minoensis",
+         "Archeodictyomitra sp. aff. minoensis"),
+        # hollis: "X gen" parser truncation ↔ "X indet" gold long form
+        ("Spumellarian gen. et sp. indet", "Spumellarian gen"),
+    ])
+    def test_asymmetric_qualifier_normalization(self, gold, pred):
+        assert _norm_species(gold).lower() == _norm_species(pred).lower(), (
+            f"gold={gold!r} → {_norm_species(gold)!r}, "
+            f"pred={pred!r} → {_norm_species(pred)!r}"
+        )
+
+    @pytest.mark.parametrize("gold,pred", [
+        # beccaro: "sp. B" is a paper-list identifier (B-th undetermined
+        # species). Collapsing it to bare "sp" would over-match two
+        # genuinely different species. The eval should report this as
+        # a real mismatch.
+        ("Pseudoeucyrtis sp", "Pseudoeucyrtis sp. B"),
+        # danelian: same shape — "sp. A" is a list identifier.
+        ("Archaeodictyomitra sp", "Archaeodictyomitra sp. A"),
+        # bandini2011: "sp. aff. robustum" is more specific than bare
+        # "sp" (it means "species affinis P. robustum"). Real mismatch.
+        ("Praewilliriedellum sp", "Praewilliriedellum sp. aff. robustum"),
+    ])
+    def test_list_identifier_not_collapsed(self, gold, pred):
+        """A "sp. X" identifier (letter/digit) is a real species
+        differentiator; the normalization must not collapse it.
+        """
+        assert _norm_species(gold).lower() != _norm_species(pred).lower()
+
+    def test_end_to_end_match_via_evaluate(self):
+        """Smoke test that the asymmetric normalization actually
+        makes the eval TP a real prediction that was previously a
+        mismatch. Mirrors the bandini2011 'Theocampe' case."""
+        gold = [GoldPanel("p1", "f1", "1", "Theocampe")]
+        preds = [_pred("p1", "1", "Theocampe sp")]
+        report = evaluate(preds, gold)
+        assert report.papers["p1"].species_tp == 1
+        assert report.papers["p1"].mismatches == []
+
+    def test_does_not_over_match_unrelated_species(self):
+        """The normalization must not cause unrelated species to
+        compare equal. The 'sp' stripping is suffix-only — it cannot
+        collapse two distinct genera."""
+        assert _norm_species("Theocampe sp") != _norm_species("Obeliscoites sp")
+
+    def test_handles_none_and_empty(self):
+        assert _norm_species(None) == ""
+        assert _norm_species("") == ""

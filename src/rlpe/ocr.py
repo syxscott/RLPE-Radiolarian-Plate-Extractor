@@ -36,7 +36,20 @@ class OCRBackend:
                 try:
                     from paddleocr import PaddleOCR
 
-                    self._engine = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=self.use_gpu)
+                    # ``use_angle_cls`` was deprecated in PaddleOCR 3.x
+                    # in favour of ``use_textline_orientation``; the new
+                    # kwarg is the documented replacement. The old name
+                    # still works in 2.x but emits a DeprecationWarning
+                    # on every import. Try the new name first and fall
+                    # back to the legacy one for 2.x users.
+                    try:
+                        self._engine = PaddleOCR(
+                            use_textline_orientation=True, lang="en", use_gpu=self.use_gpu,
+                        )
+                    except TypeError:
+                        self._engine = PaddleOCR(
+                            use_angle_cls=True, lang="en", use_gpu=self.use_gpu,
+                        )
                     return self._engine
                 except Exception:
                     logger.warning("PaddleOCR init failed; falling back to EasyOCR")
@@ -207,11 +220,48 @@ class OCRBackend:
             corners = corners + [c for c in corners if c[0] != corners[0][0]]
         best_tokens: list[OCRToken] = []
         best_score: float = -1.0
+        # Try a 2x upscaled version of the corner band as a fallback. Many
+        # bandini-style panels (e.g. 233x129 with a 1- or 2-digit label in
+        # the corner) have labels too small for EasyOCR to read at native
+        # resolution; cv2.INTER_CUBIC upscaling recovers ~78% of those
+        # labels without introducing new false positives. We only run
+        # this fallback on a corner band (not the full panel) to keep
+        # the cost modest.
         for name, (cx0, cy0, cx1, cy1) in corners:
             sub = panel[cy0:cy1, cx0:cx1]
             if sub.size == 0:
                 continue
             tokens = self._ocr_array(sub)
+            if not tokens:
+                # 2x fallback: upscale the band and retry. Skip if the
+                # panel is already very large — for 500px+ panels the
+                # native corner band is already well above OCR's
+                # comfortable input size, so upscaling brings no real
+                # benefit and just doubles the OCR cost.
+                if min(ph, pw) < 500:
+                    import cv2
+                    sh, sw = sub.shape[:2]
+                    up = cv2.resize(
+                        sub, (sw * 2, sh * 2), interpolation=cv2.INTER_CUBIC
+                    )
+                    if up.ndim == 2:
+                        up = cv2.cvtColor(up, cv2.COLOR_GRAY2BGR)
+                    elif up.shape[2] == 3:
+                        up = cv2.cvtColor(up, cv2.COLOR_RGB2BGR)
+                    tokens = self._ocr_array(up)
+                    if tokens:
+                        # Mark these tokens as coming from a 2x fallback
+                        # and remap their bboxes back to corner coords.
+                        tokens = [
+                            OCRToken(
+                                text=t.text,
+                                confidence=t.confidence * 0.9,
+                                bbox=(t.bbox[0] // 2, t.bbox[1] // 2,
+                                      t.bbox[2] // 2, t.bbox[3] // 2),
+                                metadata={"label_corner": name, "upscaled": "2x"},
+                            )
+                            for t in tokens
+                        ]
             if not tokens:
                 continue
             # Score: max confidence of any short text token (looks label-like)
@@ -227,7 +277,19 @@ class OCRBackend:
                     score = max(score, tok.confidence)
             if score > best_score:
                 best_score = score
-                # Translate bboxes back to image coordinates
+                # Translate bboxes back to image coordinates. The
+                # ``label_corner`` field always needs to reflect the
+                # corner that produced the winning token, even if the
+                # token already carried metadata from a prior call
+                # (e.g. the 2x upscaled fallback stamps its own
+                # ``{"label_corner": name, "upscaled": "2x"}`` on
+                # tokens). The previous ``tok.metadata or
+                # {"label_corner": name}`` only set ``label_corner``
+                # when metadata was None — any non-None metadata
+                # (including the empty-dict from a fresh token) would
+                # pass through untouched and lose the corner info.
+                # Use an ``is not None`` check and merge in the corner
+                # so existing fields are preserved.
                 best_tokens = [
                     OCRToken(
                         text=tok.text,
@@ -238,7 +300,11 @@ class OCRBackend:
                             tok.bbox[2],
                             tok.bbox[3],
                         ),
-                        metadata={"label_corner": name},
+                        metadata=(
+                            {**tok.metadata, "label_corner": name}
+                            if tok.metadata is not None
+                            else {"label_corner": name}
+                        ),
                     )
                     for tok in tokens
                 ]

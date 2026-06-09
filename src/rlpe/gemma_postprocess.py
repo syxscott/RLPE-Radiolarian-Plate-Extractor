@@ -158,7 +158,7 @@ def load_gemma4_llamacpp(
 
 def build_gemma_backend_from_config(extra: dict[str, Any]) -> GemmaRuntime:
     backend = str(extra.get("llm_backend", "transformers")).lower()
-    if backend in {"MiniMax", "MiniMax-m3", "MiniMax_api", "minimax"}:
+    if backend in {"minimax", "minimax-m3", "minimax_api"}:
         from .llm_backends import build_MiniMax_backend_from_env_or_config
         runtime_backend = build_MiniMax_backend_from_env_or_config(extra)
         return GemmaRuntime(backend=runtime_backend, backend_name="MiniMax")

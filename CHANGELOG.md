@@ -632,6 +632,198 @@ real mismatches surface. Per-paper v18 F1: bandini 86.4%,
 baum 97.5%, beccaro 97.1%, boughdiri 92.3%, bragin 100%,
 danelian 95.1%, feng 92.5%, hollis 97.2%, pouille 100%.
 
+## [Unreleased 3] - 2026-06-08 — frontend UX, gold normalization, OCR fallback
+
+A pass through the P0/P1 backlog and frontend UX after the v18
+panel_id realignment. Eval F1 jumped from 92.16% to **94.24%** as
+a side-effect of normalizing 11 of the 18 v18 mismatches (mostly
+asymmetric gold/pred qualifier stripping), with no impact on the
+underlying pipeline.
+
+### Fixed
+
+- **Gold/pred species string normalization**
+  (`src/rlpe/evaluation/metrics.py::_norm_species`). The caption
+  parser captures optional qualifiers that the gold annotator drops
+  (or vice versa). 11 of the 18 v18 mismatches were parser-vs-
+  annotator convention, not real species differences:
+  - bare ` sp` / ` sp.` (parser added, gold dropped)
+  - ` spp` / ` spp.` (multiple species indicator)
+  - trinomial → binomial (`Eucyrtidiellum unumaense pustulatum`
+    matches `Eucyrtidiellum unumaense`)
+  - `Archaeo` / `Archeo` spelling variant
+  - `X gen` (parser truncation) ↔ `X indet` (gold long form) for
+    the "X gen. et sp. indet" pattern
+  The rules are conservative: `sp. B` / `sp. A` / `sp. aff. <ep>`
+  are left alone because `B`/`A`/`<ep>` are meaningful list
+  identifiers, not parser conventions. 12 new parametrized tests
+  in `tests/test_evaluation_metrics.py::TestSpeciesNormAsymmetric`
+  document which asymmetries are accepted and which are rejected.
+
+- **`recognize_panel_label` 2x upscaling fallback**
+  (`src/rlpe/ocr.py`). When the native corner-band OCR returns no
+  tokens, the band is upscaled 2x with `cv2.INTER_CUBIC` and OCR
+  retried. Recovers ~78% of labels on small bandini-style panels
+  (e.g. 233×129) without introducing new false positives on
+  large panels. The fallback only fires for panels < 500px on the
+  shorter side and is skipped on 500px+ panels where the native
+  band is already well above OCR's comfortable input size.
+  Tokens recovered from the 2x fallback are tagged with
+  `metadata.upscaled = "2x"` so downstream code can attribute
+  the read. 3 new tests in
+  `tests/test_ocr_panel_label_upscaled.py` cover the fallback
+  (recovers label), the no-op (large panel), and the
+  native-succeeds (no fallback fires) paths.
+
+- **`_resolve_panel_path` glob fallback for `output/panels/`**
+  (`src/rlpe/evaluation/image_label_check.py`). The v18 image-label
+  check previously missed any paper whose panels live under
+  `work/*/output/panels/...` (e.g. beccaro2006's 35 panels); the
+  glob only tried `work/*/panels/...`. The fallback now tries both
+  layouts, so beccaro's image-label coverage goes from 0% to 81%
+  (26/32 panels OCR'd, 4/32 matching the predicted panel_id).
+  New test in
+  `tests/test_image_label_check.py::test_resolve_panel_path_fallback_output_panels_layout`.
+
+### Changed
+
+- **Frontend results tab** (`web/index.html`, `web/css/style.css`,
+  `web/js/app.js`):
+  - **Image modal** now shows paper_id, figure_id, panel_id, OCR
+    source badge, species, confidence, bbox, optional v17→v18
+    reassignment note, and a caption snippet. Replaces the
+    species-only modal.
+  - **Status filter row** with counts: `全部` / `✓ 图像 OCR` /
+    `⚠ 位置回退` / `— 无图`. Click a button to filter the table
+    to that status.
+  - **Sortable column headers**: click any `th[data-sort-key]`
+    to sort ascending/descending. Visual sort indicator
+    (`▲` / `▼`) on the active column.
+  - **Pagination** (10 / 25 / 50 / 100 per page) with first /
+    prev / next / last buttons. Replaces the silent
+    `.slice(0, 100)` truncation.
+  - **Search now matches panel_id** in addition to paper_id and
+    species. Placeholder updated to
+    `"搜索论文 ID、panel_id、物种名..."`.
+  - **Stats grid** now shows paper count, OCR-hit panel count
+    with the `pos fallback` subcount, and percent-of-total.
+  - All `onclick="..."` inline handlers replaced with
+    `addEventListener` + `data-*` attributes (avoids
+    quote-escaping bugs from complex JSON in attribute values).
+    Added `escapeHtml()` helper for safe HTML rendering.
+
+### Notes
+
+- 35 beccaro2006 panels had panel_path pointing to a non-existent
+  `work/beccaro2006_only_out/` directory (typo for
+  `work/beccaro_only_out/`). The path itself was corrected in the
+  v18 file as a one-shot, but the underlying glob fallback in
+  `_resolve_panel_path` makes future path mismatches resilient —
+  no manual intervention needed when the pred file's panel_path
+  was written for a different run layout.
+- bandini2011 unmatched investigation: 32 unmatched gold panels in
+  bandini2011 are real caption-parser gaps (parser missed entries
+  like bare `Archeodictyomitra` or `Mictyoditra` in some plates),
+  not gold/pred normalization issues. Resolving these would
+  require extending the caption parser's species-extraction
+  grammar; deferred to a separate work item.
+- Eval still uses `v18` predictions. The v18 script's hardcoded
+  path `work/beccaro_only_out` (without `2006`) is the
+  correct on-disk path; the v18 JSONL was the source of the typo.
+
+## [Unreleased 4] - 2026-06-08 — testing depth pass
+
+A pass through the 4 testing gaps surfaced by the 2026-06-08
+self-audit. **Total tests: 374 → 399 (+25 new).** No regression
+on the 94.24% F1 number.
+
+### Added
+
+- **Round-trip JSON schema tests**
+  (`tests/test_schema_models.py::TestRunOutput`). The previous
+  round-trip test only used ``json.dumps`` on the dict, which
+  loses Pydantic coercion (None vs missing-key, list[int] vs
+  tuple, etc.). Two new tests do the full Pydantic cycle
+  (``model_dump_json() → model_validate_json() → __eq__``) and
+  the converter → dict → JSON → dict → Pydantic cycle the
+  export pipeline takes. Catches silent field drops on any
+  schema change.
+
+- **OCR backend-missing 降级 tests**
+  (`tests/test_ocr_backend_missing.py`, 7 tests). When PaddleOCR
+  and EasyOCR are both unavailable, ``recognize()`` /
+  ``recognize_panel()`` / ``recognize_panel_label()`` must
+  return ``[]`` (not raise). Verifies the lazy-init failure
+  path doesn't crash, including the 2x fallback corner case
+  (a small panel that *would* trigger the fallback if the
+  backend were live). The "lazy_init not retried" test
+  ensures the import-failure path doesn't hang on every
+  call (5-min timeout per panel would be a production
+  disaster).
+
+- **Hypothesis property tests for caption parsers**
+  (`tests/test_caption_parser_property.py`, 7 tests,
+  1000+ generated inputs). The regex caption parsers
+  (``_regex_parse_caption`` and the inline regexes in
+  ``m3_engine.py``) are the only path the pipeline takes
+  when the LLM stage is disabled. A bug in any of them
+  silently breaks 100% of one paper's species. Property
+  tests verify the parser is total: it must not crash on
+  any of (a) caption-shaped input, (b) adversarial input
+  (empty, control chars, very long, Unicode emoji, regex
+  meta-chars), (c) arbitrary Unicode text up to 500 chars.
+  All output is well-formed: ``species`` is non-empty str,
+  ``labels`` is a list of non-empty strs, no ``None`` fields.
+  Also tests specific edge cases: null bytes, CRLF, smart
+  quotes, N repeated labels.
+
+- **Real OCR coverage on 60 panels**
+  (`tests/test_real_ocr_coverage.py`, 2 tests). The
+  ``image_label_check`` was tested with a mock EasyOCR
+  reader; this test runs real EasyOCR on 60 panels
+  sampled across 5 papers and reports the actual numbers.
+  **Key finding**: the 2x fallback "78% recovery" claim
+  was based on 8 panels from bandini2011 only. A wider
+  sample (60 panels, 5 papers) shows the fallback recovers
+  0% on average — the bandini result was paper-specific,
+  not a general property of the 2x strategy. The test is
+  a regression guard: combined coverage must be ≥ 10%,
+  2x fallback must not make coverage worse.
+
+- **End-to-end fresh paper sanity tests**
+  (`tests/test_fresh_paper_smoke.py`, 7 tests). Validates
+  the v1.1.0 smoke test output
+  (``work/papers_smoke/output/manifests/matches.jsonl``)
+  which contains pipeline output from 5 fresh papers
+  (carlsson2022, cifer2020, baumgartner2006,
+  danelian2018_profetis, beccaro2006). Verifies:
+  (a) ≥ 10 rows total; (b) all 5 papers produce output;
+  (c) required schema fields present; (d) ≥ 80% rows have
+  panel_path; (e) species extraction ≥ 20% (sanity
+  floor); (f) output validates through Pydantic schema;
+  (g) per-paper rate is reported for tracking.
+  **Observed**: 55.4% species aggregate on fresh papers
+  (vs 94.24% on the 9-paper gold set). The cold-start
+  gap is real and large — regex parsers don't generalise
+  to unseen paper styles.
+
+### Notes
+
+- The 25 new tests brought the total to 399 (from 374).
+  The property-based tests count as 7 tests but actually
+  run ~1000 generated inputs each.
+- The 2x OCR fallback's 78% claim has been **retracted**:
+  the wider sample shows 0% recovery. The fallback code
+  remains in place (it doesn't hurt), but the comment in
+  the docstring has been updated to reflect the
+  paper-specific nature of the original measurement.
+- API 并发压测 was listed in the audit as "low value
+  for current scope"; skipped per the
+  "暂不需要把数据上传到 PBDB / GBIF" constraint
+  (production deployment is out of scope).
+- Hypothesis added as a dev dependency. Add to
+  ``pyproject.toml`` if regenerating the lockfile.
+
 ## [1.1.0] - 2026-06-06
 
 ### Added

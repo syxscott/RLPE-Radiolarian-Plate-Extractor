@@ -156,4 +156,6 @@ def choose_best_page(pages: list[PageRecord], figure_number: str | None, caption
             if re.search(rf"\b{re.escape(figure_number)}\b", page.text or ""):
                 return page
     # Otherwise choose the page with lowest text density among pages near the caption text.
+    if not pages:
+        return None
     return min(pages, key=page_text_density)

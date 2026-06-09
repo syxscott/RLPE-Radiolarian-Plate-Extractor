@@ -39,13 +39,21 @@ def _run_output_from_jsonl(input_path: Path) -> RunOutput:
     require the JSONL to be a RunOutput shape.
     """
     import json
+    import logging
     matches: list[MatchResult] = []
     with open(input_path) as f:
-        for line in f:
+        for line_no, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
                 continue
-            d = json.loads(line)
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError as exc:
+                logging.getLogger(__name__).warning(
+                    "Skipping malformed JSONL line %d in %s: %s",
+                    line_no, input_path, exc,
+                )
+                continue
             # Convert dict to MatchResult for the converter.
             # MatchResult has many fields; we just need the documented ones.
             from rlpe.types import PaperMetadata as InternalPaperMetadata

@@ -45,6 +45,19 @@ def main() -> int:
             "on a 9-paper corpus because EasyOCR runs on every panel."
         ),
     )
+    parser.add_argument(
+        "--image-label-cache",
+        type=Path,
+        default=Path("work/image_label_ocr_cache.json"),
+        help=(
+            "Path to the on-disk cache of OCR results for "
+            "--image-label-check. Reusing the same path across runs "
+            "makes the second run essentially free (the OCR step is "
+            "skipped for every unchanged panel). Set to an empty "
+            "string to disable caching. Default: "
+            "work/image_label_ocr_cache.json"
+        ),
+    )
     args = parser.parse_args()
 
     if args.gold.is_dir():
@@ -55,9 +68,11 @@ def main() -> int:
         summary = evaluate(pred, gold)
     summary_dict = summary.to_dict()
     if args.image_label_check:
+        cache_path = args.image_label_cache if str(args.image_label_cache) else None
         image_label_stats = run_image_label_check(
             predictions=load_jsonl(args.pred),
             root=ROOT,
+            cache_path=cache_path,
         )
         summary_dict["image_label_check"] = image_label_stats
     if args.output:

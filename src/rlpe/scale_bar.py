@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 SCALE_PATTERN = re.compile(
     r"(?:scale\s*bar(?:\s*(?:length|=|:))?\s*|bar\s*=\s*|bars?\s+are\s+|"
@@ -45,8 +48,17 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
             hi = float(m.group(2))
             info.value = (val + hi) / 2.0
             info.confidence = 0.7
-        except Exception:
-            pass
+        except (TypeError, ValueError) as exc:
+            # The regex matched a range shape but the second group
+            # wasn't a valid float (e.g. unicode minus, OCR noise
+            # injected between the digits). The single-value
+            # confidence is the right fallback — log at debug so the
+            # operator can see this happened without spamming the
+            # warning level.
+            logger.debug(
+                "scale caption: range form matched but group(2)=%r is not a "
+                "float: %s — keeping single value", m.group(2), exc,
+            )
     return info
 
 
@@ -64,8 +76,13 @@ def extract_scale_from_ocr_text(ocr_text: str) -> ScaleInfo:
             hi = float(m.group(2))
             info.value = (val + hi) / 2.0
             info.confidence = 0.6
-        except Exception:
-            pass
+        except (TypeError, ValueError) as exc:
+            # See caption variant above. OCR text is much noisier so
+            # this is more common — log at debug level.
+            logger.debug(
+                "scale ocr: range form matched but group(2)=%r is not a "
+                "float: %s — keeping single value", m.group(2), exc,
+            )
     return info
 
 

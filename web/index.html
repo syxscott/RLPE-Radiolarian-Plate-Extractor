@@ -45,7 +45,7 @@
             <section id="upload-tab" class="tab-pane active">
                 <div class="card">
                     <h2>📂 上传 PDF 文件</h2>
-                    <div class="upload-area" id="upload-area">
+                    <div class="upload-area" id="upload-area" role="button" tabindex="0" aria-label="选择或拖拽 PDF 文件">
                         <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="17 8 12 3 7 8"></polyline>
@@ -152,14 +152,9 @@
                     </div>
 
                     <div class="config-section">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="use-geology-llm">
-                            启用地质信息 LLM 提取
-                        </label>
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="save-intermediate">
-                            保存中间结果（用于调试）
-                        </label>
+                        <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">
+                            提示：中间结果（裁剪的 panel、OCR JSON、caption 解析）默认始终保存，用于后续 review 跟踪。如需关闭，请修改 <code>PipelineConfig.save_intermediate</code>。
+                        </p>
                     </div>
 
                     <div class="config-section" id="paleodb-section">
@@ -263,7 +258,7 @@
                 <div class="card">
                     <h2>🔍 图版与标签匹配结果</h2>
                     <div class="results-toolbar">
-                        <input type="text" id="result-search" placeholder="搜索论文 ID、物种名...">
+                        <input type="text" id="result-search" placeholder="搜索论文 ID、panel_id、物种名...">
                         <select id="result-filter">
                             <option value="">全部论文</option>
                         </select>
@@ -272,16 +267,17 @@
     导出
 </button>
                     </div>
+                    <div id="result-status-filters" class="status-filter-row" role="tablist" aria-label="按 OCR 来源过滤"></div>
                     <div id="results-table-wrapper" class="table-wrapper">
                         <table id="results-table" class="results-table">
                             <thead>
                                 <tr>
-                                    <th>论文 ID</th>
-                                    <th>图版 ID</th>
-                                    <th>Panel 标签</th>
+                                    <th data-sort-key="paper_id">论文 ID</th>
+                                    <th data-sort-key="figure_id">图版 ID</th>
+                                    <th data-sort-key="panel_id">Panel 标签</th>
                                     <th>图版 OCR</th>
-                                    <th>物种</th>
-                                    <th>置信度</th>
+                                    <th data-sort-key="species">物种</th>
+                                    <th data-sort-key="confidence">置信度</th>
                                     <th>图版缩略图</th>
                                     <th>操作</th>
                                 </tr>
@@ -293,6 +289,7 @@
                             </tbody>
                         </table>
                     </div>
+                    <div id="results-pagination" class="pagination-row"></div>
                 </div>
             </section>
 

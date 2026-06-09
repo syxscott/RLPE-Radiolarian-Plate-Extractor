@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import io
 import json
 import logging
@@ -11,12 +12,73 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
 logger = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 _JSON_ARR_RE = re.compile(r"\[.*?\]", re.DOTALL)
+
+
+# ----------------------------------------------------------------------
+# SSRF guard for user-supplied LLM hosts
+# ----------------------------------------------------------------------
+# The Ollama and LlamaCpp backends accept an arbitrary ``host`` URL
+# from the operator. Without a guard, a malicious or accidental
+# ``host`` (e.g. ``http://169.254.169.254/latest/meta-data/`` on AWS)
+# would make the service fetch cloud metadata server-side, or probe
+# internal hosts the operator didn't intend to expose. The guard
+# below is intentionally permissive for the common case (loopback
+# and RFC1918 private — local LLM servers usually live there) but
+# blocks link-local addresses and non-HTTP(S) schemes that are the
+# usual SSRF payloads.
+#
+# Set ``RLPE_LLM_ALLOW_ANY_HOST=1`` to disable the check entirely
+# (e.g. when running on a hardened network where the operator
+# controls the LLM host). The default is safe-by-default.
+def _validate_llm_host(host: str) -> str:
+    """Return ``host`` unchanged if it passes the SSRF guard, else raise.
+
+    The check covers:
+      - scheme: must be ``http`` or ``https`` (rejects ``file://``,
+        ``gopher://``, ``ftp://`` etc.)
+      - link-local addresses (169.254.0.0/16, fe80::/10) — these
+        include the AWS / GCP / Azure metadata endpoints and IPv6
+        link-local; almost never a legitimate LLM host.
+      - the unspecified address (0.0.0.0, ::) — would route to a
+        local interface the operator doesn't expect.
+    """
+    if os.environ.get("RLPE_LLM_ALLOW_ANY_HOST") == "1":
+        return host
+    parsed = urlparse(host)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(
+            f"LLM host must use http or https scheme, got {parsed.scheme!r} "
+            f"in {host!r}. Set RLPE_LLM_ALLOW_ANY_HOST=1 to override."
+        )
+    hostname = parsed.hostname or ""
+    # Try to parse as an IP literal. If it isn't, the host is a DNS
+    # name and we can't enumerate its addresses without a DNS lookup
+    # (which itself can be an SSRF vector) — accept it and let the
+    # outbound connection handle the resolution. Operators who don't
+    # trust their DNS should set RLPE_LLM_ALLOW_ANY_HOST=0 explicitly
+    # (which is the default).
+    try:
+        addr = ipaddress.ip_address(hostname)
+    except ValueError:
+        return host
+    if (
+        addr.is_link_local
+        or addr.is_unspecified
+        or addr.is_multicast
+    ):
+        raise ValueError(
+            f"LLM host {host!r} resolves to a non-routable address "
+            f"({addr}); refusing to connect (SSRF guard). "
+            f"Set RLPE_LLM_ALLOW_ANY_HOST=1 to override."
+        )
+    return host
 
 
 def parse_json_from_text(text: str) -> dict[str, Any]:
@@ -180,6 +242,13 @@ class OllamaGemmaBackend(BaseLLMBackend):
     top_p: float = 0.9
     backend_name: str = "ollama"
 
+    def __post_init__(self) -> None:
+        # SSRF guard: reject link-local / unspecified / non-http hosts.
+        # See ``_validate_llm_host`` for the policy. The default
+        # ``http://127.0.0.1:11434`` passes the check (loopback is
+        # always allowed).
+        self.host = _validate_llm_host(self.host)
+
     def infer_panel(self, panel_image, caption_text: str, ocr_labels: list[str], system_prompt: str, user_prompt: str) -> dict[str, Any]:
         images = []
         if panel_image is not None:
@@ -259,6 +328,10 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
     temperature: float = 0.1
     top_p: float = 0.9
     backend_name: str = "llamacpp"
+
+    def __post_init__(self) -> None:
+        # SSRF guard — see ``_validate_llm_host`` for the policy.
+        self.host = _validate_llm_host(self.host)
 
     def infer_panel(self, panel_image, caption_text: str, ocr_labels: list[str], system_prompt: str, user_prompt: str) -> dict[str, Any]:
         try:
@@ -531,13 +604,25 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 time.sleep(wait)
             except anthropic_mod.APIStatusError as exc:
                 last_exc = exc
-                # 5xx -> retry; 4xx (except 429) -> fail fast
-                if getattr(exc, "status_code", 500) >= 500:
+                status = getattr(exc, "status_code", 500)
+                # Retry policy:
+                #   - 5xx and 429: always retry (transient).
+                #   - 401 / 403: retry — these are often transient, e.g. an
+                #     auth token that expired mid-session or a key
+                #     rotation; the second attempt will surface the real
+                #     failure to the user if it's permanent.
+                #   - All other 4xx (400 / 404 / 422): fail fast, the
+                #     request is malformed or the resource doesn't
+                #     exist and retrying won't help.
+                if status >= 500 or status == 429 or status in (401, 403):
                     wait = min(2 ** attempt, 30)
-                    logger.warning("MiniMax 5xx (attempt %d), sleeping %ds: %s", attempt + 1, wait, exc)
+                    logger.warning(
+                        "MiniMax %d (attempt %d), sleeping %ds: %s",
+                        status, attempt + 1, wait, exc,
+                    )
                     time.sleep(wait)
                 else:
-                    # 4xx (non-429) -> count and re-raise immediately
+                    # 4xx (not retryable) -> count and re-raise immediately
                     with self._lock:
                         self.total_errors += 1
                     raise

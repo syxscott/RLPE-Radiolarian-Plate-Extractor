@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -35,7 +38,17 @@ class TaxonRecognizer:
                 from taxonerd import TaxoNERD
 
                 self._engine = TaxoNERD(model=self.model)
-            except Exception:
+            except Exception as exc:
+                # TaxoNERD is the primary species-recognition engine.
+                # A silent fallback to the regex path leaves the
+                # operator wondering why species extraction is so
+                # weak — log at warning so the cause is visible.
+                # ``self._engine = None`` is correct: the predictor
+                # below branches on it to use the regex fallback.
+                logger.warning(
+                    "TaxoNERD init failed (model=%r): %s; falling back to "
+                    "regex-based species extraction", self.model, exc,
+                )
                 self._engine = None
 
             if self.hf_model_path and self._hf_ner is None:

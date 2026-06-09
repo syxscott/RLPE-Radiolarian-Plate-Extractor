@@ -120,7 +120,15 @@ class PaleoDB:
             return None
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, json.JSONDecodeError) as exc:
+            # Corrupted cache is functionally "cache miss" — fall
+            # through to the live request — but it should be visible
+            # in logs so the operator can clean up. Distinguish I/O
+            # errors from parse errors at warning level.
+            logger.warning(
+                "PBDB cache read failed for key=%r (%s): %s; treating as miss",
+                key, type(exc).__name__, exc,
+            )
             return None
 
     def _write_cache(self, key: str, payload: dict[str, Any]) -> None:
@@ -129,8 +137,15 @@ class PaleoDB:
             return
         try:
             path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        except Exception as exc:
-            logger.debug("PBDB cache write failed: %s", exc)
+        except OSError as exc:
+            # Bumped from debug to warning — cache-write failures
+            # (disk full, permission denied) are rare but operators
+            # have asked for them to be visible because the cache
+            # silently missing makes every later run hit the network.
+            logger.warning(
+                "PBDB cache write failed for key=%r (%s): %s",
+                key, type(exc).__name__, exc,
+            )
 
     # ------------------------------------------------------------------ HTTP
 

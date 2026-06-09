@@ -110,11 +110,58 @@ def _norm_species(s: str | None) -> str:
     # asymmetry fix — both forms are equivalent in the literature, and
     # the abbreviated form is the IRIS/Modern standard.
     s = re.sub(
-        r"^(spumellaria|nassellaria)\s+gen(?:\.\s+et\s+sp\.)?\s+indet$",
+        r"^(spumellaria[n]?|nassellaria[n]?)\s+gen(?:\.\s+et\s+sp\.)?\s+indet$",
         lambda m: m.group(1) + " indet",
         s,
         flags=re.IGNORECASE,
     )
+    # ------------------------------------------------------------------
+    # Asymmetric qualifier stripping. The caption parser is more
+    # aggressive than the gold annotator at capturing optional
+    # qualifiers, so the same biological species can appear in
+    # three shapes:
+    #   gold:   "Theocampe"                       (bare genus, no sp)
+    #   pred:   "Theocampe sp"                    (parser added "sp")
+    #   gold:   "Eucyrtidiellum unumaense"        (no subspecies)
+    #   pred:   "Eucyrtidiellum unumaense pustulatum"  (subspecies)
+    #   gold:   "Spumellarian gen. et sp. indet"  (long form)
+    #   pred:   "Spumellarian gen"                (parser truncation)
+    #   gold:   "Archaeodictyomitra sp. aff. minoensis"
+    #   pred:   "Archeodictyomitra sp. aff. minoensis"   (spelling)
+    # These four pairs all refer to the same species and are scored
+    # as TP after normalization. The following rules are applied
+    # conservatively — they only fire on asymmetries that are known
+    # to be parser-vs-annotator conventions, never on cases that
+    # could be legitimate species differentiation (e.g. "sp" vs
+    # "sp. B" stays as-is because "B" is a meaningful list identifier
+    # in the paper).
+    # ------------------------------------------------------------------
+    # 1) Bare " sp" / " sp." → drop entirely. Lets "Theocampe" match
+    #    "Theocampe sp" (parser added the "sp") and lets "Theocampe sp"
+    #    match "Theocampe" (gold dropped it). Does NOT touch "sp. B"
+    #    (a real list identifier) or "sp. aff. <epithet>".
+    s = re.sub(r"\s+sp\.?$", "", s, flags=re.IGNORECASE)
+    # 2) "spp" / "spp." (multiple species) → drop, same reasoning.
+    s = re.sub(r"\s+spp\.?$", "", s, flags=re.IGNORECASE)
+    # 3) Trinomial → binomial (3+ lowercase-tail words → keep first 2).
+    #    Eucyrtidiellum unumaense pustulatum → Eucyrtidiellum unumaense
+    #    Deviatus diamphidius hipposidericus → Deviatus diamphidius
+    #    Only when the trailing word is all-lowercase (subspecies shape);
+    #    a trinomial with a capitalised tail (e.g. an author) is left
+    #    alone — that's handled by the Author-strip rule below.
+    parts = s.split()
+    if len(parts) >= 3 and all(p and p[0].islower() for p in parts[1:]):
+        s = " ".join(parts[:2])
+    # 4) Spelling variants: "Archaeo" / "Archeo" prefix — the two
+    #    spellings are interchangeable in informal usage; canonicalise
+    #    to "Archeo" for comparison. Case-sensitive so we don't break
+    #    any future case-sensitive match (the eval lowercases later).
+    if s.startswith("Archaeo"):
+        s = "Archeo" + s[len("Archaeo"):]
+    # 5) "X gen" (parser truncation) ↔ "X indet" (gold long form).
+    #    The "gen. et sp. indet" → "indet" collapse above handles the
+    #    gold side; this handles the pred side.
+    s = re.sub(r"\s+gen$", " indet", s, flags=re.IGNORECASE)
     # Strip a trailing Author token (e.g. "Theocorys? phyzella Foreman"
     # in hollis2006 plate 2 item 22). The caption parser does not capture
     # author names; gold often does for the first appearance of a species.

@@ -238,8 +238,17 @@ def fetch_pbdb_intervals(force: bool = False, cache_dir: Path | None = None) -> 
             _PBDB_INTERVALS_CACHE = json.loads(cache_path.read_text(encoding="utf-8"))
             _PBDB_LAST_FETCH = cache_path.stat().st_mtime
             return _PBDB_INTERVALS_CACHE
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError) as exc:
+            # Corrupted intervals cache — fall through to a live
+            # fetch (the right behaviour), but log at warning so the
+            # operator can clean up the bad file. Silent corruption
+            # used to make the live fetch look like a network
+            # regression.
+            import logging
+            logging.getLogger(__name__).warning(
+                "PBDB intervals cache at %s is unreadable (%s); "
+                "falling through to live fetch", cache_path, exc,
+            )
     try:
         import requests  # type: ignore
         resp = requests.get(

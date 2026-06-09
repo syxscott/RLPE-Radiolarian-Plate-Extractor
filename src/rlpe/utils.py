@@ -26,17 +26,24 @@ def stable_id(path: Path | str) -> str:
 
     Falls back to a path-based hash when the file does not exist (e.g.
     unit tests passing a placeholder path).
+
+    The hash is computed in streaming chunks so a 100MB PDF doesn't
+    allocate 100MB of RAM per call (and so the worker pool doesn't
+    cumulatively hold many full PDFs in memory at once).
     """
     p = Path(path)
     try:
         if p.is_file():
-            data = p.read_bytes()
+            size = p.stat().st_size
+            h = hashlib.sha1()
             # size prefix prevents the (vanishingly rare) SHA1 collision
             # between two PDFs of the same content length, and makes
             # the id clearly content-derived.
-            return hashlib.sha1(
-                f"{len(data)}:".encode("ascii") + data
-            ).hexdigest()[:16]
+            h.update(f"{size}:".encode("ascii"))
+            with p.open("rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            return h.hexdigest()[:16]
     except OSError:
         pass
     return hashlib.sha1(str(path).encode("utf-8", errors="ignore")).hexdigest()[:16]

@@ -17,6 +17,7 @@ from rlpe.provenance.stamp import build_provenance
 from rlpe.schema_models import (
     SCHEMA_VERSION,
     PanelRecord,
+    PaperMetadataRecord,
     ProvenanceRecord,
     RunOutput,
     emit_json_schema,
@@ -120,6 +121,111 @@ class TestRunOutput:
         s = json.dumps(out.model_dump())
         reloaded = json.loads(s)
         assert reloaded["panels"][0]["species"] == "Genus sp"
+
+    def test_round_trip_via_pydantic_json(self):
+        """Full Pydantic round-trip: model_dump_json() → model_validate_json()
+        → reloaded == original. The previous round-trip test only used
+        json.dumps on the dict, which loses Pydantic coercion (None vs
+        missing-key, list[int] vs tuple, etc.). This test is the canonical
+        "can I write a record to disk and read it back" guard.
+        """
+        prov = self._provenance()
+        # Build a fully-populated record: nested ScaleBarRecord +
+        # GeologyLinkRecord + PaperMetadataRecord + reassigned metadata
+        pm = PaperMetadataRecord(
+            title="Round-trip test",
+            authors=["Author A", "Author B"],
+            year=2020,
+            doi="10.1000/test",
+            source="opendataloader",
+            confidence=0.8,
+        )
+        rec = PanelRecord(
+            paper_id="p1", figure_id="f1", panel_id="1",
+            species="Genus sp", panel_path="/path/to/panel.png",
+            bbox=[10, 20, 100, 200],
+            confidence=0.7,
+            label_text="1",
+            caption_snippet="Plate 1\n1) Genus sp.",
+            ocr_text="1 Genus sp",
+            metadata={
+                "panel_score": 0.6,
+                "ocr_count": 5,
+                "taxon_count": 1,
+                "figure_number": "1",
+                "page_index": 11,
+                "matcher_used": True,
+                "matcher_type": "taxon-recogniser",
+                "matcher_conf": 0.85,
+                "caption_pairs_used": True,
+                "scale_bar": {
+                    "value": 100.0, "unit": "um", "source": "caption",
+                    "pixel_length": 962.0, "um_per_px": 0.104,
+                    "confidence": 0.8,
+                },
+                "geology_links": [
+                    {"age": "Late Jurassic", "chronostratigraphy": "Kimmeridgian",
+                     "formation": "Fonzaso", "locality": "Italy",
+                     "confidence": 0.7},
+                    {"age": "Late Jurassic", "chronostratigraphy": "Kimmeridgian",
+                     "formation": "Fonzaso", "locality": "Italy",
+                     "confidence": 0.6},
+                ],
+                "m3_diagnostic": {"regex_groups": 3, "fallback_used": False},
+                "extraction_source": "opendataloader",
+                "reassigned_from_figure": "od_fig_X_p001_01",
+                "reassigned_reason": "neighbor caption match",
+            },
+            paper_metadata=pm,
+        )
+        out = RunOutput(provenance=prov, panels=[rec])
+
+        # Round-trip through Pydantic's JSON serialiser
+        json_str = out.model_dump_json()
+        reloaded = RunOutput.model_validate_json(json_str)
+
+        # Top-level equality
+        assert reloaded.schema_version == out.schema_version
+        assert reloaded.provenance.git_commit == out.provenance.git_commit
+        assert reloaded.provenance.input_sha256 == out.provenance.input_sha256
+        # Panel-level equality
+        rp = reloaded.panels[0]
+        assert rp.paper_id == "p1"
+        assert rp.bbox == [10, 20, 100, 200]
+        assert rp.confidence == 0.7
+        assert rp.metadata.scale_bar is not None
+        assert rp.metadata.scale_bar.unit == "um"
+        assert rp.metadata.scale_bar.pixel_length == 962.0
+        assert len(rp.metadata.geology_links) == 2
+        assert rp.metadata.geology_links[0].locality == "Italy"
+        assert rp.metadata.reassigned_from_figure == "od_fig_X_p001_01"
+        assert rp.metadata.m3_diagnostic == {"regex_groups": 3, "fallback_used": False}
+        assert rp.paper_metadata is not None
+        assert rp.paper_metadata.authors == ["Author A", "Author B"]
+        # Full equality (Pydantic __eq__ compares all fields)
+        assert reloaded == out
+
+    def test_round_trip_via_dict_then_json(self):
+        """The conversion path the export pipeline uses: Pydantic →
+        dict → json.dumps → json.loads → Pydantic again. Each step
+        must preserve all data; if any field is silently dropped on
+        one step, this catches it."""
+        from rlpe.converters import run_output_from_provenance
+        prov = self._provenance()
+        out = run_output_from_provenance(prov, [_make_match()])
+        # out is a dict, not a RunOutput
+        assert isinstance(out, dict)
+        # Re-validate (Pydantic coerce dict → RunOutput)
+        reloaded = validate_run_output(out)
+        assert len(reloaded.panels) == 1
+        # Drop the dict to JSON and back: simulates disk round-trip
+        s = json.dumps(out, default=str)
+        d2 = json.loads(s)
+        reloaded2 = validate_run_output(d2)
+        assert reloaded2.panels[0].paper_id == reloaded.panels[0].paper_id
+        assert reloaded2.panels[0].paper_metadata.authors == [
+            "Author A"
+        ]
 
     def test_validate_run_output_function(self):
         prov = self._provenance()
