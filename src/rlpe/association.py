@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+
 try:
     import torch
     import torch.nn as nn
@@ -15,7 +16,8 @@ except Exception:  # pragma: no cover
 
 from .ocr import OCRToken
 from .taxon import TaxonEntity
-from .types import CaptionRecord, MatchResult, PanelCandidate
+from .text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
+from .types import CaptionRecord, MatchResult, PanelCandidate, PaperMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,66 @@ TAXON_LIKE_PATTERN = re.compile(r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s+(?:s
 _SINGLE_UPPER = re.compile(r"[A-Z]")
 _SINGLE_DIGITS = re.compile(r"\d{1,2}")
 _SPECIES_QUAL = re.compile(r"\b(sp\.|spp\.|cf\.|aff\.)\b", re.IGNORECASE)
+
+# Captions that are clearly pipeline placeholders, not real figure
+# descriptions. The fallback path in pipeline.py emits strings like
+# "Auto-generated figure for page 17" when OpenDataLoader / GROBID
+# can't extract a real caption; ``extract_taxa_from_caption`` used to
+# match "Auto-generated figure" as a binomial and tag every panel with
+# that bogus species. Reject these at the boundary.
+#
+# Patterns local to the association matcher: these are strict prefix
+# matches (anchored with ^) because the matcher needs to know whether
+# the caption STARTS with a placeholder pattern. The richer detector in
+# ``text_filters.looks_like_placeholder_caption`` (which also catches
+# "Page 5 auto-generated image" anywhere in the string) is used by the
+# pipeline / stage-4 skip logic — see ``is_placeholder_caption`` below
+# which now also ORs in the text_filters predicate so the two stay in
+# sync for the cases the association matcher used to miss.
+# Strict-prefix placeholder patterns LOCAL to the association matcher.
+# These are intentionally narrower than ``text_filters._PLACEHOLDER_CAPTION_PATTERNS``
+# (note the different name — the previous shared-name made it easy to
+# import the wrong one by mistake).  Both are OR'd together inside
+# ``is_placeholder_caption`` below.
+_ASSOC_PLACEHOLDER_PREFIX_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE) for p in (
+        r"^auto[-_ ]generated\b",
+        r"^auto[-_ ]generated\s+figure\b",
+        r"^placeholder\b",
+        r"^n/?a\b",
+        r"^undefined\b",
+        r"^missing\s+caption\b",
+        r"^no\s+caption\b",
+    )
+)
+
+
+def is_placeholder_caption(text: str | None) -> bool:
+    """Return True if the caption text is a pipeline placeholder rather
+    than a real figure description. The pipeline emits "Auto-generated
+    figure for page N" when the upstream extractor returns no caption;
+    we don't want that to be treated as a taxon source.
+
+    Combines the anchored ``_PLACEHOLDER_CAPTION_PATTERNS`` (strict prefix
+    match — fast and unambiguous for the canonical fallback string) with
+    the broader ``text_filters.looks_like_placeholder_caption`` (handles
+    OpenDataLoader-style ``Page 5 auto-generated image`` where the
+    placeholder keyword is not at the start, as well as the Chinese
+    forms ``自动生成`` / ``页眉``). Without this OR the association
+    matcher would happily call ``extract_taxa_from_caption`` on a
+    "Page 5 auto-generated image" caption and tag every panel with a
+    bogus species.
+    """
+    if not text:
+        return True
+    s = str(text).strip()
+    if not s:
+        return True
+    if any(p.match(s) for p in _ASSOC_PLACEHOLDER_PREFIX_PATTERNS):
+        return True
+    # Delegate the broader patterns (Page-N prefix, Chinese variants,
+    # copyright headers) to the single source of truth in text_filters.
+    return _looks_like_placeholder_caption(s)
 
 
 @dataclass(slots=True)
@@ -138,6 +200,8 @@ class NeuralGraphMatcher:
 def extract_panel_labels(caption_text: str) -> list[str]:
     if not caption_text:
         return []
+    if is_placeholder_caption(caption_text):
+        return []
     labels: list[str] = []
     # Prefer explicit subpanel markers like (A), A., B-, 1), etc.
     for m in SUBPANEL_LABEL_PATTERN.finditer(caption_text):
@@ -150,12 +214,163 @@ def extract_panel_labels(caption_text: str) -> list[str]:
 def extract_taxa_from_caption(caption_text: str) -> list[str]:
     if not caption_text:
         return []
+    if is_placeholder_caption(caption_text):
+        return []
     taxa: list[str] = []
     for m in TAXON_LIKE_PATTERN.finditer(caption_text):
         tax = m.group(1).strip()
         if tax and tax not in taxa:
             taxa.append(tax)
     return taxa
+
+
+def _label_sort_key(label: str) -> tuple[int, str]:
+    """Sort panel labels like "1", "2", ..., "10", "A", "B".
+
+    Pure-numeric labels sort by their integer value; alphabetic labels
+    sort after numerics (alphabet labels are usually figure-level markers
+    that come after numbered sub-panels).
+    """
+    s = str(label).strip()
+    if s.isdigit():
+        return (0, "")
+    try:
+        return (1, s)
+    except Exception:
+        return (2, s)
+
+
+def _normalize_panel_label(label: str | None) -> str | None:
+    """Normalise a panel label so OCR misreads don't break caption lookup.
+
+    Two normalisations:
+      1. Strip leading zeros ("00" → "0", "04" → "4") — PaddleOCR commonly
+         reads "3" as "03" or "0" as "00" when the glyph is small.
+      2. Strip trailing zero-padding for double-digit OCR ("30" misread
+         of "3" stays as "3" if "3" is in the pair_lookup). The
+         caller decides whether to keep or drop by trying both forms.
+
+    Returns the cleanest single label (or None for empty input).
+    """
+    if label is None:
+        return None
+    s = str(label).strip()
+    if not s:
+        return None
+    # Don't normalise alphabetic labels ("A", "B" stay as-is).
+    if not s.isdigit():
+        return s
+    return str(int(s))  # "00" → "0", "04" → "4", "3" → "3"
+
+
+def _label_in_pair_lookup(label: str | None, pair_lookup: dict[str, str]) -> str | None:
+    """Try the label, then its leading-zero-stripped form, against
+    ``pair_lookup``. Returns the matching key (the value is then
+    ``pair_lookup[matched]``) or None.
+
+    Without this fallback, OCR misreads like "00" never match the
+    caption's "0" key and the panel gets species=None for no good
+    reason. With it, we tolerate the common "leading-zero" OCR error.
+    """
+    if not label:
+        return None
+    if label in pair_lookup:
+        return label
+    norm = _normalize_panel_label(label)
+    if norm and norm in pair_lookup:
+        return norm
+    return None
+
+
+def _add_label_base_aliases(cp: Any, pair_lookup: dict[str, str]) -> None:
+    """For a caption pair whose labels include letter-suffixed entries
+    like ``"14b"``, also index the species under the bare base number
+    ``"14"``. This rescues OCR misreads that drop the trailing letter
+    (panel labelled ``14`` on the figure but the caption key is
+    ``14b``) — a common case in Bandini/Pouille plates where the last
+    sub-figure of a range is the only one with the suffix.
+    """
+    sp = getattr(cp, "species", None)
+    if not sp:
+        return
+    for lbl in getattr(cp, "labels", None) or []:
+        if not lbl:
+            continue
+        m = re.match(r"^(\d+)([a-z])$", str(lbl))
+        if m:
+            base = m.group(1)
+            # Only add the bare base if no other species owns it
+            # (the LLM/regex parser should have already given the same
+            # species the base number when expanding a range, but
+            # deduplicate defensively).
+            if base not in pair_lookup:
+                pair_lookup[base] = sp
+
+
+def deduplicate_panels_nms(
+    panels: list,
+    iou_threshold: float = 0.6,
+    label_match: bool = True,
+) -> list:
+    """NMS-style merge of near-duplicate panel detections.
+
+    Two panels are duplicates if:
+      * their bboxes have IoU >= ``iou_threshold`` AND
+      * either (``label_match`` is False) OR their normalised labels are
+        equal (or both have no label).
+
+    When duplicates are found, the panel with the higher score is kept.
+    The kept panel's score is bumped by +0.02 if it had a label and the
+    dropped panel had the same label (signals "this is the real one,
+    confirmed by OCR").
+
+    This is the second-pass dedup that runs AFTER the segmenter's
+    intra-method dedup. The segmenter removes exact-overlap boxes from
+    a single method (e.g. SAM2 vs OpenCV), but doesn't catch
+    cross-method duplicates (e.g. SAM2 returns the full specimen and
+    OpenCV enhanced returns the same specimen split into two boxes).
+    """
+    if not panels:
+        return []
+    kept: list = []
+    # Sort by score descending so the highest-confidence panel wins
+    for panel in sorted(panels, key=lambda p: p.score, reverse=True):
+        is_dup = False
+        for k in kept:
+            iou = _iou_panels(panel.bbox, k.bbox)
+            if iou < iou_threshold:
+                continue
+            if label_match:
+                pl = _normalize_panel_label(panel.panel_id)
+                kl = _normalize_panel_label(k.panel_id)
+                if pl != kl:
+                    # Different labels with strong overlap is rare
+                    # (one is probably the right one); keep both but
+                    # the higher-scored one wins the slot.
+                    continue
+            is_dup = True
+            break
+        if is_dup:
+            continue
+        kept.append(panel)
+    # Sort by bbox y then x for downstream display
+    kept.sort(key=lambda p: (p.bbox[1], p.bbox[0]))
+    return kept
+
+
+def _iou_panels(a, b) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ax2, ay2 = ax + aw, ay + ah
+    bx2, by2 = bx + bw, by + bh
+    ix1, iy1 = max(ax, bx), max(ay, by)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    union = aw * ah + bw * bh - inter
+    return inter / max(1, union)
 
 
 def label_tokens_from_ocr(tokens: list[OCRToken]) -> list[OCRToken]:
@@ -168,15 +383,40 @@ def label_tokens_from_ocr(tokens: list[OCRToken]) -> list[OCRToken]:
 
 
 def assign_panels_to_labels(panels: list[PanelCandidate], labels: list[str], ocr_tokens: list[OCRToken]) -> list[str | None]:
+    """Assign each panel a textual label ("1", "2", ... or "A", "B", ...).
+
+    Priority:
+      1. ``panel.panel_id`` if it's a non-empty plain label (set by SAM2
+         detection or by classical CV with text-OCR hints).
+      2. The i-th element of ``labels`` (the caption-derived label list).
+      3. OCR text tokens on the panel.
+
+    The previous implementation always used ``labels[i]``, which
+    re-shuffled labels whenever the panel order didn't exactly match the
+    order the labels appeared in the caption (e.g. labels extracted from
+    ``DP2/8024`` or other DP catalog numbers). Using panel_id directly
+    fixes the common "panel N gets the wrong species" failure mode.
+
+    All label assignments go through ``_normalize_panel_label`` so that
+    OCR misreads like "00" (for "0") and "04" (for "4") are flattened
+    back to the canonical "0" / "4" form before any caption lookup.
+    """
     if not panels:
         return []
     if not labels:
-        # Fallback to OCR labels if available.
         ocr_labels = [tok.text.strip() for tok in label_tokens_from_ocr(ocr_tokens)]
         labels = ocr_labels
     out: list[str | None] = []
-    for i, _ in enumerate(panels):
-        out.append(labels[i] if i < len(labels) else None)
+    for i, panel in enumerate(panels):
+        pid = _normalize_panel_label(panel.panel_id)
+        if pid and (pid.isdigit() or len(pid) <= 3):
+            # Panel already has a sensible id (digit, or short letter).
+            out.append(pid)
+            continue
+        if i < len(labels) and labels[i]:
+            out.append(_normalize_panel_label(labels[i]) or labels[i])
+            continue
+        out.append(None)
     return out
 
 
@@ -190,6 +430,8 @@ def match_panels(
     use_neural_matcher: bool = False,
     matcher_checkpoint_path: str | None = None,
     image_shape: tuple[int, int] | None = None,
+    paper_metadata: PaperMetadata | None = None,
+    caption_pairs: list | None = None,
 ) -> list[MatchResult]:
     labels = caption.panel_labels or extract_panel_labels(caption.caption)
     taxa = [t.text for t in taxon_entities] or extract_taxa_from_caption(caption.caption)
@@ -197,8 +439,110 @@ def match_panels(
 
     # 1) 默认规则分配（可回退）。
     assigned_labels = assign_panels_to_labels(panels, labels, ocr_tokens)
-    assigned_species = [taxa[i] if i < len(taxa) else (taxa[0] if taxa else None) for i in range(len(panels))]
     neural_conf = [0.0] * len(panels)
+
+    # Caption is a pipeline placeholder (e.g. "Auto-generated figure for
+    # page 17"). We can't extract labels or species from it, and any
+    # positional fallback would just tag every panel with the first
+    # taxon in the placeholder string ("Auto-generated figure"). Bail
+    # out with empty species for all panels — the caller can either
+    # skip the figure or fall back to per-panel OCR/vision matching.
+    if is_placeholder_caption(caption.caption):
+        matches: list[MatchResult] = []
+        for idx, panel in enumerate(panels):
+            raw_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
+            panel_id = _normalize_panel_label(raw_id)
+            matches.append(
+                MatchResult(
+                    paper_id=paper_id,
+                    figure_id=figure_id,
+                    panel_id=panel_id,
+                    species=None,
+                    label_text=panel_id,
+                    panel_path=panel.image_path,
+                    bbox=list(panel.bbox),
+                    confidence=float(panel.score),
+                    caption_snippet=caption.caption[:240] if caption.caption else None,
+                    ocr_text=None,
+                    paper_metadata=paper_metadata,
+                    metadata={
+                        "panel_score": panel.score,
+                        "ocr_count": len(ocr_tokens),
+                        "taxon_count": len(taxon_entities),
+                        "figure_number": caption.figure_number,
+                        "page_index": caption.page_index,
+                        "matcher_used": False,
+                        "matcher_type": "skipped-placeholder-caption",
+                        "matcher_conf": 0.0,
+                        "caption_pairs_used": False,
+                    },
+                )
+            )
+        return matches
+
+    # 1b) M3 stage-1 caption pairs drive a much more accurate panel→species
+    # mapping. If we have structured (label, species) pairs from the LLM caption
+    # parser, build a label→species lookup and override the order-based
+    # heuristic. Falls back silently if pairs are empty or don't match.
+    pair_lookup: dict[str, str] = {}
+    caption_pairs_used = False
+    caption_pairs_source = ""
+    if caption_pairs:
+        for cp in caption_pairs:
+            sp = getattr(cp, "species", None)
+            if not sp:
+                continue
+            lbls = getattr(cp, "labels", None) or []
+            for lbl in lbls:
+                if lbl:
+                    pair_lookup[str(lbl).strip()] = sp
+            _add_label_base_aliases(cp, pair_lookup)
+        if pair_lookup:
+            caption_pairs_used = True
+            caption_pairs_source = "m3_llm"
+    # Fallback: when M3 didn't run, build the same lookup via the regex
+    # caption parser that M3 uses internally. This rescues the common case
+    # of "figs 1-2. SpeciesA: ... figs 3-4. SpeciesB: ..." captions where the
+    # old order-based heuristic was mapping every panel to taxa[0] (the
+    # first species in the caption).
+    if not caption_pairs_used and caption.caption:
+        try:
+            from .m3_engine import _regex_parse_caption
+            regex_pairs = _regex_parse_caption(caption.caption)
+            for cp in regex_pairs:
+                sp = getattr(cp, "species", None)
+                if not sp:
+                    continue
+                for lbl in getattr(cp, "labels", None) or []:
+                    if lbl:
+                        pair_lookup[str(lbl).strip()] = sp
+                _add_label_base_aliases(cp, pair_lookup)
+            if pair_lookup:
+                caption_pairs_used = True
+                caption_pairs_source = "regex"
+        except Exception:
+            pass
+
+    # 1c) Assign species. STRICT mode: only assign if the panel's label
+    # (or its leading-zero-normalised form) is in the caption-derived
+    # pair_lookup. We deliberately do NOT carry-forward the last seen
+    # species to panels whose label is unknown — the previous carry-forward
+    # behaviour wrongly tagged 14 SEM-metadata fragments on Feng 2007
+    # Plate 1 as "Entactinia reticulata" just because they were sorted
+    # after the panel labelled "4". When the caption has only 4 entries
+    # (figs 1-4) and we detect 17 panels, the extra 13 should be None,
+    # not the last seen species.
+    if caption_pairs_used and pair_lookup:
+        assigned_species: list[str | None] = []
+        for panel_id in assigned_labels:
+            matched_key = _label_in_pair_lookup(panel_id, pair_lookup)
+            assigned_species.append(pair_lookup[matched_key] if matched_key else None)
+    else:
+        # Last-resort fallback: position-based, but DO NOT collapse the tail
+        # onto taxa[0]. Any panel beyond the available species list gets
+        # None (so the caller can see it's unassigned) rather than a wrong
+        # first-species tag.
+        assigned_species = [taxa[i] if i < len(taxa) else None for i in range(len(panels))]
 
     # 2) 可选神经图匹配。未训练权重或缺少checkpoint时跳过。
     matcher_used = False
@@ -227,8 +571,16 @@ def match_panels(
 
     matches: list[MatchResult] = []
     for idx, panel in enumerate(panels):
-        panel_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
+        raw_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
+        panel_id = _normalize_panel_label(raw_id)
         best_species = assigned_species[idx] if idx < len(assigned_species) else (taxa[0] if taxa else None)
+        # Caption-pair override: if M3 gave us a structured (label, species) map
+        # and the panel's label (or its leading-zero-stripped form) is in
+        # it, prefer that species over the order-based fallback.
+        if caption_pairs_used:
+            matched_key = _label_in_pair_lookup(panel_id, pair_lookup)
+            if matched_key:
+                best_species = pair_lookup[matched_key]
         ocr_text = " ".join(tok.text for tok in ocr_tokens if _token_in_panel(tok, panel))
         label_text = None
         if panel_id and panel_id in panel_label_tokens:
@@ -256,6 +608,7 @@ def match_panels(
                 confidence=confidence,
                 caption_snippet=caption.caption[:240] if caption.caption else None,
                 ocr_text=ocr_text or None,
+                paper_metadata=paper_metadata,
                 metadata={
                     "panel_score": panel.score,
                     "ocr_count": len(ocr_tokens),
@@ -265,6 +618,7 @@ def match_panels(
                     "matcher_used": matcher_used,
                     "matcher_type": "neural-graph" if matcher_used else "heuristic",
                     "matcher_conf": neural_conf[idx] if idx < len(neural_conf) else 0.0,
+                    "caption_pairs_used": caption_pairs_used,
                 },
             )
         )

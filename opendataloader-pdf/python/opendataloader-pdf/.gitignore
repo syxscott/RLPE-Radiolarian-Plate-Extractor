@@ -1,0 +1,13 @@
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Ignore JAR file
+*.jar
+
+# Docs
+README.md
+LICENSE
+NOTICE
+THIRD_PARTY/

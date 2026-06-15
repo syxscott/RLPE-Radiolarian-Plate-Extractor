@@ -1,0 +1,145 @@
+/*
+ * Copyright 2025-2026 Hancom Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opendataloader.pdf.json.serializers;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.opendataloader.pdf.containers.StaticLayoutContainers;
+import org.verapdf.wcag.algorithms.entities.content.ImageChunk;
+import org.verapdf.wcag.algorithms.entities.geometry.BoundingBox;
+
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class ImageSerializerTest {
+
+    @TempDir
+    Path tempDir;
+
+    private ObjectMapper objectMapper;
+    private String imagesDirectory;
+
+    @BeforeEach
+    void setUp() throws IOException {
+        StaticLayoutContainers.clearContainers();
+
+        imagesDirectory = tempDir.toString();
+        StaticLayoutContainers.setImagesDirectory(imagesDirectory);
+
+        // Create a test image file
+        createTestImageFile(1, "png");
+
+        // Configure ObjectMapper with ImageSerializer
+        objectMapper = new ObjectMapper();
+        SimpleModule module = new SimpleModule();
+        module.addSerializer(ImageChunk.class, new ImageSerializer(ImageChunk.class));
+        objectMapper.registerModule(module);
+    }
+
+    @AfterEach
+    void tearDown() {
+        StaticLayoutContainers.clearContainers();
+    }
+
+    private void createTestImageFile(int index, String format) throws IOException {
+        BufferedImage image = new BufferedImage(10, 10, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g2d = image.createGraphics();
+        g2d.setColor(Color.RED);
+        g2d.fillRect(0, 0, 10, 10);
+        g2d.dispose();
+
+        String fileName = String.format("%s%simageFile%d.%s", imagesDirectory, File.separator, index, format);
+        File outputFile = new File(fileName);
+        ImageIO.write(image, format, outputFile);
+    }
+
+    private ImageChunk createImageChunk(int index) {
+        BoundingBox bbox = new BoundingBox(0, 0, 0, 100, 100);
+        ImageChunk imageChunk = new ImageChunk(bbox);
+        imageChunk.setIndex(index);
+        return imageChunk;
+    }
+
+    @Test
+    void testSerializeWithEmbedImagesTrueOutputsDataField() throws JsonProcessingException {
+        StaticLayoutContainers.setEmbedImages(true);
+        StaticLayoutContainers.setImageFormat("png");
+
+        ImageChunk imageChunk = createImageChunk(1);
+        String json = objectMapper.writeValueAsString(imageChunk);
+
+        assertTrue(json.contains("\"data\":\"data:image/png;base64,"));
+        assertTrue(json.contains("\"format\":\"png\""));
+        assertFalse(json.contains("\"source\":"));
+    }
+
+    @Test
+    void testSerializeWithEmbedImagesFalseOutputsSourceField() throws JsonProcessingException {
+        StaticLayoutContainers.setEmbedImages(false);
+        StaticLayoutContainers.setImageFormat("png");
+
+        ImageChunk imageChunk = createImageChunk(1);
+        String json = objectMapper.writeValueAsString(imageChunk);
+
+        assertTrue(json.contains("\"source\":"));
+        assertFalse(json.contains("\"data\":"));
+        assertFalse(json.contains("\"format\":"));
+    }
+
+    @Test
+    void testSerializeWithJpegFormat() throws IOException {
+        createTestImageFile(2, "jpeg");
+        StaticLayoutContainers.setEmbedImages(true);
+        StaticLayoutContainers.setImageFormat("jpeg");
+
+        ImageChunk imageChunk = createImageChunk(2);
+        String json = objectMapper.writeValueAsString(imageChunk);
+
+        assertTrue(json.contains("\"data\":\"data:image/jpeg;base64,"));
+        assertTrue(json.contains("\"format\":\"jpeg\""));
+    }
+
+    @Test
+    void testSerializeWithNonExistentImageNoSourceOrData() throws JsonProcessingException {
+        StaticLayoutContainers.setEmbedImages(true);
+
+        ImageChunk imageChunk = createImageChunk(999); // Non-existent image
+        String json = objectMapper.writeValueAsString(imageChunk);
+
+        assertFalse(json.contains("\"source\":"));
+        assertFalse(json.contains("\"data\":"));
+    }
+
+    @Test
+    void testSerializeContainsTypeField() throws JsonProcessingException {
+        ImageChunk imageChunk = createImageChunk(1);
+        String json = objectMapper.writeValueAsString(imageChunk);
+
+        assertTrue(json.contains("\"type\":\"image\""));
+    }
+}

@@ -1,0 +1,134 @@
+/*
+ * Copyright 2025-2026 Hancom Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.opendataloader.pdf.utils;
+
+import org.opendataloader.pdf.containers.StaticLayoutContainers;
+import org.opendataloader.pdf.entities.SemanticPicture;
+import org.opendataloader.pdf.markdown.MarkdownSyntax;
+import org.verapdf.wcag.algorithms.entities.IObject;
+import org.verapdf.wcag.algorithms.entities.SemanticHeaderOrFooter;
+import org.verapdf.wcag.algorithms.entities.content.ImageChunk;
+import org.verapdf.wcag.algorithms.entities.geometry.BoundingBox;
+import org.verapdf.wcag.algorithms.entities.lists.ListItem;
+import org.verapdf.wcag.algorithms.entities.lists.PDFList;
+import org.verapdf.wcag.algorithms.entities.tables.tableBorders.TableBorder;
+import org.verapdf.wcag.algorithms.entities.tables.tableBorders.TableBorderCell;
+import org.verapdf.wcag.algorithms.entities.tables.tableBorders.TableBorderRow;
+import org.verapdf.wcag.algorithms.semanticalgorithms.consumers.ContrastRatioConsumer;
+import org.verapdf.wcag.algorithms.semanticalgorithms.containers.StaticContainers;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+public class ImagesUtils {
+    private static final Logger LOGGER = Logger.getLogger(ImagesUtils.class.getCanonicalName());
+    private ContrastRatioConsumer contrastRatioConsumer;
+
+    public ContrastRatioConsumer getContrastRatioConsumer() {
+        return contrastRatioConsumer;
+    }
+
+    public void createImagesDirectory(String path) {
+        File directory = new File(path);
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+    }
+
+    public void write(List<List<IObject>> contents, String pdfFilePath, String password) {
+        for (int pageNumber = 0; pageNumber < StaticContainers.getDocument().getNumberOfPages(); pageNumber++) {
+            for (IObject content : contents.get(pageNumber)) {
+                writeFromContents(content, pdfFilePath, password);
+            }
+        }
+    }
+
+    private void writeFromContents(IObject content, String pdfFilePath, String password) {
+        if (content instanceof ImageChunk) {
+            writeImage((ImageChunk) content, pdfFilePath, password);
+        } else if (content instanceof SemanticPicture) {
+            writePicture((SemanticPicture) content, pdfFilePath, password);
+        } else if (content instanceof PDFList) {
+            for (ListItem listItem : ((PDFList) content).getListItems()) {
+                for (IObject item : listItem.getContents()) {
+                    writeFromContents(item, pdfFilePath, password);
+                }
+            }
+        } else if (content instanceof TableBorder) {
+            for (TableBorderRow row : ((TableBorder) content).getRows()) {
+                TableBorderCell[] cells = row.getCells();
+                for (int columnNumber = 0; columnNumber < cells.length; columnNumber++) {
+                    TableBorderCell cell = cells[columnNumber];
+                    if (cell.getColNumber() == columnNumber && cell.getRowNumber() == row.getRowNumber()) {
+                        for (IObject item : cell.getContents()) {
+                            writeFromContents(item, pdfFilePath, password);
+                        }
+                    }
+                }
+            }
+        } else if (content instanceof SemanticHeaderOrFooter) {
+            for (IObject item : ((SemanticHeaderOrFooter) content).getContents()) {
+                writeFromContents(item, pdfFilePath, password);
+            }
+        }
+    }
+
+    protected void writeImage(ImageChunk chunk, String pdfFilePath, String password) {
+        int currentImageIndex = StaticLayoutContainers.incrementImageIndex();
+        if (currentImageIndex == 1) {
+            createImagesDirectory(StaticLayoutContainers.getImagesDirectory());
+            contrastRatioConsumer = StaticLayoutContainers.getContrastRatioConsumer(pdfFilePath, password, false, null);
+        }
+        String imageFormat = StaticLayoutContainers.getImageFormat();
+        String fileName = String.format(MarkdownSyntax.IMAGE_FILE_NAME_FORMAT, StaticLayoutContainers.getImagesDirectory(), File.separator, currentImageIndex, imageFormat);
+        chunk.setIndex(currentImageIndex);
+        createImageFile(chunk.getBoundingBox(), fileName, imageFormat);
+    }
+
+    protected void writePicture(SemanticPicture picture, String pdfFilePath, String password) {
+        int pictureIndex = picture.getPictureIndex();
+        if (contrastRatioConsumer == null) {
+            createImagesDirectory(StaticLayoutContainers.getImagesDirectory());
+            contrastRatioConsumer = StaticLayoutContainers.getContrastRatioConsumer(pdfFilePath, password, false, null);
+        }
+        String imageFormat = StaticLayoutContainers.getImageFormat();
+        String fileName = String.format(MarkdownSyntax.IMAGE_FILE_NAME_FORMAT, StaticLayoutContainers.getImagesDirectory(), File.separator, pictureIndex, imageFormat);
+        createImageFile(picture.getBoundingBox(), fileName, imageFormat);
+    }
+
+    private void createImageFile(BoundingBox imageBox, String fileName, String imageFormat) {
+        try {
+            File outputFile = new File(fileName);
+            BufferedImage targetImage = contrastRatioConsumer != null ? contrastRatioConsumer.getPageSubImage(imageBox) : null;
+            if (targetImage == null) {
+                return;
+            }
+            ImageIO.write(targetImage, imageFormat, outputFile);
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Unable to create image files: " + e.getMessage());
+        }
+    }
+
+    public static boolean isImageFileExists(String fileName) {
+        File outputFile = new File(fileName);
+        return outputFile.exists();
+    }
+}

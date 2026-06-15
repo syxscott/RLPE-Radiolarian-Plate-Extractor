@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .metrics import MetricScore, iou, prf, matching_accuracy
+from .metrics import MetricScore, iou, matching_accuracy, prf
 from .utils import write_json
 
 

@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 from .types import FigureRegion, PageRecord
 from .utils import ensure_dir, slugify
-
 
 FIG_REF_PATTERN = re.compile(r"\b(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?)\b", re.IGNORECASE)
 CAPTION_LEAD_PATTERN = re.compile(r"^(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?)\b[:\-\.]?\s*", re.IGNORECASE)
@@ -159,4 +156,6 @@ def choose_best_page(pages: list[PageRecord], figure_number: str | None, caption
             if re.search(rf"\b{re.escape(figure_number)}\b", page.text or ""):
                 return page
     # Otherwise choose the page with lowest text density among pages near the caption text.
+    if not pages:
+        return None
     return min(pages, key=page_text_density)

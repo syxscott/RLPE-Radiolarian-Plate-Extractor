@@ -1,0 +1,81 @@
+*.class
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor files
+**/.idea/
+**/.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Emacs
+\#*\#
+*~
+.#*
+
+# Vim
+*.swp
+*.swo
+*.swn
+
+# Java (Maven & Gradle)
+**/target/
+**/build/
+**/bin/
+**/.gradle/
+**/*.jar
+**/*.war
+**/*.ear
+**/dependency-reduced-pom.xml
+**/.flattened-pom.xml
+
+# Logs
+*.log
+logs/
+**/logs/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/pnpm-debug.log*
+
+# Node.js
+**/node_modules/
+**/.next/
+**/.turbo/
+**/dist/
+**/.cache/
+*.tsbuildinfo
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+*.pyo
+*.pyd
+*.so
+**/.venv/
+**/.env
+**/.env.*
+*.egg-info/
+**/.eggs/
+**/.mypy_cache/
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+
+# Temporary / Generated
+**/tmp/
+**/temp/
+
+# Git worktrees
+.worktrees/
+
+# Auto-generated reference docs (CI-only, not tracked)
+content/docs/
+
+# Configuration files
+.claude/settings.local.json
+.claude/plans/
+

@@ -1,6 +1,16 @@
 """RLPE: Radiolarian Literature Plate Extractor."""
 
 from .config import PipelineConfig
-from .pipeline import RadiolarianPipeline
+
+# Defer the heavy ``pipeline`` import until the caller actually asks
+# for ``RadiolarianPipeline``. The full pipeline pulls in torch /
+# gemma / paddleocr, none of which are needed by the lightweight
+# helpers (config, evaluation, opendataloader_extractor, segmentation)
+# that ``scripts/evaluate.py`` and the eval-only entry points use.
+def __getattr__(name):
+    if name == "RadiolarianPipeline":
+        from .pipeline import RadiolarianPipeline
+        return RadiolarianPipeline
+    raise AttributeError(f"module 'rlpe' has no attribute {name!r}")
 
 __all__ = ["PipelineConfig", "RadiolarianPipeline"]

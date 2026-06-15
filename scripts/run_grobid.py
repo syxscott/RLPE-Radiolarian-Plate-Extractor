@@ -9,9 +9,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from dataclasses import asdict
+
 from rlpe.grobid import process_pdf_dir
 from rlpe.utils import write_jsonl
-from dataclasses import asdict
 
 
 def main() -> int:

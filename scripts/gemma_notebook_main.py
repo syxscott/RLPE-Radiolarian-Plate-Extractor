@@ -22,7 +22,6 @@ from rlpe.gemma_postprocess import (
     load_gemma4_ollama,
 )
 
-
 CONFIG = {
     "LLM_BACKEND": "ollama",  # transformers | ollama
     "MODEL_PATH": "/home/user/models/gemma-4-E4B",  # transformers模式下使用

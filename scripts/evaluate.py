@@ -10,7 +10,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from rlpe.evaluation import evaluate_predictions, save_evaluation
+from rlpe.evaluation import evaluate, evaluate_run, write_markdown_report
+from rlpe.evaluation.gold import GoldPanel
+from rlpe.evaluation.image_label_check import run_image_label_check
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -26,16 +28,59 @@ def load_jsonl(path: Path) -> list[dict]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate RLPE predictions against gold data")
     parser.add_argument("--pred", type=Path, required=True)
-    parser.add_argument("--gold", type=Path, required=True)
+    parser.add_argument(
+        "--gold",
+        type=Path,
+        required=True,
+        help="A single .jsonl file or a directory of .jsonl files (concatenated).",
+    )
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--image-label-check",
+        action="store_true",
+        help=(
+            "Run an additional sanity check: re-OCR each prediction's panel "
+            "image and compare to the predicted panel_id. Reports "
+            "`image_label_match_rate` per paper + aggregate. Adds ~5-15 min "
+            "on a 9-paper corpus because EasyOCR runs on every panel."
+        ),
+    )
+    parser.add_argument(
+        "--image-label-cache",
+        type=Path,
+        default=Path("work/image_label_ocr_cache.json"),
+        help=(
+            "Path to the on-disk cache of OCR results for "
+            "--image-label-check. Reusing the same path across runs "
+            "makes the second run essentially free (the OCR step is "
+            "skipped for every unchanged panel). Set to an empty "
+            "string to disable caching. Default: "
+            "work/image_label_ocr_cache.json"
+        ),
+    )
     args = parser.parse_args()
 
-    pred = load_jsonl(args.pred)
-    gold = load_jsonl(args.gold)
-    summary = evaluate_predictions(pred, gold)
+    if args.gold.is_dir():
+        summary = evaluate_run(args.pred, args.gold)
+    else:
+        pred = load_jsonl(args.pred)
+        gold = [GoldPanel(**g) for g in load_jsonl(args.gold)]
+        summary = evaluate(pred, gold)
+    summary_dict = summary.to_dict()
+    if args.image_label_check:
+        cache_path = args.image_label_cache if str(args.image_label_cache) else None
+        image_label_stats = run_image_label_check(
+            predictions=load_jsonl(args.pred),
+            root=ROOT,
+            cache_path=cache_path,
+        )
+        summary_dict["image_label_check"] = image_label_stats
     if args.output:
-        save_evaluation(summary, args.output)
-    print(json.dumps(summary.to_dict(), ensure_ascii=False, indent=2))
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        write_markdown_report(summary, args.output.with_suffix(".md"))
+        with args.output.open("w", encoding="utf-8") as f:
+            json.dump(summary_dict, f, indent=2, ensure_ascii=False, sort_keys=True)
+    print(json.dumps(summary_dict, ensure_ascii=False, indent=2))
     return 0
 
 

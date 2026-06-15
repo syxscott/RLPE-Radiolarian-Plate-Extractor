@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlpe-radiolarian-plate-extractor"
-version = "0.1.0"
+version = "1.1.0"
 description = "Local pipeline for extracting radiolarian plates, captions, labels, and taxon names from literature PDFs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,6 +27,8 @@ service = ["fastapi", "uvicorn", "pydantic"]
 queue = ["celery", "redis"]
 train = ["torch", "transformers", "datasets", "scikit-learn", "scipy"]
 opendataloader = ["opendataloader-pdf>=0.0.0"]
+schema = ["pydantic>=2.0", "jsonschema>=4.21"]
+dev = ["hypothesis>=6.0"]
 
 [project.scripts]
 rlpe = "rlpe.cli:main"
@@ -36,3 +38,76 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# ---- ruff ----
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "work",
+    "data",
+    "schemas",
+    "scripts/build_gold_*.py",  # gold builders are one-off scripts; tolerate style drift
+]
+
+[tool.ruff.lint]
+# Start conservative; expand rules as code is cleaned up.
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line-too-long (handled by formatter)
+    "B008",  # function-call-in-default-argument (FastAPI uses this idiom)
+    "B904",  # raise-without-from-inside-except (we use raise X in some places)
+    "E402",  # module-level-import-not-at-top (intentional for sys.path manipulation)
+    "E741",  # ambiguous-variable-name ('l', 'I', 'O' in image-processing math)
+    "B007",  # unused-loop-control-variable (often intentional in tests)
+    "F841",  # unused-variable (often debug residue; revisit per-file later)
+    "B905",  # zip-without-explicit-strict (Python 3.10+ zip default; revisit)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "F401"]  # asserts are fine; guard imports (e.g. jsonschema) are intentional
+"scripts/*" = ["E402", "B007"]  # scripts have flexibility needs
+
+[tool.ruff.lint.isort]
+known-first-party = ["rlpe"]
+
+# ---- mypy ----
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+no_strict_optional = true
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false  # start loose; tighten gradually
+files = ["src/rlpe/"]
+# Per-file overrides: most modules have type issues from third-party
+# shims (PIL.Image.LANCZOS, easyocr.readtext, gemma4 dataclasses).
+# Start permissive at the module level and tighten in follow-ups.
+[[tool.mypy.overrides]]
+module = [
+    "rlpe.ocr",
+    "rlpe.association",
+    "rlpe.llm_backends",
+    "rlpe.pipeline",
+    "rlpe.api.*",
+    "rlpe.evaluation.metrics",
+    "rlpe.opendataloader_extractor",
+]
+ignore_errors = true
+
+# ---- pytest ----
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: marks tests as slow (deselect with -m 'not slow')",
+    "integration: marks tests that require a real PDF run (deselect with -m 'not integration')",
+]

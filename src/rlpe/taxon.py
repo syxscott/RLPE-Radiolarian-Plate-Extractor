@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -36,7 +38,17 @@ class TaxonRecognizer:
                 from taxonerd import TaxoNERD
 
                 self._engine = TaxoNERD(model=self.model)
-            except Exception:
+            except Exception as exc:
+                # TaxoNERD is the primary species-recognition engine.
+                # A silent fallback to the regex path leaves the
+                # operator wondering why species extraction is so
+                # weak — log at warning so the cause is visible.
+                # ``self._engine = None`` is correct: the predictor
+                # below branches on it to use the regex fallback.
+                logger.warning(
+                    "TaxoNERD init failed (model=%r): %s; falling back to "
+                    "regex-based species extraction", self.model, exc,
+                )
                 self._engine = None
 
             if self.hf_model_path and self._hf_ner is None:
@@ -118,11 +130,62 @@ class TaxonRecognizer:
         return self._merge_entities(entities)
 
     def _fallback_predict(self, text: str) -> list[TaxonEntity]:
-        pattern = re.compile(r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s*(?:sp\.|spp\.|cf\.|aff\.))?)\b")
+        cleaned = self._clean_caption_for_taxon(text)
+        pattern = re.compile(
+            r"\b("
+            r"[A-Z][a-zA-Z-]{2,}"
+            r"(?:"
+            r"\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]{2,}"
+            r"|"
+            r"\s+[a-z][a-zA-Z-]{2,}"
+            r")"
+            r"(?:\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?"
+            r")\b"
+        )
         entities: list[TaxonEntity] = []
-        for m in pattern.finditer(text or ""):
+        for m in pattern.finditer(cleaned):
+            words = m.group(1).split()
+            if len(words) < 2:
+                continue
+            if words[0].lower() in _NON_TAXON_FIRST_WORDS:
+                continue
+            epithet_idx = 1
+            if len(words) > 2 and words[1].lower() in ("cf.", "aff."):
+                epithet_idx = 2
+            if epithet_idx >= len(words):
+                continue
+            if words[epithet_idx].lower() in _NON_TAXON_SECOND_WORDS:
+                continue
             entities.append(TaxonEntity(text=m.group(1), start=m.start(1), end=m.end(1), score=0.55))
         return entities
+
+    @staticmethod
+    def _clean_caption_for_taxon(text: str) -> str:
+        """Strip the leading "Explanation of Plate N." header that confuses the
+        binomial regex. Radiolarian plate captions always start with that exact
+        phrase, and the rest of the caption is a list of "fig N. Species X"
+        entries. Removing the header eliminates the "Explanation of" false
+        positive at the head of the list."""
+        if not text:
+            return ""
+        s = text
+        # "Explanation of Plate 1. ..."  /  "Explanation of Plate 1, ..."
+        s = re.sub(
+            r"^\s*Explanation\s+of\s+Plate\s+\d+\s*[\.:,]?\s*",
+            "",
+            s,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        # "Plate 1. ..."  /  "Plate 1 — ..."
+        s = re.sub(
+            r"^\s*Plate\s+\d+\s*[\.:,\-—–]?\s*",
+            "",
+            s,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        return s
 
     def _lexicon_predict(self, text: str) -> list[TaxonEntity]:
         if not text or not self._lexicon:
@@ -146,3 +209,46 @@ class TaxonRecognizer:
             if old is None or e.score > old.score:
                 merged[key] = e
         return sorted(merged.values(), key=lambda x: (x.start, x.end))
+
+
+# Words that often start a figure caption but are never a genus name.
+# These either start the header ("Explanation of Plate N.") or refer to a
+# caption-internal non-taxonomic noun ("Scale bar", "Fig. caption").
+_NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset({
+    "explanation", "scale", "figure", "fig", "figs", "plate", "pl",
+    "text", "image", "photo", "photograph", "drawing", "line",
+    "caption", "all", "bar", "see", "shown", "above", "below",
+    "early", "late", "middle", "upper", "lower", "type", "genus",
+    "species", "order", "family", "class", "subclass",
+    "north", "south", "east", "west", "central",
+    "tropical", "arctic", "pacific", "atlantic", "indian",
+    "remarks", "note", "notes", "from", "with", "without",
+    "northeastern", "northwestern", "southeastern", "southwestern",
+    # Caption-header nouns that look like binomials but never are.
+    # "Plate 1 Scanning electron microscope pictures..." — the
+    # "Scanning electron" pair matches the regex but is not a taxon.
+    "scanning", "electron", "microscope", "transmission", "light",
+    "secondary", "photomicrograph", "photomicrographs", "marker",
+    "sample", "section", "locality", "thin", "thins", "stereo",
+    "backscattered", "overview", "detail",
+    # Pipeline placeholder text (OpenDataLoader / GROBID fallback). When
+    # the upstream tool can't extract a real caption it returns strings
+    # like "Auto-generated figure for page 17" — these used to slip
+    # through the binomial regex as "Auto-generated figure".
+    "auto", "auto-generated", "automated", "generated", "placeholder",
+    "undefined", "unknown", "missing", "empty", "n/a", "na",
+    # Synthetic captions built from body-text plate references also
+    # need a sentinel header ("(Reconstructed from systematic
+    # descriptions)") that the binomial regex used to match as the
+    # species "Reconstructed from".
+    "reconstructed", "reconstructed from", "synthesized", "synthetic",
+    "copyright", "published", "springer", "elsevier", "wiley",
+    "downloaded", "downloadedfrom", "rights", "reserved",
+})
+
+# Common 2-3 letter non-Latin epithets that the binomial regex used to match.
+# Anything here is a stopword / preposition / article, never a species epithet.
+_NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset({
+    "of", "in", "on", "by", "an", "at", "to", "or", "is", "as",
+    "bar", "fig", "figs", "no", "all", "the", "and", "sp", "spp", "cf", "aff", "nov", "gen", "comb",
+})

@@ -1,0 +1,40 @@
+# Files / dirs that should never be copied into the build context.
+# Keeps the image small and the build fast.
+
+# Build artefacts
+.git
+.github
+.gitignore
+.gitattributes
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*.pyo
+*.egg-info
+*.egg
+dist
+build
+*.whl
+
+# IDE / editor
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Local work artefacts — these are large and per-machine
+work/**/output
+work/**/uploads
+work/**/service_work
+work/**/cache
+work/**/tmp
+
+# Big data files
+data/raw
+data/private
+
+# Docs and tests are NOT excluded — they are part of the image
+# so the runtime container can run the eval and serve API docs.

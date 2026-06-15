@@ -1,0 +1,146 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: '0.0.0'
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      # =================================================================
+      # 1. SETUP
+      # =================================================================
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Initialize VERSION
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          else
+            echo "VERSION=0.0.0" >> $GITHUB_ENV
+          fi
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.MAVEN_GPG_KEY }}
+          gpg-passphrase: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Node.js and pnpm
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 9
+
+      # =================================================================
+      # 2. BUILD & TEST
+      # =================================================================
+      - name: Build and test all packages
+        run: ./scripts/build-all.sh ${{ env.VERSION }}
+
+      # =================================================================
+      # 3. DEPLOY (only on tag push)
+      # =================================================================
+      - name: '[Java] Deploy to Maven Central'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: mvn -B -pl opendataloader-pdf-core deploy -P release
+        working-directory: ./java
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_KEY: ${{ secrets.MAVEN_GPG_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+      - name: '[Python] Publish to PyPI'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ./python/opendataloader-pdf/dist
+
+      - name: '[Node.js] Publish to npm'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: pnpm publish --no-git-checks
+        working-directory: ./node/opendataloader-pdf
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # =================================================================
+      # 4. GITHUB RELEASE (only on tag push)
+      # =================================================================
+      - name: Package CLI as ZIP
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cd java/opendataloader-pdf-cli/target
+          mkdir -p release
+          cp "opendataloader-pdf-cli-${{ env.VERSION }}.jar" release/
+          cp ../../../README.md release/
+          cp ../../../LICENSE release/
+          cp ../../../NOTICE release/
+          cp -r ../../../THIRD_PARTY release/
+          cd release
+          zip -r "../opendataloader-pdf-cli-${{ env.VERSION }}.zip" .
+          cd ../..
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+            tag_name: ${{ github.ref_name }}
+            name: Release ${{ github.ref_name }}
+            generate_release_notes: true
+            files: |
+              java/opendataloader-pdf-cli/target/opendataloader-pdf-cli-${{ env.VERSION }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # =================================================================
+      # 5. SYNC DOCS TO HOMEPAGE (only on tag push)
+      # =================================================================
+      - name: Generate reference docs
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p content/docs/reference
+          node scripts/generate-options.mjs
+          node scripts/generate-schema.mjs
+
+      - name: Push reference docs to homepage
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        # Pinned to v1.7.3 for security - verify before updating
+        uses: cpina/github-action-push-to-another-repository@55306faa4ed53b815ae49e564af8cfb359d32ae2  # v1.7.3
+        with:
+          source-directory: 'content/docs/reference'
+          destination-github-username: 'opendataloader-project'
+          destination-repository-name: 'opendataloader.org'
+          target-directory: 'apps/v1/content/docs/reference'
+          target-branch: main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.HOMEPAGE_SYNC_TOKEN }}
