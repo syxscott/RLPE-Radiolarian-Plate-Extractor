@@ -1,4 +1,5 @@
 """Tests for rlpe.provenance.stamp."""
+
 from __future__ import annotations
 
 import json
@@ -57,6 +58,7 @@ class TestBuildProvenance:
         class Cfg:
             def to_dict(self):
                 return {"k": 1}
+
         p = build_provenance(config=Cfg())
         assert p.config_snapshot == {"k": 1}
 
@@ -64,6 +66,7 @@ class TestBuildProvenance:
         class Cfg:
             x = 5
             y = "hi"
+
         p = build_provenance(config=Cfg())
         assert p.config_snapshot.get("x") == 5
         assert p.config_snapshot.get("y") == "hi"

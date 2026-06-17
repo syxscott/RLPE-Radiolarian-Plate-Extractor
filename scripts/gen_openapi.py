@@ -16,6 +16,7 @@ Or via the module form:
 
 The output path is hardcoded so the snapshot is reproducible.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,12 +34,14 @@ def _pkg_version() -> str:
     dev environments where `pip install -e .` hasn't been re-run
     since the last version bump)."""
     import re
+
     pyproject = REPO_ROOT / "pyproject.toml"
     m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.M)
     if m:
         return m.group(1)
     try:
         from importlib.metadata import version
+
         return version("rlpe-radiolarian-plate-extractor")
     except Exception:
         return "1.1.0"
@@ -46,6 +49,7 @@ def _pkg_version() -> str:
 
 def main() -> int:
     from rlpe.api.app import app
+
     spec = app.openapi()
     spec["info"]["version"] = _pkg_version()
     spec["info"]["description"] = (

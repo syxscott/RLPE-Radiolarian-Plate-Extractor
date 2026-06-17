@@ -8,6 +8,7 @@ each paper metadata to :class:`rlpe.schema_models.PaperMetadataRecord`.
 The conversion is intentionally a single, well-tested function pair so
 the rest of the codebase keeps its lightweight dataclass types.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -43,19 +44,21 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
     for g in meta.get("geology_links", []) or []:
         if not isinstance(g, dict):
             continue
-        out.append(GeologyLinkRecord(
-            age=g.get("age"),
-            chronostratigraphy=g.get("chronostratigraphy"),
-            chronostratigraphy_rank=g.get("chronostratigraphy_rank"),
-            formation=g.get("formation"),
-            locality=g.get("locality"),
-            latitude=g.get("latitude"),
-            longitude=g.get("longitude"),
-            section_type=g.get("section_type"),
-            section_title=g.get("section_title"),
-            evidence_text=g.get("evidence_text"),
-            confidence=g.get("confidence", 0.0) or 0.0,
-        ))
+        out.append(
+            GeologyLinkRecord(
+                age=g.get("age"),
+                chronostratigraphy=g.get("chronostratigraphy"),
+                chronostratigraphy_rank=g.get("chronostratigraphy_rank"),
+                formation=g.get("formation"),
+                locality=g.get("locality"),
+                latitude=g.get("latitude"),
+                longitude=g.get("longitude"),
+                section_type=g.get("section_type"),
+                section_title=g.get("section_title"),
+                evidence_text=g.get("evidence_text"),
+                confidence=g.get("confidence", 0.0) or 0.0,
+            )
+        )
     return out
 
 

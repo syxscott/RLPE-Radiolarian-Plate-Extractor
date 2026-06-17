@@ -5,6 +5,7 @@ list as age / formation / locality with confidence. These tests verify
 the code path is in place AND reachable from the served static assets,
 so a deployment that drops the file or strips the modal code fails fast.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -80,13 +81,13 @@ class TestGeologyModalCode:
         assert i > 0, ".modal-geo-conf rule missing"
 
 
-
 class TestGeologyModalRender:
     """Simulate the openImageModal geology block in Python.
 
     Runs the same logic the JS would run for a given record, and asserts
     the produced HTML contains the expected age/formation/locality tags.
     """
+
     @staticmethod
     def _render(record):
         md = record.get("metadata") or {}
@@ -109,14 +110,34 @@ class TestGeologyModalRender:
             conf = g.get("confidence")
             conf_html = ""
             if conf is not None:
-                conf_html = " <span class=" + chr(34) + "modal-geo-conf" + chr(34) + ">(" + str(int(conf * 100)) + "%)</span>"
+                conf_html = (
+                    " <span class="
+                    + chr(34)
+                    + "modal-geo-conf"
+                    + chr(34)
+                    + ">("
+                    + str(int(conf * 100))
+                    + "%)</span>"
+                )
             items.append("<li>" + head_str + conf_html + "</li>")
         if not items:
             return ""
         return (
-            "<div class=" + chr(34) + "modal-row modal-row-wide" + chr(34) + ">"
-            + "<span class=" + chr(34) + "modal-label" + chr(34) + ">地质关联:</span>"
-            + "<ul class=" + chr(34) + "modal-geo-list" + chr(34) + ">"
+            "<div class="
+            + chr(34)
+            + "modal-row modal-row-wide"
+            + chr(34)
+            + ">"
+            + "<span class="
+            + chr(34)
+            + "modal-label"
+            + chr(34)
+            + ">地质关联:</span>"
+            + "<ul class="
+            + chr(34)
+            + "modal-geo-list"
+            + chr(34)
+            + ">"
             + "".join(items)
             + "</ul></div>"
         )
@@ -129,7 +150,18 @@ class TestGeologyModalRender:
         assert self._render({}) == ""
 
     def test_full_record_renders_three_fields(self):
-        rec = {"metadata": {"geology_links": [{"age": "Permian", "formation": "Dalong", "locality": "Guizhou", "confidence": 0.85}]}}
+        rec = {
+            "metadata": {
+                "geology_links": [
+                    {
+                        "age": "Permian",
+                        "formation": "Dalong",
+                        "locality": "Guizhou",
+                        "confidence": 0.85,
+                    }
+                ]
+            }
+        }
         html = self._render(rec)
         assert "<strong>Permian</strong>" in html
         assert "<em>Dalong</em>" in html
@@ -154,7 +186,11 @@ class TestGeologyModalRender:
         assert html == ""
 
     def test_multiple_records_rendered_as_list_items(self):
-        rec = {"metadata": {"geology_links": [{"age": "Permian"}, {"age": "Triassic", "confidence": 0.5}]}}
+        rec = {
+            "metadata": {
+                "geology_links": [{"age": "Permian"}, {"age": "Triassic", "confidence": 0.5}]
+            }
+        }
         html = self._render(rec)
         assert html.count("<li>") == 2
         assert "<strong>Permian</strong>" in html

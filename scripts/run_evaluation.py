@@ -7,13 +7,14 @@ Usage::
         --gold-dir data/gold \\
         --output-dir work/batch4_v2/eval_reports
 """
+
 from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-UTC = timezone.utc
+UTC = UTC
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -34,8 +35,12 @@ def main() -> int:
     p.add_argument("--predictions", type=Path, required=True)
     p.add_argument("--gold-dir", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, required=True)
-    p.add_argument("--label", type=str, default="baseline",
-                   help="Suffix for report filename (e.g. 'baseline', 'pouille-fix')")
+    p.add_argument(
+        "--label",
+        type=str,
+        default="baseline",
+        help="Suffix for report filename (e.g. 'baseline', 'pouille-fix')",
+    )
     args = p.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -70,11 +75,15 @@ def main() -> int:
     agg = report.aggregate
     print(f"== {args.label} ==")
     print(f"Papers: {agg.get('n_papers', 0)}  Gold panels: {agg.get('n_gold', 0)}")
-    print(f"Species: P={agg.get('species_precision', 0):.1%} "
-          f"R={agg.get('species_recall', 0):.1%} "
-          f"F1={agg.get('species_f1', 0):.1%}")
-    print(f"Panel match: {agg.get('panel_match_rate', 0):.1%}  "
-          f"Exact: {agg.get('exact_match_rate', 0):.1%}")
+    print(
+        f"Species: P={agg.get('species_precision', 0):.1%} "
+        f"R={agg.get('species_recall', 0):.1%} "
+        f"F1={agg.get('species_f1', 0):.1%}"
+    )
+    print(
+        f"Panel match: {agg.get('panel_match_rate', 0):.1%}  "
+        f"Exact: {agg.get('exact_match_rate', 0):.1%}"
+    )
     for pid, m in sorted(report.papers.items()):
         print(f"  {pid}: F1={m.species_f1:.1%}  ({m.species_tp}/{m.n_gold} panels matched species)")
     print(f"Report: {md_path}")

@@ -2,6 +2,7 @@
 
 from .config import PipelineConfig
 
+
 # Defer the heavy ``pipeline`` import until the caller actually asks
 # for ``RadiolarianPipeline``. The full pipeline pulls in torch /
 # gemma / paddleocr, none of which are needed by the lightweight
@@ -10,7 +11,9 @@ from .config import PipelineConfig
 def __getattr__(name):
     if name == "RadiolarianPipeline":
         from .pipeline import RadiolarianPipeline
+
         return RadiolarianPipeline
     raise AttributeError(f"module 'rlpe' has no attribute {name!r}")
+
 
 __all__ = ["PipelineConfig", "RadiolarianPipeline"]

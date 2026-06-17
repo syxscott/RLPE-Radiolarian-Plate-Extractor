@@ -16,6 +16,7 @@ extracting a real plate as one figure and a sub-image of the same plate
 as another figure leaves 20-30 panels silently unmatched (Bandini 2011
 was the trigger).
 """
+
 from __future__ import annotations
 
 import sys
@@ -123,32 +124,53 @@ def test_cross_figure_reassign_moves_orphan_to_nearest_plate():
     sitting between two real plates on pages 12 and 15 should be
     absorbed by the nearest real plate."""
     from rlpe.cross_figure import _cross_figure_reassign_results
+
     # real plate on p12, orphan on p13, real plate on p15
     results = []
     # Plate 1: 2 panels, 1 with species
     for i, sp in enumerate([None, "SpeciesA"]):
-        results.append(_make_result(
-            "pl01", 12, species=sp, caption="Plate 1. figs 1-2. SpeciesA: 1, 2",
-            label_text=str(i+1), panel_id=str(i+1),
-        ))
+        results.append(
+            _make_result(
+                "pl01",
+                12,
+                species=sp,
+                caption="Plate 1. figs 1-2. SpeciesA: 1, 2",
+                label_text=str(i + 1),
+                panel_id=str(i + 1),
+            )
+        )
     # Orphan: 3 panels, no species, placeholder caption
     for i in range(3):
-        results.append(_make_result(
-            "fig_orphan", 13, species=None, caption="Auto-generated figure for page 13",
-            label_text=None, panel_id=None,
-        ))
+        results.append(
+            _make_result(
+                "fig_orphan",
+                13,
+                species=None,
+                caption="Auto-generated figure for page 13",
+                label_text=None,
+                panel_id=None,
+            )
+        )
     # Plate 2: 2 panels, 1 with species
     for i, sp in enumerate([None, "SpeciesB"]):
-        results.append(_make_result(
-            "pl02", 15, species=sp, caption="Plate 2. figs 1-2. SpeciesB: 1, 2",
-            label_text=str(i+1), panel_id=str(i+1),
-        ))
+        results.append(
+            _make_result(
+                "pl02",
+                15,
+                species=sp,
+                caption="Plate 2. figs 1-2. SpeciesB: 1, 2",
+                label_text=str(i + 1),
+                panel_id=str(i + 1),
+            )
+        )
 
     out = _cross_figure_reassign_results(results)
     figure_ids = [r["figure_id"] for r in out]
     # The 3 orphan panels should have been moved to pl01 (page 12)
     # since that's the nearest real plate.
-    orphan_moved = [r for r in out if r.get("metadata", {}).get("reassigned_from_figure") == "fig_orphan"]
+    orphan_moved = [
+        r for r in out if r.get("metadata", {}).get("reassigned_from_figure") == "fig_orphan"
+    ]
     assert len(orphan_moved) == 3
     for r in orphan_moved:
         assert r["figure_id"] == "pl01"
@@ -160,19 +182,32 @@ def test_cross_figure_reassign_keeps_orphan_far_from_plate():
     """An orphan figure on page 1 with no real plate anywhere within 3
     pages is left alone (we don't move it to a far-away plate)."""
     from rlpe.cross_figure import _cross_figure_reassign_results
+
     results = []
     # Real plate on page 20
     for i, sp in enumerate([None, "SpeciesX"]):
-        results.append(_make_result(
-            "pl01", 20, species=sp, caption="Plate 1. figs 1-2. SpeciesX: 1, 2",
-            label_text=str(i+1), panel_id=str(i+1),
-        ))
+        results.append(
+            _make_result(
+                "pl01",
+                20,
+                species=sp,
+                caption="Plate 1. figs 1-2. SpeciesX: 1, 2",
+                label_text=str(i + 1),
+                panel_id=str(i + 1),
+            )
+        )
     # Orphan on page 1
     for i in range(2):
-        results.append(_make_result(
-            "fig_orphan", 1, species=None, caption="Auto-generated figure for page 1",
-            label_text=None, panel_id=None,
-        ))
+        results.append(
+            _make_result(
+                "fig_orphan",
+                1,
+                species=None,
+                caption="Auto-generated figure for page 1",
+                label_text=None,
+                panel_id=None,
+            )
+        )
     out = _cross_figure_reassign_results(results)
     moved = [r for r in out if r.get("metadata", {}).get("reassigned_from_figure") == "fig_orphan"]
     assert len(moved) == 0  # far away, don't touch
@@ -183,18 +218,31 @@ def test_cross_figure_reassign_keeps_figure_with_real_caption_even_if_no_species
     matched should NOT be treated as orphan — it might be a plate whose
     caption parser missed the species. Leave it alone."""
     from rlpe.cross_figure import _cross_figure_reassign_results
+
     results = []
     for i, sp in enumerate([None, "SpeciesY"]):
-        results.append(_make_result(
-            "pl01", 12, species=sp, caption="Plate 1. figs 1-2. SpeciesY: 1, 2",
-            label_text=str(i+1), panel_id=str(i+1),
-        ))
+        results.append(
+            _make_result(
+                "pl01",
+                12,
+                species=sp,
+                caption="Plate 1. figs 1-2. SpeciesY: 1, 2",
+                label_text=str(i + 1),
+                panel_id=str(i + 1),
+            )
+        )
     # Real caption, but parser missed the species (so 0 species matched)
     for i in range(2):
-        results.append(_make_result(
-            "fig_real", 13, species=None, caption="Plate 2. Some complicated caption without extracted species.",
-            label_text=str(i+1), panel_id=str(i+1),
-        ))
+        results.append(
+            _make_result(
+                "fig_real",
+                13,
+                species=None,
+                caption="Plate 2. Some complicated caption without extracted species.",
+                label_text=str(i + 1),
+                panel_id=str(i + 1),
+            )
+        )
     out = _cross_figure_reassign_results(results)
     moved = [r for r in out if r.get("metadata", {}).get("reassigned_from_figure") == "fig_real"]
     assert len(moved) == 0  # real caption → keep as a real figure
@@ -202,4 +250,5 @@ def test_cross_figure_reassign_keeps_figure_with_real_caption_even_if_no_species
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

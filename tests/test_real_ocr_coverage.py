@@ -24,6 +24,7 @@ on CPU), so it samples 50+ panels across papers rather than running
 on the full 500+. Sample size is configurable via RLPE_OCR_SAMPLE
 env var.
 """
+
 from __future__ import annotations
 
 import os
@@ -46,11 +47,11 @@ _NUM_RE = re.compile(r"^\d{1,3}$")
 # Papers to include in the sample: skip papers where we already know
 # OCR doesn't work (bragin2025 - all label-less per batch4_v2 analysis).
 PAPERS_TO_TEST = [
-    "4f1bf415485765b8",     # bandini2011 (245 panels)
-    "a0f363c21b6941d7",     # hollis2006 (57 panels)
-    "58d7972c37307959",     # baumgartner2008 (63 panels)
-    "17a129b4e9ca975a",     # danelian2006 (42 panels)
-    "2225994d55021328",     # pouille2014 (94 panels)
+    "4f1bf415485765b8",  # bandini2011 (245 panels)
+    "a0f363c21b6941d7",  # hollis2006 (57 panels)
+    "58d7972c37307959",  # baumgartner2008 (63 panels)
+    "17a129b4e9ca975a",  # danelian2006 (42 panels)
+    "2225994d55021328",  # pouille2014 (94 panels)
 ]
 
 
@@ -58,6 +59,7 @@ def _try_load_easyocr():
     """Try to import and instantiate EasyOCR. Returns (reader, ok)."""
     try:
         import easyocr
+
         reader = easyocr.Reader(["en"], gpu=False, verbose=False)
         return reader, True
     except Exception as e:
@@ -75,6 +77,7 @@ def _sample_panels(root: Path, n: int, seed: int = 42) -> list[tuple[Path, dict]
             d = {}
             try:
                 import json
+
                 d = json.loads(line)
             except Exception:
                 continue
@@ -106,6 +109,7 @@ def _corner_band_ocr(reader, panel_image: np.ndarray) -> list[str]:
     if min(h_img, w_img) < 500:
         try:
             import cv2
+
             sh, sw = sub.shape[:2]
             up = cv2.resize(sub, (sw * 2, sh * 2), interpolation=cv2.INTER_CUBIC)
             if up.ndim == 2:
@@ -204,16 +208,20 @@ def test_real_ocr_coverage_on_sampled_panels():
 
     # Print the per-paper breakdown for visibility
     print(f"\n=== Real OCR coverage on {total} panels ===")
-    print(f"  Native corner coverage: {native_hits}/{total} = {100*native_cov:.1f}%")
-    print(f"  2x fallback recovery:   {fallback_hits}/{total - native_hits} "
-          f"= {100*fallback_recovery:.1f}% (of native-empty cases)")
-    print(f"  pred match rate:        {pred_matches}/{total} = {100*pred_match:.1f}%")
-    print(f"  Combined coverage:      {native_hits + fallback_hits}/{total} "
-          f"= {100*combined_cov:.1f}%")
-    print(f"  Per paper:")
+    print(f"  Native corner coverage: {native_hits}/{total} = {100 * native_cov:.1f}%")
+    print(
+        f"  2x fallback recovery:   {fallback_hits}/{total - native_hits} "
+        f"= {100 * fallback_recovery:.1f}% (of native-empty cases)"
+    )
+    print(f"  pred match rate:        {pred_matches}/{total} = {100 * pred_match:.1f}%")
+    print(
+        f"  Combined coverage:      {native_hits + fallback_hits}/{total} "
+        f"= {100 * combined_cov:.1f}%"
+    )
+    print("  Per paper:")
     for pid, s in sorted(per_paper.items()):
         combined = s["native"] + s["fallback"]
-        print(f"    {pid[:20]}: {combined}/{s['n']} = {100*combined/max(1,s['n']):.1f}%")
+        print(f"    {pid[:20]}: {combined}/{s['n']} = {100 * combined / max(1, s['n']):.1f}%")
 
     # Sanity floor: combined coverage must be at least 10%
     assert combined_cov >= 0.10, (
@@ -264,4 +272,3 @@ def test_2x_fallback_does_not_regress_native_coverage():
             # Native succeeded — fallback should not have been called.
             # We don't run the fallback here, just verify native is sane.
             assert native_nums[0].isdigit(), f"non-digit in native: {native_nums}"
-

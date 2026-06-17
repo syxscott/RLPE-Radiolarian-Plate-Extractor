@@ -43,7 +43,9 @@ class GrobidClient:
                 )
             resp.raise_for_status()
             tei_path.write_text(resp.text, encoding="utf-8")
-            captions = parse_captions_from_tei(resp.text, paper_id=paper_id, source_xml=str(tei_path))
+            captions = parse_captions_from_tei(
+                resp.text, paper_id=paper_id, source_xml=str(tei_path)
+            )
             sections = parse_fulltext_sections_from_tei(resp.text)
             return GrobidResult(
                 paper_id=paper_id,
@@ -67,7 +69,9 @@ class GrobidClient:
             )
 
 
-def parse_captions_from_tei(tei_xml: str, paper_id: str, source_xml: str | None = None) -> list[CaptionRecord]:
+def parse_captions_from_tei(
+    tei_xml: str, paper_id: str, source_xml: str | None = None
+) -> list[CaptionRecord]:
     if not tei_xml.strip():
         return []
     try:
@@ -77,10 +81,14 @@ def parse_captions_from_tei(tei_xml: str, paper_id: str, source_xml: str | None 
 
     ns = {"tei": root.tag.split("}")[0].strip("{") if root.tag.startswith("{") else ""}
     captions: list[CaptionRecord] = []
-    for idx, fig in enumerate(root.findall(".//tei:figure", ns) if ns["tei"] else root.findall(".//figure"), start=1):
+    for idx, fig in enumerate(
+        root.findall(".//tei:figure", ns) if ns["tei"] else root.findall(".//figure"), start=1
+    ):
         fig_id = fig.attrib.get("xml:id") or fig.attrib.get("id") or f"fig{idx}"
         caption = extract_figure_caption(fig, ns)
-        figure_number = fig.attrib.get("n") or extract_figure_number(caption) or _figure_number_from_id(fig_id)
+        figure_number = (
+            fig.attrib.get("n") or extract_figure_number(caption) or _figure_number_from_id(fig_id)
+        )
         panel_labels = extract_panel_labels_from_caption(caption)
         entities = extract_taxon_candidates(caption)
         captions.append(
@@ -118,7 +126,11 @@ def extract_taxon_candidates(text: str) -> list[CaptionEntity]:
     pattern = re.compile(r"\b([A-Z][a-zA-Z-]+\s+(?:sp\.|spp\.|cf\.|aff\.|[a-z][a-zA-Z-]+))\b")
     out: list[CaptionEntity] = []
     for m in pattern.finditer(text):
-        out.append(CaptionEntity(text=m.group(1), start=m.start(1), end=m.end(1), label="taxon", score=0.65))
+        out.append(
+            CaptionEntity(
+                text=m.group(1), start=m.start(1), end=m.end(1), label="taxon", score=0.65
+            )
+        )
     return out
 
 
@@ -150,18 +162,30 @@ def parse_fulltext_sections_from_tei(tei_xml: str) -> list[dict[str, str]]:
 
     ns = {"tei": root.tag.split("}")[0].strip("{") if root.tag.startswith("{") else ""}
     sections: list[dict[str, str]] = []
-    divs = root.findall(".//tei:text//tei:body//tei:div", ns) if ns["tei"] else root.findall(".//text//body//div")
+    divs = (
+        root.findall(".//tei:text//tei:body//tei:div", ns)
+        if ns["tei"]
+        else root.findall(".//text//body//div")
+    )
     for idx, div in enumerate(divs, start=1):
         head = div.find("tei:head", ns) if ns["tei"] else div.find("head")
-        title = " ".join(t.strip() for t in head.itertext() if t and t.strip()) if head is not None else f"section_{idx}"
+        title = (
+            " ".join(t.strip() for t in head.itertext() if t and t.strip())
+            if head is not None
+            else f"section_{idx}"
+        )
 
         paragraphs = div.findall("tei:p", ns) if ns["tei"] else div.findall("p")
-        text = "\n".join(" ".join(t.strip() for t in p.itertext() if t and t.strip()) for p in paragraphs)
+        text = "\n".join(
+            " ".join(t.strip() for t in p.itertext() if t and t.strip()) for p in paragraphs
+        )
         text = text.strip()
         if not text:
             continue
         section_type = infer_section_type(title)
-        sections.append({"section_id": f"sec_{idx}", "title": title, "section_type": section_type, "text": text})
+        sections.append(
+            {"section_id": f"sec_{idx}", "title": title, "section_type": section_type, "text": text}
+        )
     return sections
 
 
@@ -176,7 +200,9 @@ def infer_section_type(title: str) -> str:
     return "other"
 
 
-def process_pdf_dir(pdf_dir: Path, output_dir: Path, server_url: str = "http://localhost:8070") -> list[GrobidResult]:
+def process_pdf_dir(
+    pdf_dir: Path, output_dir: Path, server_url: str = "http://localhost:8070"
+) -> list[GrobidResult]:
     client = GrobidClient(server_url=server_url)
     results = []
     for pdf_path in sorted(pdf_dir.glob("*.pdf")):
@@ -215,7 +241,11 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
         return root.find(path, ns) if ns else root.find(path.replace("tei:", ""))
 
     # Title: <titleStmt>/<title> (level="a" preferred for article title)
-    title_node = find(".//tei:titleStmt/tei:title[@type='article']") or find(".//tei:titleStmt/tei:title") or find(".//tei:title")
+    title_node = (
+        find(".//tei:titleStmt/tei:title[@type='article']")
+        or find(".//tei:titleStmt/tei:title")
+        or find(".//tei:title")
+    )
     if title_node is not None:
         title_txt = " ".join(t.strip() for t in title_node.itertext() if t and t.strip())
         if title_txt:
@@ -243,12 +273,20 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
                 authors.append(full)
             continue
         forenames: list[str] = []
-        for fnode in (pers.findall("tei:forename", ns) if ns else pers.findall("forename")):
+        for fnode in pers.findall("tei:forename", ns) if ns else pers.findall("forename"):
             txt = " ".join(t.strip() for t in fnode.itertext() if t and t.strip())
             if txt:
                 forenames.append(txt)
         surname_node = pers.find("tei:surname", ns) if ns else pers.find("surname")
-        surname = " ".join(t.strip() for t in surname_node.itertext() if t and surname_node is not None and t and t.strip()) if surname_node is not None else ""
+        surname = (
+            " ".join(
+                t.strip()
+                for t in surname_node.itertext()
+                if t and surname_node is not None and t and t.strip()
+            )
+            if surname_node is not None
+            else ""
+        )
         full = " ".join([p for p in forenames + ([surname] if surname else []) if p]).strip()
         if not full:
             full = " ".join(t.strip() for t in pers.itertext() if t and t.strip())
@@ -258,7 +296,7 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
         meta.authors = authors
 
     # DOI: <idno type="DOI">
-    for idno in (root.findall(".//tei:idno", ns) if ns else root.findall(".//idno")):
+    for idno in root.findall(".//tei:idno", ns) if ns else root.findall(".//idno"):
         if idno.attrib.get("type", "").upper() == "DOI":
             txt = " ".join(t.strip() for t in idno.itertext() if t and t.strip())
             if txt:
@@ -271,10 +309,16 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
             meta.doi = m.group(0).rstrip(".,;)")
 
     # Journal title: <titleStmt>/<title level="j"> or <monogr>/<title level="j">
-    jrn_node = find(".//tei:titleStmt/tei:title[@level='j']") or find(".//tei:monogr/tei:title[@level='j']")
+    jrn_node = find(".//tei:titleStmt/tei:title[@level='j']") or find(
+        ".//tei:monogr/tei:title[@level='j']"
+    )
     if jrn_node is None:
         # GROBID may use the second <title> child as the journal
-        titles = (root.findall(".//tei:titleStmt/tei:title", ns) if ns else root.findall(".//titleStmt/title"))
+        titles = (
+            root.findall(".//tei:titleStmt/tei:title", ns)
+            if ns
+            else root.findall(".//titleStmt/title")
+        )
         for tn in titles:
             lvl = tn.attrib.get("level", "").lower()
             typ = tn.attrib.get("type", "").lower()
@@ -291,9 +335,11 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
     # Volume / issue / pages
     monogr = find(".//tei:monogr")
     if monogr is not None:
-        for child_tag, attr in (("tei:imprint/tei:biblScope[@unit='volume']", "volume"),
-                                ("tei:imprint/tei:biblScope[@unit='issue']", "issue"),
-                                ("tei:imprint/tei:biblScope[@unit='page']", "pages")):
+        for child_tag, attr in (
+            ("tei:imprint/tei:biblScope[@unit='volume']", "volume"),
+            ("tei:imprint/tei:biblScope[@unit='issue']", "issue"),
+            ("tei:imprint/tei:biblScope[@unit='page']", "pages"),
+        ):
             node = monogr.find(child_tag, ns) if ns else monogr.find(child_tag.replace("tei:", ""))
             if node is not None:
                 txt = " ".join(t.strip() for t in node.itertext() if t and t.strip())
@@ -301,7 +347,11 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
                     setattr(meta, attr, txt)
 
     # Year: <date type="published"> or <publicationStmt>/<date>
-    for date_el in (root.findall(".//tei:publicationStmt/tei:date", ns) if ns else root.findall(".//publicationStmt/date")):
+    for date_el in (
+        root.findall(".//tei:publicationStmt/tei:date", ns)
+        if ns
+        else root.findall(".//publicationStmt/date")
+    ):
         when = date_el.attrib.get("when") or date_el.attrib.get("notBefore") or ""
         m = _YEAR_RE.search(when)
         if m:
@@ -321,7 +371,10 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
     # Abstract: <profileDesc>/<abstract>
     abs_node = find(".//tei:profileDesc/tei:abstract")
     if abs_node is not None:
-        parts = [" ".join(t.strip() for t in p.itertext() if t and t.strip()) for p in (abs_node.findall("tei:p", ns) if ns else abs_node.findall("p"))]
+        parts = [
+            " ".join(t.strip() for t in p.itertext() if t and t.strip())
+            for p in (abs_node.findall("tei:p", ns) if ns else abs_node.findall("p"))
+        ]
         text = " ".join(p for p in parts if p).strip()
         if not text:
             text = " ".join(t.strip() for t in abs_node.itertext() if t and t.strip()).strip()
@@ -329,8 +382,11 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
             meta.abstract = text
 
     # Keywords: <profileDesc>/<textClass>/<keywords>/<term>
-    for term in (root.findall(".//tei:profileDesc/tei:textClass/tei:keywords/tei:term", ns)
-                 if ns else root.findall(".//profileDesc/textClass/keywords/term")):
+    for term in (
+        root.findall(".//tei:profileDesc/tei:textClass/tei:keywords/tei:term", ns)
+        if ns
+        else root.findall(".//profileDesc/textClass/keywords/term")
+    ):
         txt = " ".join(t.strip() for t in term.itertext() if t and t.strip())
         if txt and txt not in meta.keywords:
             meta.keywords.append(txt)
@@ -343,7 +399,7 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
             meta.publisher = txt
 
     # Page count: <measure unit="page" quantity="N"> or count <pb>
-    for meas in (root.findall(".//tei:measure", ns) if ns else root.findall(".//measure")):
+    for meas in root.findall(".//tei:measure", ns) if ns else root.findall(".//measure"):
         if (meas.attrib.get("unit") or "").lower().startswith("page"):
             try:
                 meta.page_count = int(float(meas.attrib.get("quantity", "0")))
@@ -351,7 +407,7 @@ def parse_paper_metadata_from_tei(tei_xml: str) -> PaperMetadata:
             except Exception:
                 pass
     if meta.page_count is None:
-        pbs = (root.findall(".//tei:pb", ns) if ns else root.findall(".//pb"))
+        pbs = root.findall(".//tei:pb", ns) if ns else root.findall(".//pb")
         if pbs:
             meta.page_count = len(pbs)
 

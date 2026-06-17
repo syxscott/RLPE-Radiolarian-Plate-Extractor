@@ -14,6 +14,7 @@ For each paper:
 
 Output: work/combined_7_v11.jsonl
 """
+
 from __future__ import annotations
 
 import json
@@ -32,25 +33,65 @@ PREDICTIONS_IN = ROOT / "work" / "combined_9_v16_FINAL.jsonl"
 PREDICTIONS_OUT = ROOT / "work" / "combined_9_v17_FINAL.jsonl"
 
 OD_JSON_BY_PAPER = {
-    "4f1bf415485765b8": ROOT / "work" / "all7_rerun" / "output" / "od_output"
-        / "4f1bf415485765b8" / "bandini2011.json",
-    "58d7972c37307959": ROOT / "work" / "all7_rerun" / "output" / "od_output"
-        / "58d7972c37307959" / "baumgartner2008.json",
-    "178d4e1e9d93136c": ROOT / "work" / "boughdiri_rerun" / "output" / "od_output"
-        / "178d4e1e9d93136c" / "boughdiri2007.json",
-    "17a129b4e9ca975a": ROOT / "work" / "all7_rerun" / "output" / "od_output"
-        / "17a129b4e9ca975a" / "danelian2006.json",
-    "e28de2b07edc8950": ROOT / "work" / "feng_rerun_v2" / "output" / "od_output"
-        / "e28de2b07edc8950" / "feng2007.json",
-    "a0f363c21b6941d7": ROOT / "work" / "all7_rerun" / "output" / "od_output"
-        / "a0f363c21b6941d7" / "hollis2006.json",
+    "4f1bf415485765b8": ROOT
+    / "work"
+    / "all7_rerun"
+    / "output"
+    / "od_output"
+    / "4f1bf415485765b8"
+    / "bandini2011.json",
+    "58d7972c37307959": ROOT
+    / "work"
+    / "all7_rerun"
+    / "output"
+    / "od_output"
+    / "58d7972c37307959"
+    / "baumgartner2008.json",
+    "178d4e1e9d93136c": ROOT
+    / "work"
+    / "boughdiri_rerun"
+    / "output"
+    / "od_output"
+    / "178d4e1e9d93136c"
+    / "boughdiri2007.json",
+    "17a129b4e9ca975a": ROOT
+    / "work"
+    / "all7_rerun"
+    / "output"
+    / "od_output"
+    / "17a129b4e9ca975a"
+    / "danelian2006.json",
+    "e28de2b07edc8950": ROOT
+    / "work"
+    / "feng_rerun_v2"
+    / "output"
+    / "od_output"
+    / "e28de2b07edc8950"
+    / "feng2007.json",
+    "a0f363c21b6941d7": ROOT
+    / "work"
+    / "all7_rerun"
+    / "output"
+    / "od_output"
+    / "a0f363c21b6941d7"
+    / "hollis2006.json",
     "2225994d55021328": next(
         (ROOT / "work" / "pouille_recon" / "od_output" / "4dc5b4d95e910e95").glob("*.json")
     ),
-    "5d5264c7bf0b0a43": ROOT / "work" / "beccaro_only_out" / "output"
-        / "od_output" / "5d5264c7bf0b0a43" / "beccaro2006.json",
-    "2e85364a3c605326": ROOT / "work" / "bragin_only_out" / "output"
-        / "od_output" / "2e85364a3c605326" / "bragin2025.json",
+    "5d5264c7bf0b0a43": ROOT
+    / "work"
+    / "beccaro_only_out"
+    / "output"
+    / "od_output"
+    / "5d5264c7bf0b0a43"
+    / "beccaro2006.json",
+    "2e85364a3c605326": ROOT
+    / "work"
+    / "bragin_only_out"
+    / "output"
+    / "od_output"
+    / "2e85364a3c605326"
+    / "bragin2025.json",
 }
 
 
@@ -125,11 +166,7 @@ def main() -> int:
                 if (pid, plate) not in caption_page_by_plate:
                     caption_page_by_plate[(pid, plate)] = int(pg)
 
-    rows = [
-        json.loads(l)
-        for l in PREDICTIONS_IN.read_text().splitlines()
-        if l
-    ]
+    rows = [json.loads(l) for l in PREDICTIONS_IN.read_text().splitlines() if l]
     print(f"\nLoaded {len(rows)} predictions from {PREDICTIONS_IN.name}")
 
     # Compute the chosen figure_id per (paper, plate) BEFORE processing
@@ -142,9 +179,7 @@ def main() -> int:
     existing_keys: dict[str, set[tuple[str, str]]] = {}
     for r in rows:
         pid = r.get("paper_id")
-        existing_keys.setdefault(pid, set()).add(
-            (r.get("figure_id", ""), r.get("panel_id", ""))
-        )
+        existing_keys.setdefault(pid, set()).add((r.get("figure_id", ""), r.get("panel_id", "")))
 
     plate_to_fig: dict[str, dict[str, str]] = {}
     # Score each (paper, plate, fig) candidate. The real plate page
@@ -170,18 +205,17 @@ def main() -> int:
             plate_fig_matched[key] = plate_fig_matched.get(key, 0) + 1
         bbox = r.get("bbox", [0, 0, 0, 0])
         # Bbox is stored as (x, y, w, h); validity = positive width/height.
-        if (
-            isinstance(bbox, list)
-            and len(bbox) == 4
-            and bbox[2] > 0
-            and bbox[3] > 0
-        ):
+        if isinstance(bbox, list) and len(bbox) == 4 and bbox[2] > 0 and bbox[3] > 0:
             plate_fig_valid_bbox[key] = plate_fig_valid_bbox.get(key, 0) + 1
     grouped: dict[tuple[str, str], list[tuple[str, int, int, int]]] = {}
     for (pid, plate, fig), total in plate_fig_total.items():
         grouped.setdefault((pid, plate), []).append(
-            (fig, plate_fig_matched.get((pid, plate, fig), 0), total,
-             plate_fig_valid_bbox.get((pid, plate, fig), 0))
+            (
+                fig,
+                plate_fig_matched.get((pid, plate, fig), 0),
+                total,
+                plate_fig_valid_bbox.get((pid, plate, fig), 0),
+            )
         )
     for (pid, plate), candidates in grouped.items():
         # If we have a caption-page hint (the page where OD found the
@@ -199,10 +233,7 @@ def main() -> int:
                 # Try offsets 0, 1, 2 (caption can be on same page,
                 # right-page, or two pages before the image). Pick
                 # the smallest offset that hits an existing candidate.
-                best_off = min(
-                    (abs(page - (cap_page + off)), off)
-                    for off in (0, 1, 2)
-                )
+                best_off = min((abs(page - (cap_page + off)), off) for off in (0, 1, 2))
                 scored.append((best_off[0], -vbbox, -total, fig))
             scored.sort()
             best = scored[0][3]
@@ -260,21 +291,23 @@ def main() -> int:
                 if (fig, lbl) in existing_keys.get(pid, set()):
                     continue
                 per_paper_added[pid] = per_paper_added.get(pid, 0) + 1
-                new_rows.append({
-                    "paper_id": pid,
-                    "figure_id": fig,
-                    "panel_id": lbl,
-                    "species": sp,
-                    "panel_path": "",
-                    "bbox": [0, 0, 0, 0],
-                    "confidence": 0.0,
-                    "label_text": lbl,
-                    "caption_snippet": "",
-                    "ocr_text": "",
-                    "metadata": {
-                        "matcher_type": "all-reparsed-2026-06-07-v17",
-                    },
-                })
+                new_rows.append(
+                    {
+                        "paper_id": pid,
+                        "figure_id": fig,
+                        "panel_id": lbl,
+                        "species": sp,
+                        "panel_path": "",
+                        "bbox": [0, 0, 0, 0],
+                        "confidence": 0.0,
+                        "label_text": lbl,
+                        "caption_snippet": "",
+                        "ocr_text": "",
+                        "metadata": {
+                            "matcher_type": "all-reparsed-2026-06-07-v17",
+                        },
+                    }
+                )
 
     PREDICTIONS_OUT.write_text(
         "\n".join(json.dumps(r, ensure_ascii=False) for r in new_rows) + "\n"

@@ -1,4 +1,5 @@
 """Tests for non-specimen placeholder detection in pipeline captions."""
+
 from __future__ import annotations
 
 from rlpe.text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
@@ -53,6 +54,7 @@ class TestLooksLikePlaceholderCaption:
         assert _looks_like_placeholder_caption("")
         assert _looks_like_placeholder_caption("   ")
         assert _looks_like_placeholder_caption("\n\t  ")
+
     # Publisher and license tests below.
 
     def test_publisher_no_longer_matches_in_running_text(self):
@@ -77,6 +79,7 @@ class TestStage4SkipLogic:
 
     def test_non_radiolarian_flag_does_not_count_as_fallback_error(self):
         from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
+
         # Build a fake match dict with m3_rejected_non_radiolarian
         class _FakeMatch:
             def __init__(self):
@@ -84,23 +87,28 @@ class TestStage4SkipLogic:
                     "m3_rejected_non_radiolarian": True,
                     "gemma_reasoning": "该panel并非古生物标本图版",
                 }
+
         m = _FakeMatch()
         # _matches_have_fallback_error should return False for this match
         assert _matches_have_fallback_error([m]) is False
 
     def test_real_fallback_error_still_triggers(self):
         from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
+
         class _FakeMatch:
             def __init__(self):
                 self.metadata = {"gemma_error": "API timeout"}
+
         m = _FakeMatch()
         assert _matches_have_fallback_error([m]) is True
 
     def test_low_confidence_fallback_still_triggers(self):
         from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
+
         class _FakeMatch:
             def __init__(self):
                 self.metadata = {"gemma_fallback": True, "gemma_reasoning": "low conf"}
+
         m = _FakeMatch()
         assert _matches_have_fallback_error([m]) is True
 

@@ -21,6 +21,7 @@ focused, the JSON contract is strict, and stages can be turned on/off via
 
 Cost (rough): ~¥0.10/figure with 10 panels; 4 figures ≈ ¥0.40.
 """
+
 from __future__ import annotations
 
 import json
@@ -271,13 +272,13 @@ _DANELIAN_CLAUSE_RE = re.compile(
     r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"
     r"\s*[)\.:]\s+"
     r"(\??)"  # optional "?" uncertainty marker on the genus
-              # (boughdiri2007 items 16, 17: "?Sethocapsa sp.",
-              # "?Archaeodictyomitra sp.")
+    # (boughdiri2007 items 16, 17: "?Sethocapsa sp.",
+    # "?Archaeodictyomitra sp.")
     r"((?:[A-Z][a-zA-Z-]+|\b[A-Z]\.)"  # full Genus OR "A." abbrev
     r"(?:"  # optional epithet / sp. / cf. / aff.
     r"\?\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+"  # "Genus? cf./aff. epithet"
-                                                 # (hollis2006 plate 3:
-                                                 # "Theocorys? aff. phyzella")
+    # (hollis2006 plate 3:
+    # "Theocorys? aff. phyzella")
     r"|"
     r"\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+"
     r"|"
@@ -345,31 +346,31 @@ _DANELIAN_CLAUSE_RE = re.compile(
 #     stripped from the captured species.
 _BAUMGARTNER_CLAUSE_RE = re.compile(
     r"(?<![A-Za-z]\s)"  # boundary: not preceded by letter+space (preamble like
-                        # "Plate 1 -", "Sample 1 -", "Figure 1 -")
+    # "Plate 1 -", "Sample 1 -", "Figure 1 -")
     r"(?<![\dA-Za-z])"  # boundary: not preceded by digit/letter (in-word match
-                        # like the "1" inside "100 µm")
-    r"(\d+"                       # first label
-    r"(?:"                                # optional additional labels
-    r"\s*[-–—‒]\s*\d+"                    #   " - N" (range)
+    # like the "1" inside "100 µm")
+    r"(\d+"  # first label
+    r"(?:"  # optional additional labels
+    r"\s*[-–—‒]\s*\d+"  #   " - N" (range)
     r"|"
-    r"\s*,\s*\d+"                         #   ", N"
+    r"\s*,\s*\d+"  #   ", N"
     r")*"
     r")"
-    r"\s*[-–—‒]?\s*"                      # separator: optional dash, optional spaces
-                                          # (zero-width gap handles "7Williriedellum"
-                                          #  where the caption has no space)
-    r"([A-Z][a-zA-Z\-]{2,}"               # Genus (capitalized, ≥3 chars)
-    r"(?:\s*\(\?\))?"                     # optional "(?)" uncertainty marker after
-                                          # genus: "Stichomitra (?)", "Acaeniotyle (?)"
-    r"(?:"                                # optional epithet (one shape)
+    r"\s*[-–—‒]?\s*"  # separator: optional dash, optional spaces
+    # (zero-width gap handles "7Williriedellum"
+    #  where the caption has no space)
+    r"([A-Z][a-zA-Z\-]{2,}"  # Genus (capitalized, ≥3 chars)
+    r"(?:\s*\(\?\))?"  # optional "(?)" uncertainty marker after
+    # genus: "Stichomitra (?)", "Acaeniotyle (?)"
+    r"(?:"  # optional epithet (one shape)
     # Shape 1: " sp."/"spp." with optional "cf./aff. <W>. <epithet>" tail
     # Handles "Williriedellum sp. S", "Williriedellum sp. cf. W. sp. S",
     # "Sethocapsa sp. cf. S. dorysphaeroides", "Linaresia sp. cf. L. chrafatensis".
-    r"\s+spp?\."                          #   " sp." / " spp."
-    r"(?:"                                #   optional modifier tail
+    r"\s+spp?\."  #   " sp." / " spp."
+    r"(?:"  #   optional modifier tail
     r"\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s*(?:\(\?\))?\s+)?[A-Z]?[a-z][a-z\-]+"  #   " cf. W. epithet" / " cf. W. (?) epithet"
     r"(?:\s*(?:\.\s*[A-Z]|\s+[a-z][a-z\-]{2,}))?"  # optional trailing ". X" identifier
-                                                       # (e.g. "W. sp. S") or 2nd epithet
+    # (e.g. "W. sp. S") or 2nd epithet
     r")?"
     # standalone trailing identifier: "Williriediedum sp. S" with no
     # cf./aff., OR "Zhamoidellum sp. 2" (numeric) — gold keeps the
@@ -383,11 +384,11 @@ _BAUMGARTNER_CLAUSE_RE = re.compile(
     # Shape 3: " <epithet>" — regular binomial
     r"\s+[a-z][a-z\-]{2,}"
     r")"
-    r"?"                                   # epithet is OPTIONAL (Shape 4 below
-                                           # is "genus only" — see the
-                                           # author-citation guardrail in
-                                           # the post-filter below).
-    r"(?:\s+[a-z][a-z\-]{2,})?"           # optional 2nd epithet (Shape 3 only)
+    r"?"  # epithet is OPTIONAL (Shape 4 below
+    # is "genus only" — see the
+    # author-citation guardrail in
+    # the post-filter below).
+    r"(?:\s+[a-z][a-z\-]{2,})?"  # optional 2nd epithet (Shape 3 only)
     r")"
     # Trailing single-letter or numeric identifier (e.g. "Spumellaria
     # gen. et sp. indet. A", "Nassellaria indet. A", "Zhamoidellum sp. 2").
@@ -409,24 +410,24 @@ _BAUMGARTNER_CLAUSE_RE = re.compile(
 #          (n. sp., sp., cf., aff., spp., sp. nov.). Group 3: figure
 #          label list ("5" or "12-14b" or "8-11, 14").
 _POUILE_CLAUSE_RE = re.compile(
-    r"^([A-Z][a-z]+"                       # Genus (capitalized)
-    r"(?:"                                  # optional uncertainty or epithet
-    r"\s*\??\.?\s+sp\."                    #   "? sp." or ". sp." (OCR misreads space as ".")
-    r"(?:\s+(?:[A-Z]\.|[A-Z]))?"           #     S. abbrev OR " sp. A" form
+    r"^([A-Z][a-z]+"  # Genus (capitalized)
+    r"(?:"  # optional uncertainty or epithet
+    r"\s*\??\.?\s+sp\."  #   "? sp." or ". sp." (OCR misreads space as ".")
+    r"(?:\s+(?:[A-Z]\.|[A-Z]))?"  #     S. abbrev OR " sp. A" form
     r"(?:\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+)?"
     r"|"
-    r"\s*\?\s+[a-z][a-z\-]+"               #   "? epithet"
+    r"\s*\?\s+[a-z][a-z\-]+"  #   "? epithet"
     r"|"
-    r"\s+[a-z][a-z\-]+"                    #   plain epithet
+    r"\s+[a-z][a-z\-]+"  #   plain epithet
     r")*"
     r")"
     r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.))?"  # optional modifier
     r"\s*"
-    r"\([^)]*?"                             # opening paren
-    r"[Pp](?:l|late)\.?\s*\d+"             # Pl. N
-    r"\s*[,\.]\s*"                         # separator ("," or ".")
+    r"\([^)]*?"  # opening paren
+    r"[Pp](?:l|late)\.?\s*\d+"  # Pl. N
+    r"\s*[,\.]\s*"  # separator ("," or ".")
     r"[Ff]igs?\.?\s*"
-    r"(\d+[a-z]?"                          # first fig num
+    r"(\d+[a-z]?"  # first fig num
     r"(?:\s*[\-–—‒]\s*\d+[a-z]?)?"
     r"(?:\s*,\s*\d+[a-z]?"
     r"(?:\s*[\-–—‒]\s*\d+[a-z]?)?"
@@ -677,14 +678,16 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             continue
         for lbl in labels:
             seen_labels.add(lbl)
-        pairs.append(CaptionPair(
-            labels=labels,
-            species=species,
-            modifier=modifier,
-            confidence=0.7,
-            notes="regex_fallback",
-            raw_text=m.group(0)[:120],
-        ))
+        pairs.append(
+            CaptionPair(
+                labels=labels,
+                species=species,
+                modifier=modifier,
+                confidence=0.7,
+                notes="regex_fallback",
+                raw_text=m.group(0)[:120],
+            )
+        )
 
     # Pouille-style caption fallback: when the OpenDataLoader pass
     # couldn't find a real "Plate N" header (Pouille 2014 has none) it
@@ -741,14 +744,16 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # don't get assigned too.
         for lbl in base_labels:
             seen_labels.add(lbl)
-        pairs.append(CaptionPair(
-            labels=labels,
-            species=species,
-            modifier=modifier,
-            confidence=0.65,
-            notes="regex_fallback_pouille",
-            raw_text=line[:120],
-        ))
+        pairs.append(
+            CaptionPair(
+                labels=labels,
+                species=species,
+                modifier=modifier,
+                confidence=0.65,
+                notes="regex_fallback_pouille",
+                raw_text=line[:120],
+            )
+        )
 
     # Danelian-style caption fallback: each species clause starts a
     # new line with a bare number + ")" (no "Fig." prefix), e.g.
@@ -773,9 +778,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         r"|"
         r"\d+(?:\s*[,\-–—]\s*\d+)*\s*[)\.:]\s+\??[A-Z])"
     )
-    plate_preamble_re = re.compile(
-        r"^\s*(?:Plate\s+[IVXivx\d]+\.?\s*)?"
-    )
+    plate_preamble_re = re.compile(r"^\s*(?:Plate\s+[IVXivx\d]+\.?\s*)?")
     for chunk in re.split(r"[;\n]", text):
         chunk = chunk.strip()
         if not chunk:
@@ -790,7 +793,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         m_lead = danelian_lead_re.search(chunk)
         if not m_lead:
             continue
-        chunk = chunk[m_lead.start():]
+        chunk = chunk[m_lead.start() :]
         # Strip a leading "Plate I. " preamble so the inner
         # _DANELIAN_CLAUSE_RE.match can anchor on the label.
         chunk = plate_preamble_re.sub("", chunk, count=1)
@@ -812,11 +815,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             # string so the caller sees the gold form.
             species = m.group(3).strip()
             modifier = (m.group(4) or "").strip()
-            trailing_id = (
-                (m.group(5) or "").strip()
-                if m.lastindex and m.lastindex >= 5
-                else ""
-            )
+            trailing_id = (m.group(5) or "").strip() if m.lastindex and m.lastindex >= 5 else ""
             if modifier:
                 species = (species + " " + modifier).strip()
                 modifier = ""
@@ -829,9 +828,23 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             # Filter common preamble words that start with a capital
             # letter but are not Latin genera.
             if species.lower() in {
-                "sample", "plate", "scale", "figure", "section", "bar",
-                "upper", "lower", "middle", "all", "see", "cf", "aff",
-                "et", "al", "vol", "no",
+                "sample",
+                "plate",
+                "scale",
+                "figure",
+                "section",
+                "bar",
+                "upper",
+                "lower",
+                "middle",
+                "all",
+                "see",
+                "cf",
+                "aff",
+                "et",
+                "al",
+                "vol",
+                "no",
             }:
                 continue
             labels = _regex_expand_label_list(labels_raw)
@@ -841,14 +854,16 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
                 continue
             for lbl in labels:
                 seen_labels.add(lbl)
-            pairs.append(CaptionPair(
-                labels=labels,
-                species=species,
-                modifier=modifier,
-                confidence=0.65,
-                notes="regex_fallback_danelian",
-                raw_text=m.group(0)[:120],
-            ))
+            pairs.append(
+                CaptionPair(
+                    labels=labels,
+                    species=species,
+                    modifier=modifier,
+                    confidence=0.65,
+                    notes="regex_fallback_danelian",
+                    raw_text=m.group(0)[:120],
+                )
+            )
 
     # Baumgartner-style caption fallback: semicolon-separated clauses
     # shaped like "1, 2- Williriedellum marcucciae; 3- Williriedellum
@@ -885,7 +900,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # that preamble pattern).
         tokens = species.split()
         if len(tokens) == 1 and tokens[0][0].isupper():
-            tail = text[m.end():m.end() + 8].lstrip()
+            tail = text[m.end() : m.end() + 8].lstrip()
             tail_first = tail[:1]
             # Accept if the next non-space character is one of:
             #   "(" — author citation or "(?)" uncertainty marker
@@ -922,18 +937,20 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # a clause terminator (``;``, ``.``, or end-of-text), never
         # by a word that would indicate we matched the wrong capital.
         if re.match(r"^(Spumellaria|Nassellaria)\s+gen\.?$", species, flags=re.IGNORECASE):
-            tail_window = text[m.end():m.end() + 30]
+            tail_window = text[m.end() : m.end() + 30]
             m_id = re.search(r"\b([A-Z])\b(?=\s*[;.,]|\s*$)", tail_window)
             if m_id:
                 species = species + " " + m_id.group(1)
-        pairs.append(CaptionPair(
-            labels=labels,
-            species=species,
-            modifier="",
-            confidence=0.65,
-            notes="regex_fallback_baumgartner",
-            raw_text=m.group(0)[:120],
-        ))
+        pairs.append(
+            CaptionPair(
+                labels=labels,
+                species=species,
+                modifier="",
+                confidence=0.65,
+                notes="regex_fallback_baumgartner",
+                raw_text=m.group(0)[:120],
+            )
+        )
     # Normalize species strings across all parsers to strip "(?)" markers,
     # "sensu <Author>" tails, and normalize Spumellaria / Nassellaria
     # "gen. et sp. indet." forms to "indet." (the gold convention).
@@ -966,12 +983,12 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
 class CaptionPair:
     """A parsed (label-set -> species) clause from a caption."""
 
-    labels: list[str]            # e.g. ["A", "B"] or ["3", "4"]
-    species: str                 # canonical Latin name
-    modifier: str = ""           # "sp.", "cf.", "aff.", "?", "n. sp."
-    confidence: float = 0.9      # M3's self-assessed parse confidence
-    notes: str = ""              # optional parsing notes
-    raw_text: str = ""           # original caption span that produced this pair
+    labels: list[str]  # e.g. ["A", "B"] or ["3", "4"]
+    species: str  # canonical Latin name
+    modifier: str = ""  # "sp.", "cf.", "aff.", "?", "n. sp."
+    confidence: float = 0.9  # M3's self-assessed parse confidence
+    notes: str = ""  # optional parsing notes
+    raw_text: str = ""  # original caption span that produced this pair
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -982,10 +999,12 @@ class PlateClassification:
     """M3's view of the entire plate."""
 
     is_radiolarian_plate: bool = True
-    image_type: str = "micrograph"   # "micrograph" | "SEM" | "photomicrograph" | "diagram" | "photo" | "other"
+    image_type: str = (
+        "micrograph"  # "micrograph" | "SEM" | "photomicrograph" | "diagram" | "photo" | "other"
+    )
     panel_count_estimate: int | None = None
     specimen_count_estimate: int | None = None
-    quality: str = "ok"              # "good" | "ok" | "poor"
+    quality: str = "ok"  # "good" | "ok" | "poor"
     dominant_taxa: list[str] = field(default_factory=list)
     reasoning: str = ""
 
@@ -998,9 +1017,9 @@ class PanelBox:
     """M3's view of an individual panel within the plate."""
 
     panel_id: str
-    bbox: tuple[int, int, int, int]   # (x, y, w, h) in plate pixel coordinates
+    bbox: tuple[int, int, int, int]  # (x, y, w, h) in plate pixel coordinates
     visible_label: str | None = None  # e.g. "A" if M3 sees the letter on the panel
-    morphology: str = ""              # one-line morphology hint
+    morphology: str = ""  # one-line morphology hint
     confidence: float = 0.85
 
     def to_dict(self) -> dict[str, Any]:
@@ -1031,7 +1050,7 @@ class Critique:
     """M3 self-critique of an existing per-panel match."""
 
     panel_id: str
-    verdict: str            # "agree" | "disagree" | "uncertain"
+    verdict: str  # "agree" | "disagree" | "uncertain"
     suggested_species: str | None = None
     confidence: float = 0.0
     reasoning: str = ""
@@ -1257,7 +1276,10 @@ class M3Engine:
         if self.config.get("m3_caption_regex_only", False):
             fallback = _regex_parse_caption(caption_text)
             if fallback:
-                logger.info("Stage 1 parse_caption -> %d pairs (regex only, m3_caption_regex_only=True)", len(fallback))
+                logger.info(
+                    "Stage 1 parse_caption -> %d pairs (regex only, m3_caption_regex_only=True)",
+                    len(fallback),
+                )
             return fallback
         prompt = (
             "请解析下列图版说明，输出严格的 JSON 数组（label->物种 配对列表）。"
@@ -1345,12 +1367,17 @@ class M3Engine:
         )
         logger.info(
             "Stage 2 classify_plate -> is_radiolarian=%s type=%s panels≈%s taxa=%s",
-            cls.is_radiolarian_plate, cls.image_type, cls.panel_count_estimate, cls.dominant_taxa,
+            cls.is_radiolarian_plate,
+            cls.image_type,
+            cls.panel_count_estimate,
+            cls.dominant_taxa,
         )
         return cls
 
     # ------------------------------------------------------------------ stage 3
-    def segment_panels(self, plate_image: Image.Image, hint_count: int | None = None) -> list[PanelBox]:
+    def segment_panels(
+        self, plate_image: Image.Image, hint_count: int | None = None
+    ) -> list[PanelBox]:
         """Stage 3: plate image -> panel bboxes + visible labels."""
         if not self._stage_enabled(3) or plate_image is None:
             return []
@@ -1384,10 +1411,13 @@ class M3Engine:
                 conf = 0.5
             panels.append(
                 PanelBox(
-                    panel_id=str(item.get("panel_id") or f"P{len(panels)+1}"),
+                    panel_id=str(item.get("panel_id") or f"P{len(panels) + 1}"),
                     bbox=bbox,
-                    visible_label=(str(item.get("visible_label")).strip()
-                                   if item.get("visible_label") is not None else None),
+                    visible_label=(
+                        str(item.get("visible_label")).strip()
+                        if item.get("visible_label") is not None
+                        else None
+                    ),
                     morphology=str(item.get("morphology") or "").strip(),
                     confidence=max(0.0, min(1.0, conf)),
                 )
@@ -1431,14 +1461,21 @@ class M3Engine:
         """
         if not self._stage_enabled(4) or panel_image is None:
             return PanelMatch(
-                panel_id="?", label=None, species=None, confidence=0.0,
+                panel_id="?",
+                label=None,
+                species=None,
+                confidence=0.0,
                 reasoning="stage 4 disabled",
             )
         visual_only = not caption_pairs
         if visual_only:
             system_prompt = _MATCH_PANEL_SYSTEM_VISUAL_ONLY
             hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
-            caption_block = f"\n[完整图说（仅供参考，可能为空）]\n{caption_text.strip()}\n" if caption_text else ""
+            caption_block = (
+                f"\n[完整图说（仅供参考，可能为空）]\n{caption_text.strip()}\n"
+                if caption_text
+                else ""
+            )
             prompt = (
                 f"{caption_block}"
                 f"{hint}\n"
@@ -1447,7 +1484,9 @@ class M3Engine:
             )
         else:
             system_prompt = _MATCH_PANEL_SYSTEM
-            pairs_json = json.dumps([p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2)
+            pairs_json = json.dumps(
+                [p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2
+            )
             hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
             caption_block = f"\n[完整图说]\n{caption_text.strip()}\n" if caption_text else ""
             prompt = (
@@ -1495,17 +1534,24 @@ class M3Engine:
             #      instead of a hard rejection.
             if last_error:
                 return PanelMatch(
-                    panel_id="?", label=None, species=None, confidence=0.0,
+                    panel_id="?",
+                    label=None,
+                    species=None,
+                    confidence=0.0,
                     reasoning=f"M3 error: {last_error}",
                     is_radiolarian=False,
                     raw={"error": last_error},
                 )
             return PanelMatch(
-                panel_id="?", label=None, species=None, confidence=0.0,
+                panel_id="?",
+                label=None,
+                species=None,
+                confidence=0.0,
                 reasoning="M3 returned no parseable output",
                 is_radiolarian=True,
                 raw={"unparseable": True},
             )
+
         # Majority-vote on (label, species); keep best confidence.
         # Force both elements to be hashable strings (or None). The LLM
         # occasionally returns a list/dict for ``species`` (e.g. when it
@@ -1574,7 +1620,8 @@ class M3Engine:
                 }
                 for m in matches
             ],
-            ensure_ascii=False, indent=2,
+            ensure_ascii=False,
+            indent=2,
         )
         cap_block = f"\n[图说]\n{caption_text.strip()}\n" if caption_text else ""
         pairs_block = ""
@@ -1695,7 +1742,8 @@ class M3Engine:
                 try:
                     self.backend.enable_thinking = False
                     res2 = self.backend.infer_text(
-                        system_prompt=system_prompt, user_prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
                     )
                 except Exception as exc:
                     logger.warning("M3 text retry failed: %s", exc)
@@ -1760,6 +1808,7 @@ class M3Engine:
             return
         try:
             from pathlib import Path
+
             p = Path(out_dir)
             p.mkdir(parents=True, exist_ok=True)
             self._diagnostic_counter += 1
@@ -1772,7 +1821,10 @@ class M3Engine:
                         "user_prompt": user_prompt,
                         "result": result,
                     },
-                    f, ensure_ascii=False, indent=2, default=str,
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
                 )
         except Exception as exc:
             logger.debug("Diagnostic dump failed: %s", exc)

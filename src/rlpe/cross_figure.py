@@ -7,6 +7,7 @@ public surface is ``_cross_figure_reassign_results`` (and the
 re-exported ``text_filters.looks_like_placeholder_caption`` shim that
 ``pipeline.py`` forwards to).
 """
+
 from __future__ import annotations
 
 import logging
@@ -54,7 +55,7 @@ def _cross_figure_reassign_results(results: list[dict[str, Any]]) -> list[dict[s
         for r in panels:
             meta = r.get("metadata") or {}
             if not cap:
-                cap = (r.get("caption_snippet") or "")
+                cap = r.get("caption_snippet") or ""
             if not page:
                 page = int(meta.get("page_index") or 0)
             if r.get("species"):
@@ -113,8 +114,7 @@ def _cross_figure_reassign_results(results: list[dict[str, Any]]) -> list[dict[s
                 new["metadata"] = dict(r.get("metadata") or {})
                 new["metadata"]["reassigned_from_figure"] = fid
                 new["metadata"]["reassigned_reason"] = (
-                    "orphan figure, caption empty/placeholder, "
-                    f"merged into plate figure {nearest}"
+                    f"orphan figure, caption empty/placeholder, merged into plate figure {nearest}"
                 )
                 reassigned.append(new)
                 continue
@@ -130,10 +130,7 @@ def _cross_figure_reassign_results(results: list[dict[str, Any]]) -> list[dict[s
         f"cross_figure_reassign produced {len(reassigned)} rows from "
         f"{len(results)} inputs; this should never happen"
     )
-    moved = sum(
-        1 for r in reassigned
-        if (r.get("metadata") or {}).get("reassigned_from_figure")
-    )
+    moved = sum(1 for r in reassigned if (r.get("metadata") or {}).get("reassigned_from_figure"))
     if moved:
         logger.info("Cross-figure reassignment: moved %d panels from orphan figures.", moved)
     return reassigned

@@ -19,7 +19,12 @@ class TaxonEntity:
 
 
 class TaxonRecognizer:
-    def __init__(self, model: str = "en_eco", hf_model_path: str | None = None, lexicon_path: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str = "en_eco",
+        hf_model_path: str | None = None,
+        lexicon_path: str | None = None,
+    ) -> None:
         self.model = model
         self.hf_model_path = hf_model_path
         self.lexicon_path = lexicon_path
@@ -55,7 +60,9 @@ class TaxonRecognizer:
                 # below branches on it to use the regex fallback.
                 logger.warning(
                     "TaxoNERD init failed (model=%r): %s; falling back to "
-                    "regex-based species extraction", self.model, exc,
+                    "regex-based species extraction",
+                    self.model,
+                    exc,
                 )
                 self._engine = None
 
@@ -166,7 +173,9 @@ class TaxonRecognizer:
                 continue
             if words[epithet_idx].lower() in _NON_TAXON_SECOND_WORDS:
                 continue
-            entities.append(TaxonEntity(text=m.group(1), start=m.start(1), end=m.end(1), score=0.55))
+            entities.append(
+                TaxonEntity(text=m.group(1), start=m.start(1), end=m.end(1), score=0.55)
+            )
         return entities
 
     @staticmethod
@@ -224,41 +233,143 @@ class TaxonRecognizer:
 # Words that often start a figure caption but are never a genus name.
 # These either start the header ("Explanation of Plate N.") or refer to a
 # caption-internal non-taxonomic noun ("Scale bar", "Fig. caption").
-_NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset({
-    "explanation", "scale", "figure", "fig", "figs", "plate", "pl",
-    "text", "image", "photo", "photograph", "drawing", "line",
-    "caption", "all", "bar", "see", "shown", "above", "below",
-    "early", "late", "middle", "upper", "lower", "type", "genus",
-    "species", "order", "family", "class", "subclass",
-    "north", "south", "east", "west", "central",
-    "tropical", "arctic", "pacific", "atlantic", "indian",
-    "remarks", "note", "notes", "from", "with", "without",
-    "northeastern", "northwestern", "southeastern", "southwestern",
-    # Caption-header nouns that look like binomials but never are.
-    # "Plate 1 Scanning electron microscope pictures..." — the
-    # "Scanning electron" pair matches the regex but is not a taxon.
-    "scanning", "electron", "microscope", "transmission", "light",
-    "secondary", "photomicrograph", "photomicrographs", "marker",
-    "sample", "section", "locality", "thin", "thins", "stereo",
-    "backscattered", "overview", "detail",
-    # Pipeline placeholder text (OpenDataLoader / GROBID fallback). When
-    # the upstream tool can't extract a real caption it returns strings
-    # like "Auto-generated figure for page 17" — these used to slip
-    # through the binomial regex as "Auto-generated figure".
-    "auto", "auto-generated", "automated", "generated", "placeholder",
-    "undefined", "unknown", "missing", "empty", "n/a", "na",
-    # Synthetic captions built from body-text plate references also
-    # need a sentinel header ("(Reconstructed from systematic
-    # descriptions)") that the binomial regex used to match as the
-    # species "Reconstructed from".
-    "reconstructed", "reconstructed from", "synthesized", "synthetic",
-    "copyright", "published", "springer", "elsevier", "wiley",
-    "downloaded", "downloadedfrom", "rights", "reserved",
-})
+_NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset(
+    {
+        "explanation",
+        "scale",
+        "figure",
+        "fig",
+        "figs",
+        "plate",
+        "pl",
+        "text",
+        "image",
+        "photo",
+        "photograph",
+        "drawing",
+        "line",
+        "caption",
+        "all",
+        "bar",
+        "see",
+        "shown",
+        "above",
+        "below",
+        "early",
+        "late",
+        "middle",
+        "upper",
+        "lower",
+        "type",
+        "genus",
+        "species",
+        "order",
+        "family",
+        "class",
+        "subclass",
+        "north",
+        "south",
+        "east",
+        "west",
+        "central",
+        "tropical",
+        "arctic",
+        "pacific",
+        "atlantic",
+        "indian",
+        "remarks",
+        "note",
+        "notes",
+        "from",
+        "with",
+        "without",
+        "northeastern",
+        "northwestern",
+        "southeastern",
+        "southwestern",
+        # Caption-header nouns that look like binomials but never are.
+        # "Plate 1 Scanning electron microscope pictures..." — the
+        # "Scanning electron" pair matches the regex but is not a taxon.
+        "scanning",
+        "electron",
+        "microscope",
+        "transmission",
+        "light",
+        "secondary",
+        "photomicrograph",
+        "photomicrographs",
+        "marker",
+        "sample",
+        "section",
+        "locality",
+        "thin",
+        "thins",
+        "stereo",
+        "backscattered",
+        "overview",
+        "detail",
+        # Pipeline placeholder text (OpenDataLoader / GROBID fallback). When
+        # the upstream tool can't extract a real caption it returns strings
+        # like "Auto-generated figure for page 17" — these used to slip
+        # through the binomial regex as "Auto-generated figure".
+        "auto",
+        "auto-generated",
+        "automated",
+        "generated",
+        "placeholder",
+        "undefined",
+        "unknown",
+        "missing",
+        "empty",
+        "n/a",
+        "na",
+        # Synthetic captions built from body-text plate references also
+        # need a sentinel header ("(Reconstructed from systematic
+        # descriptions)") that the binomial regex used to match as the
+        # species "Reconstructed from".
+        "reconstructed",
+        "reconstructed from",
+        "synthesized",
+        "synthetic",
+        "copyright",
+        "published",
+        "springer",
+        "elsevier",
+        "wiley",
+        "downloaded",
+        "downloadedfrom",
+        "rights",
+        "reserved",
+    }
+)
 
 # Common 2-3 letter non-Latin epithets that the binomial regex used to match.
 # Anything here is a stopword / preposition / article, never a species epithet.
-_NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset({
-    "of", "in", "on", "by", "an", "at", "to", "or", "is", "as",
-    "bar", "fig", "figs", "no", "all", "the", "and", "sp", "spp", "cf", "aff", "nov", "gen", "comb",
-})
+_NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset(
+    {
+        "of",
+        "in",
+        "on",
+        "by",
+        "an",
+        "at",
+        "to",
+        "or",
+        "is",
+        "as",
+        "bar",
+        "fig",
+        "figs",
+        "no",
+        "all",
+        "the",
+        "and",
+        "sp",
+        "spp",
+        "cf",
+        "aff",
+        "nov",
+        "gen",
+        "comb",
+    }
+)

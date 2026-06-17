@@ -7,6 +7,7 @@ These cover the two regressions that surfaced on Feng 2007 Plate 1:
   2. Carry-forward wrongly assigned species to 14 SEM-metadata fragments
      that don't have a label in any caption clause.
 """
+
 from __future__ import annotations
 
 import sys
@@ -43,7 +44,7 @@ def test_normalize_panel_label_strips_leading_zeros():
 
 
 def test_normalize_panel_label_keeps_alphabetic():
-    """"A", "B" labels must not become "0"."""
+    """ "A", "B" labels must not become "0"."""
     assert _normalize_panel_label("A") == "A"
     assert _normalize_panel_label("AB") == "AB"
 
@@ -229,9 +230,7 @@ def test_match_panels_strict_no_carry_forward_to_ocr_misread():
 
 def test_match_panels_leading_zero_ocr_misread_resolves():
     """OCR misread "04" must resolve to caption key "4"."""
-    caption_text = (
-        "Explanation of Plate 4. ﬁgs 1–5. Triaenosphaera variabilis: 1, ...; 4, ... "
-    )
+    caption_text = "Explanation of Plate 4. ﬁgs 1–5. Triaenosphaera variabilis: 1, ...; 4, ... "
     caption = _caption(caption_text)
     panels = [_panel("04"), _panel("1")]
     matches = match_panels(
@@ -331,4 +330,5 @@ def test_match_panels_skips_placeholder_caption():
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

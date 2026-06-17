@@ -20,6 +20,7 @@ the work/ artifacts). To regenerate the smoke test output:
         --work-dir work/papers_smoke \\
         --ocr-backend easyocr --num-workers 1
 """
+
 from __future__ import annotations
 
 import json
@@ -95,8 +96,7 @@ def test_smoke_output_most_rows_have_panel_path(smoke_rows):
     n_with = sum(1 for r in smoke_rows if r.get("panel_path"))
     rate = n_with / max(1, len(smoke_rows))
     assert rate >= 0.80, (
-        f"Only {n_with}/{len(smoke_rows)} ({rate:.1%}) rows have a "
-        f"panel_path. Expected >= 80%."
+        f"Only {n_with}/{len(smoke_rows)} ({rate:.1%}) rows have a panel_path. Expected >= 80%."
     )
 
 
@@ -121,6 +121,7 @@ def test_smoke_output_validates_against_schema(smoke_rows):
     JSON Schema. This is the same path the export pipeline takes;
     if validation fails, the export will reject the output."""
     from rlpe.types import MatchResult, PaperMetadata
+
     prov = ProvenanceRecord(**build_provenance().to_dict())
     # Build MatchResult objects (the converter expects typed objects)
     matches = []
@@ -136,20 +137,22 @@ def test_smoke_output_validates_against_schema(smoke_rows):
                 source=pm.get("source", ""),
                 confidence=pm.get("confidence", 0.0),
             )
-        matches.append(MatchResult(
-            paper_id=r.get("paper_id", ""),
-            figure_id=r.get("figure_id", ""),
-            panel_id=r.get("panel_id"),
-            species=r.get("species"),
-            panel_path=r.get("panel_path"),
-            bbox=r.get("bbox"),
-            confidence=float(r.get("confidence", 0.0)),
-            label_text=r.get("label_text"),
-            caption_snippet=r.get("caption_snippet"),
-            ocr_text=r.get("ocr_text"),
-            metadata=r.get("metadata", {}),
-            paper_metadata=paper_metadata,
-        ))
+        matches.append(
+            MatchResult(
+                paper_id=r.get("paper_id", ""),
+                figure_id=r.get("figure_id", ""),
+                panel_id=r.get("panel_id"),
+                species=r.get("species"),
+                panel_path=r.get("panel_path"),
+                bbox=r.get("bbox"),
+                confidence=float(r.get("confidence", 0.0)),
+                label_text=r.get("label_text"),
+                caption_snippet=r.get("caption_snippet"),
+                ocr_text=r.get("ocr_text"),
+                metadata=r.get("metadata", {}),
+                paper_metadata=paper_metadata,
+            )
+        )
     out = run_output_from_provenance(prov, matches)
     validated = validate_run_output(out)
     assert len(validated.panels) == len(smoke_rows)
@@ -161,15 +164,12 @@ def test_smoke_output_per_paper_species_rate(smoke_rows):
     observational test — it just prints, no assertion. The goal
     is to track how well the parser generalises to new papers."""
     papers = Counter(r.get("paper_id") for r in smoke_rows)
-    print(f"\n=== Fresh paper smoke test per-paper stats ===")
+    print("\n=== Fresh paper smoke test per-paper stats ===")
     for p, n in sorted(papers.items()):
-        n_species = sum(
-            1 for r in smoke_rows
-            if r.get("paper_id") == p and r.get("species")
-        )
+        n_species = sum(1 for r in smoke_rows if r.get("paper_id") == p and r.get("species"))
         rate = n_species / max(1, n)
         print(f"  {p[:20]}: {n_species}/{n} = {rate:.1%} species")
     # Aggregate rate
     n_total = len(smoke_rows)
     n_species = sum(1 for r in smoke_rows if r.get("species"))
-    print(f"  TOTAL: {n_species}/{n_total} = {n_species/n_total:.1%} species")
+    print(f"  TOTAL: {n_species}/{n_total} = {n_species / n_total:.1%} species")

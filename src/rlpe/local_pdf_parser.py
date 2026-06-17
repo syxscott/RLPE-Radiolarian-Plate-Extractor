@@ -6,6 +6,7 @@ data shape GROBID would produce, so the rest of the pipeline can be
 source-agnostic. It is the **default** extractor on environments
 without GROBID / OCR / TaxoNERD installed (i.e. our dev box).
 """
+
 from __future__ import annotations
 
 import logging
@@ -61,12 +62,23 @@ _SPECIES_RE = re.compile(
 
 # Common false positives to filter out after species extraction.
 _SPECIES_DENYLIST: set[str] = {
-    "Spongy cortical", "Spongy tissue", "Central part",
-    "Tetraspongodiscus stauracan", "Terminology fol",
-    "Although micro", "Dalongicaepa high",
-    "Rencunping section", "South China", "Dalong Formation", "West Texas",
-    "Acta Palaeontologica", "Type material", "Type species", "Type genus",
-    "Acta Palaeontologica Polonica", "Journal Paleontology",
+    "Spongy cortical",
+    "Spongy tissue",
+    "Central part",
+    "Tetraspongodiscus stauracan",
+    "Terminology fol",
+    "Although micro",
+    "Dalongicaepa high",
+    "Rencunping section",
+    "South China",
+    "Dalong Formation",
+    "West Texas",
+    "Acta Palaeontologica",
+    "Type material",
+    "Type species",
+    "Type genus",
+    "Acta Palaeontologica Polonica",
+    "Journal Paleontology",
 }
 
 # Drop standalone numerals (often panel subscripts). Applied to flatten.
@@ -90,6 +102,7 @@ def _infer_section_type(title: str) -> str:
 
 def _stable_id(pdf_path: Path) -> str:
     import hashlib
+
     h = hashlib.sha1()
     h.update(str(pdf_path.resolve()).encode("utf-8"))
     try:
@@ -368,6 +381,7 @@ def _parse_captions(pages: list[dict[str, Any]], paper_id: str) -> list[CaptionR
             i = j
     return captions
 
+
 # Fulltext sections
 # ---------------------------------------------------------------------------
 
@@ -385,7 +399,7 @@ def _parse_fulltext_sections(pages: list[dict[str, Any]]) -> list[dict[str, str]
         sections.append({"title": "Introduction", "section_type": "other", "text": intro})
     for i, (pos, title) in enumerate(headers):
         end = headers[i + 1][0] if i + 1 < len(headers) else len(full_text)
-        body = full_text[pos + len(title):end].strip()
+        body = full_text[pos + len(title) : end].strip()
         body = re.sub(r"\b[A-Z]{2,}[A-Z ,\.\d]{6,}\b\s*\d{2,4}\b", "", body)
         if not body or len(body) < 50:
             continue

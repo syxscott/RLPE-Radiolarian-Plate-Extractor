@@ -5,6 +5,7 @@ combined_7_v9.jsonl. The other 6 papers are copied unchanged.
 
 Output: work/combined_7_v10.jsonl
 """
+
 from __future__ import annotations
 
 import json
@@ -22,9 +23,7 @@ PREDICTIONS_IN = ROOT / "work" / "combined_7_v9.jsonl"
 PREDICTIONS_OUT = ROOT / "work" / "combined_7_v10.jsonl"
 
 POUILLE_PAPER_ID = "2225994d55021328"
-OD_JSON = next(
-    (ROOT / "work" / "pouille_recon" / "od_output" / "4dc5b4d95e910e95").glob("*.json")
-)
+OD_JSON = next((ROOT / "work" / "pouille_recon" / "od_output" / "4dc5b4d95e910e95").glob("*.json"))
 
 
 def _build_label_to_species() -> dict[str, dict[str, str]]:
@@ -66,11 +65,7 @@ def main() -> int:
         f"{ {p: len(d) for p, d in plate_to_label_to_species.items()} }"
     )
 
-    rows = [
-        json.loads(l)
-        for l in PREDICTIONS_IN.read_text().splitlines()
-        if l
-    ]
+    rows = [json.loads(l) for l in PREDICTIONS_IN.read_text().splitlines() if l]
     print(f"Loaded {len(rows)} predictions from {PREDICTIONS_IN.name}")
 
     new_rows: list[dict] = []
@@ -116,21 +111,23 @@ def main() -> int:
             if (fig, lbl) in existing_keys:
                 continue
             n_added += 1
-            new_rows.append({
-                "paper_id": POUILLE_PAPER_ID,
-                "figure_id": fig,
-                "panel_id": lbl,
-                "species": sp,
-                "panel_path": "",
-                "bbox": [0, 0, 0, 0],
-                "confidence": 0.0,
-                "label_text": lbl,
-                "caption_snippet": "",
-                "ocr_text": "",
-                "metadata": {
-                    "matcher_type": "pouille-reparsed-2026-06-07",
-                },
-            })
+            new_rows.append(
+                {
+                    "paper_id": POUILLE_PAPER_ID,
+                    "figure_id": fig,
+                    "panel_id": lbl,
+                    "species": sp,
+                    "panel_path": "",
+                    "bbox": [0, 0, 0, 0],
+                    "confidence": 0.0,
+                    "label_text": lbl,
+                    "caption_snippet": "",
+                    "ocr_text": "",
+                    "metadata": {
+                        "matcher_type": "pouille-reparsed-2026-06-07",
+                    },
+                }
+            )
 
     PREDICTIONS_OUT.write_text(
         "\n".join(json.dumps(r, ensure_ascii=False) for r in new_rows) + "\n"

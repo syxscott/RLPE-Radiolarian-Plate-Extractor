@@ -20,10 +20,10 @@ This is a real-pipeline rebuild, not a synthetic mirror: every
 species string comes from ``_regex_parse_caption`` over the real
 caption text extracted from the PDF by OpenDataLoader.
 """
+
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -34,7 +34,15 @@ sys.path.insert(0, str(SRC))
 from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 from rlpe.opendataloader_extractor import _find_plate_captions  # noqa: E402
 
-OD_JSON = ROOT / "work" / "bragin_only_out" / "output" / "od_output" / "2e85364a3c605326" / "bragin2025.json"
+OD_JSON = (
+    ROOT
+    / "work"
+    / "bragin_only_out"
+    / "output"
+    / "od_output"
+    / "2e85364a3c605326"
+    / "bragin2025.json"
+)
 GOLD_PATH = ROOT / "data" / "gold" / "bragin2025.jsonl"
 OUT_PATH = ROOT / "work" / "real_bragin.jsonl"
 
@@ -96,27 +104,27 @@ def main() -> int:
     out_rows: list[dict] = []
     for lbl, gold_species in label_to_species.items():
         sp = parser_map.get(lbl, gold_species)
-        out_rows.append({
-            "paper_id": GOLD_PAPER_ID,
-            "figure_id": GOLD_FIGURE_ID,
-            "panel_id": lbl,
-            "species": sp,
-            "panel_path": f"work/bragin_only_out/output/panels/2e85364a3c605326/od_plate_2e85364a3c605326_p006_pl01/panel_{int(lbl):02d}.png",
-            "bbox": [0, 0, 0, 0],
-            "confidence": 0.7,
-            "label_text": lbl,
-            "caption_snippet": cap["content"][:200],
-            "ocr_text": "",
-            "metadata": {
-                "matcher_type": "bragin-real-pipeline-rebuild-2026-06-07",
-                "parser": "_regex_parse_caption",
-                "plate": cap.get("plate_number"),
-            },
-        })
+        out_rows.append(
+            {
+                "paper_id": GOLD_PAPER_ID,
+                "figure_id": GOLD_FIGURE_ID,
+                "panel_id": lbl,
+                "species": sp,
+                "panel_path": f"work/bragin_only_out/output/panels/2e85364a3c605326/od_plate_2e85364a3c605326_p006_pl01/panel_{int(lbl):02d}.png",
+                "bbox": [0, 0, 0, 0],
+                "confidence": 0.7,
+                "label_text": lbl,
+                "caption_snippet": cap["content"][:200],
+                "ocr_text": "",
+                "metadata": {
+                    "matcher_type": "bragin-real-pipeline-rebuild-2026-06-07",
+                    "parser": "_regex_parse_caption",
+                    "plate": cap.get("plate_number"),
+                },
+            }
+        )
 
-    OUT_PATH.write_text(
-        "\n".join(json.dumps(r, ensure_ascii=False) for r in out_rows) + "\n"
-    )
+    OUT_PATH.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in out_rows) + "\n")
     print(f"\nWrote {len(out_rows)} rows to {OUT_PATH.relative_to(ROOT)}")
     matched = sum(1 for lbl in label_to_species if lbl in parser_map)
     print(f"Parser matched {matched}/{len(label_to_species)} gold panel_ids")

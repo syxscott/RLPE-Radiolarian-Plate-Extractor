@@ -52,7 +52,11 @@ def build_runtime_from_config(cfg: dict):
 
 
 def run_single_test(cfg: dict, runtime):
-    prompt = GEMMA_SYSTEM_PROMPT_ZH if cfg.get("gemma_system_prompt_lang", "zh") == "zh" else GEMMA_SYSTEM_PROMPT_EN
+    prompt = (
+        GEMMA_SYSTEM_PROMPT_ZH
+        if cfg.get("gemma_system_prompt_lang", "zh") == "zh"
+        else GEMMA_SYSTEM_PROMPT_EN
+    )
     with Image.open(cfg["single_panel_path"]) as im:
         result = gemma_match_panel(
             runtime=runtime,
@@ -73,7 +77,9 @@ def main() -> int:
     if CONFIG.get("single_test_only", True):
         run_single_test(CONFIG, runtime)
     else:
-        print("Set single_test_only=True or integrate this runtime into rlpe.pipeline.RadiolarianPipeline")
+        print(
+            "Set single_test_only=True or integrate this runtime into rlpe.pipeline.RadiolarianPipeline"
+        )
     return 0
 
 

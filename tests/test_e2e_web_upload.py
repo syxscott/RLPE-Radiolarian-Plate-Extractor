@@ -1,5 +1,6 @@
 """Test the full Web path: upload a PDF via the API, wait for completion,
 fetch the result, validate it against the published schema."""
+
 import json
 import shutil
 import sys
@@ -45,7 +46,11 @@ def test_upload_completes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
             r = client.post(
                 "/jobs/upload",
                 files={"file": (PDF.name, f, "application/pdf")},
-                data={"options": json.dumps({"use_opendataloader": True, "data_outbound_policy": "local_only"})},
+                data={
+                    "options": json.dumps(
+                        {"use_opendataloader": True, "data_outbound_policy": "local_only"}
+                    )
+                },
             )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -63,7 +68,9 @@ def test_upload_completes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
             if last_status in {"done", "failed"}:
                 break
             time.sleep(2)
-        assert last_status in {"done", "failed"}, f"Job did not terminate: last_status={last_status}"
+        assert last_status in {"done", "failed"}, (
+            f"Job did not terminate: last_status={last_status}"
+        )
 
         # Get result
         rr = client.get(f"/jobs/{job_id}/result")

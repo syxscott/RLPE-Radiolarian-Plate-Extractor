@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 # evaluation harness and unit tests can import it without dragging in
 # the torch/gemma/paddleocr chain pulled by the full pipeline.
 
-from .text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
-
-from .association import match_panels, _normalize_panel_label
+from .association import _normalize_panel_label, match_panels
 from .config import PipelineConfig
 from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
 from .geology_extraction import build_knowledge_graph, link_species_to_geology
@@ -37,7 +35,15 @@ from .scale_bar import (
 )
 from .segmentation import PanelSegmenter, SegmentationConfig
 from .taxon import TaxonRecognizer
-from .types import CaptionEntity, CaptionRecord, FigureRegion, MatchResult, PanelCandidate, PaperMetadata
+from .text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
+from .types import (
+    CaptionEntity,
+    CaptionRecord,
+    FigureRegion,
+    MatchResult,
+    PanelCandidate,
+    PaperMetadata,
+)
 from .utils import ensure_dir, slugify, stable_id, write_json, write_jsonl
 
 
@@ -95,6 +101,7 @@ class RadiolarianPipeline:
             with self._od_lock:
                 if self._od_extractor is None:
                     from .opendataloader_extractor import OpenDataLoaderExtractor
+
                     self._od_extractor = OpenDataLoaderExtractor(
                         use_ocr=bool(self.config.extra.get("od_use_ocr", False)),
                         ocr_lang=str(self.config.extra.get("od_ocr_lang", "en")),
@@ -105,7 +112,9 @@ class RadiolarianPipeline:
     def _try_init_gemma(self) -> None:
         if not self.config.extra.get("use_gemma4", False):
             return
-        model_path = self.config.extra.get("gemma_model_path") or self.config.extra.get("ollama_model")
+        model_path = self.config.extra.get("gemma_model_path") or self.config.extra.get(
+            "ollama_model"
+        )
         backend_name = str(self.config.extra.get("llm_backend", "transformers")).lower()
         minimax_backends = {"minimax", "minimax-m3", "minimax_api"}
         if not model_path and backend_name not in (minimax_backends | {"ollama"}):
@@ -122,10 +131,12 @@ class RadiolarianPipeline:
                     handler = external
                 else:
                     from .llm_backends import FallbackHandler
+
                     default_action = str(self.config.extra.get("MiniMax_fallback_default", "rules"))
                     handler = FallbackHandler(default_action=default_action)
                     if bool(self.config.extra.get("MiniMax_interactive", False)):
                         from .llm_backends import cli_fallback_prompt
+
                         handler.on_error = cli_fallback_prompt
                 self.gemma_fallback_handler = handler
                 logger.info(
@@ -147,10 +158,7 @@ class RadiolarianPipeline:
             if want_m3 is None:
                 want_m3 = backend_name in minimax_backends
             if want_m3:
-                m3_cfg = {
-                    k: v for k, v in self.config.extra.items()
-                    if k.startswith("m3_")
-                }
+                m3_cfg = {k: v for k, v in self.config.extra.items() if k.startswith("m3_")}
                 # If user didn't set stage toggles, enable all 5 by default.
                 m3_cfg.setdefault("m3_stage_1", True)
                 m3_cfg.setdefault("m3_stage_2", True)
@@ -159,6 +167,7 @@ class RadiolarianPipeline:
                 m3_cfg.setdefault("m3_stage_5", True)
                 # Diagnostic dump directory (overridable from env)
                 import os as _os
+
                 diag = _os.environ.get("RLPE_M3_DIAG_DIR")
                 if diag:
                     m3_cfg.setdefault("m3_diagnostic_dir", diag)
@@ -168,9 +177,12 @@ class RadiolarianPipeline:
                 )
                 logger.info(
                     "M3Engine initialized (stages 1-5: %s/%s/%s/%s/%s, diag=%s)",
-                    m3_cfg.get("m3_stage_1"), m3_cfg.get("m3_stage_2"),
-                    m3_cfg.get("m3_stage_3"), m3_cfg.get("m3_stage_4"),
-                    m3_cfg.get("m3_stage_5"), m3_cfg.get("m3_diagnostic_dir"),
+                    m3_cfg.get("m3_stage_1"),
+                    m3_cfg.get("m3_stage_2"),
+                    m3_cfg.get("m3_stage_3"),
+                    m3_cfg.get("m3_stage_4"),
+                    m3_cfg.get("m3_stage_5"),
+                    m3_cfg.get("m3_diagnostic_dir"),
                 )
 
     def prepare_dirs(self) -> None:
@@ -226,7 +238,8 @@ class RadiolarianPipeline:
                         rows.extend(result_rows)
                     completed += 1
                     self._emit_progress(
-                        completed, total,
+                        completed,
+                        total,
                         f"Processed {pdf.name} ({len(rows)} matches so far)",
                     )
             except (KeyboardInterrupt, SystemExit):
@@ -283,7 +296,9 @@ class RadiolarianPipeline:
                     if ent.text:
                         all_taxon_names.append(ent.text)
         species_seed = sorted(set(all_taxon_names))
-        use_geology_llm = bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
+        use_geology_llm = (
+            bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
+        )
         section_links: dict[str, list[dict[str, Any]]] = {}
         knowledge_graph: dict[str, Any] | None = None
         if od_result.fulltext_sections:
@@ -300,7 +315,8 @@ class RadiolarianPipeline:
             if not pair.image_paths:
                 continue
             self._emit_progress(
-                fig_idx - 1, n_figs,
+                fig_idx - 1,
+                n_figs,
                 f"[{fig_idx}/{n_figs}] {pair.caption_text[:40] if pair.caption_text else pair.figure_id}",
             )
 
@@ -316,9 +332,9 @@ class RadiolarianPipeline:
             primary_path: str | None = None
             primary_area: int = 0
             region_img = None  # explicit init; the previous version relied on
-                               # the for-loop binding the name in some branch,
-                               # which silently re-used the previous figure's
-                               # region_img when every imread() call failed.
+            # the for-loop binding the name in some branch,
+            # which silently re-used the previous figure's
+            # region_img when every imread() call failed.
             for cand_path in pair.image_paths:
                 if not cand_path:
                     continue
@@ -350,7 +366,9 @@ class RadiolarianPipeline:
             # Extract the actual figure number from the caption text (e.g. "Fig. 3")
             # instead of falling back to the PDF page number — that was a copy-paste
             # bug that made downstream code think every page-N figure was "figure N".
-            figure_number = extract_figure_number(caption_text) or pair.figure_id or str(pair.page_number)
+            figure_number = (
+                extract_figure_number(caption_text) or pair.figure_id or str(pair.page_number)
+            )
             caption = CaptionRecord(
                 paper_id=paper_id,
                 figure_id=pair.figure_id,
@@ -408,19 +426,20 @@ class RadiolarianPipeline:
         except Exception:
             paper_meta = PaperMetadata(source="none")
 
-        pages = render_pdf_pages(pdf_path, self.config.figures_dir() / paper_id, dpi=self.config.render_dpi)
+        pages = render_pdf_pages(
+            pdf_path, self.config.figures_dir() / paper_id, dpi=self.config.render_dpi
+        )
         results: list[dict[str, Any]] = []
 
         # 全文地质信息抽取与物种关系链接（可选使用LLM增强）
         section_links: dict[str, list[dict[str, Any]]] = {}
         knowledge_graph: dict[str, Any] | None = None
-        use_geology_llm = bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
-        species_seed = sorted({
-            ent.text
-            for cap in tei_captions
-            for ent in (cap.entities or [])
-            if ent and ent.text
-        })
+        use_geology_llm = (
+            bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
+        )
+        species_seed = sorted(
+            {ent.text for cap in tei_captions for ent in (cap.entities or []) if ent and ent.text}
+        )
         if grobid_result.fulltext_sections:
             section_links = link_species_to_geology(
                 species_names=species_seed,
@@ -435,16 +454,21 @@ class RadiolarianPipeline:
         # Fallback: when TEI captions are unavailable, do visual-first extraction.
         if not tei_captions:
             return self._fallback_process_without_captions(
-                paper_id, pages, paper_metadata=paper_meta,
+                paper_id,
+                pages,
+                paper_metadata=paper_meta,
             )
 
         for idx, caption in enumerate(tei_captions, start=1):
             self._emit_progress(
-                idx - 1, max(1, len(tei_captions)),
+                idx - 1,
+                max(1, len(tei_captions)),
                 f"[{idx}/{len(tei_captions)}] {caption.figure_id}",
             )
 
-            best_page = choose_best_page(pages, caption.figure_number, caption.caption, window=self.config.caption_window)
+            best_page = choose_best_page(
+                pages, caption.figure_number, caption.caption, window=self.config.caption_window
+            )
             if best_page is None:
                 continue
             caption.page_index = best_page.page_index
@@ -467,7 +491,11 @@ class RadiolarianPipeline:
 
             chosen_regions.sort(key=lambda r: (-r.score, r.page_index, r.bbox[1], r.bbox[0]))
             region = chosen_regions[0]
-            region_img = cv2.imread(region.crop_path) if region.crop_path else cv2.imread(best_page.image_path)
+            region_img = (
+                cv2.imread(region.crop_path)
+                if region.crop_path
+                else cv2.imread(best_page.image_path)
+            )
             if region_img is None:
                 continue
 
@@ -539,6 +567,7 @@ Rules:
 
         try:
             from PIL import Image as _PILImage
+
             if hasattr(region_img, "shape"):
                 _rgb = cv2.cvtColor(region_img, cv2.COLOR_BGR2RGB)
                 plate_pil = _PILImage.fromarray(_rgb)
@@ -579,6 +608,7 @@ Rules:
                 return None
             try:
                 import json as _json
+
                 parsed = _json.loads(raw)
                 panels_data = parsed.get("panels") or parsed
             except Exception:
@@ -626,7 +656,9 @@ Rules:
         if out:
             logger.info(
                 "LLM-first: %s/%s → %d panels extracted",
-                paper_id, figure_id, len(out),
+                paper_id,
+                figure_id,
+                len(out),
             )
         return out or None
 
@@ -687,7 +719,9 @@ Rules:
                     grobid_sections=grobid_sections,
                 )
                 return llm_results
-            logger.debug("LLM-first failed for %s/%s, falling back to classical path", paper_id, figure_id)
+            logger.debug(
+                "LLM-first failed for %s/%s, falling back to classical path", paper_id, figure_id
+            )
 
         # ---- Classical path (segmentation + OCR + matching) --------------------
         # ---- M3 Stage 1 + 2 (text + vision, run once per region) ---------------
@@ -698,6 +732,7 @@ Rules:
         if self.m3_engine is not None:
             try:
                 from PIL import Image as _PILImage
+
                 # Ensure region_img is RGB PIL for the engine
                 if hasattr(region_img, "shape"):
                     _rgb = cv2.cvtColor(region_img, cv2.COLOR_BGR2RGB)
@@ -715,29 +750,39 @@ Rules:
                     if not m3_plate_cls.is_radiolarian_plate:
                         logger.info(
                             "M3 Stage 2: %s/%s rejected (not a radiolarian plate): %s",
-                            paper_id, figure_id, m3_plate_cls.reasoning[:120],
+                            paper_id,
+                            figure_id,
+                            m3_plate_cls.reasoning[:120],
                         )
                         # Annotate each potential panel as "rejected by classifier"
                         # and return an empty match list with the diagnostic saved.
                         if self.config.save_intermediate:
-                            write_json(self.config.manifests_dir() / paper_id / f"{slugify(figure_id)}.json", {
-                                "paper_id": paper_id,
-                                "figure_id": figure_id,
-                                "caption": caption.caption,
-                                "figure_number": caption.figure_number,
-                                "page_index": best_page_index,
-                                "region": asdict(region),
-                                "m3_diagnostic": m3_diag,
-                                "m3_rejected": True,
-                                "m3_rejection_reason": m3_plate_cls.reasoning,
-                                "panels": [],
-                                "matches": [],
-                            })
+                            write_json(
+                                self.config.manifests_dir()
+                                / paper_id
+                                / f"{slugify(figure_id)}.json",
+                                {
+                                    "paper_id": paper_id,
+                                    "figure_id": figure_id,
+                                    "caption": caption.caption,
+                                    "figure_number": caption.figure_number,
+                                    "page_index": best_page_index,
+                                    "region": asdict(region),
+                                    "m3_diagnostic": m3_diag,
+                                    "m3_rejected": True,
+                                    "m3_rejection_reason": m3_plate_cls.reasoning,
+                                    "panels": [],
+                                    "matches": [],
+                                },
+                            )
                         return []
                 # Stage 3: panel segmentation hint
                 if self.m3_engine._stage_enabled(3):
-                    hint = (m3_plate_cls.panel_count_estimate
-                            if m3_plate_cls and m3_plate_cls.panel_count_estimate else None)
+                    hint = (
+                        m3_plate_cls.panel_count_estimate
+                        if m3_plate_cls and m3_plate_cls.panel_count_estimate
+                        else None
+                    )
                     m3_panels = self.m3_engine.segment_panels(plate_pil, hint_count=hint)
                     m3_diag["stage3_panels"] = [p.to_dict() for p in m3_panels]
             except Exception as exc:
@@ -758,7 +803,11 @@ Rules:
                     panel_id=mp.panel_id,
                     bbox=(int(mp.bbox[0]), int(mp.bbox[1]), int(mp.bbox[2]), int(mp.bbox[3])),
                     score=mp.confidence,
-                    metadata={"method": "m3_stage3", "morphology": mp.morphology, "visible_label": mp.visible_label},
+                    metadata={
+                        "method": "m3_stage3",
+                        "morphology": mp.morphology,
+                        "visible_label": mp.visible_label,
+                    },
                 )
                 for mp in m3_panels
             ]
@@ -807,6 +856,7 @@ Rules:
         # must run before per-panel OCR so we don't pay for OCR'ing a
         # duplicate.
         from .association import deduplicate_panels_nms
+
         pre = len(panels)
         panels = deduplicate_panels_nms(panels, iou_threshold=0.6, label_match=False)
         if len(panels) != pre:
@@ -834,7 +884,9 @@ Rules:
             crop = region_img[y0:y1, x0:x1]
             if crop.size == 0:
                 continue
-            panel_dir = ensure_dir(self.config.panels_dir() / paper_id / (figure_id or f"fig_{figure_index}"))
+            panel_dir = ensure_dir(
+                self.config.panels_dir() / paper_id / (figure_id or f"fig_{figure_index}")
+            )
             panel_path = panel_dir / f"panel_{panel_index:02d}.png"
             cv2.imwrite(str(panel_path), crop)
             panel.image_path = str(panel_path)
@@ -861,25 +913,23 @@ Rules:
             # or SAM2 prompt order).
             try:
                 label_tokens = self.ocr.recognize_panel_label(
-                    region_img, (x, y, w, h), label_corner="adaptive",
+                    region_img,
+                    (x, y, w, h),
+                    label_corner="adaptive",
                 )
                 # N10: if corner OCR returned nothing, fall back to the
                 # full-panel OCR tokens (which include the whole panel,
                 # not just the corner band). This rescued 100% of bandini2011
                 # panels where the corner band was too small to OCR.
                 if not label_tokens:
-                    full_tokens = self.ocr.recognize_panel(
-                        region_img, (x, y, w, h)
-                    )
+                    full_tokens = self.ocr.recognize_panel(region_img, (x, y, w, h))
                     label_tokens = full_tokens
                     if label_tokens:
                         panel.metadata = panel.metadata or {}
                         panel.metadata["label_region_fallback"] = "full_panel"
                 if label_tokens:
                     panel.metadata = panel.metadata or {}
-                    panel.metadata["label_region_ocr"] = " ".join(
-                        t.text for t in label_tokens
-                    )
+                    panel.metadata["label_region_ocr"] = " ".join(t.text for t in label_tokens)
                     # Pick the best short label-like token
                     best = None
                     for tok in label_tokens:
@@ -937,7 +987,9 @@ Rules:
             if skip_stage4:
                 logger.info(
                     "M3 Stage 4: skipping %s/%s (%s)",
-                    paper_id, figure_id, skip_reason,
+                    paper_id,
+                    figure_id,
+                    skip_reason,
                 )
                 m3_diag["stage4_skipped"] = skip_reason
             if not skip_stage4:
@@ -960,8 +1012,7 @@ Rules:
                 )
 
         # ---- M3 Stage 5 (cross-panel self-critique) ----------------------------
-        if (self.m3_engine is not None and self.m3_engine._stage_enabled(5)
-                and matches):
+        if self.m3_engine is not None and self.m3_engine._stage_enabled(5) and matches:
             with self._gemma_lock_if_needed():
                 matches = self._apply_m3_stage5(
                     matches=matches,
@@ -986,6 +1037,7 @@ Rules:
         #      age/formation records onto every panel of a paper
         #      with a generic caption -- a clear bug now fixed.
         from .geology_extraction import link_panels_to_geology as _link_panels
+
         # Build a unique panel_caption key per match. Two matches in the
         # same figure can share a panel_id (OCR misread duplicates) — a
         # plain ``{m.panel_id: caption}`` dict comprehension would
@@ -1034,23 +1086,26 @@ Rules:
         results: list[dict[str, Any]] = [m.to_dict() for m in matches]
 
         if self.config.save_intermediate:
-            write_json(self.config.manifests_dir() / paper_id / f"{slugify(figure_id)}.json", {
-                "paper_id": paper_id,
-                "figure_id": figure_id,
-                "caption": caption.caption,
-                "figure_number": caption.figure_number,
-                "page_index": best_page_index,
-                "region": asdict(region),
-                "ocr": [asdict(t) for t in ocr_tokens],
-                "taxa": [asdict(t) for t in taxon_entities],
-                "fulltext_sections": grobid_sections,
-                "geology_links": section_links,
-                "knowledge_graph": knowledge_graph,
-                "scale_bar": merged_scale.to_dict(),
-                "m3_diagnostic": m3_diag,
-                "panels": [asdict(p) for p in panels],
-                "matches": results,
-            })
+            write_json(
+                self.config.manifests_dir() / paper_id / f"{slugify(figure_id)}.json",
+                {
+                    "paper_id": paper_id,
+                    "figure_id": figure_id,
+                    "caption": caption.caption,
+                    "figure_number": caption.figure_number,
+                    "page_index": best_page_index,
+                    "region": asdict(region),
+                    "ocr": [asdict(t) for t in ocr_tokens],
+                    "taxa": [asdict(t) for t in taxon_entities],
+                    "fulltext_sections": grobid_sections,
+                    "geology_links": section_links,
+                    "knowledge_graph": knowledge_graph,
+                    "scale_bar": merged_scale.to_dict(),
+                    "m3_diagnostic": m3_diag,
+                    "panels": [asdict(p) for p in panels],
+                    "matches": results,
+                },
+            )
         return results
 
     def _enrich_llm_first_results(
@@ -1076,6 +1131,7 @@ Rules:
         merged_scale = merge_scale_info(caption_scale, ocr_scale, pixel_length=px_len)
 
         from .geology_extraction import link_panels_to_geology as _link_panels
+
         panel_captions: dict[str, str] = {}
         panel_keys: list[str] = []
         for i, row in enumerate(rows):
@@ -1132,6 +1188,7 @@ Rules:
     ) -> list:
         """Stage 4: re-match each panel via M3 with structured caption context."""
         from PIL import Image as _PILImage
+
         # If caption parsing found nothing AND the user opted to skip, fall through
         if not caption_pairs and self.m3_engine.config.get("m3_skip_match_on_empty_caption", True):
             return matches
@@ -1210,7 +1267,9 @@ Rules:
                         md["gemma_reasoning"] = panel_match.reasoning or m3_error
                     elif not panel_match.is_radiolarian:
                         md["m3_rejected_non_radiolarian"] = True
-                        md["gemma_reasoning"] = panel_match.reasoning or "M3: not a radiolarian specimen"
+                        md["gemma_reasoning"] = (
+                            panel_match.reasoning or "M3: not a radiolarian specimen"
+                        )
                     else:
                         md["gemma_fallback"] = True
                         md["gemma_reasoning"] = panel_match.reasoning or "M3 below threshold"
@@ -1233,6 +1292,7 @@ Rules:
     ) -> list:
         """Stage 5: cross-validate all panel matches via M3 self-critique."""
         from PIL import Image as _PILImage
+
         try:
             if hasattr(region_img, "shape"):
                 rgb = cv2.cvtColor(region_img, cv2.COLOR_BGR2RGB)
@@ -1242,13 +1302,15 @@ Rules:
             panel_matches: list[PanelMatch] = []
             for idx, m in enumerate(matches, start=1):
                 pid = str(m.panel_id or f"P{idx}")
-                panel_matches.append(PanelMatch(
-                    panel_id=pid,
-                    label=m.label_text,
-                    species=m.species,
-                    confidence=float(m.confidence or 0.0),
-                    reasoning=(m.metadata or {}).get("gemma_reasoning", ""),
-                ))
+                panel_matches.append(
+                    PanelMatch(
+                        panel_id=pid,
+                        label=m.label_text,
+                        species=m.species,
+                        confidence=float(m.confidence or 0.0),
+                        reasoning=(m.metadata or {}).get("gemma_reasoning", ""),
+                    )
+                )
             critiques = self.m3_engine.critique_matches(
                 plate_image=plate_pil,
                 matches=panel_matches,
@@ -1337,15 +1399,17 @@ Rules:
             )
 
         if action == "rules":
-            logger.warning("[MiniMax] API error, falling back to rule pipeline for %s/%s",
-                           paper_id, figure_id)
+            logger.warning(
+                "[MiniMax] API error, falling back to rule pipeline for %s/%s", paper_id, figure_id
+            )
             for m in result:
                 m.metadata["MiniMax_fallback_action"] = "rules"
             return result
 
         if action == "gemma4":
-            logger.warning("[MiniMax] API error, switching to local Gemma4 for %s/%s",
-                           paper_id, figure_id)
+            logger.warning(
+                "[MiniMax] API error, switching to local Gemma4 for %s/%s", paper_id, figure_id
+            )
             self._fallback_gemma_runtime = self._build_local_gemma_fallback()
             if self._fallback_gemma_runtime is None:
                 logger.warning("Local Gemma4 fallback unavailable; keeping rule results.")
@@ -1372,6 +1436,7 @@ Rules:
         # implementation lives in ``text_filters`` so the eval harness
         # and unit tests can import it without pulling torch / gemma.
         from .text_filters import matches_have_fallback_error
+
         return matches_have_fallback_error(matches)
 
     def _attach_paleodb_metadata(self, matches: list) -> None:
@@ -1425,7 +1490,9 @@ Rules:
                     m.metadata["paleodb"] = payload
 
     @staticmethod
-    def _collect_fallback_error_info(matches: list, paper_id: str, figure_id: str) -> dict[str, Any]:
+    def _collect_fallback_error_info(
+        matches: list, paper_id: str, figure_id: str
+    ) -> dict[str, Any]:
         # Prefer gemma_error; fall back to gemma_reasoning (always set by
         # _make_error_result to "MiniMax API error: <Type>: <message>"); only
         # as last resort show the placeholder. This is what the Web
@@ -1447,14 +1514,18 @@ Rules:
             "",
         )
         first_fb = next(
-            (m.metadata.get("gemma_fallback", False) for m in matches if m.metadata.get("gemma_fallback")),
+            (
+                m.metadata.get("gemma_fallback", False)
+                for m in matches
+                if m.metadata.get("gemma_fallback")
+            ),
             False,
         )
         return {
             "error": first_err or "MiniMax returned fallback_used=True (see stderr for traceback)",
             "error_type": first_type or ("MiniMaxAPIError" if first_fb else "Unknown"),
             "context": f"paper={paper_id} figure={figure_id} affected_panels="
-                       f"{sum(1 for m in matches if m.metadata.get('gemma_error') or m.metadata.get('gemma_fallback'))}",
+            f"{sum(1 for m in matches if m.metadata.get('gemma_error') or m.metadata.get('gemma_fallback'))}",
         }
 
     def _build_local_gemma_fallback(self):
@@ -1472,7 +1543,9 @@ Rules:
         elif extra.get("gemma_model_path"):
             extra["llm_backend"] = "transformers"
         else:
-            logger.warning("No local Gemma4 configured (no llama_host / ollama_model / gemma_model_path).")
+            logger.warning(
+                "No local Gemma4 configured (no llama_host / ollama_model / gemma_model_path)."
+            )
             return None
         try:
             runtime = build_gemma_backend_from_config(extra)
@@ -1497,8 +1570,17 @@ Rules:
         if species_seed:
             section_links = link_species_to_geology(
                 species_names=species_seed,
-                sections=[{"section_id": "fallback", "title": "Full text", "section_type": "other", "text": all_ocr_text}],
-                llm_runtime=self.gemma_runtime if bool(self.config.extra.get("use_geology_llm", False)) else None,
+                sections=[
+                    {
+                        "section_id": "fallback",
+                        "title": "Full text",
+                        "section_type": "other",
+                        "text": all_ocr_text,
+                    }
+                ],
+                llm_runtime=self.gemma_runtime
+                if bool(self.config.extra.get("use_geology_llm", False))
+                else None,
             )
         knowledge_graph = build_knowledge_graph(section_links) if section_links else None
 
@@ -1512,13 +1594,16 @@ Rules:
         done = 0
 
         for page, region, ridx in all_regions:
-            region_img = cv2.imread(region.crop_path) if region.crop_path else cv2.imread(page.image_path)
+            region_img = (
+                cv2.imread(region.crop_path) if region.crop_path else cv2.imread(page.image_path)
+            )
             if region_img is None:
                 done += 1
                 continue
 
             self._emit_progress(
-                done, n_total,
+                done,
+                n_total,
                 f"[{done + 1}/{n_total}] p{page.page_index:02d} region {ridx}",
             )
             done += 1
@@ -1557,9 +1642,7 @@ Rules:
 
         return results
 
-    def _cross_figure_reassign(
-        self, results: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _cross_figure_reassign(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Reassign panels from orphan figures to the nearest real plate figure.
 
         Thin instance wrapper around the module-level helper so the
@@ -1569,6 +1652,7 @@ Rules:
         the full pipeline (and pulling in torch / gemma / paddleocr).
         """
         from .cross_figure import _cross_figure_reassign_results
+
         return _cross_figure_reassign_results(results)
 
 
@@ -1676,12 +1760,14 @@ def _add_unmatched_m3_panels(
         if mp.visible_label:
             md["m3_visible_label"] = mp.visible_label
             md["visible_label"] = mp.visible_label
-        classical_panels.append(PanelCandidate(
-            panel_id=mp.panel_id or f"M3_{idx:02d}",
-            bbox=(int(mp.bbox[0]), int(mp.bbox[1]), int(mp.bbox[2]), int(mp.bbox[3])),
-            score=mp.confidence,
-            metadata=md,
-        ))
+        classical_panels.append(
+            PanelCandidate(
+                panel_id=mp.panel_id or f"M3_{idx:02d}",
+                bbox=(int(mp.bbox[0]), int(mp.bbox[1]), int(mp.bbox[2]), int(mp.bbox[3])),
+                score=mp.confidence,
+                metadata=md,
+            )
+        )
         added += 1
     return added
 
@@ -1697,6 +1783,7 @@ def _extract_taxon_entities_from_text(text: str) -> list[CaptionEntity]:
         taxon = m.group(1).strip()
         if taxon and taxon not in seen:
             seen.add(taxon)
-            out.append(CaptionEntity(text=taxon, start=m.start(1), end=m.end(1), label="taxon", score=0.65))
+            out.append(
+                CaptionEntity(text=taxon, start=m.start(1), end=m.end(1), label="taxon", score=0.65)
+            )
     return out
-

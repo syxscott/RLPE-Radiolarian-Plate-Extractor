@@ -1,4 +1,5 @@
 """Tests for the Paleobiology Database client (offline, with HTTP stub)."""
+
 from __future__ import annotations
 
 import json
@@ -44,6 +45,7 @@ class TestOfflineMode:
             "_source": "cache",
         }
         from rlpe.paleodb import _stable_cache_key
+
         cache_key = _stable_cache_key("taxa|dalongicaepa bipolaris")
         (cache_dir / f"{cache_key}.json").write_text(json.dumps(cached_payload))
         # Offline client should return cached result

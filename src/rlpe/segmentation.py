@@ -53,7 +53,12 @@ class SegmentationConfig:
 
 
 class PanelSegmenter:
-    def __init__(self, config: SegmentationConfig | None = None, checkpoint: str | None = None, model_cfg: str | None = None) -> None:
+    def __init__(
+        self,
+        config: SegmentationConfig | None = None,
+        checkpoint: str | None = None,
+        model_cfg: str | None = None,
+    ) -> None:
         self.config = config or SegmentationConfig()
         self.checkpoint = checkpoint
         self.model_cfg = model_cfg
@@ -72,7 +77,11 @@ class PanelSegmenter:
                 from sam2.build_sam import build_sam2
                 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-                model = build_sam2(self.model_cfg or "sam2_hiera_l.yaml", self.checkpoint or "sam2_hiera_large.pt", device="cuda")
+                model = build_sam2(
+                    self.model_cfg or "sam2_hiera_l.yaml",
+                    self.checkpoint or "sam2_hiera_large.pt",
+                    device="cuda",
+                )
                 self._predictor = SAM2ImagePredictor(model)
             except Exception:
                 self._predictor = None
@@ -129,8 +138,12 @@ class PanelSegmenter:
         kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         img_eroded = cv2.erode(img_closed, kernel_erode, iterations=1)
         binary = cv2.adaptiveThreshold(
-            img_eroded, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY, 51, 5,
+            img_eroded,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            51,
+            5,
         )
         return binary
 
@@ -170,12 +183,12 @@ class PanelSegmenter:
         """
         x0, y0, w, h = cc_bbox
         # Crop the binary mask to the CC's bounding box.
-        crop_bin = binary[y0:y0 + h, x0:x0 + w]
+        crop_bin = binary[y0 : y0 + h, x0 : x0 + w]
         if crop_bin.size == 0 or not np.any(crop_bin):
             return []
         # Crop the grayscale image too — cv2.watershed needs a 3-channel
         # 8-bit image (the standard recipe is to convert grayscale to BGR).
-        crop_gray = gray[y0:y0 + h, x0:x0 + w]
+        crop_gray = gray[y0 : y0 + h, x0 : x0 + w]
         if crop_gray.ndim == 2:
             crop_bgr = cv2.cvtColor(crop_gray, cv2.COLOR_GRAY2BGR)
         else:
@@ -197,7 +210,8 @@ class PanelSegmenter:
             return []
         ridge_mask = (dist > 0.7 * dmax).astype(np.uint8) * 255
         n_ridges, ridge_labels, ridge_stats, _ = cv2.connectedComponentsWithStats(
-            ridge_mask, connectivity=8,
+            ridge_mask,
+            connectivity=8,
         )
         if n_ridges <= 1:
             return []  # no real split possible (only 1 ridge = same as 1 blob)
@@ -233,7 +247,7 @@ class PanelSegmenter:
         # Collect sub-region bboxes from the post-watershed labels.
         sub_bboxes: list[tuple[int, int, int, int]] = []
         for label in range(2, n_seeds + 1):
-            sub_mask = (markers == label)
+            sub_mask = markers == label
             if not sub_mask.any():
                 continue
             ys, xs = np.where(sub_mask)
@@ -274,7 +288,9 @@ class PanelSegmenter:
         except Exception:
             return self._segment_with_opencv(image)
 
-    def _masks_to_candidates(self, masks: np.ndarray, scores: np.ndarray, method: str) -> list[PanelCandidate]:
+    def _masks_to_candidates(
+        self, masks: np.ndarray, scores: np.ndarray, method: str
+    ) -> list[PanelCandidate]:
         out: list[PanelCandidate] = []
         for mask, score in zip(masks, scores):
             score_f = float(score)
@@ -297,7 +313,9 @@ class PanelSegmenter:
             )
         return out
 
-    def _generate_sam2_prompts(self, image: np.ndarray) -> tuple[list[tuple[float, float]], list[tuple[float, float, float, float]]]:
+    def _generate_sam2_prompts(
+        self, image: np.ndarray
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float, float, float]]]:
         h, w = image.shape[:2]
 
         # A. 连通域中心点与外接框（针对密集碎片的高召回提示）
@@ -356,7 +374,9 @@ class PanelSegmenter:
         return inter / max(1, union)
 
     @staticmethod
-    def _dedup_points(points: list[tuple[float, float]], eps: float = 8.0) -> list[tuple[float, float]]:
+    def _dedup_points(
+        points: list[tuple[float, float]], eps: float = 8.0
+    ) -> list[tuple[float, float]]:
         out: list[tuple[float, float]] = []
         for p in points:
             if all((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 > eps * eps for q in out):
@@ -364,7 +384,9 @@ class PanelSegmenter:
         return out
 
     @staticmethod
-    def _dedup_boxes(boxes: list[tuple[float, float, float, float]]) -> list[tuple[float, float, float, float]]:
+    def _dedup_boxes(
+        boxes: list[tuple[float, float, float, float]],
+    ) -> list[tuple[float, float, float, float]]:
         out: list[tuple[float, float, float, float]] = []
         seen = set()
         for b in boxes:
@@ -479,7 +501,9 @@ class PanelSegmenter:
                 else:
                     src_bin = thresh_enh
                 sub_bboxes = self._watershed_split_cc(
-                    gray, src_bin, (int(x), int(y), int(w), int(h)),
+                    gray,
+                    src_bin,
+                    (int(x), int(y), int(w), int(h)),
                     self.config.watershed_min_seed_area,
                 )
                 if len(sub_bboxes) < 2:
@@ -506,12 +530,14 @@ class PanelSegmenter:
                         continue
                     if min(sw, sh) < 80:
                         continue
-                    new_accepted.append(PanelCandidate(
-                        panel_id=None,
-                        bbox=(int(sx), int(sy), int(sw), int(sh)),
-                        score=min(1.0, sa / img_area),
-                        metadata={"method": c.metadata.get("method", "opencv") + "+watershed"},
-                    ))
+                    new_accepted.append(
+                        PanelCandidate(
+                            panel_id=None,
+                            bbox=(int(sx), int(sy), int(sw), int(sh)),
+                            score=min(1.0, sa / img_area),
+                            metadata={"method": c.metadata.get("method", "opencv") + "+watershed"},
+                        )
+                    )
                     sub_added += 1
                 if sub_added == 0:
                     # All watershed sub-regions were rejected by the

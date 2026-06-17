@@ -21,6 +21,7 @@ Default rate limit
 
 At most 1 request per 200ms (configurable via ``min_interval``).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -127,7 +128,9 @@ class PaleoDB:
             # errors from parse errors at warning level.
             logger.warning(
                 "PBDB cache read failed for key=%r (%s): %s; treating as miss",
-                key, type(exc).__name__, exc,
+                key,
+                type(exc).__name__,
+                exc,
             )
             return None
 
@@ -144,12 +147,16 @@ class PaleoDB:
             # silently missing makes every later run hit the network.
             logger.warning(
                 "PBDB cache write failed for key=%r (%s): %s",
-                key, type(exc).__name__, exc,
+                key,
+                type(exc).__name__,
+                exc,
             )
 
     # ------------------------------------------------------------------ HTTP
 
-    def _http_get_json(self, url: str, params: dict[str, Any], cache_key: str) -> dict[str, Any] | None:
+    def _http_get_json(
+        self, url: str, params: dict[str, Any], cache_key: str
+    ) -> dict[str, Any] | None:
         cached = self._read_cache(cache_key)
         if cached is not None:
             cached.setdefault("_source", "cache")
@@ -160,7 +167,9 @@ class PaleoDB:
         full = f"{url}?{qs}" if qs else url
         self._limiter.wait()
         try:
-            req = urllib.request.Request(full, headers={"User-Agent": self._user_agent, "Accept": "application/json"})
+            req = urllib.request.Request(
+                full, headers={"User-Agent": self._user_agent, "Accept": "application/json"}
+            )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode("utf-8", errors="replace")
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
@@ -199,15 +208,14 @@ class PaleoDB:
             "vocab": "pbdb",
             "limit": 1,
         }
-        payload = self._http_get_json(
-            f"{self.endpoint}/taxa/list.json", params, cache_key
-        )
+        payload = self._http_get_json(f"{self.endpoint}/taxa/list.json", params, cache_key)
         if not payload:
             return None
         records = payload.get("records") or []
         if not records:
             return None
         rec = records[0]
+
         # Some PBDB fields appear as nested arrays of [name, id]
         def _of(*keys: str) -> str | None:
             for k in keys:
@@ -229,7 +237,9 @@ class PaleoDB:
             order=_of("order"),
             family=_of("family"),
             genus=_of("genus"),
-            match_score=float(rec.get("match_score", 0.0)) if isinstance(rec.get("match_score"), (int, float)) else 0.0,
+            match_score=float(rec.get("match_score", 0.0))
+            if isinstance(rec.get("match_score"), (int, float))
+            else 0.0,
             source=payload.get("_source", "paleodb"),
             raw=rec,
         )
@@ -251,9 +261,7 @@ class PaleoDB:
             "show": "attr,loc,strat",
             "limit": int(max_n),
         }
-        payload = self._http_get_json(
-            f"{self.endpoint}/occs/list.json", params, cache_key
-        )
+        payload = self._http_get_json(f"{self.endpoint}/occs/list.json", params, cache_key)
         if not payload:
             return []
         records = payload.get("records") or []

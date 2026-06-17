@@ -1,4 +1,5 @@
 """Tests for the evaluation harness (metrics.py + report.py)."""
+
 from __future__ import annotations
 
 import json
@@ -149,8 +150,7 @@ class TestEvaluate:
             GoldPanel("p1", "fig_3", "1", "Species in fig 3"),
         ]
         # Single prediction: panel "1" in fig_1 only.
-        preds = [{**_pred("p1", "1", "Species in fig 1"),
-                  "figure_id": "fig_1"}]
+        preds = [{**_pred("p1", "1", "Species in fig 1"), "figure_id": "fig_1"}]
         report = evaluate(preds, gold)
         m = report.papers["p1"]
         # Only fig_1 should match. fig_2 and fig_3 are NOT matched
@@ -164,8 +164,7 @@ class TestEvaluate:
         """The figure_id gate: a pred in fig_X must NOT count for a
         gold entry in fig_Y, even with the same panel_id."""
         gold = [GoldPanel("p1", "fig_1", "1", "Species A")]
-        preds = [{**_pred("p1", "1", "Species A"),
-                  "figure_id": "fig_2"}]  # wrong figure
+        preds = [{**_pred("p1", "1", "Species A"), "figure_id": "fig_2"}]  # wrong figure
         report = evaluate(preds, gold)
         m = report.papers["p1"]
         # panel_match counts gold panels that have at least one pred in
@@ -182,8 +181,7 @@ class TestEvaluate:
         """
         gold = [GoldPanel("p1", "f1", "5", "Species five")]
         # Numeric suffix: "10" should NOT match gold "5"
-        preds = [{**_pred("p1", "10", "Species ten"),
-                  "figure_id": "f1"}]
+        preds = [{**_pred("p1", "10", "Species ten"), "figure_id": "f1"}]
         report = evaluate(preds, gold)
         m = report.papers["p1"]
         assert m.panel_match == 0
@@ -191,8 +189,7 @@ class TestEvaluate:
         assert m.species_fn == 1
 
         # Alphabetic suffix: "5a" should match gold "5"
-        preds2 = [{**_pred("p1", "5a", "Species five-a"),
-                   "figure_id": "f1"}]
+        preds2 = [{**_pred("p1", "5a", "Species five-a"), "figure_id": "f1"}]
         report2 = evaluate(preds2, gold)
         m2 = report2.papers["p1"]
         assert m2.panel_match == 1
@@ -294,15 +291,27 @@ class TestEvaluateRun:
 class TestReports:
     def test_markdown_report(self, tmp_path):
         m = PaperMetrics(
-            paper_id="p1", n_gold=10, n_pred_panels=12, panel_match=8,
-            species_tp=5, species_fp=3, species_fn=5, exact_match=4,
+            paper_id="p1",
+            n_gold=10,
+            n_pred_panels=12,
+            panel_match=8,
+            species_tp=5,
+            species_fp=3,
+            species_fn=5,
+            exact_match=4,
         )
-        report = EvaluationReport(papers={"p1": m}, aggregate={
-            "n_papers": 1, "n_gold": 10,
-            "species_precision": 0.625, "species_recall": 0.5,
-            "species_f1": 0.555, "panel_match_rate": 0.8,
-            "exact_match_rate": 0.4,
-        })
+        report = EvaluationReport(
+            papers={"p1": m},
+            aggregate={
+                "n_papers": 1,
+                "n_gold": 10,
+                "species_precision": 0.625,
+                "species_recall": 0.5,
+                "species_f1": 0.555,
+                "panel_match_rate": 0.8,
+                "exact_match_rate": 0.4,
+            },
+        )
         out = write_markdown_report(report, tmp_path / "r.md", title="Test")
         text = out.read_text()
         assert "# Test" in text
@@ -403,40 +412,44 @@ class TestSpeciesNormAsymmetric:
     a parser convention — and collapsing them would over-match.
     """
 
-    @pytest.mark.parametrize("gold,pred", [
-        # bandini2011: gold has bare genus, pred has genus + "sp"
-        ("Theocampe", "Theocampe sp"),
-        ("Obeliscoites", "Obeliscoites sp"),
-        ("Hiscocapsa", "Hiscocapsa sp"),
-        ("Parahsuum", "Parahsuum sp"),
-        ("Canoptum", "Canoptum sp"),
-        # bandini2011: trinomial — gold has binomial, pred has subspecies
-        ("Eucyrtidiellum unumaense", "Eucyrtidiellum unumaense pustulatum"),
-        ("Deviatus diamphidius", "Deviatus diamphidius hipposidericus"),
-        # boughdiri: spelling variant "Archaeo" / "Archeo"
-        ("Archaeodictyomitra sp. aff. minoensis",
-         "Archeodictyomitra sp. aff. minoensis"),
-        # hollis: "X gen" parser truncation ↔ "X indet" gold long form
-        ("Spumellarian gen. et sp. indet", "Spumellarian gen"),
-    ])
+    @pytest.mark.parametrize(
+        "gold,pred",
+        [
+            # bandini2011: gold has bare genus, pred has genus + "sp"
+            ("Theocampe", "Theocampe sp"),
+            ("Obeliscoites", "Obeliscoites sp"),
+            ("Hiscocapsa", "Hiscocapsa sp"),
+            ("Parahsuum", "Parahsuum sp"),
+            ("Canoptum", "Canoptum sp"),
+            # bandini2011: trinomial — gold has binomial, pred has subspecies
+            ("Eucyrtidiellum unumaense", "Eucyrtidiellum unumaense pustulatum"),
+            ("Deviatus diamphidius", "Deviatus diamphidius hipposidericus"),
+            # boughdiri: spelling variant "Archaeo" / "Archeo"
+            ("Archaeodictyomitra sp. aff. minoensis", "Archeodictyomitra sp. aff. minoensis"),
+            # hollis: "X gen" parser truncation ↔ "X indet" gold long form
+            ("Spumellarian gen. et sp. indet", "Spumellarian gen"),
+        ],
+    )
     def test_asymmetric_qualifier_normalization(self, gold, pred):
         assert _norm_species(gold).lower() == _norm_species(pred).lower(), (
-            f"gold={gold!r} → {_norm_species(gold)!r}, "
-            f"pred={pred!r} → {_norm_species(pred)!r}"
+            f"gold={gold!r} → {_norm_species(gold)!r}, pred={pred!r} → {_norm_species(pred)!r}"
         )
 
-    @pytest.mark.parametrize("gold,pred", [
-        # beccaro: "sp. B" is a paper-list identifier (B-th undetermined
-        # species). Collapsing it to bare "sp" would over-match two
-        # genuinely different species. The eval should report this as
-        # a real mismatch.
-        ("Pseudoeucyrtis sp", "Pseudoeucyrtis sp. B"),
-        # danelian: same shape — "sp. A" is a list identifier.
-        ("Archaeodictyomitra sp", "Archaeodictyomitra sp. A"),
-        # bandini2011: "sp. aff. robustum" is more specific than bare
-        # "sp" (it means "species affinis P. robustum"). Real mismatch.
-        ("Praewilliriedellum sp", "Praewilliriedellum sp. aff. robustum"),
-    ])
+    @pytest.mark.parametrize(
+        "gold,pred",
+        [
+            # beccaro: "sp. B" is a paper-list identifier (B-th undetermined
+            # species). Collapsing it to bare "sp" would over-match two
+            # genuinely different species. The eval should report this as
+            # a real mismatch.
+            ("Pseudoeucyrtis sp", "Pseudoeucyrtis sp. B"),
+            # danelian: same shape — "sp. A" is a list identifier.
+            ("Archaeodictyomitra sp", "Archaeodictyomitra sp. A"),
+            # bandini2011: "sp. aff. robustum" is more specific than bare
+            # "sp" (it means "species affinis P. robustum"). Real mismatch.
+            ("Praewilliriedellum sp", "Praewilliriedellum sp. aff. robustum"),
+        ],
+    )
     def test_list_identifier_not_collapsed(self, gold, pred):
         """A "sp. X" identifier (letter/digit) is a real species
         differentiator; the normalization must not collapse it.

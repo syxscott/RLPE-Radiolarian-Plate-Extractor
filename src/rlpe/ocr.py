@@ -44,11 +44,15 @@ class OCRBackend:
                     # back to the legacy one for 2.x users.
                     try:
                         self._engine = PaddleOCR(
-                            use_textline_orientation=True, lang="en", use_gpu=self.use_gpu,
+                            use_textline_orientation=True,
+                            lang="en",
+                            use_gpu=self.use_gpu,
                         )
                     except TypeError:
                         self._engine = PaddleOCR(
-                            use_angle_cls=True, lang="en", use_gpu=self.use_gpu,
+                            use_angle_cls=True,
+                            lang="en",
+                            use_gpu=self.use_gpu,
                         )
                     return self._engine
                 except Exception:
@@ -92,7 +96,11 @@ class OCRBackend:
                     y = min(p[1] for p in box)
                     w = max(p[0] for p in box) - x
                     h = max(p[1] for p in box) - y
-                    tokens.append(OCRToken(text=text, confidence=float(conf), bbox=(int(x), int(y), int(w), int(h))))
+                    tokens.append(
+                        OCRToken(
+                            text=text, confidence=float(conf), bbox=(int(x), int(y), int(w), int(h))
+                        )
+                    )
             else:
                 result = engine.readtext(image)
                 for box, text, conf in result:
@@ -100,7 +108,11 @@ class OCRBackend:
                     y = min(p[1] for p in box)
                     w = max(p[0] for p in box) - x
                     h = max(p[1] for p in box) - y
-                    tokens.append(OCRToken(text=text, confidence=float(conf), bbox=(int(x), int(y), int(w), int(h))))
+                    tokens.append(
+                        OCRToken(
+                            text=text, confidence=float(conf), bbox=(int(x), int(y), int(w), int(h))
+                        )
+                    )
         except Exception:
             return []
         return tokens
@@ -123,10 +135,12 @@ class OCRBackend:
             return []
         if isinstance(image, (str, Path)):
             import cv2
+
             image = cv2.imread(str(image))
         if image is None:
             return []
         import cv2
+
         h_img, w_img = image.shape[:2]
         x, y, w, h = bbox
         x0 = max(0, int(x) - padding)
@@ -187,10 +201,12 @@ class OCRBackend:
             return []
         if isinstance(image, (str, Path)):
             import cv2
+
             image = cv2.imread(str(image))
         if image is None:
             return []
         import cv2
+
         h_img, w_img = image.shape[:2]
         x, y, w, h = bbox
         # Crop the panel first
@@ -242,10 +258,9 @@ class OCRBackend:
                 # benefit and just doubles the OCR cost.
                 if min(ph, pw) < 500:
                     import cv2
+
                     sh, sw = sub.shape[:2]
-                    up = cv2.resize(
-                        sub, (sw * 2, sh * 2), interpolation=cv2.INTER_CUBIC
-                    )
+                    up = cv2.resize(sub, (sw * 2, sh * 2), interpolation=cv2.INTER_CUBIC)
                     # ``image`` came from cv2.imread (already BGR), so
                     # ``sub`` is BGR — we must NOT apply RGB→BGR here
                     # (the previous version did, which silently swapped
@@ -263,8 +278,12 @@ class OCRBackend:
                             OCRToken(
                                 text=t.text,
                                 confidence=t.confidence * 0.9,
-                                bbox=(t.bbox[0] // 2, t.bbox[1] // 2,
-                                      t.bbox[2] // 2, t.bbox[3] // 2),
+                                bbox=(
+                                    t.bbox[0] // 2,
+                                    t.bbox[1] // 2,
+                                    t.bbox[2] // 2,
+                                    t.bbox[3] // 2,
+                                ),
                                 metadata={"label_corner": name, "upscaled": "2x"},
                             )
                             for t in tokens
@@ -324,5 +343,7 @@ def normalize_ocr_tokens(tokens: list[OCRToken]) -> list[OCRToken]:
         text = tok.text.strip()
         if not text:
             continue
-        out.append(OCRToken(text=text, confidence=tok.confidence, bbox=tok.bbox, metadata=tok.metadata))
+        out.append(
+            OCRToken(text=text, confidence=tok.confidence, bbox=tok.bbox, metadata=tok.metadata)
+        )
     return out

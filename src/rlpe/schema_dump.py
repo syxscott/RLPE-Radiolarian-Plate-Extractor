@@ -10,6 +10,7 @@ The schema file is what downstream consumers (and the schema-test in
 field in ``rlpe.schema_models`` is added, removed, or has its
 semantics changed, and bump ``SCHEMA_VERSION``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,8 +24,9 @@ DEFAULT_TARGET = REPO_ROOT / "schemas" / f"rlpe-v{SCHEMA_VERSION}.json"
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Emit the RLPE JSON Schema")
-    parser.add_argument("--out", type=Path, default=DEFAULT_TARGET,
-                        help="Where to write the schema file")
+    parser.add_argument(
+        "--out", type=Path, default=DEFAULT_TARGET, help="Where to write the schema file"
+    )
     args = parser.parse_args()
     out = emit_json_schema(args.out)
     print(f"Wrote {out}")

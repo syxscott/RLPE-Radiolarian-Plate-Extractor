@@ -1,4 +1,4 @@
-﻿"""Pin the panel-level geology linking behaviour.
+"""Pin the panel-level geology linking behaviour.
 
 This is the regression test for the "every panel inherits the entire
 paper's age/formation list" bug. The fix has three pieces:
@@ -16,6 +16,7 @@ Each test below exercises one of the three pieces; the full pipeline
 end-to-end coverage lives in
 ``test_e2e_real_pdf_smoke.py`` and ``scratch_verify_geo_e2e.py``.
 """
+
 from __future__ import annotations
 
 import sys
@@ -32,7 +33,6 @@ from rlpe.geology_extraction import (  # noqa: E402
     link_panels_to_geology,
     link_species_to_geology,
 )
-
 
 FULLTEXT = [
     {
@@ -76,10 +76,7 @@ def test_two_panels_with_distinct_captions_get_distinct_geo_facts() -> None:
 def test_each_panel_yields_at_most_few_records_not_every_age_in_paper() -> None:
     """The previous implementation dumped every age in the paper onto
     every panel. The new implementation must keep the count bounded."""
-    captions = {
-        f"P{i}": f"Fig. 3 panel {i}, Dalong Formation, Upper Permian."
-        for i in range(10)
-    }
+    captions = {f"P{i}": f"Fig. 3 panel {i}, Dalong Formation, Upper Permian." for i in range(10)}
     out = link_panels_to_geology(captions, fallback_sections=FULLTEXT)
     for pid, recs in out.items():
         assert len(recs) <= 5, f"Panel {pid} has too many records: {len(recs)}"

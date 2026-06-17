@@ -95,7 +95,7 @@ class PaperMetadata:
     keywords: list[str] = field(default_factory=list)
     publisher: str | None = None
     page_count: int | None = None
-    source: str = ""           # "grobid" | "opendataloader" | "none"
+    source: str = ""  # "grobid" | "opendataloader" | "none"
     confidence: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
@@ -105,6 +105,7 @@ class PaperMetadata:
 @dataclass(slots=True)
 class TaxonomyMatch:
     """A taxonomic record returned by the Paleobiology Database."""
+
     name: str
     rank: str | None = None
     status: str | None = None
@@ -116,7 +117,7 @@ class TaxonomyMatch:
     family: str | None = None
     genus: str | None = None
     match_score: float = 0.0
-    source: str = "paleodb"   # "paleodb" | "cache" | "offline"
+    source: str = "paleodb"  # "paleodb" | "cache" | "offline"
     raw: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -130,6 +131,7 @@ class TaxonomyMatch:
 @dataclass(slots=True)
 class OccurrenceSummary:
     """A fossil-occurrence record from the Paleobiology Database."""
+
     species_name: str
     occurrence_id: str | None = None
     collection_id: str | None = None

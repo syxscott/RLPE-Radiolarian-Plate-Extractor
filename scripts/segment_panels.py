@@ -23,17 +23,32 @@ def main() -> int:
     args = parser.parse_args()
 
     ensure_dir(args.output_dir)
-    segmenter = PanelSegmenter(SegmentationConfig(use_sam2=args.use_sam2), checkpoint=args.checkpoint, model_cfg=args.model_cfg)
+    segmenter = PanelSegmenter(
+        SegmentationConfig(use_sam2=args.use_sam2),
+        checkpoint=args.checkpoint,
+        model_cfg=args.model_cfg,
+    )
     rows = []
-    for img_path in sorted(list(args.image_dir.glob("*.png")) + list(args.image_dir.glob("*.jpg")) + list(args.image_dir.glob("*.jpeg"))):
+    for img_path in sorted(
+        list(args.image_dir.glob("*.png"))
+        + list(args.image_dir.glob("*.jpg"))
+        + list(args.image_dir.glob("*.jpeg"))
+    ):
         panels = segmenter.segment(img_path)
-        rows.append({
-            "image_path": str(img_path),
-            "panels": [
-                {"panel_id": p.panel_id, "bbox": list(p.bbox), "score": p.score, "metadata": p.metadata}
-                for p in panels
-            ],
-        })
+        rows.append(
+            {
+                "image_path": str(img_path),
+                "panels": [
+                    {
+                        "panel_id": p.panel_id,
+                        "bbox": list(p.bbox),
+                        "score": p.score,
+                        "metadata": p.metadata,
+                    }
+                    for p in panels
+                ],
+            }
+        )
     write_jsonl(args.output_dir / "panels.jsonl", rows)
     return 0
 

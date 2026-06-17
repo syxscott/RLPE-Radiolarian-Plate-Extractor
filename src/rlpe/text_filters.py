@@ -6,11 +6,11 @@ covering placeholder detection can import it without paying the cost
 of the heavy pipeline imports. Keep the public surface small and
 side-effect-free.
 """
+
 from __future__ import annotations
 
 import re
 from typing import Final
-
 
 _PLACEHOLDER_CAPTION_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"page\s+\d+\s*(auto[- ]?generated|placeholder|header|footer)", re.IGNORECASE),

@@ -92,7 +92,7 @@ jobs:
             pyproject.toml
       - name: Install mypy + deps
         run: |
-          python -m pip install mypy
+          python -m pip install mypy types-requests
           python -m pip install -e ".[schema,opendataloader]"
       - name: Run mypy
         env:
@@ -103,12 +103,15 @@ jobs:
   eval-smoke:
     name: eval smoke (gold-set + 9-paper v16)
     runs-on: ubuntu-latest
-    # The 9-paper v16 predictions (8 v13 + 1 new: beccaro2006;
-    # bandini2006 removed — see work/bandini2006.jsonl.removed)
-    # and gold set are committed to the repo, so a fresh checkout
-    # can re-run the eval without re-running the full pipeline.
-    # This guards against metric regressions in
+    # The 9-paper v16 predictions and gold set are committed to the repo,
+    # so a fresh checkout can re-run the eval without re-running the full
+    # pipeline. This guards against metric regressions in
     # parser/normalization changes.
+    # NOTE: The predictions file lives under work/ which is gitignored.
+    # It must be force-added (`git add -f work/combined_9_v16_FINAL.jsonl`)
+    # after a pipeline run. When the file is absent the job is skipped
+    # gracefully (hashFiles returns empty → job condition is false).
+    if: hashFiles('work/combined_9_v16_FINAL.jsonl') != ''
     steps:
       - uses: actions/checkout@v4
         with:

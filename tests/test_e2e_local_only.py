@@ -17,11 +17,12 @@ What this test proves
    when PaddleOCR / EasyOCR / TaxoNERD / OpenDataLoader are not
    installed (graceful lazy-init in production code).
 """
+
 from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -44,10 +45,10 @@ from rlpe.schema_models import (  # noqa: E402
     RunOutput,
 )
 
-
 # ---------------------------------------------------------------------------
 # 1) local_only: no key, no network, deterministic no-op result
 # ---------------------------------------------------------------------------
+
 
 def test_local_only_minimax_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -56,7 +57,9 @@ def test_local_only_minimax_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     b = MiniMaxM3Backend(api_key="", data_outbound_policy="local_only")
     assert b.data_outbound_policy == "local_only"
 
-    r = b.infer_panel(panel_image=None, caption_text="", ocr_labels=[], system_prompt="", user_prompt="")
+    r = b.infer_panel(
+        panel_image=None, caption_text="", ocr_labels=[], system_prompt="", user_prompt=""
+    )
     assert r["fallback_used"] is True
     assert r["error_type"] == "LocalOnlyPolicy"
     assert r["species"] is None
@@ -73,6 +76,7 @@ def test_local_only_minimax_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 # 2) api_redacted: image and text are redacted before they leave the box
 # ---------------------------------------------------------------------------
 
+
 def test_api_redacted_thumbnail_and_truncate(monkeypatch: pytest.MonkeyPatch) -> None:
     # ``api_redacted`` mode still constructs the real Anthropic SDK client
     # because it expects to make outbound calls (just with thumbnails and
@@ -80,6 +84,7 @@ def test_api_redacted_thumbnail_and_truncate(monkeypatch: pytest.MonkeyPatch) ->
     # raises by design — that is a missing dependency, not a bug.
     pytest.importorskip("anthropic")
     from PIL import Image
+
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
     b = MiniMaxM3Backend(
@@ -101,8 +106,10 @@ def test_api_redacted_thumbnail_and_truncate(monkeypatch: pytest.MonkeyPatch) ->
 # 3) Builder must accept local_only without a key
 # ---------------------------------------------------------------------------
 
+
 def test_builder_accepts_local_only_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
     from rlpe.llm_backends import build_MiniMax_backend_from_env_or_config
+
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
 
@@ -113,6 +120,7 @@ def test_builder_accepts_local_only_without_key(monkeypatch: pytest.MonkeyPatch)
 
 def test_builder_rejects_bad_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     from rlpe.llm_backends import build_MiniMax_backend_from_env_or_config
+
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
 
@@ -123,6 +131,7 @@ def test_builder_rejects_bad_policy(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 # 4) The published schema round-trips
 # ---------------------------------------------------------------------------
+
 
 def test_panel_record_round_trip() -> None:
     p = PanelRecord(
@@ -164,7 +173,7 @@ def test_panel_record_round_trip() -> None:
             git_dirty=False,
             config_snapshot={},
             input_sha256={},
-            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            timestamp_utc=datetime.now(UTC).isoformat(),
             host="test",
             python_version="3.11",
         ),
@@ -178,12 +187,16 @@ def test_panel_record_round_trip() -> None:
 # 5) The FastAPI app wires data_outbound_policy through the JobOptions validator
 # ---------------------------------------------------------------------------
 
-def test_app_version_is_in_sync_with_pyproject(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+
+def test_app_version_is_in_sync_with_pyproject(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The app's reported version must match pyproject.toml, not the
     historical 0.2.0 that was left behind in earlier versions."""
     monkeypatch.setenv("RLPE_API_TEST_TMP", str(tmp_path))
     from rlpe.api.app import app
     from rlpe.config import PipelineConfig  # for sanity
+
     # Read pyproject version (use tomllib on 3.11+, fall back to tomli on 3.10)
     try:
         import tomllib  # type: ignore[import-not-found]
@@ -204,6 +217,7 @@ def test_app_version_is_in_sync_with_pyproject(monkeypatch: pytest.MonkeyPatch, 
 # ---------------------------------------------------------------------------
 # 6) PipelineConfig + lazy-init: pipeline can be constructed without OCR/taxon
 # ---------------------------------------------------------------------------
+
 
 def test_pipeline_lazy_init_no_deps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """``RadiolarianPipeline(config)`` must succeed even when the heavy

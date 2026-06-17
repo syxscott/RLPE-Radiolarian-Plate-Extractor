@@ -33,9 +33,9 @@ COORDINATE_PATTERN = re.compile(
 
 @dataclass(slots=True)
 class GeologyRecord:
-    age: str | None = None                              # period name (e.g. "Permian")
-    chronostratigraphy: str | None = None               # most specific stage (e.g. "Changhsingian")
-    chronostratigraphy_rank: str | None = None          # "period" | "epoch" | "age"
+    age: str | None = None  # period name (e.g. "Permian")
+    chronostratigraphy: str | None = None  # most specific stage (e.g. "Changhsingian")
+    chronostratigraphy_rank: str | None = None  # "period" | "epoch" | "age"
     formation: str | None = None
     locality: str | None = None
     latitude: float | None = None
@@ -97,7 +97,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         # 以句子级片段做证据，先走规则抽取。
         # If we have chrono from stratigraphy, use that as age.
         primary_age = chrono if chrono else (ages[0] if ages else None)
-        for age in (ages or [None]):
+        for age in ages or [None]:
             rec = GeologyRecord(
                 age=age or primary_age,
                 chronostratigraphy=chrono,
@@ -135,13 +135,14 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
             # ``dedup_geology_records`` uses below, so the two paths are
             # consistent.
             key = (
-                rec.age, rec.chronostratigraphy, rec.formation,
-                rec.locality, rec.section_title,
+                rec.age,
+                rec.chronostratigraphy,
+                rec.formation,
+                rec.locality,
+                rec.section_title,
             )
             existing_keys = {
-                (r.age, r.chronostratigraphy, r.formation,
-                 r.locality, r.section_title)
-                for r in out
+                (r.age, r.chronostratigraphy, r.formation, r.locality, r.section_title) for r in out
             }
             if key not in existing_keys:
                 out.append(rec)
@@ -230,7 +231,7 @@ def link_species_to_geology(
                 f"Species: {s}\nSection title: {sec.get('title')}\n"
                 f"Section type: {sec.get('section_type')}\n"
                 f"Text: {text[:1500]}\n"
-                "Return JSON: {\"label\":\"geo_link\",\"species\":\"...\",\"confidence\":0-1,\"reasoning\":\"age=...,formation=...,locality=...\"}"
+                'Return JSON: {"label":"geo_link","species":"...","confidence":0-1,"reasoning":"age=...,formation=...,locality=..."}'
             )
             out = gemma_extract_text_json(llm_runtime, system_prompt, user_prompt)
             conf = float(out.get("confidence", 0.0))
@@ -424,4 +425,6 @@ def _extract_first(pattern: re.Pattern, text: str) -> str | None:
 # text_filters did not, so a caption like "page auto-generated"
 # matched here but not there). Keep the local function name so
 # existing callers don't change.
-from .text_filters import looks_like_placeholder_caption as _is_placeholder_caption  # noqa: E402,F401
+from .text_filters import (
+    looks_like_placeholder_caption as _is_placeholder_caption,  # noqa: E402,F401
+)

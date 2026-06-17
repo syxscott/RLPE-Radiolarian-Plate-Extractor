@@ -1,4 +1,5 @@
 """Pytest config: make ``rlpe`` importable when tests are run from the repo root."""
+
 from __future__ import annotations
 
 import sys

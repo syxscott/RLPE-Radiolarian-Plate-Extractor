@@ -1,4 +1,5 @@
 """Smoke test for M3Engine parsing helpers (no API calls)."""
+
 from __future__ import annotations
 
 import sys
@@ -53,7 +54,7 @@ def test_safe_json_loads_code_fence():
 
 
 def test_safe_json_loads_array():
-    out = _safe_json_loads('[1, 2, 3]')
+    out = _safe_json_loads("[1, 2, 3]")
     assert out == [1, 2, 3]
 
 
@@ -94,8 +95,10 @@ def test_coerce_bbox_invalid():
 
 def test_engine_constructs_with_minimal_config():
     """Engine should not call backend on construction; only on demand."""
+
     class FakeBackend:
         backend_name = "fake"
+
     engine = M3Engine(FakeBackend())
     assert engine._stage_enabled(1) is True
     assert engine._stage_enabled(5) is True
@@ -104,6 +107,7 @@ def test_engine_constructs_with_minimal_config():
 def test_engine_stage_toggle():
     class FakeBackend:
         backend_name = "fake"
+
     engine = M3Engine(FakeBackend(), {"m3_stage_4": False})
     assert engine._stage_enabled(4) is False
     assert engine._stage_enabled(3) is True
@@ -114,6 +118,7 @@ def test_engine_with_no_backend_returns_fallback():
     pairs = engine.parse_caption("Fig. 3. A: X; B: Y")
     assert pairs == []  # no backend -> empty
     from PIL import Image
+
     cls = engine.classify_plate(Image.new("RGB", (100, 100)))
     # No backend -> fallback, but PlateClassification is still returned with defaults
     assert cls.is_radiolarian_plate is True
@@ -130,11 +135,15 @@ def test_apply_critiques_agree_no_change():
 
 def test_apply_critiques_disagree_overrides():
     matches = [PanelMatch(panel_id="P1", label="A", species="X", confidence=0.8, reasoning="ok")]
-    critiques = [Critique(
-        panel_id="P1", verdict="disagree",
-        suggested_species="Y", confidence=0.85,
-        reasoning="actually looks like Y",
-    )]
+    critiques = [
+        Critique(
+            panel_id="P1",
+            verdict="disagree",
+            suggested_species="Y",
+            confidence=0.85,
+            reasoning="actually looks like Y",
+        )
+    ]
     out = M3Engine.apply_critiques(matches, critiques)
     assert out[0].species == "Y"
     assert out[0].raw["critique"]["from"] == "X"
@@ -143,26 +152,37 @@ def test_apply_critiques_disagree_overrides():
 
 def test_apply_critiques_low_confidence_no_override():
     matches = [PanelMatch(panel_id="P1", label="A", species="X", confidence=0.8, reasoning="ok")]
-    critiques = [Critique(
-        panel_id="P1", verdict="disagree",
-        suggested_species="Y", confidence=0.4,  # below threshold
-        reasoning="maybe",
-    )]
+    critiques = [
+        Critique(
+            panel_id="P1",
+            verdict="disagree",
+            suggested_species="Y",
+            confidence=0.4,  # below threshold
+            reasoning="maybe",
+        )
+    ]
     out = M3Engine.apply_critiques(matches, critiques)
     assert out[0].species == "X"  # not overridden
 
 
 def test_apply_critiques_unknown_panel_no_effect():
     matches = [PanelMatch(panel_id="P1", label="A", species="X", confidence=0.8, reasoning="ok")]
-    critiques = [Critique(panel_id="P99", verdict="disagree", suggested_species="Y", confidence=0.9)]
+    critiques = [
+        Critique(panel_id="P99", verdict="disagree", suggested_species="Y", confidence=0.9)
+    ]
     out = M3Engine.apply_critiques(matches, critiques)
     assert out[0].species == "X"
     assert "critique" not in out[0].raw
 
 
 def test_prompts_present_and_nonempty():
-    for p in (_PARSE_CAPTION_SYSTEM, _CLASSIFY_PLATE_SYSTEM,
-              _SEGMENT_PANELS_SYSTEM, _MATCH_PANEL_SYSTEM, _CRITIQUE_SYSTEM):
+    for p in (
+        _PARSE_CAPTION_SYSTEM,
+        _CLASSIFY_PLATE_SYSTEM,
+        _SEGMENT_PANELS_SYSTEM,
+        _MATCH_PANEL_SYSTEM,
+        _CRITIQUE_SYSTEM,
+    ):
         assert p and len(p) > 50, f"prompt too short: {len(p)} chars"
 
 
@@ -175,12 +195,15 @@ class TestMatchPanelErrorPropagation:
         class _FailingBackend:
             backend_name = "fake-fail"
             enable_thinking = False
+
             def infer_panel(self, **_):
                 return {"fallback_used": True, "error": "MiniMax API timeout"}
+
         return M3Engine(_FailingBackend())
 
     def test_match_panel_propagates_error_in_raw(self):
         from PIL import Image
+
         engine = self._engine_with_failing_backend()
         panel = Image.new("RGB", (64, 64))
         result = engine.match_panel(panel_image=panel, caption_pairs=[], caption_text="")
@@ -190,14 +213,17 @@ class TestMatchPanelErrorPropagation:
 
     def test_match_panel_no_error_when_results_present(self):
         from PIL import Image
+
         class _OkBackend:
             backend_name = "fake-ok"
             enable_thinking = False
+
             def infer_panel(self, **_):
                 return {
                     "fallback_used": False,
                     "raw_text": '{"label": "A", "species": "Foo", "confidence": 0.8, "reasoning": "r"}',
                 }
+
         engine = M3Engine(_OkBackend())
         panel = Image.new("RGB", (64, 64))
         result = engine.match_panel(panel_image=panel, caption_pairs=[], caption_text="")
@@ -244,9 +270,7 @@ def test_regex_parse_caption_handles_ligature_figs():
 
 def test_regex_parse_caption_handles_curly_quotes():
     """Curly apostrophes inside species modifiers should not break parsing."""
-    caption = (
-        "Explanation of Plate 1. Fig. 1. Entactinia cf. ﬁtsukichiensis."
-    )
+    caption = "Explanation of Plate 1. Fig. 1. Entactinia cf. ﬁtsukichiensis."
     pairs = _regex_parse_caption(caption)
     assert len(pairs) == 1
     assert pairs[0].labels == ["1"]
@@ -278,8 +302,7 @@ def test_caption_clause_singular_figure():
     'Figure 14 Pseudoacanthosphaera galeata', etc. Previously the regex
     only matched 'Fig(s|ures)?' so 'Figure' (singular) fell through."""
     pairs = _regex_parse_caption(
-        "Figure 3 Acaeniotyle sp. A\n"
-        "Figure 14 Pseudoacanthosphaera galeata"
+        "Figure 3 Acaeniotyle sp. A\nFigure 14 Pseudoacanthosphaera galeata"
     )
     by_label = {p.labels[0]: p for p in pairs}
     assert "3" in by_label, f"expected label 3 in {list(by_label)}"
@@ -298,8 +321,7 @@ def test_caption_clause_genus_question_mark_epithet():
     ('Archaeocenosphaera (?) mellifera', 'Pseudoacanthosphaera (?) sp.').
     The epithet branch must accept '(?)' before the epithet token."""
     pairs = _regex_parse_caption(
-        "Figures 5-6 Archaeocenosphaera (?) mellifera\n"
-        "Figures 7-8 Archaeocenosphaera (?) sp."
+        "Figures 5-6 Archaeocenosphaera (?) mellifera\nFigures 7-8 Archaeocenosphaera (?) sp."
     )
     assert len(pairs) == 2
     by_label: dict[str, object] = {}
@@ -321,6 +343,7 @@ def test_caption_clause_genus_question_mark_epithet():
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])
 
 
@@ -384,14 +407,25 @@ def test_normalize_subspecies_preserved_corpus_specific():
     require paper_id-aware normalize to fix.
     """
     # bandini trinomial (still mm — corpus-specific, not fixed here)
-    assert _normalize_species("Eucyrtidiellum unumaense pustulatum") == "Eucyrtidiellum unumaense pustulatum"
-    assert _normalize_species("Deviatus diamphidius hipposidericus") == "Deviatus diamphidius hipposidericus"
+    assert (
+        _normalize_species("Eucyrtidiellum unumaense pustulatum")
+        == "Eucyrtidiellum unumaense pustulatum"
+    )
+    assert (
+        _normalize_species("Deviatus diamphidius hipposidericus")
+        == "Deviatus diamphidius hipposidericus"
+    )
     # beccaro trinomial (must preserve)
-    assert _normalize_species("Eucyrtidiellum unumaense dentatum") == "Eucyrtidiellum unumaense dentatum"
+    assert (
+        _normalize_species("Eucyrtidiellum unumaense dentatum")
+        == "Eucyrtidiellum unumaense dentatum"
+    )
     assert _normalize_species("Mirifusus dianae minor") == "Mirifusus dianae minor"
     assert _normalize_species("Ristola altissima nodosa") == "Ristola altissima nodosa"
     # hollis autonym (must preserve)
-    assert _normalize_species("Lamptonium fabaeforme fabaeforme") == "Lamptonium fabaeforme fabaeforme"
+    assert (
+        _normalize_species("Lamptonium fabaeforme fabaeforme") == "Lamptonium fabaeforme fabaeforme"
+    )
     assert _normalize_species("Ristola altissima altissima") == "Ristola altissima altissima"
 
 

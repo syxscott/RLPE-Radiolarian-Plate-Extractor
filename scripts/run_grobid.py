@@ -23,25 +23,28 @@ def main() -> int:
     args = parser.parse_args()
 
     results = process_pdf_dir(args.pdf_dir, args.output_dir, server_url=args.grobid_url)
-    write_jsonl(args.output_dir / "grobid_results.jsonl", [
-        {
-            "paper_id": r.paper_id,
-            "pdf_path": str(r.pdf_path),
-            "tei_path": str(r.tei_path) if r.tei_path else None,
-            "success": r.success,
-            "error": r.error,
-            "captions": [
-                {
-                    "paper_id": c.paper_id,
-                    "figure_id": c.figure_id,
-                    "caption": c.caption,
-                    "entities": [asdict(e) for e in c.entities],
-                }
-                for c in r.captions
-            ],
-        }
-        for r in results
-    ])
+    write_jsonl(
+        args.output_dir / "grobid_results.jsonl",
+        [
+            {
+                "paper_id": r.paper_id,
+                "pdf_path": str(r.pdf_path),
+                "tei_path": str(r.tei_path) if r.tei_path else None,
+                "success": r.success,
+                "error": r.error,
+                "captions": [
+                    {
+                        "paper_id": c.paper_id,
+                        "figure_id": c.figure_id,
+                        "caption": c.caption,
+                        "entities": [asdict(e) for e in c.entities],
+                    }
+                    for c in r.captions
+                ],
+            }
+            for r in results
+        ],
+    )
     return 0
 
 

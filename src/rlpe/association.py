@@ -22,9 +22,10 @@ from .types import CaptionRecord, MatchResult, PanelCandidate, PaperMetadata
 logger = logging.getLogger(__name__)
 
 
-SUBPANEL_LABEL_PATTERN = re.compile(r"(?:\(|\[)?([A-Z]|[0-9]{1,2})(?:\)|\])?(?=\s*[:\.\-\)]|\s|,)"
+SUBPANEL_LABEL_PATTERN = re.compile(r"(?:\(|\[)?([A-Z]|[0-9]{1,2})(?:\)|\])?(?=\s*[:\.\-\)]|\s|,)")
+TAXON_LIKE_PATTERN = re.compile(
+    r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b"
 )
-TAXON_LIKE_PATTERN = re.compile(r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b")
 _SINGLE_UPPER = re.compile(r"[A-Z]")
 _SINGLE_DIGITS = re.compile(r"\d{1,2}")
 _SPECIES_QUAL = re.compile(r"\b(sp\.|spp\.|cf\.|aff\.)\b", re.IGNORECASE)
@@ -50,7 +51,8 @@ _SPECIES_QUAL = re.compile(r"\b(sp\.|spp\.|cf\.|aff\.)\b", re.IGNORECASE)
 # import the wrong one by mistake).  Both are OR'd together inside
 # ``is_placeholder_caption`` below.
 _ASSOC_PLACEHOLDER_PREFIX_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.IGNORECASE) for p in (
+    re.compile(p, re.IGNORECASE)
+    for p in (
         r"^auto[-_ ]generated\b",
         r"^auto[-_ ]generated\s+figure\b",
         r"^placeholder\b",
@@ -127,7 +129,9 @@ class PanelLabelSpeciesMatcher(nn.Module if nn is not None else object):
             nn.Linear(hidden_dim, hidden_dim),
         )
 
-    def forward(self, panel_feats: torch.Tensor, label_feats: torch.Tensor, species_feats: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, panel_feats: torch.Tensor, label_feats: torch.Tensor, species_feats: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         p = self.panel_encoder(panel_feats)
         l = self.label_encoder(label_feats)
         s = self.species_encoder(species_feats)
@@ -169,9 +173,14 @@ class NeuralGraphMatcher:
 
         h, w = image_shape if image_shape else (1000, 1000)
 
-        panel_feats = torch.tensor([_panel_features(p, w, h, idx=i) for i, p in enumerate(panels)], dtype=torch.float32, device=self.device)
+        panel_feats = torch.tensor(
+            [_panel_features(p, w, h, idx=i) for i, p in enumerate(panels)],
+            dtype=torch.float32,
+            device=self.device,
+        )
         label_feats = torch.tensor(
-            [_label_features(t, w, h, idx=i) for i, t in enumerate(ocr_label_tokens)] or [[0.0] * 12],
+            [_label_features(t, w, h, idx=i) for i, t in enumerate(ocr_label_tokens)]
+            or [[0.0] * 12],
             dtype=torch.float32,
             device=self.device,
         )
@@ -382,7 +391,9 @@ def label_tokens_from_ocr(tokens: list[OCRToken]) -> list[OCRToken]:
     return out
 
 
-def assign_panels_to_labels(panels: list[PanelCandidate], labels: list[str], ocr_tokens: list[OCRToken]) -> list[str | None]:
+def assign_panels_to_labels(
+    panels: list[PanelCandidate], labels: list[str], ocr_tokens: list[OCRToken]
+) -> list[str | None]:
     """Assign each panel a textual label ("1", "2", ... or "A", "B", ...).
 
     Priority:
@@ -508,6 +519,7 @@ def match_panels(
     if not caption_pairs_used and caption.caption:
         try:
             from .m3_engine import _regex_parse_caption
+
             regex_pairs = _regex_parse_caption(caption.caption)
             for cp in regex_pairs:
                 sp = getattr(cp, "species", None)
@@ -550,9 +562,13 @@ def match_panels(
         try:
             matcher = NeuralGraphMatcher(checkpoint_path=matcher_checkpoint_path)
             if not matcher.is_trained:
-                logger.warning("Neural matcher loaded but not trained; falling back to heuristic matching.")
+                logger.warning(
+                    "Neural matcher loaded but not trained; falling back to heuristic matching."
+                )
             else:
-                merged_label_tokens = ocr_label_tokens or [OCRToken(text=l, confidence=0.5, bbox=(0, 0, 1, 1)) for l in labels]
+                merged_label_tokens = ocr_label_tokens or [
+                    OCRToken(text=l, confidence=0.5, bbox=(0, 0, 1, 1)) for l in labels
+                ]
                 n_labels, n_species, n_conf = matcher.match(
                     panels=panels,
                     ocr_label_tokens=merged_label_tokens,

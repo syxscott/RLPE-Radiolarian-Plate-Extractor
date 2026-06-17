@@ -10,6 +10,7 @@ in caption text, and returns structured records so downstream consumers can
 follow the link from a panel's species to the figure where it was first
 described.
 """
+
 from __future__ import annotations
 
 import re
@@ -19,10 +20,10 @@ from typing import Any
 
 @dataclass(slots=True)
 class CrossRef:
-    target_figure: str           # canonical "Fig. 3" / "Pl. 2" / "Figure 1"
-    target_figure_num: str       # just the number/letter "3" / "2A"
-    span: tuple[int, int]        # (start, end) in source text
-    context: str                 # ±60 chars around the match
+    target_figure: str  # canonical "Fig. 3" / "Pl. 2" / "Figure 1"
+    target_figure_num: str  # just the number/letter "3" / "2A"
+    span: tuple[int, int]  # (start, end) in source text
+    context: str  # ±60 chars around the match
     species_hint: str | None = None  # species name found near the reference, if any
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,7 +39,7 @@ class CrossRef:
 # "Fig." / "Figure" / "Pl." / "Plate"  +  number  +  optional panel range
 _PATTERN = re.compile(
     r"\b(?:Fig|Figure|Pl|Plate)\s*\.?\s*"
-    r"(\d+[A-Za-z]?)"           # figure number
+    r"(\d+[A-Za-z]?)"  # figure number
     r"(?:\s*\(([A-Z\d,\-\s]+)\))?"  # optional panel range inside parens
     r"(?:\s*[A-Z](?:\s*[-–—]\s*[A-Z])?)?"  # optional trailing panel letter
     r"(?=$|\s|[.,;:\)])",
@@ -83,14 +84,14 @@ def parse_cross_refs(
         target = f"{kind}. {target_num}"
         # Extract species hint from the right side of the reference (where
         # the species name typically appears in "Fig. 2C-E shows Cromyomma sp.")
-        right = caption_text[m.end():m.end() + 60]
+        right = caption_text[m.end() : m.end() + 60]
         species_hint = None
         sp_match = _SPECIES_NEAR.search(right)
         if sp_match:
             species_hint = sp_match.group(1).strip()
         # Also try left side if right is empty
         if not species_hint:
-            left = caption_text[max(0, m.start() - 80):m.start()]
+            left = caption_text[max(0, m.start() - 80) : m.start()]
             sp_match = _SPECIES_NEAR.search(left)
             if sp_match:
                 species_hint = sp_match.group(1).strip()

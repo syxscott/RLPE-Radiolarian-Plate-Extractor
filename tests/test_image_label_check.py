@@ -4,6 +4,7 @@ The module's core logic is pure-Python (path resolution, metric
 aggregation). We don't run real EasyOCR in unit tests — we mock the
 reader to keep CI fast and avoid depending on OCR packages.
 """
+
 from __future__ import annotations
 
 import sys
@@ -72,11 +73,11 @@ def test_resolve_panel_path_fallback_output_panels_layout(tmp_path):
     work.mkdir(parents=True)
     (work / panel).write_bytes(b"")
     # Pred file wrote a path with a typo'd run dir name
-    fake_pred_path = str(tmp_path / "work" / "run_y_TYPO" / "output" / "panels" / paper_id / fig / panel)
-    resolved = _resolve_panel_path(fake_pred_path, tmp_path)
-    assert resolved is not None, (
-        "fallback glob should find panels under work/*/output/panels/"
+    fake_pred_path = str(
+        tmp_path / "work" / "run_y_TYPO" / "output" / "panels" / paper_id / fig / panel
     )
+    resolved = _resolve_panel_path(fake_pred_path, tmp_path)
+    assert resolved is not None, "fallback glob should find panels under work/*/output/panels/"
     assert resolved.name == panel
     assert paper_id in str(resolved)
 
@@ -90,15 +91,27 @@ def test_image_label_stats_rate_property():
 def test_run_image_label_check_with_fake_reader(tmp_path):
     import numpy as np
     from PIL import Image
+
     paper_id = "paper1"
     work = tmp_path / "work" / "r" / "panels" / paper_id / "fig_01"
     work.mkdir(parents=True)
     for n in ("panel_05.png", "panel_06.png"):
         Image.new("RGB", (10, 10), color=(255, 255, 255)).save(work / n)
     preds = [
-        {"paper_id": paper_id, "figure_id": "fig_01", "panel_id": "5", "panel_path": str(work / "panel_05.png")},
-        {"paper_id": paper_id, "figure_id": "fig_01", "panel_id": "6", "panel_path": str(work / "panel_06.png")},
+        {
+            "paper_id": paper_id,
+            "figure_id": "fig_01",
+            "panel_id": "5",
+            "panel_path": str(work / "panel_05.png"),
+        },
+        {
+            "paper_id": paper_id,
+            "figure_id": "fig_01",
+            "panel_id": "6",
+            "panel_path": str(work / "panel_06.png"),
+        },
     ]
+
     # Reader returns "5" for the first image (match) and "9" for the
     # second (mismatch). To make the fake return different things per
     # image we need a stateful reader.

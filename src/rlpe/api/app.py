@@ -124,6 +124,7 @@ class JobOptions(BaseModel):
 
     Validated server-side; invalid values are rejected with HTTP 400.
     """
+
     use_gemma4: bool = False
     llm_backend: str | None = None  # "transformers" | "ollama" | "llamacpp" | "MiniMax"
     gemma_conf_threshold: float = 0.70
@@ -167,9 +168,9 @@ class JobOptions(BaseModel):
     # ---- Core pipeline overrides (previously rendered in the web form but
     # silently dropped by the API) ----
     grobid_url: str | None = None
-    ocr_backend: str | None = None       # "paddleocr" | "easyocr"
-    num_workers: int | None = None       # 1..32
-    min_panel_score: float | None = None # 0.0..1.0
+    ocr_backend: str | None = None  # "paddleocr" | "easyocr"
+    num_workers: int | None = None  # 1..32
+    min_panel_score: float | None = None  # 0.0..1.0
 
     @field_validator("llm_backend")
     @classmethod
@@ -186,7 +187,9 @@ class JobOptions(BaseModel):
     def _validate_fallback(cls, v: str) -> str:
         allowed = {"gemma4", "rules", "stop", "retry"}
         if v not in allowed:
-            raise ValueError(f"MiniMax_fallback_default must be one of {sorted(allowed)}, got {v!r}")
+            raise ValueError(
+                f"MiniMax_fallback_default must be one of {sorted(allowed)}, got {v!r}"
+            )
         return v
 
     @field_validator("data_outbound_policy")
@@ -214,8 +217,12 @@ class JobOptions(BaseModel):
             raise ValueError(f"MiniMax_thinking_budget_tokens must be <= 32000, got {v!r}")
         return v
 
-    @field_validator("MiniMax_max_output_tokens", "MiniMax_max_concurrent",
-                     "MiniMax_timeout_sec", "MiniMax_max_retries")
+    @field_validator(
+        "MiniMax_max_output_tokens",
+        "MiniMax_max_concurrent",
+        "MiniMax_timeout_sec",
+        "MiniMax_max_retries",
+    )
     @classmethod
     def _validate_positive_int(cls, v: int | None) -> int | None:
         if v is None:
@@ -269,14 +276,15 @@ class JobOptions(BaseModel):
             unknown = sorted(set(values.keys()) - known)
             if unknown:
                 logger.warning(
-                    "JobOptions dropped unknown fields: %s (check the "
-                    "frontend / caller for typos)", unknown,
+                    "JobOptions dropped unknown fields: %s (check the frontend / caller for typos)",
+                    unknown,
                 )
         return values
 
 
 class FallbackDecisionRequest(BaseModel):
     """User response when MiniMax M3 API errors and the pipeline is paused."""
+
     job_id: str
     action: str  # "gemma4" | "rules" | "stop" | "retry"
 
@@ -301,6 +309,7 @@ async def _lifespan(_app: FastAPI):
     n = _load_existing_jobs_from_disk()
     if n:
         import logging as _log
+
         _log.getLogger("rlpe.api").info("Loaded %d existing job(s) from disk", n)
     yield
 
@@ -343,6 +352,7 @@ def _load_existing_jobs_from_disk() -> int:
     Returns the number of jobs loaded.
     """
     from datetime import datetime as _dt
+
     loaded = 0
     # Candidate roots: service_work/<job_id>/output/manifests/matches.jsonl
     # and the dev work/ directory at project root.
@@ -356,6 +366,7 @@ def _load_existing_jobs_from_disk() -> int:
     if cli_work.exists() and cli_work.resolve() != WORK_DIR.resolve():
         # Synthesize a stable job_id from a hash of the path so it can be referenced.
         import hashlib
+
         jid = "cli_" + hashlib.md5(str(cli_work.resolve()).encode()).hexdigest()[:12]
         roots.append((cli_work, jid))
 
@@ -411,21 +422,13 @@ def _load_existing_jobs_from_disk() -> int:
     return loaded
 
 
-
-
-
 @app.get("/")
 def root():
     if WEB_DIR is not None:
         index_path = WEB_DIR / "index.html"
         if index_path.exists():
             return FileResponse(index_path)
-    return {
-        "status": "ok",
-        "service": "rlpe-api",
-        "docs": "/docs",
-        "web": "/web"
-    }
+    return {"status": "ok", "service": "rlpe-api", "docs": "/docs", "web": "/web"}
 
 
 @app.get("/css/{file_path:path}")
@@ -439,7 +442,11 @@ def web_css(file_path: str):
     # subtle ways (e.g. junctions / case-folding); rejecting the
     # obvious payload up front is cheap and makes the security
     # posture obvious from a quick read of the function.
-    if ".." in file_path.split("/") or ".." in file_path.split("\\") or file_path.startswith(("/", "\\")):
+    if (
+        ".." in file_path.split("/")
+        or ".." in file_path.split("\\")
+        or file_path.startswith(("/", "\\"))
+    ):
         raise HTTPException(status_code=400, detail="Invalid asset path")
     target = (WEB_DIR / "css" / file_path).resolve()
     css_root = (WEB_DIR / "css").resolve()
@@ -456,7 +463,11 @@ def web_css(file_path: str):
 def web_js(file_path: str):
     if WEB_DIR is None:
         raise HTTPException(status_code=404, detail="Web assets not found")
-    if ".." in file_path.split("/") or ".." in file_path.split("\\") or file_path.startswith(("/", "\\")):
+    if (
+        ".." in file_path.split("/")
+        or ".." in file_path.split("\\")
+        or file_path.startswith(("/", "\\"))
+    ):
         raise HTTPException(status_code=400, detail="Invalid asset path")
     target = (WEB_DIR / "js" / file_path).resolve()
     js_root = (WEB_DIR / "js").resolve()
@@ -492,7 +503,12 @@ async def upload_pdf(
 ):
     original_filename = file.filename or ""
     safe_filename = Path(original_filename).name
-    if not safe_filename or safe_filename != original_filename or "/" in original_filename or "\\" in original_filename:
+    if (
+        not safe_filename
+        or safe_filename != original_filename
+        or "/" in original_filename
+        or "\\" in original_filename
+    ):
         raise HTTPException(status_code=400, detail="Invalid upload filename.")
     if not safe_filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -530,15 +546,10 @@ async def upload_pdf(
             "detail": None,
             "created_at": now,
             "filename": safe_filename,
-            "progress": 0
+            "progress": 0,
         }
     background_tasks.add_task(_run_job, job_id, save_path, job_options)
-    return JobStatus(
-        job_id=job_id,
-        status="queued",
-        created_at=now,
-        filename=safe_filename
-    )
+    return JobStatus(job_id=job_id, status="queued", created_at=now, filename=safe_filename)
 
 
 @app.get("/jobs/{job_id}/status", response_model=JobStatus)
@@ -583,7 +594,11 @@ def list_jobs() -> list[JobStatus]:
 def job_file(job_id: str, file_path: str):
     # Reject literal traversal payloads BEFORE filesystem resolution.
     # See ``/css/{file_path:path}`` for the rationale.
-    if ".." in file_path.split("/") or ".." in file_path.split("\\") or file_path.startswith(("/", "\\")):
+    if (
+        ".." in file_path.split("/")
+        or ".." in file_path.split("\\")
+        or file_path.startswith(("/", "\\"))
+    ):
         raise HTTPException(status_code=400, detail="Invalid file path")
     # Resolve the actual job root: standard jobs live in WORK_DIR, but
     # CLI/imported jobs (e.g. loaded from work/) may live elsewhere.
@@ -753,9 +768,7 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
                     }
                 try:
                     # Compute size before deletion for reporting.
-                    bytes_freed = sum(
-                        f.stat().st_size for f in root.rglob("*") if f.is_file()
-                    )
+                    bytes_freed = sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
                     shutil.rmtree(root)
                     files_removed = True
                 except Exception as exc:
@@ -850,10 +863,7 @@ def post_MiniMax_fallback(job_id: str, req: FallbackDecisionRequest) -> dict[str
 def submit_correction(payload: ReviewCorrection):
     corrections_dir = ensure_dir(WORK_DIR / "corrections")
     target = corrections_dir / "corrections.jsonl"
-    row = {
-        **payload.model_dump(),
-        "timestamp": datetime.now().isoformat()
-    }
+    row = {**payload.model_dump(), "timestamp": datetime.now().isoformat()}
     with target.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
     return {"status": "ok", "saved_to": str(target)}
@@ -892,7 +902,8 @@ def get_results() -> list[ResultRecord]:
                 except Exception as exc:
                     logger.warning(
                         "Skipping malformed result row in job=%s: %s",
-                        job_id, exc,
+                        job_id,
+                        exc,
                     )
     return results
 
@@ -909,7 +920,9 @@ def system_info() -> dict[str, Any]:
         "version": _get_package_version(),
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         "grobid_url": GROBID_URL,
-        "active_jobs": sum(1 for j in jobs if j["status"] in {"queued", "running", "awaiting_user_decision"}),
+        "active_jobs": sum(
+            1 for j in jobs if j["status"] in {"queued", "running", "awaiting_user_decision"}
+        ),
         "total_jobs": len(jobs),
         "completed_jobs": sum(1 for j in jobs if j["status"] == "done"),
         "failed_jobs": sum(1 for j in jobs if j["status"] == "failed"),
@@ -921,6 +934,7 @@ def system_info() -> dict[str, Any]:
 # show "API Key configured / not configured" without leaking the key, and
 # to let the operator click "Test API Key" before paying for a real run.
 # ---------------------------------------------------------------------------
+
 
 def _mask_api_key(key: str | None) -> str | None:
     """Return a non-revealing preview of an API key.
@@ -952,11 +966,7 @@ def llm_status() -> dict[str, Any]:
     confirm WHICH key is loaded when they have multiple .env files.
     Also returns aggregated MiniMax usage if any jobs have made calls.
     """
-    api_key = (
-        os.environ.get("ANTHROPIC_API_KEY")
-        or os.environ.get("MiniMax_API_KEY")
-        or ""
-    )
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("MiniMax_API_KEY") or ""
     key_configured = bool(api_key.strip())
 
     # Aggregate MiniMax cost across all completed jobs (if any matched
@@ -1008,11 +1018,10 @@ def llm_status() -> dict[str, Any]:
     # "active_endpoint" makes it clear this is the *resolved* value.
     # Both names are returned for one release so frontends that read
     # the old key continue to work.
-    active_endpoint = os.environ.get(
-        "ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"
-    )
+    active_endpoint = os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic")
     active_model = os.environ.get(
-        "MiniMax_MODEL", os.environ.get("ANTHROPIC_MODEL", "MiniMax-M3"),
+        "MiniMax_MODEL",
+        os.environ.get("ANTHROPIC_MODEL", "MiniMax-M3"),
     )
 
     return {
@@ -1039,6 +1048,7 @@ def llm_status() -> dict[str, Any]:
 
 class TestLLMRequest(BaseModel):
     """Body for /system/test-llm — all fields optional, falls back to env."""
+
     model_config = ConfigDict(extra="ignore")
     api_key: str | None = None
     endpoint: str | None = None
@@ -1069,18 +1079,27 @@ def test_llm(req: TestLLMRequest | None = None) -> dict[str, Any]:
         return {
             "ok": False,
             "error": "no API key provided (request body empty and "
-                     "ANTHROPIC_API_KEY env var not set)",
+            "ANTHROPIC_API_KEY env var not set)",
             "error_type": "MissingKey",
         }
-    endpoint = (body.endpoint or os.environ.get("ANTHROPIC_BASE_URL")
-                or "https://api.minimaxi.com/anthropic").strip()
-    model = (body.model or os.environ.get("MiniMax_MODEL")
-             or os.environ.get("ANTHROPIC_MODEL") or "MiniMax-M3").strip()
+    endpoint = (
+        body.endpoint
+        or os.environ.get("ANTHROPIC_BASE_URL")
+        or "https://api.minimaxi.com/anthropic"
+    ).strip()
+    model = (
+        body.model
+        or os.environ.get("MiniMax_MODEL")
+        or os.environ.get("ANTHROPIC_MODEL")
+        or "MiniMax-M3"
+    ).strip()
 
     import time as _time
+
     t0 = _time.time()
     try:
         from ..llm_backends import MiniMaxM3Backend
+
         backend = MiniMaxM3Backend(
             api_key=api_key,
             base_url=endpoint,
@@ -1126,7 +1145,9 @@ def test_llm(req: TestLLMRequest | None = None) -> dict[str, Any]:
     # JSON-parse-on-non-JSON-reply is still a success for a connection
     # test: the API responded, charged us tokens, and returned text. We
     # only care that auth / quota / network worked.
-    is_json_parse_only = err_type in {"jsonparseerror", "valueerror"} and (result.get("raw_text") or "")
+    is_json_parse_only = err_type in {"jsonparseerror", "valueerror"} and (
+        result.get("raw_text") or ""
+    )
     if fallback and not is_json_parse_only:
         return {
             "ok": False,
@@ -1147,7 +1168,8 @@ def test_llm(req: TestLLMRequest | None = None) -> dict[str, Any]:
         # "API working (reply was not JSON, that's expected for /test)"
         # rather than nothing.
         "note": "Reply was non-JSON, treated as success for connection test."
-                if is_json_parse_only else None,
+        if is_json_parse_only
+        else None,
     }
 
 
@@ -1161,6 +1183,7 @@ def _get_package_version() -> str:
     """
     try:
         from importlib.metadata import PackageNotFoundError, version
+
         try:
             return version("rlpe")
         except PackageNotFoundError:
@@ -1216,6 +1239,7 @@ def _safe_value(v: Any) -> Any:
     # numpy
     try:
         import numpy as np
+
         if isinstance(v, np.integer):
             return int(v)
         if isinstance(v, np.floating):
@@ -1237,6 +1261,7 @@ def _safe_value(v: Any) -> Any:
     # datetime
     try:
         import datetime as _dt
+
         if isinstance(v, (_dt.datetime, _dt.date)):
             return v.isoformat()
     except Exception:
@@ -1244,6 +1269,7 @@ def _safe_value(v: Any) -> Any:
     # pathlib
     try:
         from pathlib import Path as _Path
+
         if isinstance(v, _Path):
             return str(v)
     except Exception:
@@ -1298,7 +1324,9 @@ def _sanitize_row(row: dict[str, Any]) -> dict[str, Any]:
         if isinstance(v, dict):
             out[k] = _sanitize_row(v)
         elif isinstance(v, list):
-            out[k] = [_sanitize_row(item) if isinstance(item, dict) else _safe_value(item) for item in v]
+            out[k] = [
+                _sanitize_row(item) if isinstance(item, dict) else _safe_value(item) for item in v
+            ]
         else:
             out[k] = _safe_value(v)
     return out
@@ -1307,8 +1335,10 @@ def _sanitize_row(row: dict[str, Any]) -> dict[str, Any]:
 def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None) -> None:
     options = options or {}
     import time as _time
+
     t_start = _time.time()
     stop_hb = threading.Event()
+
     def _heartbeat_loop() -> None:
         # Background thread that refreshes elapsed_sec every second so the
         # UI shows "alive" progress even when the pipeline is mid-figure and
@@ -1325,6 +1355,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             except Exception:
                 pass
             stop_hb.wait(1.0)
+
     hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name=f"rlpe-hb-{job_id[:8]}")
     hb_thread.start()
     # Pre-flight cancel check: if the user hit /jobs/{id}/cancel between
@@ -1365,26 +1396,45 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         extra: dict[str, Any] = {"use_gemma4": False}
         # NOTE: keep this list in sync with the CLI flags in cli.py
         for key in (
-            "llm_backend", "MiniMax_api_key", "MiniMax_endpoint", "MiniMax_model",
-            "MiniMax_enable_thinking", "MiniMax_thinking_budget_tokens",
-            "MiniMax_max_output_tokens", "MiniMax_max_concurrent",
-            "MiniMax_timeout_sec", "MiniMax_max_retries",
-            "MiniMax_fallback_default", "data_outbound_policy",
+            "llm_backend",
+            "MiniMax_api_key",
+            "MiniMax_endpoint",
+            "MiniMax_model",
+            "MiniMax_enable_thinking",
+            "MiniMax_thinking_budget_tokens",
+            "MiniMax_max_output_tokens",
+            "MiniMax_max_concurrent",
+            "MiniMax_timeout_sec",
+            "MiniMax_max_retries",
+            "MiniMax_fallback_default",
+            "data_outbound_policy",
             "MiniMax_interactive",
             # Local LLM backends (llamacpp / ollama). The web UI exposes
             # these in the LLM config panel; if the user fills in a custom
             # host, it must reach the pipeline (previously silently dropped).
-            "llama_host", "llama_model", "llama_timeout_sec",
-            "ollama_host", "ollama_model", "gemma_timeout_sec",
+            "llama_host",
+            "llama_model",
+            "llama_timeout_sec",
+            "ollama_host",
+            "ollama_model",
+            "gemma_timeout_sec",
             # PDF figure extractor
             "use_opendataloader",
             # M3 5-stage engine toggles
-            "m3_enhanced_mode", "m3_stage_1", "m3_stage_2",
-            "m3_stage_3", "m3_stage_4", "m3_stage_5",
-            "m3_match_samples", "m3_diagnostic_dir",
+            "m3_enhanced_mode",
+            "m3_stage_1",
+            "m3_stage_2",
+            "m3_stage_3",
+            "m3_stage_4",
+            "m3_stage_5",
+            "m3_match_samples",
+            "m3_diagnostic_dir",
             # Paleobiology Database (opt-in)
-            "use_paleodb", "paleodb_max_occurrences", "paleodb_endpoint",
-            "paleodb_cache_dir", "paleodb_offline",
+            "use_paleodb",
+            "paleodb_max_occurrences",
+            "paleodb_endpoint",
+            "paleodb_cache_dir",
+            "paleodb_offline",
         ):
             if key in options and options[key] is not None:
                 extra[key] = options[key]
@@ -1396,6 +1446,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         # Auto-detect GPU; user can override via options.use_gpu
         try:
             import torch
+
             default_use_gpu = bool(torch.cuda.is_available())
         except ImportError:
             default_use_gpu = False
@@ -1426,10 +1477,12 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         # If using MiniMax, register a web-popup fallback handler.
         if str(extra.get("llm_backend", "")).lower() in {"minimax", "minimax-m3", "minimax_api"}:
             from ..llm_backends import FallbackHandler
+
             handler = FallbackHandler(default_action=extra.get("MiniMax_fallback_default", "rules"))
 
             def _web_fallback_popup(error_info: dict[str, Any]) -> str:
                 import threading
+
                 event = threading.Event()
                 # Register the pending decision under the same lock
                 # that cancel_job and post_MiniMax_fallback hold, so
@@ -1468,7 +1521,9 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                     # way, the worker is no longer blocked).
                     if job_id not in FALLBACK_PENDING:
                         return handler.default_action
-                decision = FALLBACK_PENDING.pop(job_id, {}).get("decision") or handler.default_action
+                decision = (
+                    FALLBACK_PENDING.pop(job_id, {}).get("decision") or handler.default_action
+                )
                 return decision
 
             handler.on_error = _web_fallback_popup
@@ -1508,7 +1563,9 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         normalized_rows: list[dict[str, Any]] = []
         job_root = (WORK_DIR / job_id).resolve()
         for row in rows:
-            normalized = _sanitize_row(asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row))
+            normalized = _sanitize_row(
+                asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row)
+            )
             panel_path = normalized.get("panel_path")
             if panel_path:
                 # Resolve relative panel_paths against job_root, NOT against

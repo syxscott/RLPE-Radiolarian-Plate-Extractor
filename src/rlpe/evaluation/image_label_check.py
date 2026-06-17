@@ -27,6 +27,7 @@ reuse OCR results across runs — the cache key is the panel image's
 ``(size, mtime)`` tuple, so it transparently invalidates when a panel
 is regenerated.
 """
+
 from __future__ import annotations
 
 import json
@@ -89,15 +90,23 @@ def _resolve_panel_path(panel_path: str, root: Path) -> Path | None:
     if len(parts) < 3 or "panel_" not in parts[-1]:
         return None
     tail = Path(*parts[-3:])
-    candidates = list(root.glob(f"work/*/panels/{tail.parent.parent.name}/{tail.parent.name}/{tail.name}"))
+    candidates = list(
+        root.glob(f"work/*/panels/{tail.parent.parent.name}/{tail.parent.name}/{tail.name}")
+    )
     if not candidates:
         # Some runs (e.g. work/beccaro_only_out) put panels under an
         # extra ``output/`` segment. Try that layout too.
-        candidates = list(root.glob(f"work/*/output/panels/{tail.parent.parent.name}/{tail.parent.name}/{tail.name}"))
+        candidates = list(
+            root.glob(
+                f"work/*/output/panels/{tail.parent.parent.name}/{tail.parent.name}/{tail.name}"
+            )
+        )
     if not candidates:
         candidates = list(root.glob(f"work/*/panels/{tail.parent.parent.name}/**/{tail.name}"))
     if not candidates:
-        candidates = list(root.glob(f"work/*/output/panels/{tail.parent.parent.name}/**/{tail.name}"))
+        candidates = list(
+            root.glob(f"work/*/output/panels/{tail.parent.parent.name}/**/{tail.name}")
+        )
     return candidates[0] if candidates else None
 
 
@@ -125,6 +134,7 @@ def run_image_label_check(
     """
     if reader is None:
         import easyocr
+
         reader = easyocr.Reader(["en"], gpu=False)
     import numpy as np
     from PIL import Image
@@ -191,13 +201,17 @@ def run_image_label_check(
         if first == pred_label:
             st.n_image_label_match += 1
         elif len(st.mismatches) < max_mismatches_per_paper:
-            st.mismatches.append({
-                "figure_id": p.get("figure_id"),
-                "panel_path": str(resolved.relative_to(root)) if resolved.is_relative_to(root) else str(resolved),
-                "pred_panel_id": pred_label,
-                "ocr_label": first,
-                "all_ocr_numbers": nums,
-            })
+            st.mismatches.append(
+                {
+                    "figure_id": p.get("figure_id"),
+                    "panel_path": str(resolved.relative_to(root))
+                    if resolved.is_relative_to(root)
+                    else str(resolved),
+                    "pred_panel_id": pred_label,
+                    "ocr_label": first,
+                    "all_ocr_numbers": nums,
+                }
+            )
 
     total_checked = sum(s.n_checked for s in by_paper.values())
     total_has_label = sum(s.n_ocr_has_label for s in by_paper.values())
@@ -215,8 +229,11 @@ def run_image_label_check(
         except OSError as exc:
             # Don't fail the eval just because we couldn't persist the cache.
             import logging
+
             logging.getLogger(__name__).warning(
-                "Failed to write image-label cache to %s: %s", cache_path, exc,
+                "Failed to write image-label cache to %s: %s",
+                cache_path,
+                exc,
             )
     return {
         "papers": {k: v.to_dict() for k, v in by_paper.items()},

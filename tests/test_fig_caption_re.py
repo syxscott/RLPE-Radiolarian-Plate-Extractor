@@ -11,6 +11,7 @@ BOTH "Plate N" and "Fig. N" — the fix must keep both sets distinct
 (Fig 1 must not collapse onto Plate 1, and a real Plate 1 must not be
 blocked by a Fig 1 caption with the same number).
 """
+
 from __future__ import annotations
 
 import json
@@ -87,6 +88,7 @@ def test_pouille2014_reconstruction_works_alongside_fig_captions():
 
 def test_fig_caption_regex_rejects_body_text_references():
     from rlpe.opendataloader_extractor import _FIG_CAPTION_RE, _looks_like_fig_caption
+
     # Real captions — regex matches AND content passes the head check.
     assert _FIG_CAPTION_RE.match("Fig. 1. Stratigraphic ranges of radiolarian families.")
     assert _looks_like_fig_caption("Fig. 1. Stratigraphic ranges of radiolarian families.")
@@ -128,22 +130,26 @@ def test_plate_caption_regex_matches_roman_numerals():
     for arabic, expected in [("Plate 1", 1), ("Plate 12", 12)]:
         m = _PLATE_CAPTION_RE.match(arabic)
         assert m is not None, f"{arabic!r} should match"
-        assert _plate_number_from_match(m) == expected, (
-            f"{arabic!r} should map to {expected}"
-        )
+        assert _plate_number_from_match(m) == expected, f"{arabic!r} should map to {expected}"
 
     # Roman numerals I..XII — newly supported.
     for roman, expected in [
-        ("Plate I", 1), ("Plate II", 2), ("Plate III", 3),
-        ("Plate IV", 4), ("Plate V", 5), ("Plate VI", 6),
-        ("Plate VII", 7), ("Plate VIII", 8), ("Plate IX", 9),
-        ("Plate X", 10), ("Plate XI", 11), ("Plate XII", 12),
+        ("Plate I", 1),
+        ("Plate II", 2),
+        ("Plate III", 3),
+        ("Plate IV", 4),
+        ("Plate V", 5),
+        ("Plate VI", 6),
+        ("Plate VII", 7),
+        ("Plate VIII", 8),
+        ("Plate IX", 9),
+        ("Plate X", 10),
+        ("Plate XI", 11),
+        ("Plate XII", 12),
     ]:
         m = _PLATE_CAPTION_RE.match(roman)
         assert m is not None, f"{roman!r} should match"
-        assert _plate_number_from_match(m) == expected, (
-            f"{roman!r} should map to {expected}"
-        )
+        assert _plate_number_from_match(m) == expected, f"{roman!r} should map to {expected}"
 
     # Whitespace and "Explanation of" prefix still work for both kinds.
     assert _PLATE_CAPTION_RE.match("  Plate IV  ") is not None
@@ -181,9 +187,7 @@ def test_boughdiri2007_finds_plate_i_caption():
         f"got {len(plate_caps)}: {[c['plate_number'] for c in plate_caps]}"
     )
     pc = plate_caps[0]
-    assert pc["plate_number"] == 1, (
-        f"Roman 'Plate I' should map to 1, got {pc['plate_number']}"
-    )
+    assert pc["plate_number"] == 1, f"Roman 'Plate I' should map to 1, got {pc['plate_number']}"
     assert pc["page_number"] == 10
     # The heading-only match was expanded with the following
     # paragraphs (heading → paragraph) so the captured content must
@@ -212,8 +216,7 @@ def test_feng2007_plate_caption_expands_paragraph_to_list():
     caps = _find_plate_captions(_load_json(fn)["kids"])
     plate_caps = [c for c in caps if c.get("kind") == "plate"]
     assert len(plate_caps) >= 1, (
-        f"expected at least 1 plate caption in feng2007, "
-        f"got {len(plate_caps)}"
+        f"expected at least 1 plate caption in feng2007, got {len(plate_caps)}"
     )
     pl1 = next(c for c in plate_caps if c["plate_number"] == 1)
     content = pl1["content"]

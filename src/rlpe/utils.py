@@ -67,6 +67,7 @@ def _json_default(obj: Any) -> Any:
     # numpy
     try:
         import numpy as _np  # type: ignore[import-not-found]
+
         if isinstance(obj, _np.integer):
             return int(obj)
         if isinstance(obj, _np.floating):
@@ -91,6 +92,7 @@ def _json_default(obj: Any) -> Any:
     # datetime
     try:
         import datetime as _dt
+
         if isinstance(obj, (_dt.datetime, _dt.date)):
             return obj.isoformat()
     except Exception:

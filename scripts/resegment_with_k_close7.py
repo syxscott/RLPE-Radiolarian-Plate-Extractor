@@ -19,6 +19,7 @@ re-running the entire pipeline (which takes hours), we:
 Species labels are preserved 1:1 by bbox-overlap matching, so the
 eval isolates the effect of the segmentation change.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,7 +46,13 @@ PAPER_DIR_CANDIDATES: dict[str, list[str]] = {
     "17a129b4e9ca975a": ["all7_rerun"],
     "2225994d55021328": ["all7_rerun"],
     "4f1bf415485765b8": ["all7_rerun"],
-    "58d7972c37307959": ["baum_rerun_v5", "baum_only_out", "baum_rerun_v4", "baum_rerun_v3", "baum_rerun_v2"],
+    "58d7972c37307959": [
+        "baum_rerun_v5",
+        "baum_only_out",
+        "baum_rerun_v4",
+        "baum_rerun_v3",
+        "baum_rerun_v2",
+    ],
     "a0f363c21b6941d7": ["all7_rerun"],
     "e28de2b07edc8950": ["feng_rerun_v2", "feng_only_out", "feng_rerun"],
 }
@@ -91,8 +98,10 @@ def _list_image_files(od_dir: Path, paper_label: str) -> list[tuple[Path, tuple[
 
 
 def _image_for_figure(
-    fig_id: str, all_imgs: list[tuple[Path, tuple[int, int]]],
-    fig_preds: list[dict], paper_id: str,
+    fig_id: str,
+    all_imgs: list[tuple[Path, tuple[int, int]]],
+    fig_preds: list[dict],
+    paper_id: str,
 ) -> Path | None:
     """Find the rendered image that best matches the figure_id.
 
@@ -108,10 +117,7 @@ def _image_for_figure(
     min_h = max_y
     min_w = max_x
     # Tolerance: allow bboxes to overflow by up to 5 px (cropping margin).
-    candidates = [
-        (p, hw) for (p, hw) in all_imgs
-        if hw[0] >= min_h - 5 and hw[1] >= min_w - 5
-    ]
+    candidates = [(p, hw) for (p, hw) in all_imgs if hw[0] >= min_h - 5 and hw[1] >= min_w - 5]
     if not candidates:
         # Fallback: take the smallest image that fits (smallest extra margin).
         candidates = sorted(
@@ -191,8 +197,12 @@ def main() -> int:
             if best_iou > 0.05:
                 used_new.add(best_i)
                 new_op = dict(op)
-                new_op["bbox"] = [int(panels[best_i].bbox[0]), int(panels[best_i].bbox[1]),
-                                  int(panels[best_i].bbox[2]), int(panels[best_i].bbox[3])]
+                new_op["bbox"] = [
+                    int(panels[best_i].bbox[0]),
+                    int(panels[best_i].bbox[1]),
+                    int(panels[best_i].bbox[2]),
+                    int(panels[best_i].bbox[3]),
+                ]
                 new_rows.append(new_op)
             else:
                 new_rows.append(op)
@@ -201,25 +211,29 @@ def main() -> int:
             if i in used_new:
                 continue
             n_added += 1
-            new_rows.append({
-                "paper_id": paper_id,
-                "figure_id": figure_id,
-                "panel_id": f"new-kclose7-{n_added}",
-                "species": None,
-                "panel_path": "",
-                "bbox": [int(p.bbox[0]), int(p.bbox[1]), int(p.bbox[2]), int(p.bbox[3])],
-                "confidence": float(p.score),
-                "label_text": "",
-                "caption_snippet": "",
-                "ocr_text": "",
-                "metadata": {"matcher_type": "resegmented-new-kclose7"},
-            })
+            new_rows.append(
+                {
+                    "paper_id": paper_id,
+                    "figure_id": figure_id,
+                    "panel_id": f"new-kclose7-{n_added}",
+                    "species": None,
+                    "panel_path": "",
+                    "bbox": [int(p.bbox[0]), int(p.bbox[1]), int(p.bbox[2]), int(p.bbox[3])],
+                    "confidence": float(p.score),
+                    "label_text": "",
+                    "caption_snippet": "",
+                    "ocr_text": "",
+                    "metadata": {"matcher_type": "resegmented-new-kclose7"},
+                }
+            )
 
     PREDICTIONS_OUT.write_text(
         "\n".join(json.dumps(r, ensure_ascii=False) for r in new_rows) + "\n"
     )
-    print(f"Re-segmented {figs_re_seg}/{len(by_fig)} figures; "
-          f"added {n_added} new panels; wrote {len(new_rows)} rows to {PREDICTIONS_OUT.name}")
+    print(
+        f"Re-segmented {figs_re_seg}/{len(by_fig)} figures; "
+        f"added {n_added} new panels; wrote {len(new_rows)} rows to {PREDICTIONS_OUT.name}"
+    )
     return 0
 
 

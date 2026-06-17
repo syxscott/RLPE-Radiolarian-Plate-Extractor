@@ -26,9 +26,22 @@ SCALE_PATTERN = re.compile(
 # we reject the match — otherwise "specimen 250 µm long" or
 # "100 µm sieve" gets stored as the figure's scale bar.
 _NON_SCALE_CONTEXT_WORDS = (
-    "specimen", "specimens", "sieve", "sample", "depth", "length",
-    "long", "wide", "tall", "diameter", "radius", "thick",
-    "aperture", "mesh", "grain", "test",
+    "specimen",
+    "specimens",
+    "sieve",
+    "sample",
+    "depth",
+    "length",
+    "long",
+    "wide",
+    "tall",
+    "diameter",
+    "radius",
+    "thick",
+    "aperture",
+    "mesh",
+    "grain",
+    "test",
 )
 
 
@@ -47,7 +60,7 @@ def _is_real_scale_match(text: str, match: re.Match[str]) -> bool:
     if "scale" in span or "bar" in span:
         return True
     # Otherwise check the left-context for specimen-size words.
-    left = text[max(0, match.start() - 30):match.start()].lower()
+    left = text[max(0, match.start() - 30) : match.start()].lower()
     return not any(w in left for w in _NON_SCALE_CONTEXT_WORDS)
 
 
@@ -96,7 +109,9 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
             # warning level.
             logger.debug(
                 "scale caption: range form matched but group(2)=%r is not a "
-                "float: %s — keeping single value", m.group(2), exc,
+                "float: %s — keeping single value",
+                m.group(2),
+                exc,
             )
     return info
 
@@ -124,7 +139,9 @@ def extract_scale_from_ocr_text(ocr_text: str) -> ScaleInfo:
             # this is more common — log at debug level.
             logger.debug(
                 "scale ocr: range form matched but group(2)=%r is not a "
-                "float: %s — keeping single value", m.group(2), exc,
+                "float: %s — keeping single value",
+                m.group(2),
+                exc,
             )
     return info
 
@@ -151,7 +168,9 @@ def detect_scale_bar_length_px(image: np.ndarray) -> float | None:
     return best if best > 0 else None
 
 
-def estimate_um_per_px(scale_value: float | None, scale_unit: str | None, pixel_length: float | None) -> float | None:
+def estimate_um_per_px(
+    scale_value: float | None, scale_unit: str | None, pixel_length: float | None
+) -> float | None:
     if scale_value is None or scale_unit is None or pixel_length is None or pixel_length <= 0:
         return None
     um_value = to_um(scale_value, scale_unit)
@@ -160,7 +179,9 @@ def estimate_um_per_px(scale_value: float | None, scale_unit: str | None, pixel_
     return um_value / pixel_length
 
 
-def merge_scale_info(caption_info: ScaleInfo, ocr_info: ScaleInfo, pixel_length: float | None = None) -> ScaleInfo:
+def merge_scale_info(
+    caption_info: ScaleInfo, ocr_info: ScaleInfo, pixel_length: float | None = None
+) -> ScaleInfo:
     base = caption_info if caption_info.confidence >= ocr_info.confidence else ocr_info
     if base.value is None and ocr_info.value is not None:
         base = ocr_info

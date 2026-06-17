@@ -8,6 +8,7 @@ a new path. Switching to content hashing (file size + SHA1 of bytes)
 makes the id portable — the same PDF produces the same id regardless
 of where it lives.
 """
+
 from __future__ import annotations
 
 import tempfile

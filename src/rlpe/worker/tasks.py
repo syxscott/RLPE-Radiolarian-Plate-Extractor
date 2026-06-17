@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..config import PipelineConfig
 from ..pipeline import RadiolarianPipeline
 
 try:
     from celery import Celery
+
     _HAS_CELERY = True
 except Exception:  # pragma: no cover
     _HAS_CELERY = False
@@ -57,7 +58,9 @@ if celery_app is not None:
         return pipeline.run()
 
     @celery_app.task(name="rlpe.process_gpu_gemma")
-    def process_gpu_gemma(pdf_dir: str, work_dir: str, gpu_id: int = 0, config_extra: dict[str, Any] | None = None):
+    def process_gpu_gemma(
+        pdf_dir: str, work_dir: str, gpu_id: int = 0, config_extra: dict[str, Any] | None = None
+    ):
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
         extra = dict(config_extra or {})
         extra["use_gemma4"] = True

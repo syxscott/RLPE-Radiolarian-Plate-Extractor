@@ -11,6 +11,7 @@ What we assert:
   * If any rows are produced, each validates against the published
     PanelRecord schema
 """
+
 import json
 import shutil
 import sys

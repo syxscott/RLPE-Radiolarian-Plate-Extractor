@@ -17,6 +17,7 @@ The function is pure-ish: it inspects the filesystem and ``git`` binary
 but does not modify state. Calling it twice in the same second produces
 the same timestamp.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -25,9 +26,9 @@ import platform
 import socket
 import subprocess
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-UTC = timezone.utc
+UTC = UTC
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ def _resolve_pipeline_version() -> str:
     """
     try:
         from importlib.metadata import PackageNotFoundError, version
+
         try:
             return version("rlpe")
         except PackageNotFoundError:

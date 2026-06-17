@@ -4,6 +4,7 @@ These guard against drift: if anyone changes ``rlpe.schema_models``
 without re-running ``python -m rlpe.schema_dump``, the schema file
 will not match what Pydantic would emit today, and this test fails.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,6 +29,7 @@ SCHEMA_PATH = REPO_ROOT / "schemas" / f"rlpe-v{SCHEMA_VERSION}.json"
 try:
     import jsonschema  # type: ignore[import-untyped]
     from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+
     _HAS_JSONSCHEMA = True
 except ImportError:
     _HAS_JSONSCHEMA = False
@@ -35,8 +37,7 @@ except ImportError:
 
 def test_schema_file_exists():
     assert SCHEMA_PATH.exists(), (
-        f"Schema not found at {SCHEMA_PATH}. "
-        f"Run: PYTHONPATH=src python -m rlpe.schema_dump"
+        f"Schema not found at {SCHEMA_PATH}. Run: PYTHONPATH=src python -m rlpe.schema_dump"
     )
 
 
@@ -46,6 +47,7 @@ def test_schema_file_is_in_sync():
         pytest.skip(f"{SCHEMA_PATH} not yet emitted; run schema_dump first")
     # Re-emit to a temp file and compare
     import tempfile
+
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         tmp = Path(f.name)
     try:

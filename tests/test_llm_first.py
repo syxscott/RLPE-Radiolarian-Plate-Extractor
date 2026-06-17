@@ -1,4 +1,5 @@
 """Tests for the LLM-first extraction path in pipeline.py."""
+
 from __future__ import annotations
 
 import sys
@@ -17,20 +18,25 @@ class TestLLMFirstExtract:
     def _patch_pipeline(self, tmp_path):
         """Create a minimal RadiolarianPipeline with mocked dependencies."""
         from rlpe.config import PipelineConfig
-        with patch("rlpe.pipeline.GrobidClient"), \
-             patch("rlpe.pipeline.OCRBackend"), \
-             patch("rlpe.pipeline.TaxonRecognizer"), \
-             patch("rlpe.pipeline.PanelSegmenter"):
+
+        with (
+            patch("rlpe.pipeline.GrobidClient"),
+            patch("rlpe.pipeline.OCRBackend"),
+            patch("rlpe.pipeline.TaxonRecognizer"),
+            patch("rlpe.pipeline.PanelSegmenter"),
+        ):
             cfg = PipelineConfig(
                 pdf_dir=tmp_path,
                 work_dir=tmp_path / "work",
             )
             cfg.extra["use_llm_first"] = True
             from rlpe.pipeline import RadiolarianPipeline
+
             self.pipe = RadiolarianPipeline(cfg)
 
     def _make_caption(self, text="Fig. 1. 1-4. Actinomma leptodermum"):
         from rlpe.types import CaptionRecord
+
         return CaptionRecord(
             paper_id="test",
             figure_id="fig1",
@@ -42,6 +48,7 @@ class TestLLMFirstExtract:
 
     def _make_region(self):
         from rlpe.types import FigureRegion
+
         return FigureRegion(
             page_index=1,
             bbox=(0, 0, 100, 100),
@@ -54,7 +61,8 @@ class TestLLMFirstExtract:
         """Without a backend, _llm_first_extract returns None (triggers fallback)."""
         self.pipe.gemma_runtime = None
         result = self.pipe._llm_first_extract(
-            paper_id="p", figure_id="f",
+            paper_id="p",
+            figure_id="f",
             caption=self._make_caption(),
             region_img=MagicMock(),
             region=self._make_region(),
@@ -67,7 +75,8 @@ class TestLLMFirstExtract:
         mock_backend = MagicMock()
         self.pipe.gemma_runtime = mock_backend
         result = self.pipe._llm_first_extract(
-            paper_id="p", figure_id="f",
+            paper_id="p",
+            figure_id="f",
             caption=self._make_caption("Auto-generated figure for page 5"),
             region_img=MagicMock(),
             region=self._make_region(),
@@ -80,12 +89,12 @@ class TestLLMFirstExtract:
         """Helper: set backend and run with PIL/cv2 mocked."""
         self.pipe.gemma_runtime = backend
         mock_img = MagicMock()
-        with patch("rlpe.pipeline.cv2") as mock_cv2, \
-             patch("PIL.Image") as mock_pil:
+        with patch("rlpe.pipeline.cv2") as mock_cv2, patch("PIL.Image") as mock_pil:
             mock_cv2.cvtColor.return_value = MagicMock()
             mock_pil.fromarray.return_value = mock_img
             return self.pipe._llm_first_extract(
-                paper_id="p", figure_id="f",
+                paper_id="p",
+                figure_id="f",
                 caption=self._make_caption(),
                 region_img=MagicMock(shape=(100, 100, 3)),
                 region=self._make_region(),
@@ -134,16 +143,19 @@ class TestLLMFirstExtract:
     def test_handles_raw_text_json(self):
         """When result has raw_text but no panels key, parse from raw text."""
         import json
+
         mock_backend = MagicMock()
         mock_backend.backend_name = "test_llm"
         mock_backend.infer_panel.return_value = {
             "fallback_used": False,
-            "raw_text": json.dumps({
-                "panels": [
-                    {"label": "A", "species": "Test sp. 1", "confidence": 0.8},
-                    {"label": "B", "species": "Test sp. 2", "confidence": 0.7},
-                ]
-            }),
+            "raw_text": json.dumps(
+                {
+                    "panels": [
+                        {"label": "A", "species": "Test sp. 1", "confidence": 0.8},
+                        {"label": "B", "species": "Test sp. 2", "confidence": 0.7},
+                    ]
+                }
+            ),
         }
         result = self._run_with_mock_backend(mock_backend)
         assert result is not None

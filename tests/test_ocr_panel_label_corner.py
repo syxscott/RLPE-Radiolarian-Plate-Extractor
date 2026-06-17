@@ -5,10 +5,10 @@ public API surface (default value of `label_corner`, behaviour when the
 backend is disabled) is pure Python and can be tested without the
 heavyweight OCR engines.
 """
+
 from __future__ import annotations
 
 import inspect
-
 import sys
 from pathlib import Path
 
@@ -45,6 +45,7 @@ def test_recognize_panel_label_returns_empty_when_no_backend():
     backend = OCRBackend(backend="nonexistent", use_gpu=False)
     # Use a tiny synthetic image (no OCR needed if backend fails)
     import numpy as np
+
     img = np.zeros((100, 100, 3), dtype=np.uint8)
     out = backend.recognize_panel_label(img, (0, 0, 50, 50))
     assert out == []
@@ -57,6 +58,7 @@ def test_recognize_panel_label_tl_corner_only_one_call():
     we just verify the function accepts the explicit values."""
     backend = OCRBackend(backend="nonexistent", use_gpu=False)
     import numpy as np
+
     img = np.zeros((100, 100, 3), dtype=np.uint8)
     for corner in ("tl", "tr", "bl", "br", "auto"):
         # No exception means the corner value is accepted.

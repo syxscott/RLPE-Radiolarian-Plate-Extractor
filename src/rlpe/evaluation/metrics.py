@@ -13,6 +13,7 @@ species) and reports:
 The metrics are designed for the batch4_v2 test set but generalise to
 any paper with a gold JSONL.
 """
+
 from __future__ import annotations
 
 import json
@@ -160,7 +161,7 @@ def _norm_species(s: str | None) -> str:
     #    to "Archeo" for comparison. Case-sensitive so we don't break
     #    any future case-sensitive match (the eval lowercases later).
     if s.startswith("Archaeo"):
-        s = "Archeo" + s[len("Archaeo"):]
+        s = "Archeo" + s[len("Archaeo") :]
     # 5) "X gen" (parser truncation) ↔ "X indet" (gold long form).
     #    The "gen. et sp. indet" → "indet" collapse above handles the
     #    gold side; this handles the pred side.
@@ -275,15 +276,19 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
                     # Prefer the candidate that matches the gold species
                     cand_sp = _norm_species(cand.get("species"))
                     cur_sp = _norm_species(matched_pred.get("species"))
-                    if (cand_sp.lower() == gold_species.lower()
-                            and cur_sp.lower() != gold_species.lower()):
+                    if (
+                        cand_sp.lower() == gold_species.lower()
+                        and cur_sp.lower() != gold_species.lower()
+                    ):
                         matched_pred = cand
-        matched_pred_species = (
-            _norm_species(matched_pred.get("species")) if matched_pred else None
-        )
+        matched_pred_species = _norm_species(matched_pred.get("species")) if matched_pred else None
         if matched_pred is not None:
             m.panel_match += 1
-            if gold_species and matched_pred_species and gold_species.lower() == matched_pred_species.lower():
+            if (
+                gold_species
+                and matched_pred_species
+                and gold_species.lower() == matched_pred_species.lower()
+            ):
                 m.species_tp += 1
                 m.exact_match += 1
             elif matched_pred_species and not gold_species:
@@ -293,24 +298,28 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
             else:
                 m.species_fp += 1
                 m.species_fn += 1
-                m.mismatches.append({
-                    "figure_id": g.figure_id,
-                    "panel_id": g.panel_id,
-                    "expected": gold_species,
-                    "predicted": matched_pred_species or "",
-                })
+                m.mismatches.append(
+                    {
+                        "figure_id": g.figure_id,
+                        "panel_id": g.panel_id,
+                        "expected": gold_species,
+                        "predicted": matched_pred_species or "",
+                    }
+                )
         else:
             if gold_species:
                 m.species_fn += 1
-                m.unmatched.append({
-                    "figure_id": g.figure_id,
-                    "panel_id": g.panel_id,
-                    "expected": gold_species,
-                })
+                m.unmatched.append(
+                    {
+                        "figure_id": g.figure_id,
+                        "panel_id": g.panel_id,
+                        "expected": gold_species,
+                    }
+                )
 
     # n_pred_panels per paper (count unique (figure, panel) pairs)
     pred_per_paper: dict[str, int] = defaultdict(int)
-    for (pid, _fid, _plabel) in pred_groups.keys():
+    for pid, _fid, _plabel in pred_groups.keys():
         pred_per_paper[pid] += 1
     for pid, n in pred_per_paper.items():
         if pid not in by_paper:
@@ -328,7 +337,7 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
         msg = (
             f"[eval] filtered {n_skipped} placeholder-caption rows "
             f"({n_skipped}/{len(predictions)} = "
-            f"{100*n_skipped/max(1,len(predictions)):.1f}% of raw predictions)"
+            f"{100 * n_skipped / max(1, len(predictions)):.1f}% of raw predictions)"
         )
         print(msg)
         logger.info(msg)
@@ -346,9 +355,7 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
         "n_gold": total_gold,
         "species_precision": total_tp / max(1, total_tp + total_fp),
         "species_recall": total_tp / max(1, total_tp + total_fn),
-        "species_f1": (
-            2 * total_tp / max(1, 2 * total_tp + total_fp + total_fn)
-        ),
+        "species_f1": (2 * total_tp / max(1, 2 * total_tp + total_fp + total_fn)),
         "panel_match_rate": total_panel_match / max(1, total_gold),
         "exact_match_rate": total_exact / max(1, total_gold),
     }
@@ -372,13 +379,15 @@ def load_predictions_jsonl(path: Path) -> list[dict[str, Any]]:
             if not line:
                 continue
             d = json.loads(line)
-            out.append({
-                "paper_id": d.get("paper_id"),
-                "figure_id": d.get("figure_id"),
-                "panel_id": d.get("panel_id"),
-                "species": d.get("species"),
-                "metadata": d.get("metadata") or {},
-            })
+            out.append(
+                {
+                    "paper_id": d.get("paper_id"),
+                    "figure_id": d.get("figure_id"),
+                    "panel_id": d.get("panel_id"),
+                    "species": d.get("species"),
+                    "metadata": d.get("metadata") or {},
+                }
+            )
     return out
 
 

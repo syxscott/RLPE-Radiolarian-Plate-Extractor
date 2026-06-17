@@ -13,6 +13,7 @@ This test covers the splitter-based parser: split on ";" + newlines,
 match each clause independently, and accept abbreviated "X. epithet"
 genera (e.g. "A. patricki" for Archaeodictyomitra patricki).
 """
+
 from __future__ import annotations
 
 from rlpe.m3_engine import _regex_parse_caption
@@ -71,9 +72,7 @@ def test_danelian_plate1_full_parse():
 def test_danelian_abbreviated_genus_supported():
     """A clause like "7) A. patricki, Mg-2" must match — the regex used
     to require a full Genus name and missed abbreviated references."""
-    pairs = _regex_parse_caption(
-        "7) A. patricki, Mg-2; 10) A. shengi, Mg-77"
-    )
+    pairs = _regex_parse_caption("7) A. patricki, Mg-2; 10) A. shengi, Mg-77")
     assert len(pairs) == 2
     assert pairs[0].labels == ["7"]
     assert pairs[0].species == "A. patricki"
@@ -83,9 +82,7 @@ def test_danelian_abbreviated_genus_supported():
 
 def test_danelian_range_label_supported():
     """A range like "2-3) Species" must be split into two labels."""
-    pairs = _regex_parse_caption(
-        "2-3) Archaeodictyomitra apiarium (RÜST), Mg-2"
-    )
+    pairs = _regex_parse_caption("2-3) Archaeodictyomitra apiarium (RÜST), Mg-2")
     assert len(pairs) == 1
     assert pairs[0].labels == ["2", "3"]
     assert pairs[0].species == "Archaeodictyomitra apiarium"
@@ -95,8 +92,7 @@ def test_danelian_ignores_preamble():
     """The "100 µm for all figures" preamble must not be matched as a clause
     (its "1" is part of a number, not a label)."""
     pairs = _regex_parse_caption(
-        "Plate 1\n\nBar scale is 100 µm for all figures.\n\n"
-        "1) Acastea sp, Mg-100"
+        "Plate 1\n\nBar scale is 100 µm for all figures.\n\n1) Acastea sp, Mg-100"
     )
     # Only 1 pair from the real clause. _normalize_species adds
     # the period back on "sp" (historical v9 behaviour, preserved
@@ -109,8 +105,7 @@ def test_danelian_does_not_break_pouille_or_fig_pattern():
     """Adding the danelian splitter must not regress the other caption
     forms. Sample pouille and inverse "Fig. N. Species" patterns here."""
     pouille_text = (
-        "Syntagentactinia biocculosa (Pl. 1, figs 5)\n"
-        "Haplentactinia juncta (Pl. 1, fig. 1)"
+        "Syntagentactinia biocculosa (Pl. 1, figs 5)\nHaplentactinia juncta (Pl. 1, fig. 1)"
     )
     pairs = _regex_parse_caption(pouille_text)
     assert len(pairs) == 2
@@ -146,8 +141,7 @@ def test_caption_clause_sp_aff_tail():
     form (CAPTION_CLAUSE_RE path). Mirrors test_danelian_sp_aff_epithet_tail
     for the inverse shape used by the Baumgartner/fig-style papers."""
     pairs = _regex_parse_caption(
-        "fig 3 Orbiculiforma sp. aff. mclaughlini; fig 27 "
-        "Archaeodictyomitra sp. aff. minoensis"
+        "fig 3 Orbiculiforma sp. aff. mclaughlini; fig 27 Archaeodictyomitra sp. aff. minoensis"
     )
     assert len(pairs) == 2
     by_label = {p.labels[0]: p for p in pairs}

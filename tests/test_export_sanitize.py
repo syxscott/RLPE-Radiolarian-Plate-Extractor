@@ -1,4 +1,5 @@
 """Tests for export sanitisation and CSV flattening."""
+
 from __future__ import annotations
 
 import json
