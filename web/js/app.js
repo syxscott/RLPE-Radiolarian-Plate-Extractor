@@ -279,6 +279,11 @@ document.getElementById('process-btn').addEventListener('click', async () => {
         };
 
         for (const file of uploadedFiles) {
+            // Update button text with progress so the user knows which
+            // file is being uploaded (especially important for batch
+            // uploads of 5+ PDFs where the total wait can be minutes).
+            btn.innerHTML = `<span class="spinner-small"></span> 上传中 (${uploadedCount + 1}/${totalFiles})…`;
+
             const formData = new FormData();
             formData.append('file', file);
             // combinedOptions is always a real object now (it always at
@@ -326,9 +331,13 @@ document.getElementById('process-btn').addEventListener('click', async () => {
         showNotification(error.message, 'error');
     } finally {
         _processing = false;
-        btn.disabled = false;
+        // Re-enable only if there are files left to process. After a
+        // successful run ``uploadedFiles`` is cleared (line 317), so the
+        // button should stay disabled — clicking it with no files is a
+        // no-op that confuses users.
+        btn.disabled = uploadedFiles.length === 0;
         btn.classList.remove('btn-loading');
-        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 开始处理';
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 开始提取图版';
     }
 });
 
@@ -511,6 +520,22 @@ async function loadJobs() {
         }
 
         const jobs = await response.json();
+
+        // Detect jobs that just transitioned to "done" since the last
+        // poll. If the user is watching the jobs tab, auto-switch to the
+        // results tab so they see the extraction results immediately.
+        // Novice users often sit on the jobs tab watching the progress
+        // bar and don't realise they need to click "结果查看" to see
+        // the extracted species.
+        const previouslyActive = new Set(
+            Object.values(jobsData)
+                .filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'awaiting_user_decision')
+                .map(j => j.job_id)
+        );
+        const justCompleted = jobs.filter(
+            j => previouslyActive.has(j.job_id) && j.status === 'done'
+        );
+
         // Build a fresh map from the server's response.
         const serverJobIds = new Set();
         const freshData = {};
@@ -545,6 +570,23 @@ async function loadJobs() {
         // This is the missing piece that made the backend's
         // FallbackHandler appear silently broken from the UI side.
         checkMiniMaxFallbacks();
+
+        // Auto-switch to results tab when a job the user was watching
+        // just completed. Only switch if the user is currently on the
+        // jobs tab (don't yank them away from upload/settings) and at
+        // least one job transitioned to done.
+        if (justCompleted.length > 0) {
+            const activeTab = document.querySelector('.tab-btn.active');
+            if (activeTab && activeTab.dataset.tab === 'jobs') {
+                const names = justCompleted.map(j => j.filename || j.job_id.substring(0, 8)).join(', ');
+                showNotification(`✅ 处理完成：${names}，正在跳转到结果…`, 'success');
+                // Brief delay so the user sees the "done" status before
+                // the tab switch.
+                setTimeout(() => {
+                    document.querySelector('[data-tab="results"]')?.click();
+                }, 1200);
+            }
+        }
     } catch (error) {
         _onPollFailure(error.message || String(error));
     }
@@ -618,7 +660,14 @@ function renderJobsList() {
         .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
     if (jobs.length === 0) {
-        jobsList.innerHTML = '<div style="text-align: center; color: #999; padding: 2rem;">暂无任务</div>';
+        const isFiltered = searchTerm || filterStatus;
+        jobsList.innerHTML = isFiltered
+            ? '<div style="text-align: center; color: var(--text-muted); padding: 2rem;">没有匹配的任务，试试清除搜索/筛选条件</div>'
+            : `<div style="text-align: center; color: var(--text-muted); padding: 2.5rem 1rem;">
+                <p style="font-size: 1rem; margin-bottom: 0.5rem;">📋 还没有处理任务</p>
+                <p style="font-size: 0.875rem;">前往「上传处理」标签页，拖入 PDF 文件即可开始</p>
+                <button class="btn btn-primary btn-small" style="margin-top: 1rem;" onclick="document.querySelector('[data-tab=\\'upload\\']').click()">去上传 PDF</button>
+            </div>`;
         return;
     }
 
@@ -673,14 +722,16 @@ function renderJobsList() {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                     详情
                 </button>
-                ${job.status === 'done' ? `<button type="button" class="btn btn-small" data-action="results" data-job-id="${escapeHtml(job.job_id)}">
+                ${job.status === 'done' ? `<button type="button" class="btn btn-small btn-primary" data-action="results" data-job-id="${escapeHtml(job.job_id)}">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-                    结果
+                    查看结果 →
                 </button>` : ''}
+                ${(job.status === 'queued' || job.status === 'running' || job.status === 'awaiting_user_decision') ? `
                 <button type="button" class="btn btn-small btn-secondary" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     取消
                 </button>
+                ` : ''}
                 ${(job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') ? `
                 <button type="button" class="btn btn-small btn-danger" data-action="delete" data-job-id="${escapeHtml(job.job_id)}" title="删除任务及文件">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
@@ -1327,7 +1378,10 @@ document.getElementById('delete-modal-confirm')?.addEventListener('click', confi
 async function loadResults() {
     try {
         const response = await fetch(`${CONFIG.apiBaseUrl}/results`);
-        if (!response.ok) return;
+        if (!response.ok) {
+            console.error(`loadResults: HTTP ${response.status}`);
+            return;
+        }
 
         resultsData = await response.json();
         populateResultFilter();
@@ -1438,7 +1492,13 @@ function renderResults() {
 
     const tbody = document.getElementById('results-tbody');
     if (total === 0) {
-        tbody.innerHTML = '<tr class="placeholder"><td colspan="8" style="text-align: center; color: #999;">暂无结果</td></tr>';
+        const hasAnyResults = resultsData.length > 0;
+        tbody.innerHTML = hasAnyResults
+            ? '<tr class="placeholder"><td colspan="8" style="text-align: center; color: var(--text-muted);">当前筛选条件下无结果，试试清除搜索或切换筛选</td></tr>'
+            : `<tr class="placeholder"><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                🔍 还没有提取结果<br>
+                <span style="font-size: 0.85rem;">完成 PDF 处理后，结果会自动显示在这里</span>
+            </td></tr>`;
         renderResultsPagination(0, 0, 0);
         renderResultsStatusFilterCounts({});
         return;
@@ -1931,6 +1991,22 @@ document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
         loadJobs();
         loadResults();
+    }
+});
+
+// Warn the user before closing/navigating away while a job is actively
+// running. The pipeline continues server-side regardless, but a novice
+// user who accidentally closes the tab loses track of their job and may
+// re-upload the same PDF (wasting API calls). The check is lightweight
+// (reads the in-memory cache, no network call) and only fires when the
+// page is actually being unloaded.
+window.addEventListener('beforeunload', (e) => {
+    const hasActive = Object.values(jobsData).some(
+        j => j.status === 'queued' || j.status === 'running' || j.status === 'awaiting_user_decision'
+    );
+    if (hasActive || _processing) {
+        e.preventDefault();
+        e.returnValue = '';
     }
 });
 

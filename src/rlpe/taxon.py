@@ -27,6 +27,14 @@ class TaxonRecognizer:
         self._hf_ner = None
         self._lexicon: set[str] = set()
         self._lock = threading.Lock()
+        # Separate lock for predict-time model calls. TaxoNERD and HF
+        # ``token-classification`` pipelines share mutable internal state
+        # (model weights, attention cache, random state) that is NOT
+        # thread-safe. The pipeline's ThreadPoolExecutor calls
+        # ``predict`` concurrently from multiple workers; without this
+        # lock, concurrent ``engine.predict()`` / ``self._hf_ner()``
+        # calls corrupt each other's output or crash with a CUDA error.
+        self._predict_lock = threading.Lock()
 
     def _lazy_init(self):
         if self._engine is not None:
@@ -85,7 +93,8 @@ class TaxonRecognizer:
         # A) TaxoNERD 通用模型
         if engine is not None:
             try:
-                result = engine.predict(text)
+                with self._predict_lock:
+                    result = engine.predict(text)
                 for item in result:
                     entities.append(
                         TaxonEntity(
@@ -102,7 +111,8 @@ class TaxonRecognizer:
         # B) 可选垂类HF NER模型（建议后续用古生物语料微调）
         if self._hf_ner is not None:
             try:
-                hf_res = self._hf_ner(text)
+                with self._predict_lock:
+                    hf_res = self._hf_ner(text)
                 for item in hf_res:
                     label = str(item.get("entity_group", "taxon")).lower()
                     if "tax" not in label and "species" not in label and "org" not in label:

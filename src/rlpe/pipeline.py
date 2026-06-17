@@ -4,6 +4,7 @@ import logging
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -673,6 +674,18 @@ Rules:
                 paper_metadata=paper_metadata,
             )
             if llm_results is not None:
+                # Enrich LLM-first results with scale_bar + geology_links.
+                # Without this, the LLM-first path skips the metadata
+                # enrichment that the classical path applies at the end of
+                # _process_region, leaving the Web UI's scale/geology panels
+                # empty for every LLM-extracted figure.
+                llm_results = self._enrich_llm_first_results(
+                    llm_results,
+                    caption=caption,
+                    region_img=region_img,
+                    section_links=section_links,
+                    grobid_sections=grobid_sections,
+                )
                 return llm_results
             logger.debug("LLM-first failed for %s/%s, falling back to classical path", paper_id, figure_id)
 
@@ -928,12 +941,13 @@ Rules:
                 )
                 m3_diag["stage4_skipped"] = skip_reason
             if not skip_stage4:
-                matches = self._apply_m3_stage4(
-                    matches=matches,
-                    caption_pairs=m3_caption_pairs,
-                    caption_text=caption.caption or "",
-                    region_img=region_img,
-                )
+                with self._gemma_lock_if_needed():
+                    matches = self._apply_m3_stage4(
+                        matches=matches,
+                        caption_pairs=m3_caption_pairs,
+                        caption_text=caption.caption or "",
+                        region_img=region_img,
+                    )
         elif self.gemma_runtime is not None:
             # Backward-compatible single-stage M3 fallback
             with self._gemma_lock:
@@ -948,12 +962,13 @@ Rules:
         # ---- M3 Stage 5 (cross-panel self-critique) ----------------------------
         if (self.m3_engine is not None and self.m3_engine._stage_enabled(5)
                 and matches):
-            matches = self._apply_m3_stage5(
-                matches=matches,
-                caption_pairs=m3_caption_pairs,
-                caption_text=caption.caption or "",
-                region_img=region_img,
-            )
+            with self._gemma_lock_if_needed():
+                matches = self._apply_m3_stage5(
+                    matches=matches,
+                    caption_pairs=m3_caption_pairs,
+                    caption_text=caption.caption or "",
+                    region_img=region_img,
+                )
 
         # Attach geology links and scale bar info.
         #
@@ -1037,6 +1052,76 @@ Rules:
                 "matches": results,
             })
         return results
+
+    def _enrich_llm_first_results(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        caption: CaptionRecord,
+        region_img: Any,
+        section_links: dict[str, list[dict[str, Any]]],
+        grobid_sections: list[dict[str, str]],
+    ) -> list[dict[str, Any]]:
+        """Attach scale_bar + geology_links to LLM-first result rows.
+
+        The LLM-first path returns early from ``_process_region`` before the
+        classical enrichment block runs. Without this helper, every
+        LLM-extracted figure would have empty ``scale_bar`` and
+        ``geology_links`` in its metadata, breaking the Web UI's geology/scale
+        panels and the downstream knowledge-graph export.
+        """
+        caption_scale = extract_scale_from_caption(caption.caption or "")
+        ocr_scale = extract_scale_from_ocr_text("")  # no OCR tokens available
+        px_len = detect_scale_bar_length_px(region_img)
+        merged_scale = merge_scale_info(caption_scale, ocr_scale, pixel_length=px_len)
+
+        from .geology_extraction import link_panels_to_geology as _link_panels
+        panel_captions: dict[str, str] = {}
+        panel_keys: list[str] = []
+        for i, row in enumerate(rows):
+            base = row.get("panel_id") or f"idx_{i}"
+            key = base
+            j = 1
+            while key in panel_captions:
+                key = f"{base}#{j}"
+                j += 1
+            panel_captions[key] = caption.caption or ""
+            panel_keys.append(key)
+        panel_geo: dict[str, list[dict[str, Any]]] = {}
+        if any(v for v in panel_captions.values()):
+            panel_geo = _link_panels(
+                panel_captions,
+                fallback_sections=grobid_sections or [],
+            )
+        for i, row in enumerate(rows):
+            md = dict(row.get("metadata") or {})
+            sp = row.get("species") or ""
+            geo_list = section_links.get(sp, [])
+            if not geo_list:
+                key = panel_keys[i] if i < len(panel_keys) else (row.get("panel_id") or f"idx_{i}")
+                geo_list = panel_geo.get(key, [])
+            md["scale_bar"] = merged_scale.to_dict()
+            md["geology_links"] = geo_list[:5]
+            md.setdefault("m3_diagnostic", {})
+            row["metadata"] = md
+        return rows
+
+    def _gemma_lock_if_needed(self):
+        """Return a lock context manager for backends requiring serialization.
+
+        Transformers' ``model.generate()`` shares mutable internal state
+        across threads (random state, KV cache), so concurrent calls from
+        the ThreadPoolExecutor workers corrupt each other. MiniMax has its
+        own semaphore (``max_concurrent``); Ollama/llama.cpp are stateless
+        HTTP calls. Serializing those would kill MiniMax's throughput for
+        no safety benefit, so we only lock for the Transformers backend.
+        """
+        if (
+            self.gemma_runtime is not None
+            and str(self.gemma_runtime.backend_name).lower() == "transformers"
+        ):
+            return self._gemma_lock
+        return nullcontext()
 
     def _apply_m3_stage4(
         self,
@@ -1171,20 +1256,16 @@ Rules:
                 caption_pairs=caption_pairs,
             )
             M3Engine.apply_critiques(panel_matches, critiques)
-            # Back-apply to original matches. Use a length-stable insertion
-            # that handles duplicate panel_id values (e.g. when two figures
-            # were merged upstream and both contain a panel labeled "1") —
-            # a plain dict comprehension would silently drop all but the
-            # last occurrence and cause a critique to never reach its match.
-            by_id: dict[str, PanelMatch] = {}
-            for pm in panel_matches:
-                cur = by_id.get(pm.panel_id)
-                if cur is None or float(pm.confidence or 0.0) > float(cur.confidence or 0.0):
-                    by_id[pm.panel_id] = pm
-            for idx, m in enumerate(matches, start=1):
-                pid = str(m.panel_id or f"P{idx}")
-                pm = by_id.get(pid)
-                if not pm:
+            # Back-apply to original matches by INDEX, not by panel_id.
+            # ``panel_matches`` and ``matches`` are parallel arrays built in
+            # the same loop above, so index correspondence is guaranteed.
+            # The previous ``by_id`` dict approach broke when two matches
+            # shared a panel_id (OCR duplicates): it kept only the
+            # highest-confidence PanelMatch and applied its critique to BOTH
+            # matches, corrupting the lower-confidence one's species.
+            for idx, m in enumerate(matches):
+                pm = panel_matches[idx] if idx < len(panel_matches) else None
+                if pm is None:
                     continue
                 md = dict(m.metadata or {})
                 if "critique" in (pm.raw or {}):

@@ -632,6 +632,17 @@ class MiniMaxM3Backend(BaseLLMBackend):
         """
         kwargs = self._build_request_kwargs(system_prompt, messages)
         anthropic_mod = self._anthropic
+        # Guard: in ``local_only`` mode the anthropic SDK is never imported
+        # (``self._anthropic`` is None and ``self._client`` is None). The
+        # public ``infer_panel`` / ``infer_text`` methods short-circuit
+        # before reaching here, but a future code path that bypasses the
+        # short-circuit would hit ``None.RateLimitError`` in the except
+        # clauses below — an ``AttributeError`` that masks the real issue.
+        if anthropic_mod is None or self._client is None:
+            raise RuntimeError(
+                "MiniMax _call_api invoked without an Anthropic client "
+                "(data_outbound_policy=local_only or SDK not installed)."
+            )
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
             try:

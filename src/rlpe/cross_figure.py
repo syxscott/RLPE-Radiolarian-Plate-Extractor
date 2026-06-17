@@ -87,13 +87,27 @@ def _cross_figure_reassign_results(results: list[dict[str, Any]]) -> list[dict[s
         fid = r.get("figure_id", "")
         if fid in orphans and real_plates:
             # Find the nearest real plate by absolute page diff.
+            # Pages in this codebase are 1-indexed (see
+            # ``render_pdf_pages`` which uses ``start=1``), so a
+            # ``page_index`` of 0 means the metadata is missing. When
+            # either the orphan or the nearest real plate has a missing
+            # page, the page-distance is meaningless and reassignment
+            # would misattribute panels to an unrelated figure. Skip
+            # in that case and keep the panels in place.
             rp = figure_page.get(fid, 0)
+            if rp == 0:
+                reassigned.append(r)
+                continue
             nearest = min(
                 real_plates,
                 key=lambda f: abs(figure_page.get(f, 0) - rp),
             )
+            nearest_page = figure_page.get(nearest, 0)
+            if nearest_page == 0:
+                reassigned.append(r)
+                continue
             # Reassign only if the page gap is small (<=3).
-            if abs(figure_page.get(nearest, 0) - rp) <= 3:
+            if abs(nearest_page - rp) <= 3:
                 new = dict(r)
                 new["figure_id"] = nearest
                 new["metadata"] = dict(r.get("metadata") or {})

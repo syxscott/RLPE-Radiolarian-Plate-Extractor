@@ -96,6 +96,7 @@
                         </svg>
                         <h3>拖拽 PDF 文件到此</h3>
                         <p>或点击选择文件（支持多选）</p>
+                        <p style="font-size: 0.78rem; color: var(--text-light); margin-top: 0.5rem;">仅支持 PDF 格式 · 单文件最大 256 MB</p>
                         <input type="file" id="pdf-input" accept=".pdf" multiple hidden>
                     </div>
                     <div id="file-list" class="file-list"></div>
@@ -298,7 +299,7 @@
                 <div class="card action-buttons">
                     <button id="process-btn" class="btn btn-primary btn-large" disabled>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        ③ 开始处理
+                        ③ 开始提取图版
                     </button>
                     <button id="clear-btn" class="btn btn-secondary">清空列表</button>
                 </div>
@@ -386,17 +387,17 @@
                                 <tr>
                                     <th data-sort-key="paper_id">论文 ID</th>
                                     <th data-sort-key="figure_id">图版 ID</th>
-                                    <th data-sort-key="panel_id">Panel 标签</th>
-                                    <th>图版 OCR</th>
-                                    <th data-sort-key="species">物种</th>
+                                    <th data-sort-key="panel_id">子图标签</th>
+                                    <th>标签来源</th>
+                                    <th data-sort-key="species">拉丁学名</th>
                                     <th data-sort-key="confidence">置信度</th>
-                                    <th>图版缩略图</th>
+                                    <th>缩略图</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
                             <tbody id="results-tbody">
                                 <tr class="placeholder">
-                                    <td colspan="8" style="text-align: center; color: #999;">暂无结果</td>
+                                    <td colspan="8" style="text-align: center; color: var(--text-muted);">暂无结果</td>
                                 </tr>
                             </tbody>
                         </table>

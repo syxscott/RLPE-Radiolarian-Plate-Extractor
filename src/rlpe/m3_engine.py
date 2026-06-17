@@ -27,6 +27,7 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
+from threading import Lock
 from typing import Any
 
 from PIL import Image
@@ -1228,6 +1229,16 @@ class M3Engine:
         # Diagnostic dump: also save M3 raw output to this directory (None = off).
         self.config.setdefault("m3_diagnostic_dir", None)
         self._diagnostic_counter = 0
+        # Lock for the "retry without thinking" path in _infer_text /
+        # _infer_vision. The retry mutates ``backend.enable_thinking``
+        # (a MiniMax-specific attribute) before the second call and
+        # restores it afterwards. When multiple pipeline workers call
+        # M3 concurrently, one thread's toggle can race another's
+        # save/restore, leaving ``enable_thinking`` in the wrong state
+        # for the first thread's original call. The lock serializes the
+        # toggle+retry+restore sequence so each thread sees a consistent
+        # backend state.
+        self._thinking_retry_lock = Lock()
 
     # ------------------------------------------------------------------ stage 1
     def parse_caption(self, caption_text: str) -> list[CaptionPair]:
@@ -1620,12 +1631,30 @@ class M3Engine:
         critiques: list[Critique],
         override_threshold: float = 0.6,
     ) -> list[PanelMatch]:
-        """Apply critiques to matches in place. Returns the same list (mutated)."""
-        by_id: dict[str, Critique] = {c.panel_id: c for c in critiques}
+        """Apply critiques to matches in place. Returns the same list (mutated).
+
+        When multiple matches share a ``panel_id`` (e.g. OCR duplicates), each
+        critique is applied to the FIRST unmatched match with that id, so no
+        match receives a critique intended for a different panel. The previous
+        ``by_id`` dict approach silently dropped duplicate critiques and could
+        apply the wrong critique to the wrong match.
+        """
+        # Build a multimap: panel_id -> list of critiques (in order).
+        by_id: dict[str, list[Critique]] = {}
+        for c in critiques:
+            by_id.setdefault(c.panel_id, []).append(c)
+        # Track which critique indices have been consumed so each critique
+        # is applied at most once.
+        consumed: dict[str, int] = {}
         for m in matches:
-            c = by_id.get(m.panel_id)
-            if not c:
+            cands = by_id.get(m.panel_id)
+            if not cands:
                 continue
+            pos = consumed.get(m.panel_id, 0)
+            if pos >= len(cands):
+                continue
+            consumed[m.panel_id] = pos + 1
+            c = cands[pos]
             if c.verdict == "agree":
                 m.raw.setdefault("critique", {"verdict": "agree", "confidence": c.confidence})
                 continue
@@ -1661,17 +1690,18 @@ class M3Engine:
             and getattr(self.backend, "enable_thinking", False)
         ):
             logger.info("M3 text returned empty; retrying with thinking disabled")
-            saved = self.backend.enable_thinking
-            try:
-                self.backend.enable_thinking = False
-                res2 = self.backend.infer_text(
-                    system_prompt=system_prompt, user_prompt=user_prompt,
-                )
-            except Exception as exc:
-                logger.warning("M3 text retry failed: %s", exc)
-                res2 = res
-            finally:
-                self.backend.enable_thinking = saved
+            with self._thinking_retry_lock:
+                saved = self.backend.enable_thinking
+                try:
+                    self.backend.enable_thinking = False
+                    res2 = self.backend.infer_text(
+                        system_prompt=system_prompt, user_prompt=user_prompt,
+                    )
+                except Exception as exc:
+                    logger.warning("M3 text retry failed: %s", exc)
+                    res2 = res
+                finally:
+                    self.backend.enable_thinking = saved
             if (res2.get("raw_text") or "").strip():
                 res = res2
         return res
@@ -1702,21 +1732,22 @@ class M3Engine:
             and getattr(self.backend, "enable_thinking", False)
         ):
             logger.info("M3 returned empty text; retrying with thinking disabled")
-            saved = self.backend.enable_thinking
-            try:
-                self.backend.enable_thinking = False
-                res2 = self.backend.infer_panel(
-                    panel_image=image,
-                    caption_text="",
-                    ocr_labels=[],
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                )
-            except Exception as exc:
-                logger.warning("M3 retry without thinking failed: %s", exc)
-                res2 = res
-            finally:
-                self.backend.enable_thinking = saved
+            with self._thinking_retry_lock:
+                saved = self.backend.enable_thinking
+                try:
+                    self.backend.enable_thinking = False
+                    res2 = self.backend.infer_panel(
+                        panel_image=image,
+                        caption_text="",
+                        ocr_labels=[],
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                    )
+                except Exception as exc:
+                    logger.warning("M3 retry without thinking failed: %s", exc)
+                    res2 = res
+                finally:
+                    self.backend.enable_thinking = saved
             if (res2.get("raw_text") or "").strip():
                 res = res2
         return res

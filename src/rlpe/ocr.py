@@ -215,9 +215,11 @@ class OCRBackend:
         ]
         if label_corner in {"tl", "tr", "bl", "br"}:
             corners = [c for c in corners if c[0] == label_corner]
-        # "adaptive" = try the explicit corner first, then the others.
-        if label_corner == "adaptive":
-            corners = corners + [c for c in corners if c[0] != corners[0][0]]
+        # "adaptive" = try all four corners (corners already contains
+        # all 4 from the list above). The previous code appended a
+        # filtered copy of corners, producing a 7-element list
+        # [tl, tr, bl, br, tr, bl, br] and wasting 3 OCR calls per
+        # panel.
         best_tokens: list[OCRToken] = []
         best_score: float = -1.0
         # Try a 2x upscaled version of the corner band as a fallback. Many

@@ -376,7 +376,7 @@ body {
 }
 
 .file-item:hover {
-    background: #eff6ff;
+    background: var(--primary-soft);
 }
 
 .file-item-info {
@@ -958,7 +958,7 @@ body {
     padding: 0.3rem 0.6rem;
     border: 1px solid var(--border-color);
     border-radius: 4px;
-    background: white;
+    background: var(--bg-white);
     font-size: 0.85rem;
 }
 
@@ -1217,7 +1217,7 @@ body {
 }
 
 .modal-content {
-    background: white;
+    background: var(--bg-white);
     border-radius: 16px;
     max-width: 600px;
     width: 100%;
@@ -1281,7 +1281,7 @@ body {
 }
 .modal-header h3 {
     margin: 0;
-    color: var(--danger, #dc3545);
+    color: var(--danger-color);
     font-size: 1.3rem;
 }
 .modal-body {
@@ -1289,18 +1289,18 @@ body {
 }
 .modal-body p {
     margin: 0.5rem 0;
-    color: #333;
+    color: var(--text-base);
 }
 #delete-modal-summary {
     font-size: 0.95rem;
-    color: #555;
+    color: var(--text-muted);
     line-height: 1.6;
 }
 .delete-modal-jobs {
     max-height: 200px;
     overflow-y: auto;
-    background: #f8f9fa;
-    border: 1px solid #e9ecef;
+    background: var(--bg-lighter);
+    border: 1px solid var(--border-color);
     border-radius: 8px;
     padding: 0.75rem;
     margin: 1rem 0;
@@ -1309,8 +1309,8 @@ body {
 }
 .delete-modal-jobs .job-row {
     padding: 0.25rem 0;
-    color: #495057;
-    border-bottom: 1px solid #e9ecef;
+    color: var(--text-base);
+    border-bottom: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
     gap: 0.5rem;
@@ -1319,10 +1319,10 @@ body {
     border-bottom: none;
 }
 .delete-modal-jobs .job-row .job-row-id {
-    color: #6c757d;
+    color: var(--text-muted);
 }
 .delete-modal-jobs .job-row .job-row-name {
-    color: #212529;
+    color: var(--text-dark);
     text-align: right;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1332,8 +1332,8 @@ body {
 .delete-modal-option {
     margin: 1.25rem 0 0.5rem;
     padding: 0.75rem;
-    background: #fff8e1;
-    border-left: 3px solid #ffc107;
+    background: var(--warning-soft);
+    border-left: 3px solid var(--warning-color);
     border-radius: 4px;
 }
 .delete-modal-option .checkbox-label {
@@ -1342,7 +1342,7 @@ body {
 .delete-modal-hint {
     margin: 0.4rem 0 0 1.5rem;
     font-size: 0.8rem;
-    color: #856404;
+    color: var(--text-muted);
 }
 .modal-footer {
     display: flex;
@@ -1554,7 +1554,7 @@ body {
     font-size: 1rem;
     font-family: inherit;
     transition: var(--transition);
-    background: white;
+    background: var(--bg-white);
 }
 
 .form-group input:focus,

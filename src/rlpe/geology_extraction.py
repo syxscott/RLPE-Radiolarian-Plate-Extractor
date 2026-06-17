@@ -149,24 +149,35 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
 
 
 def _extract_first_coord(text: str) -> tuple[float | None, float | None]:
-    """Best-effort coordinate extraction. Returns ``(lat, lon)`` or ``(None, None)``."""
+    """Best-effort coordinate extraction. Returns ``(lat, lon)`` or ``(None, None)``.
+
+    Requires at least one hemisphere indicator (N/S/E/W) or a degree symbol
+    (°) in the match. Without this filter, bare number pairs like "45, 90"
+    (page numbers, specimen dimensions, figure counts) would be falsely
+    parsed as coordinates.
+    """
     if not text:
         return None, None
-    m = COORDINATE_PATTERN.search(text)
-    if not m:
-        return None, None
-    try:
-        lat = float(m.group(1))
-        if m.group(2) and m.group(2).upper() == "S":
-            lat = -lat
-        lon = float(m.group(3))
-        if m.group(4) and m.group(4).upper() == "W":
-            lon = -lon
-        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-            return None, None
-        return lat, lon
-    except Exception:
-        return None, None
+    for m in COORDINATE_PATTERN.finditer(text):
+        # Require at least one hemisphere indicator or degree symbol to
+        # reduce false positives from bare number pairs.
+        has_hemisphere = bool(m.group(2) or m.group(4))
+        has_degree = "°" in m.group(0)
+        if not has_hemisphere and not has_degree:
+            continue
+        try:
+            lat = float(m.group(1))
+            if m.group(2) and m.group(2).upper() == "S":
+                lat = -lat
+            lon = float(m.group(3))
+            if m.group(4) and m.group(4).upper() == "W":
+                lon = -lon
+            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                continue
+            return lat, lon
+        except Exception:
+            continue
+    return None, None
 
 
 def link_species_to_geology(

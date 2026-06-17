@@ -573,7 +573,7 @@ def match_panels(
     for idx, panel in enumerate(panels):
         raw_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
         panel_id = _normalize_panel_label(raw_id)
-        best_species = assigned_species[idx] if idx < len(assigned_species) else (taxa[0] if taxa else None)
+        best_species = assigned_species[idx] if idx < len(assigned_species) else None
         # Caption-pair override: if M3 gave us a structured (label, species) map
         # and the panel's label (or its leading-zero-stripped form) is in
         # it, prefer that species over the order-based fallback.
@@ -587,7 +587,7 @@ def match_panels(
             label_text = panel_label_tokens[panel_id].text
         confidence = float(panel.score)
         if matcher_used:
-            confidence = max(confidence, float(neural_conf[idx]) if idx < len(neural_conf) else confidence)
+            confidence = max(confidence, float(neural_conf[idx]) if idx < len(neural_conf) else 0.0)
         else:
             if panel_id:
                 confidence += 0.08
