@@ -48,11 +48,27 @@ output/
 # Environment and secrets
 .env
 .env.local
+.env.*.local
 *.key
+*.pem
+*.p12
+# Reject any file that might accidentally contain a credential, even
+# ones that don't match the names above (e.g. a stray "credentials.txt"
+# or "secrets.json" that an operator dropped into the repo).
+**/credentials.*
+**/secrets.*
+**/secrets.json
+**/credentials.json
+**/*.secret
 
 # API integration logs
 MiniMax_usage.log
 MiniMax_costs.log
+# Pipeline server output logs that may carry request IDs or cost data
+# (not sensitive on its own, but combined with timing can correlate
+# with API requests).
+service_work/*.log
+uploads/*.log
 # Local-only development scratch scripts (created by the
 # agent during iterative edits; safe to remove).
 scratch_*.py

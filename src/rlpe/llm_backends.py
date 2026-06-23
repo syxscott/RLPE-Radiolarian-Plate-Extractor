@@ -1061,6 +1061,7 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
         extra.get("MiniMax_api_key")
         or os.environ.get("ANTHROPIC_API_KEY")
         or os.environ.get("MiniMax_API_KEY")
+        or os.environ.get("MINIMAX_API_KEY")
     )
     if not api_key and policy != "local_only":
         raise ValueError(

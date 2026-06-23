@@ -269,20 +269,25 @@ def apply_gemma_to_matches(
         match.metadata["gemma_reasoning"] = (
             out.get("reasoning") or "No reasoning provided by LLM backend"
         )
-        # Propagate MiniMax / Ollama / Transformers error info so the
-        # FallbackHandler popup can show the real reason (not "no detailed error").
-        if out.get("error"):
-            match.metadata["gemma_error"] = str(out.get("error"))
-        if out.get("error_type"):
-            match.metadata["gemma_error_type"] = str(out.get("error_type"))
-        if out.get("request_id"):
-            match.metadata["MiniMax_request_id"] = str(out.get("request_id"))
-        if out.get("cost_cny") is not None:
-            match.metadata["MiniMax_cost_cny"] = float(out.get("cost_cny"))
-        if out.get("model_version"):
-            match.metadata["MiniMax_model_version"] = str(out.get("model_version"))
+        # Bug #3 fix: only propagate error info when the call genuinely
+        # failed. A successful call may still carry an "error" key from a
+        # previous raw_text echo, and stamping it would cause
+        # ``RadiolarianPipeline._matches_have_fallback_error`` to misclassify
+        # a successful call as failed, triggering unnecessary fallback.
+        actually_failed = bool(out.get("fallback_used")) or gemma_conf < conf_threshold
+        if actually_failed:
+            if out.get("error"):
+                match.metadata["gemma_error"] = str(out.get("error"))
+            if out.get("error_type"):
+                match.metadata["gemma_error_type"] = str(out.get("error_type"))
+            if out.get("request_id"):
+                match.metadata["MiniMax_request_id"] = str(out.get("request_id"))
+            if out.get("cost_cny") is not None:
+                match.metadata["MiniMax_cost_cny"] = float(out.get("cost_cny"))
+            if out.get("model_version"):
+                match.metadata["MiniMax_model_version"] = str(out.get("model_version"))
 
-        if gemma_conf >= conf_threshold:
+        if gemma_conf >= conf_threshold and not out.get("fallback_used"):
             match.panel_id = out.get("label") or match.panel_id
             match.species = out.get("species") or match.species
             match.label_text = out.get("label") or match.label_text

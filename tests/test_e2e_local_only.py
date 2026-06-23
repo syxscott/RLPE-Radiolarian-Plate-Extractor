@@ -22,7 +22,11 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
+
+# Compat: ``datetime.UTC`` was added in Python 3.11. Use ``timezone.utc``
+# so the test runs on Python 3.10 conda envs that the user may use.
+UTC = timezone.utc  # noqa: UP017
 from pathlib import Path
 
 import pytest

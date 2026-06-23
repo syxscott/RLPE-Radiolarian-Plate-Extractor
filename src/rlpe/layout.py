@@ -20,22 +20,25 @@ def render_pdf_pages(pdf_path: Path, out_dir: Path, dpi: int = 200) -> list[Page
     fitz = _import_pymupdf()
 
     doc = fitz.open(str(pdf_path))
-    for idx, page in enumerate(doc, start=1):
-        pix = page.get_pixmap(dpi=dpi, alpha=False)
-        image_path = out_dir / f"page_{idx:03d}.png"
-        pix.save(str(image_path))
-        text = page.get_text("text") or ""
-        pages.append(
-            PageRecord(
-                page_index=idx,
-                image_path=str(image_path),
-                text=text,
-                width=pix.width,
-                height=pix.height,
-                metadata={"dpi": dpi},
+    try:
+        for idx, page in enumerate(doc, start=1):
+            pix = page.get_pixmap(dpi=dpi, alpha=False)
+            image_path = out_dir / f"page_{idx:03d}.png"
+            pix.save(str(image_path))
+            text = page.get_text("text") or ""
+            pages.append(
+                PageRecord(
+                    page_index=idx,
+                    image_path=str(image_path),
+                    text=text,
+                    width=pix.width,
+                    height=pix.height,
+                    metadata={"dpi": dpi},
+                )
             )
-        )
-    return pages
+        return pages
+    finally:
+        doc.close()
 
 
 def _import_pymupdf():
@@ -93,6 +96,12 @@ def detect_figure_regions(page: PageRecord, min_area: int = 8000) -> list[Figure
     image = cv2.imread(page.image_path, cv2.IMREAD_UNCHANGED)
     if image is None:
         return []
+    # Bug #11 fix: PyMuPDF may save RGBA PNGs. cv2.threshold on a 4-channel
+    # image has version-dependent behaviour and can produce an all-zero binary,
+    # causing every page to fall back to the fullpage-region branch. Strip
+    # alpha explicitly and convert to BGR before grayscale conversion.
+    if image.ndim == 3 and image.shape[2] == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
     if image.ndim == 2:
         gray = image
     else:

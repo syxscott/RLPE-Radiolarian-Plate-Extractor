@@ -177,7 +177,7 @@ class JobOptions(BaseModel):
     def _validate_backend(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        allowed = {"transformers", "ollama", "llamacpp", "MiniMax"}
+        allowed = {"transformers", "ollama", "llamacpp", "MiniMax", "MiniMax-m3", "minimax"}
         if v not in allowed:
             raise ValueError(f"llm_backend must be one of {sorted(allowed)}, got {v!r}")
         return v
@@ -966,7 +966,12 @@ def llm_status() -> dict[str, Any]:
     confirm WHICH key is loaded when they have multiple .env files.
     Also returns aggregated MiniMax usage if any jobs have made calls.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("MiniMax_API_KEY") or ""
+    api_key = (
+        os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("MiniMax_API_KEY")
+        or os.environ.get("MINIMAX_API_KEY")
+        or ""
+    )
     key_configured = bool(api_key.strip())
 
     # Aggregate MiniMax cost across all completed jobs (if any matched
@@ -1030,7 +1035,11 @@ def llm_status() -> dict[str, Any]:
         "key_source": (
             "env:ANTHROPIC_API_KEY"
             if os.environ.get("ANTHROPIC_API_KEY")
-            else ("env:MiniMax_API_KEY" if os.environ.get("MiniMax_API_KEY") else None)
+            else (
+                "env:MiniMax_API_KEY"
+                if os.environ.get("MiniMax_API_KEY")
+                else ("env:MINIMAX_API_KEY" if os.environ.get("MINIMAX_API_KEY") else None)
+            )
         ),
         "active_endpoint": active_endpoint,
         "active_model": active_model,
@@ -1073,6 +1082,7 @@ def test_llm(req: TestLLMRequest | None = None) -> dict[str, Any]:
         body.api_key
         or os.environ.get("ANTHROPIC_API_KEY")
         or os.environ.get("MiniMax_API_KEY")
+        or os.environ.get("MINIMAX_API_KEY")
         or ""
     ).strip()
     if not api_key:

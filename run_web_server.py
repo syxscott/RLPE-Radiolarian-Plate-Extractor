@@ -51,6 +51,7 @@ _RLPE_PROJECT_OVERRIDE_KEYS = {
     "MiniMax_API_KEY",
     "MiniMax_MODEL",
     "MiniMax_BASE_URL",
+    "MINIMAX_API_KEY",
 }
 _force_override = os.environ.get("RLPE_FORCE_ENV_OVERRIDE") == "1"
 

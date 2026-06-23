@@ -260,6 +260,18 @@ body {
     flex-shrink: 0;
 }
 
+/* ==================== Global utilities ==================== */
+/* `.hidden` is used extensively by the JS to toggle visibility of config
+   panels, modals, banners, etc. Without a global rule, elements with
+   `class="... hidden"` were NOT actually hidden (e.g. `.config-group`
+   has `display:flex` which overrode any non-!important `.hidden`).
+   The `!important` ensures `.hidden` always wins over component-level
+   `display` rules; removing the class via JS restores the element's
+   normal display. */
+.hidden {
+    display: none !important;
+}
+
 /* ==================== Tab Content ==================== */
 .tab-content {
     padding: 1.5rem;

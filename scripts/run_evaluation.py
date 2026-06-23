@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
-UTC = UTC
+# Compat: ``datetime.UTC`` was added in Python 3.11. Use ``timezone.utc``
+# so the script runs on Python 3.10 conda envs that the user may use.
+UTC = timezone.utc  # noqa: UP017
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

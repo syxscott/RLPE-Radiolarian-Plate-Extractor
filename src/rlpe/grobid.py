@@ -138,10 +138,17 @@ def extract_panel_labels_from_caption(text: str) -> list[str]:
     if not text:
         return []
     labels: list[str] = []
-    pattern = re.compile(r"(?:\(|\[)?([A-Z]|[0-9]{1,2})(?:\)|\])?(?=\s*[:\.\-\)]|\s|,)")
+    # Bug #10 fix: require explicit wrapping or separator to avoid false
+    # positives from sentence-initial capitals. Two alternatives:
+    #   group 1: parenthesised/bracketed labels like (A) [1] 1)
+    #   group 2: separator-style labels like A. 1: 2.
+    pattern = re.compile(
+        r"(?:\(|\[)([A-Z]|[0-9]{1,2})(?:\)|\])"
+        r"|(?<!\w)([A-Z]|[0-9]{1,2})(?=\.|\:)\s*"
+    )
     for m in pattern.finditer(text):
-        label = m.group(1)
-        if label not in labels:
+        label = (m.group(1) or m.group(2) or "").strip()
+        if label and label not in labels:
             labels.append(label)
     return labels
 

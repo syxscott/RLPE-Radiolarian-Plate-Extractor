@@ -22,7 +22,13 @@ from .types import CaptionRecord, MatchResult, PanelCandidate, PaperMetadata
 logger = logging.getLogger(__name__)
 
 
-SUBPANEL_LABEL_PATTERN = re.compile(r"(?:\(|\[)?([A-Z]|[0-9]{1,2})(?:\)|\])?(?=\s*[:\.\-\)]|\s|,)")
+# Bug #10 fix: require labels to be wrapped in () or [] OR followed immediately
+# by '.' or ':' to reduce false positives on normal sentence-initial capitals.
+# Two alternatives: group 1 = parenthesised/bracketed; group 2 = separator-style.
+SUBPANEL_LABEL_PATTERN = re.compile(
+    r"(?:\(|\[)([A-Z]|[0-9]{1,2})(?:\)|\])"
+    r"|(?<!\w)([A-Z]|[0-9]{1,2})(?=\.|\:)\s*"
+)
 TAXON_LIKE_PATTERN = re.compile(
     r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b"
 )
@@ -178,31 +184,61 @@ class NeuralGraphMatcher:
             dtype=torch.float32,
             device=self.device,
         )
-        label_feats = torch.tensor(
-            [_label_features(t, w, h, idx=i) for i, t in enumerate(ocr_label_tokens)]
-            or [[0.0] * 12],
-            dtype=torch.float32,
-            device=self.device,
-        )
-        species_feats = torch.tensor(
-            [_species_features(name, idx=i) for i, name in enumerate(taxa)] or [[0.0] * 12],
-            dtype=torch.float32,
-            device=self.device,
-        )
+
+        # Bug #5 fix: when there are no OCR label tokens (or no taxa), we MUST
+        # NOT feed a dummy row of zeros. softmax over a single zero row yields
+        # 1.0, which then produced near-1.0 confidence for every panel — a
+        # false high-confidence match. Instead, compute each side only when it
+        # has real candidates, and return 0.0 confidence for the missing side.
+        has_labels = bool(ocr_label_tokens)
+        has_taxa = bool(taxa)
+
+        if has_labels:
+            label_feats = torch.tensor(
+                [_label_features(t, w, h, idx=i) for i, t in enumerate(ocr_label_tokens)],
+                dtype=torch.float32,
+                device=self.device,
+            )
+        if has_taxa:
+            species_feats = torch.tensor(
+                [_species_features(name, idx=i) for i, name in enumerate(taxa)],
+                dtype=torch.float32,
+                device=self.device,
+            )
 
         with torch.inference_mode():
-            logits_pl, logits_ps = self.model(panel_feats, label_feats, species_feats)
-            probs_pl = logits_pl.softmax(dim=-1).detach().cpu().numpy()
-            probs_ps = logits_ps.softmax(dim=-1).detach().cpu().numpy()
+            feat_dim = panel_feats.shape[1]
+            if has_labels and has_taxa:
+                logits_pl, logits_ps = self.model(panel_feats, label_feats, species_feats)
+                probs_pl = logits_pl.softmax(dim=-1).detach().cpu().numpy()
+                probs_ps = logits_ps.softmax(dim=-1).detach().cpu().numpy()
+            elif has_labels and not has_taxa:
+                zero_species = torch.zeros((1, feat_dim), dtype=torch.float32, device=self.device)
+                logits_pl, _ = self.model(panel_feats, label_feats, zero_species)
+                probs_pl = logits_pl.softmax(dim=-1).detach().cpu().numpy()
+                probs_ps = np.zeros((len(panels), 0), dtype=np.float32)
+            elif has_taxa and not has_labels:
+                zero_labels = torch.zeros((1, feat_dim), dtype=torch.float32, device=self.device)
+                _, logits_ps = self.model(panel_feats, zero_labels, species_feats)
+                probs_pl = np.zeros((len(panels), 0), dtype=np.float32)
+                probs_ps = logits_ps.softmax(dim=-1).detach().cpu().numpy()
+            else:
+                n = len(panels)
+                return [None] * n, [None] * n, [0.0] * n
 
-        label_assign = _bipartite_assign(probs_pl, [tok.text.strip() for tok in ocr_label_tokens])
-        species_assign = _bipartite_assign(probs_ps, taxa)
+        label_assign = (
+            _bipartite_assign(probs_pl, [tok.text.strip() for tok in ocr_label_tokens])
+            if has_labels
+            else [None] * len(panels)
+        )
+        species_assign = _bipartite_assign(probs_ps, taxa) if has_taxa else [None] * len(panels)
 
         confs: list[float] = []
         for i in range(len(panels)):
-            p1 = float(np.max(probs_pl[i])) if probs_pl.shape[1] > 0 else 0.0
-            p2 = float(np.max(probs_ps[i])) if probs_ps.shape[1] > 0 else 0.0
-            confs.append((p1 + p2) * 0.5)
+            p1 = float(np.max(probs_pl[i])) if has_labels and probs_pl.shape[1] > 0 else 0.0
+            p2 = float(np.max(probs_ps[i])) if has_taxa and probs_ps.shape[1] > 0 else 0.0
+            denom = (1.0 if has_labels else 0.0) + (1.0 if has_taxa else 0.0)
+            confs.append((p1 + p2) / denom if denom > 0 else 0.0)
         return label_assign, species_assign, confs
 
 
@@ -212,9 +248,10 @@ def extract_panel_labels(caption_text: str) -> list[str]:
     if is_placeholder_caption(caption_text):
         return []
     labels: list[str] = []
-    # Prefer explicit subpanel markers like (A), A., B-, 1), etc.
+    # SUBPANEL_LABEL_PATTERN has two alternatives (parenthesized vs.
+    # separator-followed); check both groups to find the captured label.
     for m in SUBPANEL_LABEL_PATTERN.finditer(caption_text):
-        label = m.group(1).strip()
+        label = (m.group(1) or m.group(2) or "").strip()
         if label and label not in labels:
             labels.append(label)
     return labels

@@ -26,9 +26,14 @@ import platform
 import socket
 import subprocess
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
-UTC = UTC
+# Compat shim: ``datetime.UTC`` was added in Python 3.11; on 3.10
+# (and earlier) the canonical spelling is ``datetime.timezone.utc``.
+# Using ``timezone.utc`` keeps this module importable on Python 3.10
+# even though pyproject.toml formally requires >=3.11, so users who
+# run the pipeline in an older conda env aren't blocked at import time.
+UTC = timezone.utc  # noqa: UP017
 from pathlib import Path
 from typing import Any
 

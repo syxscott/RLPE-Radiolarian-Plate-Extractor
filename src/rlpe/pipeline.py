@@ -572,7 +572,8 @@ Rules:
                 _rgb = cv2.cvtColor(region_img, cv2.COLOR_BGR2RGB)
                 plate_pil = _PILImage.fromarray(_rgb)
             else:
-                plate_pil = _PILImage.open(str(region_img)).convert("RGB")
+                with _PILImage.open(str(region_img)) as _im:
+                    plate_pil = _im.convert("RGB")
         except Exception:
             return None
 
@@ -738,7 +739,8 @@ Rules:
                     _rgb = cv2.cvtColor(region_img, cv2.COLOR_BGR2RGB)
                     plate_pil = _PILImage.fromarray(_rgb)
                 else:
-                    plate_pil = _PILImage.open(str(region_img)).convert("RGB")
+                    with _PILImage.open(str(region_img)) as _im:
+                        plate_pil = _im.convert("RGB")
                 # Stage 1: caption parser
                 if self.m3_engine._stage_enabled(1):
                     m3_caption_pairs = self.m3_engine.parse_caption(caption.caption or "")
@@ -1298,7 +1300,8 @@ Rules:
                 rgb = cv2.cvtColor(region_img, cv2.COLOR_BGR2RGB)
                 plate_pil = _PILImage.fromarray(rgb)
             else:
-                plate_pil = _PILImage.open(str(region_img)).convert("RGB")
+                with _PILImage.open(str(region_img)) as _im:
+                    plate_pil = _im.convert("RGB")
             panel_matches: list[PanelMatch] = []
             for idx, m in enumerate(matches, start=1):
                 pid = str(m.panel_id or f"P{idx}")
@@ -1410,7 +1413,11 @@ Rules:
             logger.warning(
                 "[MiniMax] API error, switching to local Gemma4 for %s/%s", paper_id, figure_id
             )
-            self._fallback_gemma_runtime = self._build_local_gemma_fallback()
+            # Bug #7 fix: cache the local Gemma4 runtime after the first
+            # successful build so subsequent fallbacks don't reload a multi-GB
+            # model each time.
+            if self._fallback_gemma_runtime is None:
+                self._fallback_gemma_runtime = self._build_local_gemma_fallback()
             if self._fallback_gemma_runtime is None:
                 logger.warning("Local Gemma4 fallback unavailable; keeping rule results.")
                 for m in result:
