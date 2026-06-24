@@ -14,6 +14,7 @@ record. The smoke test fixture is git-ignored, so this test is a
 no-op on a fresh checkout. When run locally after a real pipeline
 run, it surfaces schema drift as a red build.
 """
+
 from __future__ import annotations
 
 import json
@@ -73,6 +74,7 @@ class TestPipelineContract:
 
         # Use the model class (not instance) — instance access is deprecated
         from rlpe.schema_models import PanelMetadata
+
         allowed = set(PanelMetadata.model_fields.keys())
 
         unknown = runtime_keys - allowed

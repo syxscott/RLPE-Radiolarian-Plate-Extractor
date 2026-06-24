@@ -20,12 +20,14 @@ logger = logging.getLogger(__name__)
 
 # ---- data types -----------------------------------------------------------
 
+
 @dataclass(slots=True)
 class FigureCaptionPair:
     """A figure image (or merged image group) paired with its caption."""
+
     figure_id: str
     page_number: int
-    image_paths: list[str]          # one or more exported image files
+    image_paths: list[str]  # one or more exported image files
     caption_text: str | None
     merged_bbox: tuple[float, float, float, float] | None  # [left, bottom, right, top] in PDF pts
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -44,6 +46,7 @@ class OpenDataLoaderResult:
 
 
 # ---- extractor -------------------------------------------------------------
+
 
 class OpenDataLoaderExtractor:
     """Wrap opendataloader-pdf to extract figures, captions, and full text.
@@ -90,6 +93,7 @@ class OpenDataLoaderExtractor:
             return self._available
         try:
             import opendataloader_pdf  # noqa: F401
+
             self._available = True
         except ImportError:
             logger.warning("opendataloader-pdf not installed; OpenDataLoader unavailable")
@@ -104,9 +108,13 @@ class OpenDataLoaderExtractor:
 
         if not self.is_available():
             return OpenDataLoaderResult(
-                paper_id=paper_id, json_data=None, output_dir=out,
-                figures=[], fulltext_sections=[],
-                success=False, error="opendataloader-pdf not installed",
+                paper_id=paper_id,
+                json_data=None,
+                output_dir=out,
+                figures=[],
+                fulltext_sections=[],
+                success=False,
+                error="opendataloader-pdf not installed",
             )
 
         try:
@@ -114,9 +122,13 @@ class OpenDataLoaderExtractor:
             json_path = self._find_json(out)
             if json_path is None:
                 return OpenDataLoaderResult(
-                    paper_id=paper_id, json_data=None, output_dir=out,
-                    figures=[], fulltext_sections=[],
-                    success=False, error="No JSON output produced by OpenDataLoader",
+                    paper_id=paper_id,
+                    json_data=None,
+                    output_dir=out,
+                    figures=[],
+                    fulltext_sections=[],
+                    success=False,
+                    error="No JSON output produced by OpenDataLoader",
                 )
             data = _load_json(json_path)
             figures = self._extract_figures(data, out, paper_id)
@@ -130,17 +142,24 @@ class OpenDataLoaderExtractor:
             # has something to work with.
             figures = self._ocr_missing_captions(figures, pdf_path)
             return OpenDataLoaderResult(
-                paper_id=paper_id, json_data=data, output_dir=out,
-                figures=figures, fulltext_sections=sections,
+                paper_id=paper_id,
+                json_data=data,
+                output_dir=out,
+                figures=figures,
+                fulltext_sections=sections,
                 success=True,
                 paper_metadata=paper_metadata,
             )
         except Exception as exc:
             logger.exception("OpenDataLoader extraction failed for %s", pdf_path)
             return OpenDataLoaderResult(
-                paper_id=paper_id, json_data=None, output_dir=out,
-                figures=[], fulltext_sections=[],
-                success=False, error=str(exc),
+                paper_id=paper_id,
+                json_data=None,
+                output_dir=out,
+                figures=[],
+                fulltext_sections=[],
+                success=False,
+                error=str(exc),
             )
 
     # -- caption OCR fallback ------------------------------------------------
@@ -161,8 +180,11 @@ class OpenDataLoaderExtractor:
                 return self._ocr_engine
             try:
                 import easyocr
+
                 self._ocr_engine = easyocr.Reader(
-                    ["en"], gpu=False, verbose=False,
+                    ["en"],
+                    gpu=False,
+                    verbose=False,
                 )
             except Exception:
                 logger.warning(
@@ -243,9 +265,7 @@ class OpenDataLoaderExtractor:
                 if cache_key in ocr_cache:
                     recovered = ocr_cache[cache_key]
                 else:
-                    recovered = _ocr_caption_band(
-                        doc, page_index, fig.merged_bbox, ocr_engine, np
-                    )
+                    recovered = _ocr_caption_band(doc, page_index, fig.merged_bbox, ocr_engine, np)
                     ocr_cache[cache_key] = recovered
                 if recovered:
                     fig.metadata = dict(fig.metadata or {})
@@ -316,8 +336,7 @@ class OpenDataLoaderExtractor:
             # image on a "plate page" but linked to a different plate is not
             # accidentally re-surfaced as a leftover.
             leftover_images = [
-                img for img in images
-                if int(img.get("id", -1)) not in claimed_image_ids
+                img for img in images if int(img.get("id", -1)) not in claimed_image_ids
             ]
             if leftover_images:
                 # Build a single fallback figure for unassigned images so the
@@ -334,7 +353,9 @@ class OpenDataLoaderExtractor:
                     plate_cap_list: list[str] = []
                     for img in plate_images:
                         img_id = img.get("id")
-                        cap_text = caption_for_image.get(int(img_id)) if img_id is not None else None
+                        cap_text = (
+                            caption_for_image.get(int(img_id)) if img_id is not None else None
+                        )
                         if cap_text:
                             plate_cap_list.append(cap_text)
                     caption_text = " ".join(plate_cap_list) if plate_cap_list else None
@@ -343,14 +364,16 @@ class OpenDataLoaderExtractor:
                         caption_text = _find_nearest_caption(plate_images, captions, page)
                     image_paths = _resolve_image_paths(plate_images, output_dir)
                     merged_bbox = _union_bbox(plate_images)
-                    plate_pairs.append(FigureCaptionPair(
-                        figure_id=f"od_fig_{paper_id}_p{plate_images[0].get('page number', 1):03d}_{plate_idx:02d}",
-                        page_number=int(plate_images[0].get("page number", 1)),
-                        image_paths=image_paths,
-                        caption_text=caption_text,
-                        merged_bbox=merged_bbox,
-                        metadata={"unassigned": True},
-                    ))
+                    plate_pairs.append(
+                        FigureCaptionPair(
+                            figure_id=f"od_fig_{paper_id}_p{plate_images[0].get('page number', 1):03d}_{plate_idx:02d}",
+                            page_number=int(plate_images[0].get("page number", 1)),
+                            image_paths=image_paths,
+                            caption_text=caption_text,
+                            merged_bbox=merged_bbox,
+                            metadata={"unassigned": True},
+                        )
+                    )
             return plate_pairs
 
         # FALLBACK: no plate captions found. Use the original spatial-merge +
@@ -380,17 +403,20 @@ class OpenDataLoaderExtractor:
 
             image_paths = _resolve_image_paths(plate_images, output_dir)
             merged_bbox = _union_bbox(plate_images)
-            pairs.append(FigureCaptionPair(
-                figure_id=f"od_fig_{paper_id}_p{plate_images[0].get('page number', 1):03d}_{plate_idx:02d}",
-                page_number=int(plate_images[0].get("page number", 1)),
-                image_paths=image_paths,
-                caption_text=caption_text,
-                merged_bbox=merged_bbox,
-            ))
+            pairs.append(
+                FigureCaptionPair(
+                    figure_id=f"od_fig_{paper_id}_p{plate_images[0].get('page number', 1):03d}_{plate_idx:02d}",
+                    page_number=int(plate_images[0].get("page number", 1)),
+                    image_paths=image_paths,
+                    caption_text=caption_text,
+                    merged_bbox=merged_bbox,
+                )
+            )
         return pairs
 
 
 # ---- helpers (module-level) ------------------------------------------------
+
 
 def _load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
@@ -401,7 +427,9 @@ def _iter_all_elements(kids: list[dict[str, Any]]):
     """Recursively yield every element in the content tree."""
     for kid in kids:
         yield kid
-        children = kid.get("kids") or kid.get("rows") or kid.get("list items") or kid.get("cells") or []
+        children = (
+            kid.get("kids") or kid.get("rows") or kid.get("list items") or kid.get("cells") or []
+        )
         if isinstance(children, list):
             yield from _iter_all_elements(children)
 
@@ -417,7 +445,11 @@ def _collect_images(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _images_page_index(images: list[dict[str, Any]]) -> set[int]:
     """Return the set of page numbers that contain at least one image."""
-    return {int(img.get("page number", 0) or 0) for img in images if int(img.get("page number", 0) or 0) > 0}
+    return {
+        int(img.get("page number", 0) or 0)
+        for img in images
+        if int(img.get("page number", 0) or 0) > 0
+    }
 
 
 def _merge_nearby_images(
@@ -564,6 +596,7 @@ def _ocr_caption_band(
         )
         # EasyOCR expects BGR.
         import cv2
+
         img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         try:
             results = ocr_engine.readtext(img_bgr)
@@ -611,8 +644,18 @@ _PLATE_CAPTION_RE = re.compile(
 )
 
 _ROMAN_TO_INT = {
-    "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6,
-    "VII": 7, "VIII": 8, "IX": 9, "X": 10, "XI": 11, "XII": 12,
+    "I": 1,
+    "II": 2,
+    "III": 3,
+    "IV": 4,
+    "V": 5,
+    "VI": 6,
+    "VII": 7,
+    "VIII": 8,
+    "IX": 9,
+    "X": 10,
+    "XI": 11,
+    "XII": 12,
 }
 
 
@@ -629,6 +672,7 @@ def _plate_number_from_match(m: re.Match) -> int:
     if roman is not None:
         return _ROMAN_TO_INT.get(roman.upper(), 0)
     return 0
+
 
 # Match "Fig. 1", "Fig 1", "Figure 1" — covers review/synthesis papers
 # that use "Fig." numbering instead of "Plate" (e.g. Wever 2006, where
@@ -666,24 +710,28 @@ _PLATE_INLINE_REF_RE = re.compile(
 # We grab the species name(s) from the start of the line, then look right-
 # ward for the plate ref. Pouille 2014 is the canonical example.
 _SPECIES_NAME_RE = re.compile(
-    r"([A-Z][a-z]+"          # Genus
+    r"([A-Z][a-z]+"  # Genus
     r"(?:"
-    r"[?.]?\s+sp\."          # "Genus? sp." (?, period, or no marker — OCR
-                              #  often prints "Polyentactinia. sp." instead of
-                              #  "Polyentactinia sp.")
+    r"[?.]?\s+sp\."  # "Genus? sp." (?, period, or no marker — OCR
+    #  often prints "Polyentactinia. sp." instead of
+    #  "Polyentactinia sp.")
     r"(?:\s+(?:[A-Z]\.|[A-Z]))?"  #   S. (abbrev genus) OR " sp. A" form
     r"(?:\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+)?"  # cf./aff. S. species
     r"|"
-    r"[?.]?\s+[a-z][a-z\-]+"   # "Genus? species" (Pouille) or "Genus species"
+    r"[?.]?\s+[a-z][a-z\-]+"  # "Genus? species" (Pouille) or "Genus species"
     r"(?:\s+[a-z][a-z\-]+)*"  # optional third epithet
     r")"
     r")"
 )
 
 
-def _collect_following_text(kids: list[dict[str, Any]], start_idx: int,
-                             same_page: int, max_items: int = 4,
-                             kinds: tuple[str, ...] = ("paragraph", "list")) -> str:
+def _collect_following_text(
+    kids: list[dict[str, Any]],
+    start_idx: int,
+    same_page: int,
+    max_items: int = 4,
+    kinds: tuple[str, ...] = ("paragraph", "list"),
+) -> str:
     """Return the concatenated ``content`` of up to ``max_items`` siblings
     after ``start_idx`` on the same page, stopping at the next ``heading``
     or ``image`` / ``table``. Used to expand a bare ``Plate N`` heading
@@ -831,22 +879,24 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # species description paragraph) so we exclude paragraphs from
         # the expansion when the matched element is itself a paragraph.
         if etype == "heading":
-            extra = _collect_following_text(kids, idx, page, max_items=3,
-                                            kinds=("paragraph", "list"))
+            extra = _collect_following_text(
+                kids, idx, page, max_items=3, kinds=("paragraph", "list")
+            )
         elif etype in ("paragraph", "caption"):
-            extra = _collect_following_text(kids, idx, page, max_items=3,
-                                            kinds=("list",))
+            extra = _collect_following_text(kids, idx, page, max_items=3, kinds=("list",))
         else:
             extra = ""
         if extra:
             content = content + "\n\n" + extra
-        found.append({
-            "plate_number": plate_number,
-            "page_number": page,
-            "content": content,
-            "element": kid,
-            "kind": kind,
-        })
+        found.append(
+            {
+                "plate_number": plate_number,
+                "page_number": page,
+                "content": content,
+                "element": kid,
+                "kind": kind,
+            }
+        )
 
     # Reconstruction pass: for plates without a real caption, scan the
     # body paragraphs for inline "Pl. N, fig. M" mentions and assemble
@@ -882,9 +932,7 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # and the *next* real plate's caption page. The figure may sit
         # a page or two after the body description (Pouille 2014 plate
         # 1 is described on p4 with the figure on p5).
-        next_plate_page = next(
-            (pp for pp in real_plate_pages if pp > ref_page), None
-        )
+        next_plate_page = next((pp for pp in real_plate_pages if pp > ref_page), None)
         page_lo = ref_page
         page_hi = next_plate_page if next_plate_page is not None else ref_page + 3
         has_image = any(page_lo <= p <= page_hi for p in images_by_page)
@@ -895,12 +943,14 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for sp, plate_ref, page in mentions:
             lines.append(f"{sp} ({plate_ref})")
         earliest_page = ref_pages[0]
-        found.append({
-            "plate_number": plate_number,
-            "page_number": earliest_page,
-            "content": "\n".join(lines),
-            "element": None,
-        })
+        found.append(
+            {
+                "plate_number": plate_number,
+                "page_number": earliest_page,
+                "content": "\n".join(lines),
+                "element": None,
+            }
+        )
     found.sort(key=lambda d: (d["plate_number"], d["page_number"]))
     return found
 
@@ -919,7 +969,7 @@ def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tup
             continue
         if k.get("type") != "paragraph":
             continue
-        text = (k.get("content") or "")
+        text = k.get("content") or ""
         if not text:
             continue
         page = int(k.get("page number", 0) or 0)
@@ -930,7 +980,7 @@ def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tup
             # for a binomial that starts a sentence/line OR follows
             # typical parens/commas.
             left_start = max(0, m.start() - 250)
-            prefix = text[left_start:m.start()]
+            prefix = text[left_start : m.start()]
             sp_match = None
             # Find ALL species matches in the prefix and take the
             # closest non-author-citation one. Splitting on ".\n;" was
@@ -970,10 +1020,22 @@ def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tup
 # Author-citation words that frequently follow a surname in a parenthetical
 # paleontology citation ("Nazarov in Nazarov & Ormiston 1985", "Smith &
 # Jones 2001", etc.) and that we should NOT treat as a species epithet.
-_AUTHOR_CITATION_WORDS = frozenset({
-    "in", "and", "&", "et", "al", "al.", "of", "de", "von", "van",
-    "in Nazarov", "in Ormiston",
-})
+_AUTHOR_CITATION_WORDS = frozenset(
+    {
+        "in",
+        "and",
+        "&",
+        "et",
+        "al",
+        "al.",
+        "of",
+        "de",
+        "von",
+        "van",
+        "in Nazarov",
+        "in Ormiston",
+    }
+)
 
 # Detect an inline "(SURNAME)" style author citation in the head of a
 # paragraph — a strong signal that a "Fig. N" match is body text (a
@@ -1083,14 +1145,16 @@ def _build_figures_from_plate_captions(
         if not candidates:
             # No images found for this plate caption; skip but record the caption
             # so the downstream matcher still sees the text.
-            pairs.append(FigureCaptionPair(
-                figure_id=f"od_plate_{paper_id}_p{page_lo:03d}_pl{cap['plate_number']:02d}",
-                page_number=page_lo,
-                image_paths=[],
-                caption_text=cap["content"],
-                merged_bbox=None,
-                metadata={"plate_number": cap["plate_number"], "no_images": True},
-            ))
+            pairs.append(
+                FigureCaptionPair(
+                    figure_id=f"od_plate_{paper_id}_p{page_lo:03d}_pl{cap['plate_number']:02d}",
+                    page_number=page_lo,
+                    image_paths=[],
+                    caption_text=cap["content"],
+                    merged_bbox=None,
+                    metadata={"plate_number": cap["plate_number"], "no_images": True},
+                )
+            )
             continue
 
         # Mark these image IDs as claimed so the next plate's forward search
@@ -1104,14 +1168,16 @@ def _build_figures_from_plate_captions(
         merged_bbox = _union_bbox(candidates)
         # Anchor the figure_id on the first image's page.
         first_page = int(candidates[0].get("page number", page_lo))
-        pairs.append(FigureCaptionPair(
-            figure_id=f"od_plate_{paper_id}_p{first_page:03d}_pl{cap['plate_number']:02d}",
-            page_number=first_page,
-            image_paths=image_paths,
-            caption_text=cap["content"],
-            merged_bbox=merged_bbox,
-            metadata={"plate_number": cap["plate_number"]},
-        ))
+        pairs.append(
+            FigureCaptionPair(
+                figure_id=f"od_plate_{paper_id}_p{first_page:03d}_pl{cap['plate_number']:02d}",
+                page_number=first_page,
+                image_paths=image_paths,
+                caption_text=cap["content"],
+                merged_bbox=merged_bbox,
+                metadata={"plate_number": cap["plate_number"]},
+            )
+        )
     return pairs, claimed_image_ids
 
 
@@ -1171,7 +1237,7 @@ def _extract_fulltext_sections(data: dict[str, Any]) -> list[dict[str, str]]:
                 sections.append(current_section)
             title = kid.get("content", "")
             current_section = {
-                "section_id": f"od_sec_{len(sections)+1}",
+                "section_id": f"od_sec_{len(sections) + 1}",
                 "title": title,
                 "section_type": _infer_section_type(title),
                 "text": "",
@@ -1194,12 +1260,14 @@ def _extract_fulltext_sections(data: dict[str, Any]) -> list[dict[str, str]]:
                 if content:
                     all_text_parts.append(content)
         if all_text_parts:
-            sections.append({
-                "section_id": "od_sec_1",
-                "title": "Full text",
-                "section_type": "other",
-                "text": "\n".join(all_text_parts),
-            })
+            sections.append(
+                {
+                    "section_id": "od_sec_1",
+                    "title": "Full text",
+                    "section_type": "other",
+                    "text": "\n".join(all_text_parts),
+                }
+            )
     return sections
 
 
@@ -1277,9 +1345,13 @@ def _extract_paper_metadata_from_json(
             break
 
     json_title = (data.get("title") or "").strip()
-    if headings and (not json_title or json_title.lower().endswith(".indd") or "indd" in json_title.lower()):
+    if headings and (
+        not json_title or json_title.lower().endswith(".indd") or "indd" in json_title.lower()
+    ):
         meta.title = headings[0]
-    elif json_title and not json_title.lower().endswith(".indd") and "indd" not in json_title.lower():
+    elif (
+        json_title and not json_title.lower().endswith(".indd") and "indd" not in json_title.lower()
+    ):
         meta.title = json_title
 
     # Authors: prefer the second heading (a "SURNAME, NAME" or "FIRST LAST" list)
@@ -1328,8 +1400,18 @@ def _extract_paper_metadata_from_json(
     paras = _paragraphs_in_order(data)
     abstract_parts: list[str] = []
     in_abstract = False
-    stop_markers = ("key words", "keywords", "received ", "accepted ", "available online",
-                    "copyright", "introduction", "1. introduction", "摘要", "introduction.")
+    stop_markers = (
+        "key words",
+        "keywords",
+        "received ",
+        "accepted ",
+        "available online",
+        "copyright",
+        "introduction",
+        "1. introduction",
+        "摘要",
+        "introduction.",
+    )
     for p in paras:
         low = p.lower().strip()
         if not in_abstract:
@@ -1407,7 +1489,9 @@ def _extract_paper_metadata_from_json(
                 break
 
     # Confidence
-    filled = sum(1 for k in ("title", "doi", "abstract", "year", "journal", "authors") if getattr(meta, k))
+    filled = sum(
+        1 for k in ("title", "doi", "abstract", "year", "journal", "authors") if getattr(meta, k)
+    )
     if filled == 0:
         meta.confidence = 0.0
         meta.source = "none"

@@ -16,14 +16,22 @@ except Exception:  # pragma: no cover
 
 from .ocr import OCRToken
 from .taxon import TaxonEntity
+from .text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
 from .types import CaptionRecord, MatchResult, PanelCandidate, PaperMetadata
 
 logger = logging.getLogger(__name__)
 
 
-SUBPANEL_LABEL_PATTERN = re.compile(r"(?:\(|\[)?([A-Z]|[0-9]{1,2})(?:\)|\])?(?=\s*[:\.\-\)]|\s|,)"
+# Bug #10 fix: require labels to be wrapped in () or [] OR followed immediately
+# by '.' or ':' to reduce false positives on normal sentence-initial capitals.
+# Two alternatives: group 1 = parenthesised/bracketed; group 2 = separator-style.
+SUBPANEL_LABEL_PATTERN = re.compile(
+    r"(?:\(|\[)([A-Z]|[0-9]{1,2})(?:\)|\])"
+    r"|(?<!\w)([A-Z]|[0-9]{1,2})(?=\.|\:)\s*"
 )
-TAXON_LIKE_PATTERN = re.compile(r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b")
+TAXON_LIKE_PATTERN = re.compile(
+    r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b"
+)
 _SINGLE_UPPER = re.compile(r"[A-Z]")
 _SINGLE_DIGITS = re.compile(r"\d{1,2}")
 _SPECIES_QUAL = re.compile(r"\b(sp\.|spp\.|cf\.|aff\.)\b", re.IGNORECASE)
@@ -34,8 +42,23 @@ _SPECIES_QUAL = re.compile(r"\b(sp\.|spp\.|cf\.|aff\.)\b", re.IGNORECASE)
 # can't extract a real caption; ``extract_taxa_from_caption`` used to
 # match "Auto-generated figure" as a binomial and tag every panel with
 # that bogus species. Reject these at the boundary.
-_PLACEHOLDER_CAPTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.IGNORECASE) for p in (
+#
+# Patterns local to the association matcher: these are strict prefix
+# matches (anchored with ^) because the matcher needs to know whether
+# the caption STARTS with a placeholder pattern. The richer detector in
+# ``text_filters.looks_like_placeholder_caption`` (which also catches
+# "Page 5 auto-generated image" anywhere in the string) is used by the
+# pipeline / stage-4 skip logic — see ``is_placeholder_caption`` below
+# which now also ORs in the text_filters predicate so the two stay in
+# sync for the cases the association matcher used to miss.
+# Strict-prefix placeholder patterns LOCAL to the association matcher.
+# These are intentionally narrower than ``text_filters._PLACEHOLDER_CAPTION_PATTERNS``
+# (note the different name — the previous shared-name made it easy to
+# import the wrong one by mistake).  Both are OR'd together inside
+# ``is_placeholder_caption`` below.
+_ASSOC_PLACEHOLDER_PREFIX_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
         r"^auto[-_ ]generated\b",
         r"^auto[-_ ]generated\s+figure\b",
         r"^placeholder\b",
@@ -51,13 +74,28 @@ def is_placeholder_caption(text: str | None) -> bool:
     """Return True if the caption text is a pipeline placeholder rather
     than a real figure description. The pipeline emits "Auto-generated
     figure for page N" when the upstream extractor returns no caption;
-    we don't want that to be treated as a taxon source."""
+    we don't want that to be treated as a taxon source.
+
+    Combines the anchored ``_PLACEHOLDER_CAPTION_PATTERNS`` (strict prefix
+    match — fast and unambiguous for the canonical fallback string) with
+    the broader ``text_filters.looks_like_placeholder_caption`` (handles
+    OpenDataLoader-style ``Page 5 auto-generated image`` where the
+    placeholder keyword is not at the start, as well as the Chinese
+    forms ``自动生成`` / ``页眉``). Without this OR the association
+    matcher would happily call ``extract_taxa_from_caption`` on a
+    "Page 5 auto-generated image" caption and tag every panel with a
+    bogus species.
+    """
     if not text:
         return True
     s = str(text).strip()
     if not s:
         return True
-    return any(p.match(s) for p in _PLACEHOLDER_CAPTION_PATTERNS)
+    if any(p.match(s) for p in _ASSOC_PLACEHOLDER_PREFIX_PATTERNS):
+        return True
+    # Delegate the broader patterns (Page-N prefix, Chinese variants,
+    # copyright headers) to the single source of truth in text_filters.
+    return _looks_like_placeholder_caption(s)
 
 
 @dataclass(slots=True)
@@ -97,7 +135,9 @@ class PanelLabelSpeciesMatcher(nn.Module if nn is not None else object):
             nn.Linear(hidden_dim, hidden_dim),
         )
 
-    def forward(self, panel_feats: torch.Tensor, label_feats: torch.Tensor, species_feats: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, panel_feats: torch.Tensor, label_feats: torch.Tensor, species_feats: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         p = self.panel_encoder(panel_feats)
         l = self.label_encoder(label_feats)
         s = self.species_encoder(species_feats)
@@ -139,31 +179,66 @@ class NeuralGraphMatcher:
 
         h, w = image_shape if image_shape else (1000, 1000)
 
-        panel_feats = torch.tensor([_panel_features(p, w, h, idx=i) for i, p in enumerate(panels)], dtype=torch.float32, device=self.device)
-        label_feats = torch.tensor(
-            [_label_features(t, w, h, idx=i) for i, t in enumerate(ocr_label_tokens)] or [[0.0] * 12],
+        panel_feats = torch.tensor(
+            [_panel_features(p, w, h, idx=i) for i, p in enumerate(panels)],
             dtype=torch.float32,
             device=self.device,
         )
-        species_feats = torch.tensor(
-            [_species_features(name, idx=i) for i, name in enumerate(taxa)] or [[0.0] * 12],
-            dtype=torch.float32,
-            device=self.device,
-        )
+
+        # Bug #5 fix: when there are no OCR label tokens (or no taxa), we MUST
+        # NOT feed a dummy row of zeros. softmax over a single zero row yields
+        # 1.0, which then produced near-1.0 confidence for every panel — a
+        # false high-confidence match. Instead, compute each side only when it
+        # has real candidates, and return 0.0 confidence for the missing side.
+        has_labels = bool(ocr_label_tokens)
+        has_taxa = bool(taxa)
+
+        if has_labels:
+            label_feats = torch.tensor(
+                [_label_features(t, w, h, idx=i) for i, t in enumerate(ocr_label_tokens)],
+                dtype=torch.float32,
+                device=self.device,
+            )
+        if has_taxa:
+            species_feats = torch.tensor(
+                [_species_features(name, idx=i) for i, name in enumerate(taxa)],
+                dtype=torch.float32,
+                device=self.device,
+            )
 
         with torch.inference_mode():
-            logits_pl, logits_ps = self.model(panel_feats, label_feats, species_feats)
-            probs_pl = logits_pl.softmax(dim=-1).detach().cpu().numpy()
-            probs_ps = logits_ps.softmax(dim=-1).detach().cpu().numpy()
+            feat_dim = panel_feats.shape[1]
+            if has_labels and has_taxa:
+                logits_pl, logits_ps = self.model(panel_feats, label_feats, species_feats)
+                probs_pl = logits_pl.softmax(dim=-1).detach().cpu().numpy()
+                probs_ps = logits_ps.softmax(dim=-1).detach().cpu().numpy()
+            elif has_labels and not has_taxa:
+                zero_species = torch.zeros((1, feat_dim), dtype=torch.float32, device=self.device)
+                logits_pl, _ = self.model(panel_feats, label_feats, zero_species)
+                probs_pl = logits_pl.softmax(dim=-1).detach().cpu().numpy()
+                probs_ps = np.zeros((len(panels), 0), dtype=np.float32)
+            elif has_taxa and not has_labels:
+                zero_labels = torch.zeros((1, feat_dim), dtype=torch.float32, device=self.device)
+                _, logits_ps = self.model(panel_feats, zero_labels, species_feats)
+                probs_pl = np.zeros((len(panels), 0), dtype=np.float32)
+                probs_ps = logits_ps.softmax(dim=-1).detach().cpu().numpy()
+            else:
+                n = len(panels)
+                return [None] * n, [None] * n, [0.0] * n
 
-        label_assign = _bipartite_assign(probs_pl, [tok.text.strip() for tok in ocr_label_tokens])
-        species_assign = _bipartite_assign(probs_ps, taxa)
+        label_assign = (
+            _bipartite_assign(probs_pl, [tok.text.strip() for tok in ocr_label_tokens])
+            if has_labels
+            else [None] * len(panels)
+        )
+        species_assign = _bipartite_assign(probs_ps, taxa) if has_taxa else [None] * len(panels)
 
         confs: list[float] = []
         for i in range(len(panels)):
-            p1 = float(np.max(probs_pl[i])) if probs_pl.shape[1] > 0 else 0.0
-            p2 = float(np.max(probs_ps[i])) if probs_ps.shape[1] > 0 else 0.0
-            confs.append((p1 + p2) * 0.5)
+            p1 = float(np.max(probs_pl[i])) if has_labels and probs_pl.shape[1] > 0 else 0.0
+            p2 = float(np.max(probs_ps[i])) if has_taxa and probs_ps.shape[1] > 0 else 0.0
+            denom = (1.0 if has_labels else 0.0) + (1.0 if has_taxa else 0.0)
+            confs.append((p1 + p2) / denom if denom > 0 else 0.0)
         return label_assign, species_assign, confs
 
 
@@ -173,9 +248,10 @@ def extract_panel_labels(caption_text: str) -> list[str]:
     if is_placeholder_caption(caption_text):
         return []
     labels: list[str] = []
-    # Prefer explicit subpanel markers like (A), A., B-, 1), etc.
+    # SUBPANEL_LABEL_PATTERN has two alternatives (parenthesized vs.
+    # separator-followed); check both groups to find the captured label.
     for m in SUBPANEL_LABEL_PATTERN.finditer(caption_text):
-        label = m.group(1).strip()
+        label = (m.group(1) or m.group(2) or "").strip()
         if label and label not in labels:
             labels.append(label)
     return labels
@@ -352,7 +428,9 @@ def label_tokens_from_ocr(tokens: list[OCRToken]) -> list[OCRToken]:
     return out
 
 
-def assign_panels_to_labels(panels: list[PanelCandidate], labels: list[str], ocr_tokens: list[OCRToken]) -> list[str | None]:
+def assign_panels_to_labels(
+    panels: list[PanelCandidate], labels: list[str], ocr_tokens: list[OCRToken]
+) -> list[str | None]:
     """Assign each panel a textual label ("1", "2", ... or "A", "B", ...).
 
     Priority:
@@ -478,6 +556,7 @@ def match_panels(
     if not caption_pairs_used and caption.caption:
         try:
             from .m3_engine import _regex_parse_caption
+
             regex_pairs = _regex_parse_caption(caption.caption)
             for cp in regex_pairs:
                 sp = getattr(cp, "species", None)
@@ -520,9 +599,13 @@ def match_panels(
         try:
             matcher = NeuralGraphMatcher(checkpoint_path=matcher_checkpoint_path)
             if not matcher.is_trained:
-                logger.warning("Neural matcher loaded but not trained; falling back to heuristic matching.")
+                logger.warning(
+                    "Neural matcher loaded but not trained; falling back to heuristic matching."
+                )
             else:
-                merged_label_tokens = ocr_label_tokens or [OCRToken(text=l, confidence=0.5, bbox=(0, 0, 1, 1)) for l in labels]
+                merged_label_tokens = ocr_label_tokens or [
+                    OCRToken(text=l, confidence=0.5, bbox=(0, 0, 1, 1)) for l in labels
+                ]
                 n_labels, n_species, n_conf = matcher.match(
                     panels=panels,
                     ocr_label_tokens=merged_label_tokens,
@@ -543,7 +626,7 @@ def match_panels(
     for idx, panel in enumerate(panels):
         raw_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
         panel_id = _normalize_panel_label(raw_id)
-        best_species = assigned_species[idx] if idx < len(assigned_species) else (taxa[0] if taxa else None)
+        best_species = assigned_species[idx] if idx < len(assigned_species) else None
         # Caption-pair override: if M3 gave us a structured (label, species) map
         # and the panel's label (or its leading-zero-stripped form) is in
         # it, prefer that species over the order-based fallback.
@@ -557,7 +640,7 @@ def match_panels(
             label_text = panel_label_tokens[panel_id].text
         confidence = float(panel.score)
         if matcher_used:
-            confidence = max(confidence, float(neural_conf[idx]) if idx < len(neural_conf) else confidence)
+            confidence = max(confidence, float(neural_conf[idx]) if idx < len(neural_conf) else 0.0)
         else:
             if panel_id:
                 confidence += 0.08

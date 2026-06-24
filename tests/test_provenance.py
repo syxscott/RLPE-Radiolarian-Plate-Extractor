@@ -1,4 +1,5 @@
 """Tests for rlpe.provenance.stamp."""
+
 from __future__ import annotations
 
 import json
@@ -57,6 +58,7 @@ class TestBuildProvenance:
         class Cfg:
             def to_dict(self):
                 return {"k": 1}
+
         p = build_provenance(config=Cfg())
         assert p.config_snapshot == {"k": 1}
 
@@ -64,6 +66,7 @@ class TestBuildProvenance:
         class Cfg:
             x = 5
             y = "hi"
+
         p = build_provenance(config=Cfg())
         assert p.config_snapshot.get("x") == 5
         assert p.config_snapshot.get("y") == "hi"
@@ -118,7 +121,8 @@ class TestWriteProvenanceSidecar:
         sidecar = write_provenance_sidecar(p, out)
         assert sidecar == out.with_suffix(out.suffix + ".provenance.json")
         assert sidecar.exists()
-        data = json.loads(sidecar.read_text())
+        # read_text needs explicit encoding on Windows (cp936/GBK default)
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
         assert data["pipeline_version"] == p.pipeline_version
 
     def test_creates_parent_dirs(self, tmp_path):

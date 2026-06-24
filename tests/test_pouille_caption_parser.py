@@ -16,6 +16,7 @@ Species" form, so without this pass the parser returned zero pairs
 and the order-based fallback tagged every panel with taxa[0] (one
 species per plate, instead of one per fig range).
 """
+
 from __future__ import annotations
 
 from rlpe.m3_engine import _regex_parse_caption
@@ -97,19 +98,28 @@ def test_base_label_alias_rescues_ocr_misread():
     association.py, exercised here through match_panels."""
     from rlpe.association import PanelCandidate, match_panels
     from rlpe.types import CaptionRecord
+
     cap = CaptionRecord(
-        paper_id="t", figure_id="f1",
-        caption=(
-            "Plate 1.\n"
-            "Syntagentactinia? angulata n. sp. (Pl. 1, figs 12–14b)"
-        ),
-        entities=[], figure_number="1", page_index=1,
-        panel_labels=[], source_xml=None,
+        paper_id="t",
+        figure_id="f1",
+        caption=("Plate 1.\nSyntagentactinia? angulata n. sp. (Pl. 1, figs 12–14b)"),
+        entities=[],
+        figure_number="1",
+        page_index=1,
+        panel_labels=[],
+        source_xml=None,
     )
-    panels = [PanelCandidate(panel_id=str(i), bbox=(0, 0, 100, 100), score=0.5) for i in range(12, 15)]
+    panels = [
+        PanelCandidate(panel_id=str(i), bbox=(0, 0, 100, 100), score=0.5) for i in range(12, 15)
+    ]
     matches = match_panels(
-        paper_id="t", figure_id="f1", caption=cap, panels=panels,
-        ocr_tokens=[], taxon_entities=[], caption_pairs=None,
+        paper_id="t",
+        figure_id="f1",
+        caption=cap,
+        panels=panels,
+        ocr_tokens=[],
+        taxon_entities=[],
+        caption_pairs=None,
     )
     by_id = {m.panel_id: m.species for m in matches}
     # All three panels — 12, 13, 14 — should map to the species,

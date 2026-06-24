@@ -5,6 +5,7 @@ combined_7_v8.jsonl. The other 6 papers are copied unchanged.
 
 Output: work/combined_7_v9.jsonl
 """
+
 from __future__ import annotations
 
 import json
@@ -22,7 +23,12 @@ PREDICTIONS_OUT = ROOT / "work" / "combined_7_v9.jsonl"
 
 BAUM_PAPER_ID = "58d7972c37307959"
 OD_JSON = (
-    ROOT / "work" / "baum_rerun_v5" / "output" / "od_output" / BAUM_PAPER_ID
+    ROOT
+    / "work"
+    / "baum_rerun_v5"
+    / "output"
+    / "od_output"
+    / BAUM_PAPER_ID
     / "baumgartner2008.json"
 )
 
@@ -68,15 +74,10 @@ def _plate_from_figure_id(figure_id: str) -> str | None:
 def main() -> int:
     plate_to_label_to_species = _build_label_to_species()
     print(
-        f"Loaded baum plate labels: "
-        f"{ {p: len(d) for p, d in plate_to_label_to_species.items()} }"
+        f"Loaded baum plate labels: { {p: len(d) for p, d in plate_to_label_to_species.items()} }"
     )
 
-    rows = [
-        json.loads(l)
-        for l in PREDICTIONS_IN.read_text().splitlines()
-        if l
-    ]
+    rows = [json.loads(l) for l in PREDICTIONS_IN.read_text().splitlines() if l]
     print(f"Loaded {len(rows)} predictions from {PREDICTIONS_IN.name}")
 
     new_rows: list[dict] = []
@@ -124,21 +125,23 @@ def main() -> int:
             if (fig, lbl) in existing_keys:
                 continue
             n_added += 1
-            new_rows.append({
-                "paper_id": BAUM_PAPER_ID,
-                "figure_id": fig,
-                "panel_id": lbl,
-                "species": sp,
-                "panel_path": "",
-                "bbox": [0, 0, 0, 0],
-                "confidence": 0.0,
-                "label_text": lbl,
-                "caption_snippet": "",
-                "ocr_text": "",
-                "metadata": {
-                    "matcher_type": "baum-reparsed-2026-06-07",
-                },
-            })
+            new_rows.append(
+                {
+                    "paper_id": BAUM_PAPER_ID,
+                    "figure_id": fig,
+                    "panel_id": lbl,
+                    "species": sp,
+                    "panel_path": "",
+                    "bbox": [0, 0, 0, 0],
+                    "confidence": 0.0,
+                    "label_text": lbl,
+                    "caption_snippet": "",
+                    "ocr_text": "",
+                    "metadata": {
+                        "matcher_type": "baum-reparsed-2026-06-07",
+                    },
+                }
+            )
 
     PREDICTIONS_OUT.write_text(
         "\n".join(json.dumps(r, ensure_ascii=False) for r in new_rows) + "\n"

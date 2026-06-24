@@ -18,16 +18,20 @@ chars, very long strings, mixed Unicode) and verifies that:
      (a single line shouldn't produce 100 pairs unless the line
      really has 100 labels)
 """
+
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-import hypothesis
-import hypothesis.strategies as st
-from hypothesis import given, settings
+import pytest
+
+hypothesis = pytest.importorskip("hypothesis")
+import hypothesis.strategies as st  # noqa: E402
+from hypothesis import given, settings  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 
 from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 
@@ -36,27 +40,68 @@ from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 # text shaped like a radiolarian-plate caption: starts with a figure
 # label, has species words.
 def _species_word():
-    return st.sampled_from([
-        "Genus", "GenusA", "Eucyrtidiellum", "Archaeodictyomitra",
-        "Stylocapsa", "Theocampe", "Pseudoeucyrtis", "Sethocapsa",
-        "Hiscocapsa", "Parahsuum", "Canoptum", "Spumellaria",
-        "Nassellaria", "Deviatus", "Archeo", "Archaeo",
-    ])
+    return st.sampled_from(
+        [
+            "Genus",
+            "GenusA",
+            "Eucyrtidiellum",
+            "Archaeodictyomitra",
+            "Stylocapsa",
+            "Theocampe",
+            "Pseudoeucyrtis",
+            "Sethocapsa",
+            "Hiscocapsa",
+            "Parahsuum",
+            "Canoptum",
+            "Spumellaria",
+            "Nassellaria",
+            "Deviatus",
+            "Archeo",
+            "Archaeo",
+        ]
+    )
 
 
 def _epithet():
-    return st.sampled_from([
-        "species", "sp", "sp.", "indet", "pustulatum", "minor",
-        "unumaense", "apiarium", "apiarius", "blackhorsensis",
-        "remusa", "oblongula", "minor", "gracilis", "excelsa",
-    ])
+    return st.sampled_from(
+        [
+            "species",
+            "sp",
+            "sp.",
+            "indet",
+            "pustulatum",
+            "minor",
+            "unumaense",
+            "apiarium",
+            "apiarius",
+            "blackhorsensis",
+            "remusa",
+            "oblongula",
+            "minor",
+            "gracilis",
+            "excelsa",
+        ]
+    )
 
 
 def _modifier():
-    return st.sampled_from([
-        "", "sp", "sp.", "spp", "spp.", "gr", "gr.", "cf.", "aff.",
-        "cf. W.", "aff. minoensis", "(?)", "?",
-    ])
+    return st.sampled_from(
+        [
+            "",
+            "sp",
+            "sp.",
+            "spp",
+            "spp.",
+            "gr",
+            "gr.",
+            "cf.",
+            "aff.",
+            "cf. W.",
+            "aff. minoensis",
+            "(?)",
+            "?",
+        ]
+    )
 
 
 def _label_token():
@@ -64,16 +109,23 @@ def _label_token():
 
 
 def _figure_lead():
-    return st.sampled_from([
-        "Plate 1, fig. 1.", "Fig. 1.", "fig 1.", "figs 1-3.",
-        "Plate 1, fig 1, 4.", "Fig 1, fig 2.",
-    ])
+    return st.sampled_from(
+        [
+            "Plate 1, fig. 1.",
+            "Fig. 1.",
+            "fig 1.",
+            "figs 1-3.",
+            "Plate 1, fig 1, 4.",
+            "Fig 1, fig 2.",
+        ]
+    )
 
 
 # A strategy that builds a caption-shaped string from primitives.
 caption_text_strategy = st.builds(
-    lambda fig, lbl, sp1, epi, mod, sp2, epi2, mod2, tail:
-        f"{fig} {lbl}) {sp1} {epi} {mod} {lbl}) {sp2} {epi2} {mod2} {tail}",
+    lambda fig, lbl, sp1, epi, mod, sp2, epi2, mod2, tail: (
+        f"{fig} {lbl}) {sp1} {epi} {mod} {lbl}) {sp2} {epi2} {mod2} {tail}"
+    ),
     fig=_figure_lead(),
     lbl=_label_token(),
     sp1=_species_word(),
@@ -82,32 +134,39 @@ caption_text_strategy = st.builds(
     sp2=_species_word(),
     epi2=_epithet(),
     mod2=_modifier(),
-    tail=st.sampled_from([
-        "", "; Pl. 1, fig. 2: Foo bar", "; 5, 6) Bar baz sp.",
-        "and Fig 7, fig 8. extra", "; (?). trailing punctuation...",
-    ]),
+    tail=st.sampled_from(
+        [
+            "",
+            "; Pl. 1, fig. 2: Foo bar",
+            "; 5, 6) Bar baz sp.",
+            "and Fig 7, fig 8. extra",
+            "; (?). trailing punctuation...",
+        ]
+    ),
 )
 
 
 # Adversarial inputs that should NOT crash the parser
-adversarial_strategy = st.sampled_from([
-    "",  # empty
-    " ",  # whitespace only
-    "\n\n\n",  # newlines only
-    "..." * 100,  # punctuation spam
-    "abc" * 1000,  # very long
-    "123" * 1000,  # digits only
-    "\x00\x01\x02\x03",  # control chars
-    "🔥" * 100,  # Unicode emoji
-    "αβγδ" * 50,  # Greek
-    "(?<!invalid_regex_attempt)",  # regex meta-chars in text
-    "1) Genus epithet" * 100,  # repeated labels
-    "\t\t\t1)\tGenus\tepithet",  # tabs as separators
-    "1)Genus\n2)Species",  # newline-separated
-    "Plate 1\nfig 1. Genus epithet\nfig 2. Genus species2",
-    "A" * 10000,  # very long single token
-    "1) " + "x" * 5000,  # very long trailing
-])
+adversarial_strategy = st.sampled_from(
+    [
+        "",  # empty
+        " ",  # whitespace only
+        "\n\n\n",  # newlines only
+        "..." * 100,  # punctuation spam
+        "abc" * 1000,  # very long
+        "123" * 1000,  # digits only
+        "\x00\x01\x02\x03",  # control chars
+        "🔥" * 100,  # Unicode emoji
+        "αβγδ" * 50,  # Greek
+        "(?<!invalid_regex_attempt)",  # regex meta-chars in text
+        "1) Genus epithet" * 100,  # repeated labels
+        "\t\t\t1)\tGenus\tepithet",  # tabs as separators
+        "1)Genus\n2)Species",  # newline-separated
+        "Plate 1\nfig 1. Genus epithet\nfig 2. Genus species2",
+        "A" * 10000,  # very long single token
+        "1) " + "x" * 5000,  # very long trailing
+    ]
+)
 
 
 @given(caption_text=caption_text_strategy)

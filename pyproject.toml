@@ -28,6 +28,7 @@ queue = ["celery", "redis"]
 train = ["torch", "transformers", "datasets", "scikit-learn", "scipy"]
 opendataloader = ["opendataloader-pdf>=0.0.0"]
 schema = ["pydantic>=2.0", "jsonschema>=4.21"]
+dev = ["hypothesis>=6.0"]
 
 [project.scripts]
 rlpe = "rlpe.cli:main"

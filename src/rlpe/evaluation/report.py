@@ -1,4 +1,5 @@
 """Markdown + JSON report writer for evaluation runs."""
+
 from __future__ import annotations
 
 import json
@@ -52,7 +53,9 @@ def write_markdown_report(
     lines.append(f"| Exact match rate | {agg.get('exact_match_rate', 0):.1%} |")
     lines.append("")
     lines.append("## Per-paper\n")
-    lines.append("| Paper | Gold | Pred | Panel-match | Species P | Species R | Species F1 | Exact |")
+    lines.append(
+        "| Paper | Gold | Pred | Panel-match | Species P | Species R | Species F1 | Exact |"
+    )
     lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for m in sorted(report.papers.values(), key=lambda x: x.paper_id):
         lines.append(_paper_row(m))

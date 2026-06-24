@@ -34,6 +34,7 @@ def _sanitize(obj: Any) -> Any:
     # numpy scalars (optional dep)
     try:
         import numpy as np  # type: ignore
+
         if isinstance(obj, np.floating):
             v = float(obj)
             if math.isnan(v) or math.isinf(v):
@@ -48,6 +49,7 @@ def _sanitize(obj: Any) -> Any:
     # pathlib
     try:
         from pathlib import Path as _Path
+
         if isinstance(obj, _Path):
             return str(obj)
     except ImportError:
@@ -77,18 +79,22 @@ def _sanitize(obj: Any) -> Any:
             # export can see which object tripped, without spamming
             # warnings on the happy path.
             import logging
+
             logging.getLogger(__name__).debug(
-                "export._sanitize: to_dict() failed for %s: %s; "
-                "falling back to vars()", type(obj).__name__, exc,
+                "export._sanitize: to_dict() failed for %s: %s; falling back to vars()",
+                type(obj).__name__,
+                exc,
             )
     if hasattr(obj, "__dict__"):
         try:
             return _sanitize({k: v for k, v in vars(obj).items()})
         except Exception as exc:
             import logging
+
             logging.getLogger(__name__).debug(
-                "export._sanitize: vars() failed for %s: %s; "
-                "falling back to repr()", type(obj).__name__, exc,
+                "export._sanitize: vars() failed for %s: %s; falling back to repr()",
+                type(obj).__name__,
+                exc,
             )
     return repr(obj)
 
@@ -189,7 +195,9 @@ def _csv_cell(v: Any) -> str:
     return _jsonify(v)
 
 
-def copy_assets(rows: list[dict[str, Any]], dst_dir: Path, key: str = "panel_path") -> list[dict[str, Any]]:
+def copy_assets(
+    rows: list[dict[str, Any]], dst_dir: Path, key: str = "panel_path"
+) -> list[dict[str, Any]]:
     ensure_dir(dst_dir)
     copied: list[dict[str, Any]] = []
     for row in rows:

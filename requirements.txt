@@ -59,7 +59,12 @@ scipy>=1.13.0
 # -------------------------
 # Published JSON Schema (contract)
 # -------------------------
-pydantic>=2.5
+# Note: pydantic is already declared above (>=2.8.0). The schema
+# extra (pydantic>=2.5) was redundant -- pip's resolver takes the
+# highest declared version, so this section now only pulls in
+# jsonschema. Keeping a single source of truth for the pydantic
+# version avoids drift between the API section and the schema
+# section.
 jsonschema>=4.21
 
 # -------------------------

@@ -46,7 +46,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Apply Gemma4 postprocess to RLPE rows.")
     parser.add_argument("--input-jsonl", type=Path, required=True)
     parser.add_argument("--output-jsonl", type=Path, required=True)
-    parser.add_argument("--backend", type=str, default="llamacpp", choices=["transformers", "ollama", "llamacpp", "llama.cpp", "llama_cpp", "MiniMax", "minimax"])
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="llamacpp",
+        choices=[
+            "transformers",
+            "ollama",
+            "llamacpp",
+            "llama.cpp",
+            "llama_cpp",
+            "MiniMax",
+            "minimax",
+        ],
+    )
     parser.add_argument("--model-path", type=str, default=None)
     parser.add_argument("--llama-model", type=str, default=None)
     parser.add_argument("--llama-host", type=str, default="http://127.0.0.1:8080")
@@ -59,16 +72,23 @@ def main() -> int:
     parser.add_argument("--timeout-sec", type=int, default=120)
     # MiniMax M3 API arguments
     parser.add_argument("--MiniMax-api-key", type=str, default=None)
-    parser.add_argument("--MiniMax-endpoint", type=str, default="https://api.minimaxi.com/anthropic")
+    parser.add_argument(
+        "--MiniMax-endpoint", type=str, default="https://api.minimaxi.com/anthropic"
+    )
     parser.add_argument("--MiniMax-model", type=str, default="MiniMax-M3")
     parser.add_argument("--MiniMax-max-concurrent", type=int, default=8)
     parser.add_argument("--MiniMax-max-retries", type=int, default=3)
     parser.add_argument("--MiniMax-thinking-budget", type=int, default=1024)
     parser.add_argument("--MiniMax-no-thinking", action="store_true")
-    parser.add_argument("--MiniMax-interactive", action="store_true",
-                        help="Prompt user (CLI) on API errors")
-    parser.add_argument("--MiniMax-fallback-default", type=str, default="rules",
-                        choices=["gemma4", "rules", "stop", "retry"])
+    parser.add_argument(
+        "--MiniMax-interactive", action="store_true", help="Prompt user (CLI) on API errors"
+    )
+    parser.add_argument(
+        "--MiniMax-fallback-default",
+        type=str,
+        default="rules",
+        choices=["gemma4", "rules", "stop", "retry"],
+    )
     args = parser.parse_args()
 
     rows = load_jsonl(args.input_jsonl)
@@ -147,9 +167,11 @@ def main() -> int:
         mini_b = getattr(runtime.backend, "cost_summary", None)
         if callable(mini_b):
             summary = mini_b()
-            print(f"MiniMax usage: calls={summary['calls']} errors={summary['errors']} "
-                  f"in_tok={summary['input_tokens']} out_tok={summary['output_tokens']} "
-                  f"cost_cny={summary['total_cost_cny']}")
+            print(
+                f"MiniMax usage: calls={summary['calls']} errors={summary['errors']} "
+                f"in_tok={summary['input_tokens']} out_tok={summary['output_tokens']} "
+                f"cost_cny={summary['total_cost_cny']}"
+            )
     except Exception:
         pass
     return 0

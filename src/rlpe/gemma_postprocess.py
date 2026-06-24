@@ -100,7 +100,9 @@ def load_gemma4_model(
             trust_remote_code=True,
         )
         model.eval()
-        backend = TransformersGemmaBackend(model=model, processor=processor, tokenizer=None, is_multimodal=True)
+        backend = TransformersGemmaBackend(
+            model=model, processor=processor, tokenizer=None, is_multimodal=True
+        )
         return GemmaRuntime(backend=backend, backend_name="transformers")
     except Exception as exc:
         mm_error = exc
@@ -116,7 +118,9 @@ def load_gemma4_model(
             trust_remote_code=True,
         )
         model.eval()
-        backend = TransformersGemmaBackend(model=model, processor=None, tokenizer=tokenizer, is_multimodal=False)
+        backend = TransformersGemmaBackend(
+            model=model, processor=None, tokenizer=tokenizer, is_multimodal=False
+        )
         return GemmaRuntime(backend=backend, backend_name="transformers")
     except Exception as lm_exc:
         raise RuntimeError(f"Gemma load failed. multimodal_error={mm_error}; text_error={lm_exc}")
@@ -160,11 +164,14 @@ def build_gemma_backend_from_config(extra: dict[str, Any]) -> GemmaRuntime:
     backend = str(extra.get("llm_backend", "transformers")).lower()
     if backend in {"minimax", "minimax-m3", "minimax_api"}:
         from .llm_backends import build_MiniMax_backend_from_env_or_config
+
         runtime_backend = build_MiniMax_backend_from_env_or_config(extra)
         return GemmaRuntime(backend=runtime_backend, backend_name="MiniMax")
     if backend in {"llama.cpp", "llamacpp", "llama_cpp"}:
         host = str(extra.get("llama_host", "http://127.0.0.1:8080"))
-        model_name = extra.get("llama_model") or extra.get("ollama_model") or extra.get("gemma_model_path")
+        model_name = (
+            extra.get("llama_model") or extra.get("ollama_model") or extra.get("gemma_model_path")
+        )
         timeout_sec = int(extra.get("llama_timeout_sec", 120))
         return load_gemma4_llamacpp(
             host=host,
@@ -203,10 +210,18 @@ def gemma_match_panel(
         "请判断该panel最可能对应的label与拉丁学名。严格输出JSON，不要输出其他文本。"
     )
 
-    return runtime.backend.infer_panel(panel_image=panel_image, caption_text=caption_text, ocr_labels=ocr_labels, system_prompt=prompt, user_prompt=user_prompt)
+    return runtime.backend.infer_panel(
+        panel_image=panel_image,
+        caption_text=caption_text,
+        ocr_labels=ocr_labels,
+        system_prompt=prompt,
+        user_prompt=user_prompt,
+    )
 
 
-def gemma_extract_text_json(runtime: GemmaRuntime, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+def gemma_extract_text_json(
+    runtime: GemmaRuntime, system_prompt: str, user_prompt: str
+) -> dict[str, Any]:
     return runtime.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
 
 
@@ -218,7 +233,9 @@ def apply_gemma_to_matches(
     conf_threshold: float = 0.70,
     prompt_lang: str = "zh",
 ) -> list[MatchResult]:
-    prompt = GEMMA_SYSTEM_PROMPT_ZH if prompt_lang.lower().startswith("zh") else GEMMA_SYSTEM_PROMPT_EN
+    prompt = (
+        GEMMA_SYSTEM_PROMPT_ZH if prompt_lang.lower().startswith("zh") else GEMMA_SYSTEM_PROMPT_EN
+    )
     for match in matches:
         if not match.panel_path:
             continue
@@ -245,21 +262,32 @@ def apply_gemma_to_matches(
 
         gemma_conf = float(out.get("confidence", 0.0))
         match.metadata["gemma_confidence"] = gemma_conf
-        match.metadata["gemma_reasoning"] = out.get("reasoning", "")
-        # Propagate MiniMax / Ollama / Transformers error info so the
-        # FallbackHandler popup can show the real reason (not "no detailed error").
-        if out.get("error"):
-            match.metadata["gemma_error"] = str(out.get("error"))
-        if out.get("error_type"):
-            match.metadata["gemma_error_type"] = str(out.get("error_type"))
-        if out.get("request_id"):
-            match.metadata["MiniMax_request_id"] = str(out.get("request_id"))
-        if out.get("cost_cny") is not None:
-            match.metadata["MiniMax_cost_cny"] = float(out.get("cost_cny"))
-        if out.get("model_version"):
-            match.metadata["MiniMax_model_version"] = str(out.get("model_version"))
+        # Always provide a reasoning string. Empty reasoning leaves the
+        # frontend's "why was this overridden?" tooltip blank, which
+        # operators have reported as confusing — they couldn't tell
+        # whether the LLM was silent or the metadata field was lost.
+        match.metadata["gemma_reasoning"] = (
+            out.get("reasoning") or "No reasoning provided by LLM backend"
+        )
+        # Bug #3 fix: only propagate error info when the call genuinely
+        # failed. A successful call may still carry an "error" key from a
+        # previous raw_text echo, and stamping it would cause
+        # ``RadiolarianPipeline._matches_have_fallback_error`` to misclassify
+        # a successful call as failed, triggering unnecessary fallback.
+        actually_failed = bool(out.get("fallback_used")) or gemma_conf < conf_threshold
+        if actually_failed:
+            if out.get("error"):
+                match.metadata["gemma_error"] = str(out.get("error"))
+            if out.get("error_type"):
+                match.metadata["gemma_error_type"] = str(out.get("error_type"))
+            if out.get("request_id"):
+                match.metadata["MiniMax_request_id"] = str(out.get("request_id"))
+            if out.get("cost_cny") is not None:
+                match.metadata["MiniMax_cost_cny"] = float(out.get("cost_cny"))
+            if out.get("model_version"):
+                match.metadata["MiniMax_model_version"] = str(out.get("model_version"))
 
-        if gemma_conf >= conf_threshold:
+        if gemma_conf >= conf_threshold and not out.get("fallback_used"):
             match.panel_id = out.get("label") or match.panel_id
             match.species = out.get("species") or match.species
             match.label_text = out.get("label") or match.label_text
@@ -291,7 +319,9 @@ def batch_gemma_postprocess_rows(
 
     Returns a new list of dicts; the input *rows* are not modified.
     """
-    prompt = GEMMA_SYSTEM_PROMPT_ZH if prompt_lang.lower().startswith("zh") else GEMMA_SYSTEM_PROMPT_EN
+    prompt = (
+        GEMMA_SYSTEM_PROMPT_ZH if prompt_lang.lower().startswith("zh") else GEMMA_SYSTEM_PROMPT_EN
+    )
     out_rows: list[dict[str, Any]] = []
     for row in tqdm(rows, desc="Gemma postprocess"):
         new_row = dict(row)
@@ -307,7 +337,9 @@ def batch_gemma_postprocess_rows(
                 result = gemma_match_panel(
                     runtime=runtime,
                     panel_image=im.convert("RGB"),
-                    caption_text=(new_row.get("caption_text") or new_row.get("caption_snippet") or ""),
+                    caption_text=(
+                        new_row.get("caption_text") or new_row.get("caption_snippet") or ""
+                    ),
                     ocr_labels=new_row.get("ocr_labels", []),
                     system_prompt=prompt,
                 )

@@ -26,6 +26,7 @@ The fix: optional open paren in ``_DANELIAN_CLAUSE_RE``, removal of the
 ``^`` anchor + MULTILINE flag, and a ``danelian_lead_re`` that strips the
 preamble before the inner finditer.
 """
+
 from __future__ import annotations
 
 from rlpe.m3_engine import _regex_parse_caption

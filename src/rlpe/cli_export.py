@@ -7,6 +7,7 @@ Usage::
         --output-dir work/batch4_v2/exports \\
         [--include-unmatched] [--ml-seed foo]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,6 +41,7 @@ def _run_output_from_jsonl(input_path: Path) -> RunOutput:
     """
     import json
     import logging
+
     matches: list[MatchResult] = []
     with open(input_path) as f:
         for line_no, line in enumerate(f, start=1):
@@ -51,12 +53,15 @@ def _run_output_from_jsonl(input_path: Path) -> RunOutput:
             except json.JSONDecodeError as exc:
                 logging.getLogger(__name__).warning(
                     "Skipping malformed JSONL line %d in %s: %s",
-                    line_no, input_path, exc,
+                    line_no,
+                    input_path,
+                    exc,
                 )
                 continue
             # Convert dict to MatchResult for the converter.
             # MatchResult has many fields; we just need the documented ones.
             from rlpe.types import PaperMetadata as InternalPaperMetadata
+
             pm = None
             pm_raw = d.get("paper_metadata")
             if isinstance(pm_raw, dict):
@@ -92,9 +97,11 @@ def _run_output_from_jsonl(input_path: Path) -> RunOutput:
             )
             matches.append(m)
     panels = [panel_record_from_match(m) for m in matches]
-    prov = ProvenanceRecord(**build_provenance(
-        config={"input": str(input_path)},
-    ).to_dict())
+    prov = ProvenanceRecord(
+        **build_provenance(
+            config={"input": str(input_path)},
+        ).to_dict()
+    )
     return RunOutput(provenance=prov, panels=panels)
 
 
@@ -102,8 +109,11 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Export a RunOutput to all three views")
     p.add_argument("--input", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, required=True)
-    p.add_argument("--include-unmatched", action="store_true",
-                   help="Include rows with no species in the analysis view")
+    p.add_argument(
+        "--include-unmatched",
+        action="store_true",
+        help="Include rows with no species in the analysis view",
+    )
     p.add_argument("--ml-seed", type=str, default="rlpe-v1")
     args = p.parse_args()
 
@@ -112,13 +122,15 @@ def main() -> int:
 
     # 1. Analysis (CSV + Parquet)
     n_csv = write_csv(
-        run, args.output_dir / "analysis.csv",
+        run,
+        args.output_dir / "analysis.csv",
         options=AnalysisOptions(include_unmatched=args.include_unmatched),
     )
     print(f"  analysis.csv: {n_csv} rows")
     try:
         n_parquet = write_parquet(
-            run, args.output_dir / "analysis.parquet",
+            run,
+            args.output_dir / "analysis.parquet",
             options=AnalysisOptions(include_unmatched=args.include_unmatched),
         )
         print(f"  analysis.parquet: {n_parquet} rows")
@@ -127,14 +139,16 @@ def main() -> int:
 
     # 2. ML (JSONL with splits)
     counts = write_ml_split(
-        run, args.output_dir / "ml",
+        run,
+        args.output_dir / "ml",
         options=MLOptions(seed=args.ml_seed),
     )
     print(f"  ml/: train={counts['train']} val={counts['validation']} test={counts['test']}")
 
     # 3. Archive (DwC-A)
     n_dwca = write_dwca_zip(
-        run, args.output_dir / "archive.zip",
+        run,
+        args.output_dir / "archive.zip",
         options=DwCAOptions(include_unmatched=args.include_unmatched),
     )
     print(f"  archive.zip: {n_dwca} occurrence rows")

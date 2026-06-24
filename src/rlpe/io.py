@@ -44,6 +44,8 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
             except json.JSONDecodeError as exc:
                 logger.warning(
                     "Skipping malformed JSONL line %d in %s: %s",
-                    line_no, path, exc,
+                    line_no,
+                    path,
+                    exc,
                 )
     return rows

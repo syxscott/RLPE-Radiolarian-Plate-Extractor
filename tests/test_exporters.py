@@ -1,4 +1,5 @@
 """Tests for the three exporters (analysis, ml, archive)."""
+
 from __future__ import annotations
 
 import csv
@@ -41,35 +42,46 @@ def _make_run(n: int = 4) -> RunOutput:
             source="opendataloader",
             confidence=0.8,
         )
-        sb = ScaleBarRecord(value=100.0, unit="um", source="caption",
-                            um_per_px=0.1, confidence=0.8)
+        sb = ScaleBarRecord(value=100.0, unit="um", source="caption", um_per_px=0.1, confidence=0.8)
         geo = GeologyLinkRecord(
-            age="Late Jurassic", chronostratigraphy="Kimmeridgian",
-            formation="Fonzaso", locality="Italy",
-            latitude=46.5, longitude=11.5, confidence=0.7,
+            age="Late Jurassic",
+            chronostratigraphy="Kimmeridgian",
+            formation="Fonzaso",
+            locality="Italy",
+            latitude=46.5,
+            longitude=11.5,
+            confidence=0.7,
         )
         meta = PanelMetadata(
-            panel_score=0.5, ocr_count=2, taxon_count=1,
-            figure_number="1", page_index=10,
-            matcher_used=False, matcher_type="heuristic",
-            matcher_conf=0.0, caption_pairs_used=True,
-            scale_bar=sb, geology_links=[geo],
+            panel_score=0.5,
+            ocr_count=2,
+            taxon_count=1,
+            figure_number="1",
+            page_index=10,
+            matcher_used=False,
+            matcher_type="heuristic",
+            matcher_conf=0.0,
+            caption_pairs_used=True,
+            scale_bar=sb,
+            geology_links=[geo],
             extraction_source="opendataloader",
         )
-        panels.append(PanelRecord(
-            paper_id=f"paper_{i}",
-            figure_id=f"figure_{i}",
-            panel_id=str(i + 1),
-            species=f"Genus species_{i}" if i % 2 == 0 else None,
-            panel_path=f"/path/panel_{i}.png",
-            bbox=[10, 20, 100, 200],
-            confidence=0.7,
-            label_text=str(i + 1),
-            caption_snippet=f"Caption for {i}",
-            ocr_text=str(i + 1),
-            metadata=meta,
-            paper_metadata=pm,
-        ))
+        panels.append(
+            PanelRecord(
+                paper_id=f"paper_{i}",
+                figure_id=f"figure_{i}",
+                panel_id=str(i + 1),
+                species=f"Genus species_{i}" if i % 2 == 0 else None,
+                panel_path=f"/path/panel_{i}.png",
+                bbox=[10, 20, 100, 200],
+                confidence=0.7,
+                label_text=str(i + 1),
+                caption_snippet=f"Caption for {i}",
+                ocr_text=str(i + 1),
+                metadata=meta,
+                paper_metadata=pm,
+            )
+        )
     return RunOutput(provenance=prov, panels=panels)
 
 
@@ -109,9 +121,7 @@ class TestAnalysisCsv:
         # Default: include all (the test set has alternating matched/unmatched)
         n_all = write_csv(run, target)
         # Now exclude unmatched
-        n_filtered = write_csv(
-            run, target, options=AnalysisOptions(include_unmatched=False)
-        )
+        n_filtered = write_csv(run, target, options=AnalysisOptions(include_unmatched=False))
         assert n_all == 4
         assert n_filtered == 2  # only the even-indexed panels have species
 
@@ -135,6 +145,7 @@ class TestAnalysisParquet:
         # We don't fail the test if it's installed.
         try:
             import pyarrow  # noqa: F401
+
             pytest.skip("pyarrow is installed; cannot test missing-dep path")
         except ImportError:
             with pytest.raises(ImportError, match="pyarrow"):
@@ -145,9 +156,16 @@ class TestMlSplit:
     def test_write_ml_split(self, tmp_path):
         run = _make_run(10)
         target_dir = tmp_path / "ml"
-        counts = write_ml_split(run, target_dir, options=MLOptions(
-            train_ratio=0.5, val_ratio=0.3, test_ratio=0.2, seed="test-seed",
-        ))
+        counts = write_ml_split(
+            run,
+            target_dir,
+            options=MLOptions(
+                train_ratio=0.5,
+                val_ratio=0.3,
+                test_ratio=0.2,
+                seed="test-seed",
+            ),
+        )
         # Sum must equal n_panels
         assert sum(counts.values()) == 10
         # All counts are non-negative

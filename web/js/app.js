@@ -183,8 +183,8 @@ function renderFileList() {
         <div class="file-item">
             <div class="file-item-info">
                 <div>
-                    <div class="file-item-name">${esc(file.name)}</div>
-                    <div class="file-item-size">${esc(formatFileSize(file.size))}</div>
+                    <div class="file-item-name">${escapeHtml(file.name)}</div>
+                    <div class="file-item-size">${escapeHtml(formatFileSize(file.size))}</div>
                 </div>
             </div>
             <button type="button" class="file-item-remove" data-file-index="${index}">删除</button>
@@ -253,21 +253,45 @@ document.getElementById('process-btn').addEventListener('click', async () => {
         // the box, the pipeline uses OpenDataLoader-pdf in-process — no GROBID
         // server required.
         const useOpenDataLoader = document.getElementById('use-opendataloader')?.checked ?? false;
-        // Merge LLM + PBDB + extractor options into a single JSON body
-        let combinedOptions = null;
-        const baseOpts = { use_opendataloader: useOpenDataLoader };
-        if (llmOptions || paleodbOptions) {
-            combinedOptions = { ...baseOpts, ...(llmOptions || {}), ...(paleodbOptions || {}) };
-        } else if (useOpenDataLoader) {
-            combinedOptions = baseOpts;
+
+        // Core pipeline options that USED to be silently dropped: the form
+        // rendered them but the previous build never read them, so the user's
+        // GROBID URL / OCR engine / worker count / panel-score threshold were
+        // ignored. Validate up-front so an invalid number returns a toast
+        // instead of a server 400.
+        let coreOpts;
+        try {
+            coreOpts = _buildCorePipelineOptions();
+        } catch (validationErr) {
+            showNotification(validationErr.message, 'error');
+            return;
         }
 
+        // Merge LLM + PBDB + extractor + core options into a single JSON body.
+        // Always send the merged object so the server gets the user's full
+        // configuration (the previous version skipped the request body when
+        // LLM/PBDB were off, losing the core pipeline overrides too).
+        const combinedOptions = {
+            use_opendataloader: useOpenDataLoader,
+            ...coreOpts,
+            ...(llmOptions || {}),
+            ...(paleodbOptions || {}),
+        };
+
         for (const file of uploadedFiles) {
+            // Update button text with progress so the user knows which
+            // file is being uploaded (especially important for batch
+            // uploads of 5+ PDFs where the total wait can be minutes).
+            btn.innerHTML = `<span class="spinner-small"></span> 上传中 (${uploadedCount + 1}/${totalFiles})…`;
+
             const formData = new FormData();
             formData.append('file', file);
-            if (combinedOptions) {
-                formData.append('options', JSON.stringify(combinedOptions));
-            }
+            // combinedOptions is always a real object now (it always at
+            // least carries use_opendataloader), so unconditionally attach
+            // it. The previous ``if (combinedOptions)`` guard was a relic
+            // from the old code path that returned null when both LLM and
+            // PBDB were off.
+            formData.append('options', JSON.stringify(combinedOptions));
 
             const response = await fetch(`${CONFIG.apiBaseUrl}/jobs/upload`, {
                 method: 'POST',
@@ -307,9 +331,13 @@ document.getElementById('process-btn').addEventListener('click', async () => {
         showNotification(error.message, 'error');
     } finally {
         _processing = false;
-        btn.disabled = false;
+        // Re-enable only if there are files left to process. After a
+        // successful run ``uploadedFiles`` is cleared (line 317), so the
+        // button should stay disabled — clicking it with no files is a
+        // no-op that confuses users.
+        btn.disabled = uploadedFiles.length === 0;
         btn.classList.remove('btn-loading');
-        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 开始处理';
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 开始提取图版';
     }
 });
 
@@ -365,6 +393,47 @@ function _buildPaleodbOptions() {
     const endpoint = document.getElementById('paleodb-endpoint').value.trim();
     if (endpoint) opts.paleodb_endpoint = endpoint;
     opts.paleodb_offline = document.getElementById('paleodb-offline').checked;
+    return opts;
+}
+
+// ==================== Build core pipeline options from form ==================== //
+// These fields used to be rendered in the form but never sent to the API.
+// Each option is only included when the user has provided a non-empty value
+// so that omissions fall back to PipelineConfig defaults on the server.
+function _buildCorePipelineOptions() {
+    const opts = {};
+
+    const grobidUrl = document.getElementById('grobid-url')?.value.trim();
+    if (grobidUrl) {
+        // Sanity check: only http(s) URLs are accepted to avoid surprising
+        // protocols (file://, javascript:) reaching the server validator.
+        if (!/^https?:\/\//i.test(grobidUrl)) {
+            throw new Error(`GROBID 地址必须以 http:// 或 https:// 开头，当前值: "${grobidUrl}"`);
+        }
+        opts.grobid_url = grobidUrl;
+    }
+
+    const ocrBackend = document.getElementById('ocr-backend')?.value;
+    if (ocrBackend) opts.ocr_backend = ocrBackend;
+
+    const workersRaw = document.getElementById('num-workers')?.value.trim();
+    if (workersRaw) {
+        const n = parseInt(workersRaw, 10);
+        if (isNaN(n) || n < 1 || n > 32) {
+            throw new Error(`并发处理数必须是 1..32 的整数，当前值: "${workersRaw}"`);
+        }
+        opts.num_workers = n;
+    }
+
+    const scoreRaw = document.getElementById('min-panel-score')?.value.trim();
+    if (scoreRaw) {
+        const f = parseFloat(scoreRaw);
+        if (isNaN(f) || f < 0 || f > 1) {
+            throw new Error(`Panel 分割置信度阈值必须在 [0, 1]，当前值: "${scoreRaw}"`);
+        }
+        opts.min_panel_score = f;
+    }
+
     return opts;
 }
 
@@ -433,22 +502,115 @@ function _buildLLMOptions() {
 }
 
 // ==================== Jobs Management ==================== //
+// Adaptive backoff for /jobs polling. When the server returns errors or the
+// network is down, the previous code kept hammering /jobs every 3 seconds,
+// producing a flood of console errors and toasts. We now double the interval
+// on each consecutive failure (capped at 30 s) and reset to the configured
+// interval on the first successful response.
+let _consecutivePollFailures = 0;
+const _MAX_POLL_FAILURES = 5;          // give up the toast after this many
+const _MAX_POLL_BACKOFF_SEC = 30;
+
 async function loadJobs() {
     try {
         const response = await fetch(`${CONFIG.apiBaseUrl}/jobs`);
-        if (!response.ok) return;
+        if (!response.ok) {
+            _onPollFailure(`HTTP ${response.status}`);
+            return;
+        }
 
         const jobs = await response.json();
-        jobsData = jobs.reduce((acc, job) => {
-            acc[job.job_id] = job;
-            return acc;
-        }, jobsData);
+
+        // Detect jobs that just transitioned to "done" since the last
+        // poll. If the user is watching the jobs tab, auto-switch to the
+        // results tab so they see the extraction results immediately.
+        // Novice users often sit on the jobs tab watching the progress
+        // bar and don't realise they need to click "结果查看" to see
+        // the extracted species.
+        const previouslyActive = new Set(
+            Object.values(jobsData)
+                .filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'awaiting_user_decision')
+                .map(j => j.job_id)
+        );
+        const justCompleted = jobs.filter(
+            j => previouslyActive.has(j.job_id) && j.status === 'done'
+        );
+
+        // Build a fresh map from the server's response.
+        const serverJobIds = new Set();
+        const freshData = {};
+        for (const job of jobs) {
+            freshData[job.job_id] = job;
+            serverJobIds.add(job.job_id);
+        }
+        // Remove jobs from the local cache that no longer exist on the
+        // server (they were deleted by another tab / session / CLI).
+        // The previous version used ``reduce(acc[job_id]=job, jobsData)``
+        // which ONLY added or updated — never deleted — so deleted jobs
+        // stayed in the UI forever.
+        for (const cachedId of Object.keys(jobsData)) {
+            if (!serverJobIds.has(cachedId)) {
+                delete jobsData[cachedId];
+            }
+        }
+        // Merge new data into the existing cache.
+        Object.assign(jobsData, freshData);
+
+        // First successful poll after one or more failures — restore the
+        // configured refresh interval and stop showing the error toast.
+        if (_consecutivePollFailures > 0) {
+            _consecutivePollFailures = 0;
+            if (refreshIntervalId) startJobPolling();
+        }
 
         renderJobsList();
         maybeStopPolling();
+        // After we refresh job state, check whether any of them is
+        // blocked on a MiniMax M3 user decision and pop the modal.
+        // This is the missing piece that made the backend's
+        // FallbackHandler appear silently broken from the UI side.
+        checkMiniMaxFallbacks();
+
+        // Auto-switch to results tab when a job the user was watching
+        // just completed. Only switch if the user is currently on the
+        // jobs tab (don't yank them away from upload/settings) and at
+        // least one job transitioned to done.
+        if (justCompleted.length > 0) {
+            const activeTab = document.querySelector('.tab-btn.active');
+            if (activeTab && activeTab.dataset.tab === 'jobs') {
+                const names = justCompleted.map(j => j.filename || j.job_id.substring(0, 8)).join(', ');
+                showNotification(`✅ 处理完成：${names}，正在跳转到结果…`, 'success');
+                // Brief delay so the user sees the "done" status before
+                // the tab switch.
+                setTimeout(() => {
+                    document.querySelector('[data-tab="results"]')?.click();
+                }, 1200);
+            }
+        }
     } catch (error) {
-        console.error('Failed to load jobs:', error);
-        showNotification('加载任务列表失败: ' + (error.message || error), 'error');
+        _onPollFailure(error.message || String(error));
+    }
+}
+
+function _onPollFailure(reason) {
+    _consecutivePollFailures += 1;
+    // Only show a single toast on the first failure to avoid spamming
+    // the user when the server is down.
+    if (_consecutivePollFailures === 1) {
+        console.error('Failed to load jobs:', reason);
+        showNotification(`加载任务列表失败: ${reason}`, 'error');
+    } else if (_consecutivePollFailures === _MAX_POLL_FAILURES) {
+        showNotification('多次连接失败，已降低刷新频率', 'error');
+    }
+    // Apply exponential backoff: 3s -> 6s -> 12s -> 24s -> capped at 30s.
+    if (refreshIntervalId) {
+        clearInterval(refreshIntervalId);
+        const base = CONFIG.refreshInterval || 3;
+        const backoffSec = Math.min(
+            base * Math.pow(2, _consecutivePollFailures - 1),
+            _MAX_POLL_BACKOFF_SEC,
+        );
+        refreshIntervalId = setInterval(loadJobs, backoffSec * 1000);
     }
 }
 
@@ -457,13 +619,21 @@ async function loadJobs() {
 // pulling the endpoint every 3 s forever (wasted bandwidth, extra
 // server load, and noisy console errors if the server is down).
 function maybeStopPolling() {
-    if (!refreshIntervalId) return;
     const hasActive = Object.values(jobsData).some(
         j => j.status === 'queued' || j.status === 'running' || j.status === 'awaiting_user_decision'
     );
-    if (!hasActive) {
+    if (refreshIntervalId && !hasActive) {
         clearInterval(refreshIntervalId);
         refreshIntervalId = null;
+        return;
+    }
+    // Symmetric case: a manual loadJobs() (tab switch / refresh button /
+    // visibility change) discovered an active job while polling was off.
+    // Without this branch, the UI would show the active job but never
+    // update its progress until another full reload. Auto-restart at the
+    // configured interval so the progress bar moves.
+    if (!refreshIntervalId && hasActive) {
+        startJobPolling();
     }
 }
 
@@ -490,71 +660,80 @@ function renderJobsList() {
         .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
     if (jobs.length === 0) {
-        jobsList.innerHTML = '<div style="text-align: center; color: #999; padding: 2rem;">暂无任务</div>';
+        const isFiltered = searchTerm || filterStatus;
+        jobsList.innerHTML = isFiltered
+            ? '<div style="text-align: center; color: var(--text-muted); padding: 2rem;">没有匹配的任务，试试清除搜索/筛选条件</div>'
+            : `<div style="text-align: center; color: var(--text-muted); padding: 2.5rem 1rem;">
+                <p style="font-size: 1rem; margin-bottom: 0.5rem;">📋 还没有处理任务</p>
+                <p style="font-size: 0.875rem;">前往「上传处理」标签页，拖入 PDF 文件即可开始</p>
+                <button class="btn btn-primary btn-small" style="margin-top: 1rem;" onclick="document.querySelector('[data-tab=\\'upload\\']').click()">去上传 PDF</button>
+            </div>`;
         return;
     }
 
-    // Use esc() on every backend string; use data-action + data-job-id for
+    // Use escapeHtml() on every backend string; use data-action + data-job-id for
     // event delegation (replaces previous inline onclick="..." which
     // concatenated job_id and would have XSS'd if a job_id ever contained
     // a quote character). The click handler lives at module load (below).
     jobsList.innerHTML = jobs.map(job => `
-        <div class="job-card" data-job-id="${esc(job.job_id)}">
-            <input type="checkbox" class="job-card-checkbox" data-job-id="${esc(job.job_id)}"
+        <div class="job-card" data-job-id="${escapeHtml(job.job_id)}">
+            <input type="checkbox" class="job-card-checkbox" data-job-id="${escapeHtml(job.job_id)}"
                    ${selectedJobIds.has(job.job_id) ? 'checked' : ''}>
             <div class="job-header">
-                <div class="job-id">ID: ${esc(job.job_id.substring(0, 12))}...</div>
-                <span class="job-status status-${esc(job.status)}">${esc(getStatusLabel(job.status))}</span>
+                <div class="job-id">ID: ${escapeHtml(job.job_id.substring(0, 12))}...</div>
+                <span class="job-status status-${escapeHtml(job.status)}">${escapeHtml(getStatusLabel(job.status))}</span>
             </div>
             <div class="job-details">
                 <div class="job-detail-item">
                     <span class="job-detail-label">创建时间:</span>
-                    <span class="job-detail-value">${esc(formatDate(job.created_at))}</span>
+                    <span class="job-detail-value">${escapeHtml(formatDate(job.created_at))}</span>
                 </div>
                 <div class="job-detail-item">
                     <span class="job-detail-label">文件:</span>
-                    <span class="job-detail-value">${esc(job.filename || 'N/A')}</span>
+                    <span class="job-detail-value">${escapeHtml(job.filename || 'N/A')}</span>
                 </div>
                 <div class="job-detail-item">
                     <span class="job-detail-label">进度:</span>
-                    <span class="job-detail-value">${esc(job.progress || 0)}%</span>
+                    <span class="job-detail-value">${escapeHtml(job.progress || 0)}%</span>
                 </div>
                 ${job.stage ? `
                 <div class="job-detail-item">
                     <span class="job-detail-label">阶段:</span>
-                    <span class="job-detail-value">${esc(job.stage)}</span>
+                    <span class="job-detail-value">${escapeHtml(job.stage)}</span>
                 </div>` : ''}
                 ${job.elapsed_sec != null ? `
                 <div class="job-detail-item">
                     <span class="job-detail-label">已用时:</span>
-                    <span class="job-detail-value">${esc(formatElapsed(job.elapsed_sec))}</span>
+                    <span class="job-detail-value">${escapeHtml(formatElapsed(job.elapsed_sec))}</span>
                 </div>` : ''}
                 ${job.detail ? `
                 <div class="job-detail-item">
                     <span class="job-detail-label">说明:</span>
-                    <span class="job-detail-value">${esc(job.detail)}</span>
+                    <span class="job-detail-value">${escapeHtml(job.detail)}</span>
                 </div>` : ''}
             </div>
             <div class="job-progress">
                 <div class="progress-bar">
-                    <div class="progress-fill" style="width: ${esc(job.progress || 0)}%"></div>
+                    <div class="progress-fill" style="width: ${escapeHtml(job.progress || 0)}%"></div>
                 </div>
             </div>
             <div class="job-actions">
-                <button type="button" class="btn btn-small" data-action="details" data-job-id="${esc(job.job_id)}">
+                <button type="button" class="btn btn-small" data-action="details" data-job-id="${escapeHtml(job.job_id)}">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                     详情
                 </button>
-                ${job.status === 'done' ? `<button type="button" class="btn btn-small" data-action="results" data-job-id="${esc(job.job_id)}">
+                ${job.status === 'done' ? `<button type="button" class="btn btn-small btn-primary" data-action="results" data-job-id="${escapeHtml(job.job_id)}">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-                    结果
+                    查看结果 →
                 </button>` : ''}
-                <button type="button" class="btn btn-small btn-secondary" data-action="cancel" data-job-id="${esc(job.job_id)}">
+                ${(job.status === 'queued' || job.status === 'running' || job.status === 'awaiting_user_decision') ? `
+                <button type="button" class="btn btn-small btn-secondary" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     取消
                 </button>
+                ` : ''}
                 ${(job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') ? `
-                <button type="button" class="btn btn-small btn-danger" data-action="delete" data-job-id="${esc(job.job_id)}" title="删除任务及文件">
+                <button type="button" class="btn btn-small btn-danger" data-action="delete" data-job-id="${escapeHtml(job.job_id)}" title="删除任务及文件">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
                     删除
                 </button>` : ''}
@@ -589,11 +768,126 @@ function getStatusLabel(status) {
     const labels = {
         'queued': '队列中',
         'running': '处理中',
+        'awaiting_user_decision': '等待用户决策',
         'done': '已完成',
         'failed': '失败',
         'cancelled': '已取消'
     };
     return labels[status] || status;
+}
+
+// ==================== MiniMax fallback popup ==================== //
+// The backend pauses a job in status='awaiting_user_decision' when the
+// MiniMax API errors and waits up to 5 minutes for a user decision (see
+// app.py::_web_fallback_popup). The previous JS only RECOGNISED that
+// status for polling — it never actually FETCHED the pending decision
+// and never SHOWED a popup, so users always silently timed out and
+// got the headless default. The poll loop below closes that gap.
+//
+// Polled jobs are tracked in a Set so we only render one modal per job
+// at a time (multiple polls hitting "awaiting_user_decision" for the
+// same job would otherwise stack popups).
+const _MiniMaxPopupShown = new Set();
+
+async function checkMiniMaxFallbacks() {
+    const awaiting = Object.values(jobsData).filter(
+        j => j.status === 'awaiting_user_decision'
+    );
+    for (const job of awaiting) {
+        if (_MiniMaxPopupShown.has(job.job_id)) continue;
+        try {
+            const r = await fetch(`${CONFIG.apiBaseUrl}/jobs/${job.job_id}/MiniMax-fallback`);
+            if (!r.ok) continue;
+            const data = await r.json();
+            if (data.status !== 'awaiting_decision') continue;
+            _MiniMaxPopupShown.add(job.job_id);
+            showMiniMaxFallbackModal(job.job_id, data.error_info || {});
+        } catch (_) { /* network blip; next poll will retry */ }
+    }
+    // Clear stale popups for jobs that are no longer awaiting
+    for (const jid of Array.from(_MiniMaxPopupShown)) {
+        const j = jobsData[jid];
+        if (!j || j.status !== 'awaiting_user_decision') {
+            _MiniMaxPopupShown.delete(jid);
+        }
+    }
+}
+
+function showMiniMaxFallbackModal(jobId, errorInfo) {
+    let modal = document.getElementById('MiniMax-fallback-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'MiniMax-fallback-modal';
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 560px;">
+                <div class="modal-header">
+                    <h3>⚠️ MiniMax M3 调用失败</h3>
+                </div>
+                <div class="modal-body">
+                    <p style="color: var(--text-muted); font-size: 0.9rem;">
+                        云端 LLM 后端返回错误。请选择如何继续——5 分钟内未选择将自动应用默认策略。
+                    </p>
+                    <div class="MiniMax-fallback-err">
+                        <div><strong>任务:</strong> <code id="MiniMax-fb-job"></code></div>
+                        <div><strong>类型:</strong> <span id="MiniMax-fb-type"></span></div>
+                        <div><strong>错误:</strong> <span id="MiniMax-fb-msg"></span></div>
+                        <div id="MiniMax-fb-ctx-row" style="display:none"><strong>上下文:</strong> <span id="MiniMax-fb-ctx"></span></div>
+                    </div>
+                    <div class="MiniMax-fallback-actions">
+                        <button class="btn btn-primary" data-action="retry">重试</button>
+                        <button class="btn btn-secondary" data-action="rules">回退到规则流水线</button>
+                        <button class="btn btn-secondary" data-action="gemma4">切换本地 Gemma4</button>
+                        <button class="btn btn-danger" data-action="stop">中止任务</button>
+                    </div>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {/* don't close on overlay; force a choice */}
+        });
+    }
+    document.getElementById('MiniMax-fb-job').textContent = jobId.substring(0, 12) + '...';
+    document.getElementById('MiniMax-fb-type').textContent = errorInfo.error_type || 'Unknown';
+    document.getElementById('MiniMax-fb-msg').textContent = (errorInfo.error || '').substring(0, 240);
+    if (errorInfo.context) {
+        document.getElementById('MiniMax-fb-ctx-row').style.display = '';
+        document.getElementById('MiniMax-fb-ctx').textContent = errorInfo.context;
+    } else {
+        document.getElementById('MiniMax-fb-ctx-row').style.display = 'none';
+    }
+    modal.classList.remove('hidden');
+    // Replace action buttons each open so old listeners don't pile up
+    const newActions = modal.querySelectorAll('.MiniMax-fallback-actions [data-action]');
+    newActions.forEach(btn => {
+        const fresh = btn.cloneNode(true);
+        btn.replaceWith(fresh);
+        fresh.addEventListener('click', () => submitMiniMaxFallback(jobId, fresh.dataset.action, modal));
+    });
+}
+
+async function submitMiniMaxFallback(jobId, action, modal) {
+    modal.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+        const r = await fetch(`${CONFIG.apiBaseUrl}/jobs/${jobId}/MiniMax-fallback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_id: jobId, action }),
+        });
+        if (!r.ok) {
+            const errBody = await r.json().catch(() => ({}));
+            showNotification(`提交失败: ${errBody.detail || r.statusText}`, 'error');
+        } else {
+            showNotification(`已选择: ${action}`);
+            modal.classList.add('hidden');
+            _MiniMaxPopupShown.delete(jobId);
+            loadJobs();
+        }
+    } catch (err) {
+        showNotification(`提交失败: ${err.message || err}`, 'error');
+    } finally {
+        modal.querySelectorAll('button').forEach(b => b.disabled = false);
+    }
 }
 
 // ==================== Delete Jobs ==================== //
@@ -675,17 +969,20 @@ async function openDeleteModal(jobIds) {
     }
 
     const n = idsToShow.length;
-    const bytes = await estimateSelectedBytes(idsToShow);
-    const sizeStr = bytes > 0 ? `，预计释放 ${formatBytes(bytes)}` : '';
-    summary.innerHTML = `将删除 <strong>${n}</strong> 个任务${sizeStr}。此操作不可撤销。${truncWarn}`;
+    // NOTE: there is no per-job size endpoint, so we don't pre-compute
+    // bytes here. The server returns ``bytes_freed`` in the delete
+    // response, which we then surface in the toast. The previous
+    // ``estimateSelectedBytes`` helper was dead code (always returned 0)
+    // and has been removed.
+    summary.innerHTML = `将删除 <strong>${n}</strong> 个任务。此操作不可撤销。${truncWarn}`;
 
     // Build per-job list with filename and a remove button
     list.innerHTML = idsToShow.map(id => {
         const job = jobsData[id];
         const filename = job?.filename || '(无文件)';
-        return `<div class="job-row" data-row-id="${esc(id)}">
-            <span class="job-row-id">${esc(id.substring(0, 12))}...</span>
-            <span class="job-row-name" title="${esc(filename)}">${esc(filename)}</span>
+        return `<div class="job-row" data-row-id="${escapeHtml(id)}">
+            <span class="job-row-id">${escapeHtml(id.substring(0, 12))}...</span>
+            <span class="job-row-name" title="${escapeHtml(filename)}">${escapeHtml(filename)}</span>
         </div>`;
     }).join('');
 
@@ -707,19 +1004,8 @@ function closeDeleteModal() {
     }
 }
 
-async function estimateSelectedBytes(jobIds) {
-    // Best-effort size estimate by summing job directory sizes when available.
-    // Falls back to 0 if directories cannot be stat'd (e.g. cli_ jobs).
-    let total = 0;
-    for (const id of jobIds) {
-        try {
-            // We don't have a "size" endpoint, so skip; the server returns
-            // bytes_freed in the response. UI will show post-hoc if needed.
-        } catch (_) { /* noop */ }
-    }
-    return total;
-}
-
+// Pretty-print a byte count for delete toasts (the server returns
+// bytes_freed in the delete response).
 function formatBytes(n) {
     if (n < 1024) return `${n} B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -792,6 +1078,12 @@ async function confirmDelete() {
                 showToast(`任务记录已删除，但文件清理失败: ${r.error || ''}`, 'warning');
             } else if (r.status === 'refused') {
                 showToast(`拒绝删除: ${r.error || ''}`, 'error');
+            } else if (r.files_skipped) {
+                // CLI-loaded job: the on-disk files live under
+                // APP_ROOT/work which is shared with other CLI runs;
+                // we removed the in-memory record but kept the files
+                // so the user can still inspect them via the CLI.
+                showToast('已从列表中移除（CLI 任务文件位于共享目录，保留在磁盘上）', 'info');
             } else {
                 showToast(`已删除任务${freed}`, 'success');
             }
@@ -799,9 +1091,11 @@ async function confirmDelete() {
             const deleted = data.deleted || 0;
             const notFound = results.filter(r => r.status === 'not_found').length;
             const fileErr = results.filter(r => r.status === 'file_error').length;
+            const filesSkipped = results.filter(r => r.files_skipped).length;
             let suffix = '';
             if (notFound) suffix += `，${notFound} 个已不存在`;
             if (fileErr) suffix += `，${fileErr} 个文件清理失败`;
+            if (filesSkipped) suffix += `，${filesSkipped} 个 CLI 任务文件保留在磁盘上`;
             showToast(`已删除 ${deleted} 个任务${suffix}${freed}`, deleted > 0 ? 'success' : 'info');
         }
     } catch (err) {
@@ -839,13 +1133,12 @@ function escapeHtml(s) {
         .replace(/'/g, '&#39;');
 }
 
-// Single canonical escape function for both text content and attribute values.
-// Previously the codebase had two near-duplicate helpers (escapeHtml + escapeAttr)
-// with subtle differences; the local `escapeAttr` skipped `&`, which broke
-// attribute parsing when records contained `&` (e.g. species "A & B").
-function esc(v) {
-    return escapeHtml(v);
-}
+// NOTE: there used to be a second ``function escapeHtml(v) { return escapeHtml(v); }``
+// declaration just below this one. Function declarations hoist and overwrite, so
+// the duplicate replaced the real implementation with infinite self-recursion
+// that blew the JS stack on every render (60+ call sites). The duplicate is
+// gone — keep this comment as a tripwire so the broken version doesn't
+// silently come back through a copy-paste.
 
 function deleteSingleJob(jobId) {
     openDeleteModal([jobId]);
@@ -908,35 +1201,35 @@ async function viewJobDetails(jobId) {
                 <div class="job-detail-grid">
                     <div class="job-detail-item">
                         <span class="label">任务ID</span>
-                        <span class="value" style="font-family: monospace;">${esc(jobId)}</span>
+                        <span class="value" style="font-family: monospace;">${escapeHtml(jobId)}</span>
                     </div>
                     <div class="job-detail-item">
                         <span class="label">状态</span>
-                        <span class="value"><span class="job-status ${esc(statusClass)}">${esc(getStatusLabel(job.status))}</span></span>
+                        <span class="value"><span class="job-status ${escapeHtml(statusClass)}">${escapeHtml(getStatusLabel(job.status))}</span></span>
                     </div>
                     <div class="job-detail-item">
                         <span class="label">文件名</span>
-                        <span class="value">${esc(job.filename || 'N/A')}</span>
+                        <span class="value">${escapeHtml(job.filename || 'N/A')}</span>
                     </div>
                     <div class="job-detail-item">
                         <span class="label">创建时间</span>
-                        <span class="value">${esc(formatDate(job.created_at))}</span>
+                        <span class="value">${escapeHtml(formatDate(job.created_at))}</span>
                     </div>
                     <div class="job-detail-item">
                         <span class="label">进度</span>
-                        <span class="value">${esc(job.progress || 0)}%</span>
+                        <span class="value">${escapeHtml(job.progress || 0)}%</span>
                     </div>
                     <div class="job-detail-item">
                         <span class="label">阶段</span>
-                        <span class="value">${esc(job.stage || '—')}</span>
+                        <span class="value">${escapeHtml(job.stage || '—')}</span>
                     </div>
                     <div class="job-detail-item">
                         <span class="label">已用时</span>
-                        <span class="value">${esc(job.elapsed_sec != null ? formatElapsed(job.elapsed_sec) : '—')}</span>
+                        <span class="value">${escapeHtml(job.elapsed_sec != null ? formatElapsed(job.elapsed_sec) : '—')}</span>
                     </div>
                     <div class="job-detail-item">
                         <span class="label">说明</span>
-                        <span class="value">${esc(job.detail || '无')}</span>
+                        <span class="value">${escapeHtml(job.detail || '无')}</span>
                     </div>
                 </div>
             </div>
@@ -945,12 +1238,12 @@ async function viewJobDetails(jobId) {
         if (job.status === 'failed' && job.error) {
             // Both error and error_trace come from server-side tracebacks and
             // may contain `<`, `>`, `&` (e.g. "AttributeError: '<' not supported").
-            // MUST go through esc() — they are inserted into innerHTML.
+            // MUST go through escapeHtml() — they are inserted into innerHTML.
             html += `
                 <div class="job-detail-section">
                     <h3>错误信息</h3>
-                    <div class="job-error-message">${esc(job.error)}</div>
-                    ${job.error_trace ? `<div class="job-error-trace">${esc(job.error_trace)}</div>` : ''}
+                    <div class="job-error-message">${escapeHtml(job.error)}</div>
+                    ${job.error_trace ? `<div class="job-error-trace">${escapeHtml(job.error_trace)}</div>` : ''}
                 </div>
             `;
         }
@@ -966,10 +1259,13 @@ async function viewJobDetails(jobId) {
 
         content.innerHTML = html;
     } catch (error) {
+        // error.message may contain HTML entities from the server's
+        // Pydantic validation detail (e.g. "Value error, Invalid ...").
+        // MUST go through escapeHtml() — it is inserted into innerHTML.
         content.innerHTML = `
             <div class="job-detail-section">
                 <p style="text-align: center; color: var(--danger-color); padding: 2rem;">
-                    获取详情失败: ${error.message}
+                    获取详情失败: ${escapeHtml(error.message)}
                 </p>
             </div>
         `;
@@ -977,12 +1273,37 @@ async function viewJobDetails(jobId) {
 }
 
 async function viewJobResults(jobId) {
-    // Switch to results tab and filter by job
-    document.querySelector('[data-tab="results"]').click();
+    // Switch to results tab and filter by job. Subtle ordering matters:
+    //   * If we use ``tabBtn.click()`` to switch tabs, the tab handler will
+    //     ALSO call ``loadResults()`` — racing the explicit ``await
+    //     loadResults()`` below (two concurrent fetches, both rebuilding
+    //     the filter, with the user's just-set filter.value at risk of
+    //     being clobbered by whichever finishes second).
+    //   * If we set ``filter.value`` before ``loadResults()`` returns,
+    //     ``populateResultFilter()`` will rebuild the <select> and the
+    //     value silently disappears.
+    // Solution: switch tabs MANUALLY (without firing the click handler),
+    // then await a single loadResults(), then set the filter value.
+    const targetBtn = document.querySelector('[data-tab="results"]');
+    if (!targetBtn) return;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
+    targetBtn.classList.add('active');
+    document.getElementById('results-tab').classList.add('active');
+
     const filter = document.getElementById('result-filter');
-    if (filter) {
+    if (!filter) return;
+    await loadResults();
+    // After loadResults() the option for this jobId may or may not be in
+    // the select (e.g. job has no rows yet). Only set if present so the
+    // user's filter doesn't silently match nothing.
+    const has = Array.from(filter.options).some(opt => opt.value === jobId);
+    if (has) {
         filter.value = jobId;
-        loadResults();
+        resultsTableState.page = 1;
+        renderResults();
+    } else {
+        showNotification('该任务暂无结果可显示', 'info');
     }
 }
 
@@ -1046,11 +1367,21 @@ document.getElementById('job-filter')?.addEventListener('change', renderJobsList
 document.getElementById('jobs-select-all')?.addEventListener('change', onSelectAllToggle);
 document.getElementById('delete-selected-btn')?.addEventListener('click', openDeleteModalForSelection);
 
+// Delete-modal buttons (previously bound via inline onclick="..." which
+// breaks under strict-CSP). The header X, footer Cancel and footer Confirm
+// are all registered by ID here.
+document.getElementById('delete-modal-close-btn')?.addEventListener('click', closeDeleteModal);
+document.getElementById('delete-modal-cancel-btn')?.addEventListener('click', closeDeleteModal);
+document.getElementById('delete-modal-confirm')?.addEventListener('click', confirmDelete);
+
 // ==================== Results ==================== //
 async function loadResults() {
     try {
         const response = await fetch(`${CONFIG.apiBaseUrl}/results`);
-        if (!response.ok) return;
+        if (!response.ok) {
+            console.error(`loadResults: HTTP ${response.status}`);
+            return;
+        }
 
         resultsData = await response.json();
         populateResultFilter();
@@ -1067,31 +1398,37 @@ function populateResultFilter() {
 
     // Get unique job IDs from results
     const jobIds = [...new Set(resultsData.map(r => r.job_id).filter(Boolean))];
+
+    // Remember the user's previous selection so we can either restore it
+    // (the corresponding job still exists) or reset to "全部论文" (the job
+    // was deleted on the server). Without this, every periodic refresh
+    // wiped the filter and the user's "view this paper only" intent was
+    // lost on each poll.
+    const prevValue = filter.value;
+
     if (jobIds.length <= 1) {
-        // 0 or 1 job — nothing to filter. If the user previously had a
-        // selection, clear it so the table shows everything (instead of
-        // silently filtering to 0 rows when the job no longer exists).
-        if (filter.value && filter.value !== '') {
+        // 0 or 1 job — nothing to filter. Reset only if a stale selection
+        // would silently match 0 rows.
+        if (prevValue && prevValue !== '' && !jobIds.includes(prevValue)) {
             filter.value = '';
         }
         return;
     }
 
-    // Remember the user's previous selection so we can detect "stale" IDs
-    // (job was deleted on the server but the <option> is gone).
-    const prevValue = filter.value;
-
     // Keep the first "All papers" option
     filter.innerHTML = '<option value="">全部论文</option>';
     jobIds.forEach(jobId => {
         const shortId = jobId.substring(0, 12) + '...';
-        filter.innerHTML += `<option value="${esc(jobId)}">${esc(shortId)}</option>`;
+        filter.innerHTML += `<option value="${escapeHtml(jobId)}">${escapeHtml(shortId)}</option>`;
     });
 
-    // If the previous selection is no longer in the option list, reset.
-    // (The <select> retains its value even when the matching <option> is
-    // removed, so the filter would silently match nothing.)
-    if (prevValue && prevValue !== '' && !jobIds.includes(prevValue)) {
+    // Restore the previous selection if the corresponding option is still
+    // present; otherwise reset to "全部论文". (Setting .value to a missing
+    // option silently leaves the field at its previous DOM value, which
+    // matches no rows — surprising behaviour we explicitly normalise here.)
+    if (prevValue && jobIds.includes(prevValue)) {
+        filter.value = prevValue;
+    } else if (prevValue && prevValue !== '' && !jobIds.includes(prevValue)) {
         filter.value = '';
     }
 }
@@ -1155,7 +1492,13 @@ function renderResults() {
 
     const tbody = document.getElementById('results-tbody');
     if (total === 0) {
-        tbody.innerHTML = '<tr class="placeholder"><td colspan="8" style="text-align: center; color: #999;">暂无结果</td></tr>';
+        const hasAnyResults = resultsData.length > 0;
+        tbody.innerHTML = hasAnyResults
+            ? '<tr class="placeholder"><td colspan="8" style="text-align: center; color: var(--text-muted);">当前筛选条件下无结果，试试清除搜索或切换筛选</td></tr>'
+            : `<tr class="placeholder"><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                🔍 还没有提取结果<br>
+                <span style="font-size: 0.85rem;">完成 PDF 处理后，结果会自动显示在这里</span>
+            </td></tr>`;
         renderResultsPagination(0, 0, 0);
         renderResultsStatusFilterCounts({});
         return;
@@ -1167,30 +1510,30 @@ function renderResults() {
         // attribute which (a) wasted ~25 KB per page, (b) was vulnerable to
         // attribute-boundary escape when records contained '&' or '<'.
         const recordIndex = __rlpeRecords.push(r) - 1;
-        const paperId = esc(r.paper_id);
-        const figureId = esc(r.figure_id);
-        const species = esc(r.species);
-        const panelPath = esc(r.panel_path);
-        const panelPathEscaped = esc(resolveAssetUrl(r.panel_path || ''));
+        const paperId = escapeHtml(r.paper_id);
+        const figureId = escapeHtml(r.figure_id);
+        const species = escapeHtml(r.species);
+        const panelPath = escapeHtml(r.panel_path);
+        const panelPathEscaped = escapeHtml(resolveAssetUrl(r.panel_path || ''));
         const md = r.metadata || {};
         const ocrSource = md.v18_panel_id_source;
         const oldPanelId = md.v18_old_panel_id;
         const status = getRecordStatus(r);
         const ocrCell = status === 'image_ocr'
-            ? `<span class="badge badge-ok" title="Re-OCR'd from panel image${oldPanelId && oldPanelId !== r.panel_id ? ' (was: ' + esc(oldPanelId) + ')' : ''}">✓ ${esc(r.panel_id) || 'N/A'}</span>`
+            ? `<span class="badge badge-ok" title="Re-OCR'd from panel image${oldPanelId && oldPanelId !== r.panel_id ? ' (was: ' + escapeHtml(oldPanelId) + ')' : ''}">✓ ${escapeHtml(r.panel_id) || 'N/A'}</span>`
             : (status === 'positional'
-                ? `<span class="badge badge-warn" title="panel_id came from caption list (positional); image OCR did not return a usable label">⚠ ${esc(r.panel_id) || 'N/A'}</span>`
-                : `<span class="badge badge-muted" title="No panel image available for OCR verification">— ${esc(r.panel_id) || 'N/A'}</span>`);
+                ? `<span class="badge badge-warn" title="panel_id came from caption list (positional); image OCR did not return a usable label">⚠ ${escapeHtml(r.panel_id) || 'N/A'}</span>`
+                : `<span class="badge badge-muted" title="No panel image available for OCR verification">— ${escapeHtml(r.panel_id) || 'N/A'}</span>`);
         return `
         <tr>
-            <td>${esc(r.paper_id)}</td>
-            <td>${esc(r.figure_id)}</td>
-            <td>${esc(r.panel_id) || 'N/A'}</td>
+            <td>${escapeHtml(r.paper_id)}</td>
+            <td>${escapeHtml(r.figure_id)}</td>
+            <td>${escapeHtml(r.panel_id) || 'N/A'}</td>
             <td>${ocrCell}</td>
-            <td>${esc(r.species) || 'N/A'}</td>
+            <td>${escapeHtml(r.species) || 'N/A'}</td>
             <td>
-                <span class="confidence-badge ${getConfidenceClass(r.confidence)}">
-                    ${(r.confidence * 100).toFixed(0)}%
+                <span class="confidence-badge ${getConfidenceClass(r.confidence || 0)}">
+                    ${((r.confidence || 0) * 100).toFixed(0)}%
                 </span>
             </td>
             <td>
@@ -1208,7 +1551,13 @@ function renderResults() {
             const idx = parseInt(img.getAttribute('data-record-index'), 10);
             const record = __rlpeRecords[idx];
             if (!record) return;
-            openImageModal(img.getAttribute('src'), img.getAttribute('data-species'), record);
+            // Use record.species (RAW) as the modal title. Reading
+            // ``data-species`` via getAttribute would return the
+            // HTML-ESCAPED value (e.g. ``A &amp; B``), which then
+            // gets re-escaped in openImageModal and the user sees
+            // ``A &amp;amp; B`` in tooltips. The full record is
+            // available in __rlpeRecords, so just use it directly.
+            openImageModal(img.getAttribute('src'), record.species || '', record);
         });
         img.addEventListener('error', () => {
             // Replace broken image with a plain "N/A" text. { once: true } ensures
@@ -1249,7 +1598,7 @@ function renderResultsStatusFilterCounts(counts) {
         ['no_image', '— 无图', counts.no_image || 0],
     ];
     container.innerHTML = buttons.map(([k, label, n]) =>
-        `<button type="button" role="tab" class="status-filter-btn ${k === cur ? 'active' : ''}" data-status="${esc(k)}" aria-selected="${k === cur ? 'true' : 'false'}">${label} <span class="status-filter-count">${n}</span></button>`
+        `<button type="button" role="tab" class="status-filter-btn ${k === cur ? 'active' : ''}" data-status="${escapeHtml(k)}" aria-selected="${k === cur ? 'true' : 'false'}">${label} <span class="status-filter-count">${n}</span></button>`
     ).join('');
     container.querySelectorAll('.status-filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -1297,8 +1646,9 @@ function renderResultsPagination(total, page, totalPages) {
 }
 
 function getConfidenceClass(confidence) {
-    if (confidence >= 0.8) return 'confidence-high';
-    if (confidence >= 0.5) return 'confidence-medium';
+    const c = confidence || 0;
+    if (c >= 0.8) return 'confidence-high';
+    if (c >= 0.5) return 'confidence-medium';
     return 'confidence-low';
 }
 
@@ -1462,10 +1812,31 @@ function openImageModal(src, title, record) {
                 <div class="modal-row"><span class="modal-label">Panel 标签:</span> <code>${escapeHtml(record.panel_id || 'N/A')}</code></div>
                 <div class="modal-row"><span class="modal-label">Panel 来源:</span> ${ocrBadge}</div>
                 <div class="modal-row"><span class="modal-label">物种:</span> <strong>${escapeHtml(record.species || 'N/A')}</strong></div>
-                <div class="modal-row"><span class="modal-label">置信度:</span> ${(record.confidence * 100).toFixed(0)}%</div>
+                <div class="modal-row"><span class="modal-label">置信度:</span> ${((record.confidence || 0) * 100).toFixed(0)}%</div>
                 ${reassignNote}
-                ${record.bbox && record.bbox.some(v => v > 0) ? `<div class="modal-row"><span class="modal-label">BBox:</span> <code>[${record.bbox.join(', ')}]</code></div>` : ''}
+                ${record.bbox && Array.isArray(record.bbox) && record.bbox.some(v => v > 0) ? `<div class="modal-row"><span class="modal-label">BBox:</span> <code>[${record.bbox.map(v => escapeHtml(String(v))).join(', ')}]</code></div>` : ''}
                 ${captionSnippet ? `<div class="modal-row modal-row-wide"><span class="modal-label">Caption:</span><div class="modal-caption">${escapeHtml(captionSnippet)}${captionSnippet.length >= 280 ? '…' : ''}</div></div>` : ''}
+                ${(() => {
+                    // Render geology_links (age / formation / locality) so the
+                    // operator can see WHY a panel got a given species prediction.
+                    // Skip silently if the metadata is missing or empty.
+                    const links = (record.metadata && record.metadata.geology_links) || [];
+                    if (!links.length) return '';
+                    const items = links.map(g => {
+                        const age = g.age || g.chronostratigraphy;
+                        const head = [
+                            age ? `<strong>${escapeHtml(age)}</strong>` : '',
+                            g.formation ? `<em>${escapeHtml(g.formation)}</em>` : '',
+                            g.locality ? `<span>${escapeHtml(g.locality)}</span>` : ''
+                        ].filter(Boolean).join(' · ');
+                        if (!head) return '';
+                        const conf = (g.confidence != null) ?
+                            ` <span class="modal-geo-conf">(${(g.confidence * 100).toFixed(0)}%)</span>` : '';
+                        return `<li>${head}${conf}</li>`;
+                    }).filter(Boolean);
+                    if (!items.length) return '';
+                    return `<div class="modal-row modal-row-wide"><span class="modal-label">地质关联:</span><ul class="modal-geo-list">${items.join('')}</ul></div>`;
+                })()}
             </div>`;
     }
     modal.classList.remove('hidden');
@@ -1508,6 +1879,9 @@ function closeCorrectionModal() {
     document.getElementById('correction-modal').classList.add('hidden');
 }
 
+// Close correction modal via close button or cancel button (both are
+// now registered by ID instead of the previous inline onclick).
+document.getElementById('correction-modal-cancel-btn')?.addEventListener('click', closeCorrectionModal);
 document.querySelector('#correction-modal .modal-close')?.addEventListener('click', closeCorrectionModal);
 
 document.getElementById('correction-form')?.addEventListener('submit', async (e) => {
@@ -1577,15 +1951,67 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load saved settings
     document.getElementById('api-base-url').value = CONFIG.apiBaseUrl;
     document.getElementById('refresh-interval').value = CONFIG.refreshInterval;
-    
+
     // Load system info
     loadSystemInfo();
-    
+
     // Check API health
     checkApiHealth();
     setInterval(checkApiHealth, 10000);
-    
+
     // Load initial data
+    loadJobs();
+    loadResults();
+
+    // ============== UX upgrades (#PR — default-MiniMax + onboarding) ==============
+    // 1) Show the first-time onboarding banner unless dismissed
+    initOnboardingBanner();
+    // 2) Wire up the basic/advanced view toggle
+    initViewToggle();
+    // 3) Sync the basic-view LLM backend dropdown with the advanced-view one
+    initLLMBackendSync();
+    // 4) Wire up the API key show/hide toggle
+    initApiKeyToggle();
+    // 5) Wire up the LLM status card (poll once now and after each upload)
+    refreshLLMStatus();
+    // 6) Wire up the "Test connection" button
+    document.getElementById('llm-test-btn')?.addEventListener('click', testLLMConnection);
+    // 7) Wire up the cost estimate update on file change
+    initCostEstimate();
+    // 8) Show MiniMax usage in settings tab
+    refreshMiniMaxUsage();
+});
+
+// Auto-restart polling when the page becomes visible (tab switch / window
+// refocus). The previous design stopped polling once all jobs settled and
+// only restarted on a fresh upload; if a user ran a task, switched to
+// another browser tab, then came back after the task completed, the "jobs"
+// tab showed stale data until they manually clicked "刷新" or re-uploaded.
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        loadJobs();
+        loadResults();
+    }
+});
+
+// Warn the user before closing/navigating away while a job is actively
+// running. The pipeline continues server-side regardless, but a novice
+// user who accidentally closes the tab loses track of their job and may
+// re-upload the same PDF (wasting API calls). The check is lightweight
+// (reads the in-memory cache, no network call) and only fires when the
+// page is actually being unloaded.
+window.addEventListener('beforeunload', (e) => {
+    const hasActive = Object.values(jobsData).some(
+        j => j.status === 'queued' || j.status === 'running' || j.status === 'awaiting_user_decision'
+    );
+    if (hasActive || _processing) {
+        e.preventDefault();
+        e.returnValue = '';
+    }
+});
+
+// Also restart polling when the window regains focus (e.g. Alt+Tab back).
+window.addEventListener('focus', () => {
     loadJobs();
     loadResults();
 });
@@ -1594,7 +2020,7 @@ async function loadSystemInfo() {
     try {
         const response = await fetch(`${CONFIG.apiBaseUrl}/system/info`);
         if (!response.ok) return;
-        
+
         const info = await response.json();
         const infoDiv = document.getElementById('system-info');
         if (infoDiv) {
@@ -1621,3 +2047,338 @@ async function loadSystemInfo() {
         console.error('Failed to load system info:', error);
     }
 }
+
+// ====================================================================
+// Onboarding banner — shown on first visit, dismissible, restorable
+// from the settings tab via "重新显示新手引导".
+// ====================================================================
+const ONBOARDING_DISMISSED_KEY = 'rlpe.onboardingDismissed';
+
+function initOnboardingBanner() {
+    const banner = document.getElementById('onboarding-banner');
+    if (!banner) return;
+    const dismissed = localStorage.getItem(ONBOARDING_DISMISSED_KEY) === '1';
+    if (!dismissed) {
+        banner.classList.remove('hidden');
+    }
+    document.getElementById('onboarding-close-btn')?.addEventListener('click', () => {
+        banner.classList.add('hidden');
+        localStorage.setItem(ONBOARDING_DISMISSED_KEY, '1');
+    });
+    document.getElementById('show-onboarding-btn')?.addEventListener('click', () => {
+        localStorage.removeItem(ONBOARDING_DISMISSED_KEY);
+        banner.classList.remove('hidden');
+        // Switch to the upload tab so the banner is visible.
+        document.querySelector('[data-tab="upload"]')?.click();
+        showNotification('新手引导已重新显示', 'success');
+    });
+}
+
+// ====================================================================
+// Basic / Advanced view toggle on the config card. Persisted in
+// localStorage so the user's preferred view is remembered.
+// ====================================================================
+const VIEW_PREF_KEY = 'rlpe.configView';
+
+function initViewToggle() {
+    const buttons = document.querySelectorAll('.view-toggle-btn');
+    if (!buttons.length) return;
+    const savedView = localStorage.getItem(VIEW_PREF_KEY) || 'basic';
+    applyConfigView(savedView);
+    buttons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const view = btn.dataset.view;
+            applyConfigView(view);
+            localStorage.setItem(VIEW_PREF_KEY, view);
+        });
+    });
+}
+
+function applyConfigView(view) {
+    document.querySelectorAll('.view-toggle-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.view === view);
+    });
+    const basic = document.getElementById('config-basic-view');
+    const advanced = document.getElementById('config-advanced-view');
+    if (basic) basic.classList.toggle('hidden', view !== 'basic');
+    if (advanced) advanced.classList.toggle('hidden', view !== 'advanced');
+}
+
+// ====================================================================
+// Sync basic-view LLM backend dropdown <-> advanced-view dropdown.
+// Both dropdowns control the SAME upload behaviour, so changing one
+// must update the other. We use the basic dropdown's value as the
+// primary source of truth (since it's the default visible one).
+// ====================================================================
+function initLLMBackendSync() {
+    const basic = document.getElementById('llm-backend-basic');
+    const advanced = document.getElementById('llm-backend');
+    if (!basic || !advanced) return;
+    // basic → advanced
+    basic.addEventListener('change', () => {
+        advanced.value = basic.value;
+        _syncLLMBackendVisibility();
+    });
+    // advanced → basic
+    advanced.addEventListener('change', () => {
+        basic.value = advanced.value;
+    });
+    // initial: copy basic's value (which is `MiniMax` by default) into
+    // advanced, then trigger the visibility sync.
+    advanced.value = basic.value;
+    _syncLLMBackendVisibility();
+}
+
+// Override _buildLLMOptions so it reads from whichever dropdown is
+// currently authoritative. We keep the original function (defined
+// earlier in this file) reading `#llm-backend`; here we make sure
+// `#llm-backend` is always in sync with `#llm-backend-basic` via
+// the change handlers wired in initLLMBackendSync.
+
+// ====================================================================
+// API Key show/hide toggle
+// ====================================================================
+function initApiKeyToggle() {
+    const btn = document.getElementById('api-key-toggle');
+    const input = document.getElementById('MiniMax-api-key');
+    if (!btn || !input) return;
+    btn.addEventListener('click', () => {
+        input.type = input.type === 'password' ? 'text' : 'password';
+    });
+}
+
+// ====================================================================
+// LLM status card — polls /system/llm-status to render
+//   ✅ Key configured  /  ⚠️ Key missing  /  ❌ Test failed
+// ====================================================================
+async function refreshLLMStatus() {
+    const iconEl = document.getElementById('llm-status-icon');
+    const bodyEl = document.getElementById('llm-status-body');
+    if (!bodyEl) return;
+    try {
+        const resp = await fetch(`${CONFIG.apiBaseUrl}/system/llm-status`);
+        if (!resp.ok) {
+            if (iconEl) iconEl.textContent = '❌';
+            bodyEl.innerHTML = `<span class="llm-status-error">无法获取 LLM 状态（HTTP ${resp.status}）</span>`;
+            return;
+        }
+        const data = await resp.json();
+        // Resolve endpoint / model with fallback to legacy field names.
+        // The backend returns ``active_endpoint`` / ``active_model`` (the
+        // resolved values) plus the deprecated ``default_endpoint`` /
+        // ``default_model`` aliases. Prefer the new names if present.
+        const endpoint = data.active_endpoint || data.default_endpoint || '—';
+        const model = data.active_model || data.default_model || 'MiniMax-M3';
+        const totalCost = Number(data.total_cost_cny) || 0;
+        const totalCalls = Number(data.total_calls) || 0;
+        const approxPerCall = Number(data.approx_cny_per_call) || 0;
+        if (data.key_configured) {
+            if (iconEl) iconEl.textContent = '✅';
+            const keyHTML = data.key_preview
+                ? `<span class="llm-status-key-preview">${escapeHtml(data.key_preview)}</span>`
+                : '';
+            // Build the cumulative usage line conditionally so a missing
+            // total_cost_cny (server bug or older schema) doesn't crash
+            // ``.toFixed`` on undefined.
+            const usageLine = totalCalls > 0
+                ? `· 累计 ${totalCalls} 次调用，¥${totalCost.toFixed(4)}`
+                : '';
+            bodyEl.innerHTML = `
+                <span class="llm-status-ok">
+                    API Key 已配置 ${keyHTML}
+                </span>
+                <span class="llm-status-detail">
+                    来源：${escapeHtml(data.key_source || 'unknown')}
+                    · 当前模型：${escapeHtml(model)}
+                    · Endpoint：${escapeHtml(endpoint)}
+                </span>
+                <span class="llm-status-detail">
+                    单次调用约 ¥${approxPerCall.toFixed(4)} ${usageLine}
+                </span>
+            `;
+        } else {
+            if (iconEl) iconEl.textContent = '⚠️';
+            bodyEl.innerHTML = `
+                <span class="llm-status-warn">
+                    未检测到 MiniMax API Key
+                </span>
+                <span class="llm-status-detail">
+                    项目根目录的 <code>.env</code> 文件中未发现 <code>ANTHROPIC_API_KEY</code>。
+                    您可以：
+                    （1）在「高级」视图的"API Key"输入框中临时填入；或
+                    （2）在 .env 中写入并重启服务（推荐）。
+                </span>
+                <a class="llm-status-action-link"
+                   href="https://platform.minimaxi.com/user-center/payment/token-plan"
+                   target="_blank" rel="noopener">
+                    🔗 申请 MiniMax Token Plan
+                </a>
+            `;
+        }
+    } catch (err) {
+        if (iconEl) iconEl.textContent = '❌';
+        bodyEl.innerHTML = `<span class="llm-status-error">检查失败：${escapeHtml(err.message || String(err))}</span>`;
+    }
+}
+
+// ====================================================================
+// Test the configured API key by hitting /system/test-llm.
+// Runs in the foreground (button shows spinner). Cost ≈ ¥0.001 per call.
+// ====================================================================
+async function testLLMConnection() {
+    const btn = document.getElementById('llm-test-btn');
+    if (!btn) return;
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-small"></span> 测试中…';
+    try {
+        // Pull the user-overridden values from the advanced-view inputs
+        // (if visible), otherwise let the server fall back to .env.
+        const body = {};
+        const apiKeyVal = document.getElementById('MiniMax-api-key')?.value.trim();
+        const endpointVal = document.getElementById('MiniMax-endpoint')?.value.trim();
+        const modelVal = document.getElementById('MiniMax-model')?.value.trim();
+        if (apiKeyVal) body.api_key = apiKeyVal;
+        if (endpointVal) body.endpoint = endpointVal;
+        if (modelVal) body.model = modelVal;
+        const resp = await fetch(`${CONFIG.apiBaseUrl}/system/test-llm`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            // Build the success message piece by piece so missing
+            // optional fields (cost_cny, note) don't produce dangling
+            // delimiters or unbalanced brackets.
+            const parts = [`${data.latency_ms}ms`, data.model || 'MiniMax-M3'];
+            if (data.cost_cny != null) {
+                parts.push(`¥${data.cost_cny}`);
+            }
+            let msg = `✅ 连接成功（${parts.join(' · ')}）`;
+            if (data.note) {
+                msg += ` ${data.note}`;
+            }
+            showNotification(msg, 'success');
+        } else {
+            showNotification(
+                `❌ 测试失败：${data.error || data.error_type || '未知错误'}`,
+                'error',
+            );
+        }
+    } catch (err) {
+        showNotification(`❌ 测试请求失败：${err.message || err}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        // Refresh the status card so the user sees the latest state.
+        refreshLLMStatus();
+    }
+}
+
+// ====================================================================
+// Cost estimate — when files are added/removed, estimate the MiniMax
+// cost. Heuristic: ~3 figures per PDF page × ~10 panels per figure ×
+// ¥0.0085 per call. We use file size as a proxy for page count
+// (~80 KB / page is typical for OA radiolarian PDFs).
+// ====================================================================
+function initCostEstimate() {
+    const updateEstimate = () => {
+        const stripEl = document.getElementById('cost-estimate');
+        const textEl = document.getElementById('cost-estimate-text');
+        if (!stripEl || !textEl) return;
+        if (!uploadedFiles.length) {
+            stripEl.classList.add('hidden');
+            return;
+        }
+        // Only show the estimate when the user has LLM enabled with MiniMax
+        const useLLM = document.getElementById('use-gemma4')?.checked;
+        const backend = document.getElementById('llm-backend-basic')?.value
+            || document.getElementById('llm-backend')?.value;
+        if (!useLLM || backend !== 'MiniMax') {
+            stripEl.classList.add('hidden');
+            return;
+        }
+        // Crude estimate: pages = sum(size_KB) / 80; calls ≈ pages * 3 * 8.
+        // The 3× is "figures per page" and 8× is "panels per figure".
+        // These are heuristics tuned on the gold corpus (~40 panels per
+        // 10-page paper).
+        const totalBytes = uploadedFiles.reduce((s, f) => s + (f.size || 0), 0);
+        const estPages = Math.max(1, totalBytes / 1024 / 80);
+        const estCalls = Math.round(estPages * 3 * 8);
+        const estCost = (estCalls * 0.0085).toFixed(2);
+        textEl.textContent = `预估调用 MiniMax ≈ ${estCalls} 次，约 ¥${estCost}（基于 ${uploadedFiles.length} 个文件，${Math.round(estPages)} 页）`;
+        stripEl.classList.remove('hidden');
+    };
+    // Hook into add/remove events. addFiles / removeFile / clear-btn
+    // already call renderFileList; we attach a MutationObserver to the
+    // file-list element to catch all of them with a single hook.
+    const fileList = document.getElementById('file-list');
+    if (fileList) {
+        const observer = new MutationObserver(updateEstimate);
+        observer.observe(fileList, { childList: true, subtree: true });
+    }
+    // Also re-estimate when the LLM toggle / backend changes.
+    document.getElementById('use-gemma4')?.addEventListener('change', updateEstimate);
+    document.getElementById('llm-backend-basic')?.addEventListener('change', updateEstimate);
+    document.getElementById('llm-backend')?.addEventListener('change', updateEstimate);
+    // Initial render.
+    updateEstimate();
+}
+
+// ====================================================================
+// MiniMax usage panel (settings tab) — renders cumulative call counts
+// and total cost from the same /system/llm-status endpoint.
+// ====================================================================
+async function refreshMiniMaxUsage() {
+    const panel = document.getElementById('minimax-usage');
+    if (!panel) return;
+    try {
+        const resp = await fetch(`${CONFIG.apiBaseUrl}/system/llm-status`);
+        if (!resp.ok) {
+            panel.innerHTML = `<p style="color: var(--text-muted);">无法读取用量（HTTP ${resp.status}）</p>`;
+            return;
+        }
+        const data = await resp.json();
+        const totalCost = Number(data.total_cost_cny) || 0;
+        const totalCalls = Number(data.total_calls) || 0;
+        const approxPerCall = Number(data.approx_cny_per_call) || 0;
+        const model = data.active_model || data.default_model || 'MiniMax-M3';
+        panel.innerHTML = `
+            <div class="minimax-usage-item">
+                <span class="minimax-usage-label">累计调用次数</span>
+                <span class="minimax-usage-value">${totalCalls}</span>
+            </div>
+            <div class="minimax-usage-item">
+                <span class="minimax-usage-label">累计费用（CNY）</span>
+                <span class="minimax-usage-value">¥${totalCost.toFixed(4)}</span>
+            </div>
+            <div class="minimax-usage-item">
+                <span class="minimax-usage-label">单次调用估价</span>
+                <span class="minimax-usage-value">¥${approxPerCall.toFixed(4)}</span>
+            </div>
+            <div class="minimax-usage-item">
+                <span class="minimax-usage-label">当前模型</span>
+                <span class="minimax-usage-value" style="font-size: 0.95rem;">${escapeHtml(model)}</span>
+            </div>
+        `;
+    } catch (err) {
+        panel.innerHTML = `<p style="color: var(--danger-color);">读取失败：${escapeHtml(err.message || String(err))}</p>`;
+    }
+}
+
+// Hook the existing tab-switch handler (defined earlier in this file
+// at the top with ``document.querySelectorAll('.tab-btn').forEach``)
+// to also refresh LLM status / usage when the user navigates to the
+// settings tab. Implemented as a SINGLE event listener attached to
+// each settings tab button (not to ``document``) so we don't fire on
+// unrelated clicks elsewhere on the page. The previous global click
+// listener fired on ANY click that bubbled to ``document`` and
+// matched ``[data-tab="settings"]`` — including bubbled clicks from
+// child elements that don't actually trigger a tab change.
+document.querySelectorAll('.tab-btn[data-tab="settings"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+        refreshLLMStatus();
+        refreshMiniMaxUsage();
+    });
+});

@@ -19,6 +19,7 @@ Plus RLPE-specific columns (``panel_id``, ``figure_id``, ``paper_id``,
 Parquet uses the same column names with proper types (no string-only
 fallback for numeric lat/long).
 """
+
 from __future__ import annotations
 
 import csv
@@ -32,6 +33,7 @@ from ..schema_models import PanelRecord, RunOutput
 @dataclass(slots=True)
 class AnalysisOptions:
     """Options for the analysis-view export."""
+
     include_unmatched: bool = True
     csv_encoding: str = "utf-8"
     csv_delimiter: str = ","
@@ -97,9 +99,7 @@ def _to_analysis_row(panel: PanelRecord) -> dict[str, Any]:
     }
 
 
-def panels_to_rows(
-    run: RunOutput, options: AnalysisOptions | None = None
-) -> list[dict[str, Any]]:
+def panels_to_rows(run: RunOutput, options: AnalysisOptions | None = None) -> list[dict[str, Any]]:
     """Project all panels of a RunOutput into analysis-view rows."""
     options = options or AnalysisOptions()
     rows: list[dict[str, Any]] = []
@@ -121,7 +121,9 @@ def write_csv(
     rows = panels_to_rows(run, options)
     with open(target, "w", encoding=options.csv_encoding, newline="") as f:
         w = csv.DictWriter(
-            f, fieldnames=CSV_COLUMNS, delimiter=options.csv_delimiter,
+            f,
+            fieldnames=CSV_COLUMNS,
+            delimiter=options.csv_delimiter,
             extrasaction="ignore",
         )
         w.writeheader()

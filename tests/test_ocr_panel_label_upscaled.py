@@ -10,6 +10,7 @@ The fallback only runs on small corner bands (shorter side < 200px)
 and marks recovered tokens with ``metadata={"upscaled": "2x"}`` so
 downstream code can attribute the read to the fallback path.
 """
+
 from __future__ import annotations
 
 import sys
@@ -104,6 +105,4 @@ def test_2x_fallback_uses_native_result_when_native_succeeds():
     tokens = backend.recognize_panel_label(img, (0, 0, 80, 100), label_corner="tl")
     assert len(tokens) == 1
     assert tokens[0].text == "3"
-    assert call_count["n"] == 1, (
-        f"expected 1 OCR call (native succeeded), got {call_count['n']}"
-    )
+    assert call_count["n"] == 1, f"expected 1 OCR call (native succeeded), got {call_count['n']}"

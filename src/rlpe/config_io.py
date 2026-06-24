@@ -66,7 +66,10 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
     except (TypeError, ValueError):
         logger.warning(
             "config_io: could not coerce %s=%r to %s; using default %r",
-            name, value, target_type.__name__, default,
+            name,
+            value,
+            target_type.__name__,
+            default,
         )
         return default
 
@@ -75,19 +78,20 @@ def load_config(path: Path) -> PipelineConfig:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(
-            f"config_io: could not read config from {path}: {exc}"
-        ) from exc
+        raise ValueError(f"config_io: could not read config from {path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise ValueError(
-            f"config_io: top-level JSON in {path} must be an object, "
-            f"got {type(payload).__name__}"
+            f"config_io: top-level JSON in {path} must be an object, got {type(payload).__name__}"
         )
     return PipelineConfig(
         pdf_dir=Path(payload["pdf_dir"]),
         work_dir=Path(payload["work_dir"]),
         output_dir=Path(payload["output_dir"]) if payload.get("output_dir") else None,
-        grobid_url=_coerce("grobid_url", payload.get("grobid_url", "http://localhost:8070"), "http://localhost:8070"),
+        grobid_url=_coerce(
+            "grobid_url",
+            payload.get("grobid_url", "http://localhost:8070"),
+            "http://localhost:8070",
+        ),
         use_gpu=_coerce("use_gpu", payload.get("use_gpu", True), True),
         ocr_backend=_coerce("ocr_backend", payload.get("ocr_backend", "paddleocr"), "paddleocr"),
         taxon_model=_coerce("taxon_model", payload.get("taxon_model", "en_eco"), "en_eco"),
@@ -95,6 +99,8 @@ def load_config(path: Path) -> PipelineConfig:
         caption_window=_coerce("caption_window", payload.get("caption_window", 2), 2),
         num_workers=_coerce("num_workers", payload.get("num_workers", 4), 4),
         render_dpi=_coerce("render_dpi", payload.get("render_dpi", 200), 200),
-        save_intermediate=_coerce("save_intermediate", payload.get("save_intermediate", True), True),
+        save_intermediate=_coerce(
+            "save_intermediate", payload.get("save_intermediate", True), True
+        ),
         extra=payload.get("extra", {}) or {},
     )

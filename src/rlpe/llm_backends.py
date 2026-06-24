@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import base64
-import ipaddress
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -58,6 +58,17 @@ def _validate_llm_host(host: str) -> str:
             f"in {host!r}. Set RLPE_LLM_ALLOW_ANY_HOST=1 to override."
         )
     hostname = parsed.hostname or ""
+    # Reject URLs without a hostname (e.g. "http:///metadata"). The
+    # previous code fell through to ``ipaddress.ip_address("")`` which
+    # raised ValueError and was caught as "treat as DNS name" — the
+    # request then went to whatever the OS resolver decided "" meant
+    # (usually localhost), bypassing the SSRF guard. Empty hostnames
+    # are never legitimate for an LLM host so reject explicitly.
+    if not hostname:
+        raise ValueError(
+            f"LLM host {host!r} has no hostname; refusing to connect "
+            f"(SSRF guard). Set RLPE_LLM_ALLOW_ANY_HOST=1 to override."
+        )
     # Try to parse as an IP literal. If it isn't, the host is a DNS
     # name and we can't enumerate its addresses without a DNS lookup
     # (which itself can be an SSRF vector) — accept it and let the
@@ -68,11 +79,7 @@ def _validate_llm_host(host: str) -> str:
         addr = ipaddress.ip_address(hostname)
     except ValueError:
         return host
-    if (
-        addr.is_link_local
-        or addr.is_unspecified
-        or addr.is_multicast
-    ):
+    if addr.is_link_local or addr.is_unspecified or addr.is_multicast:
         raise ValueError(
             f"LLM host {host!r} resolves to a non-routable address "
             f"({addr}); refusing to connect (SSRF guard). "
@@ -146,7 +153,14 @@ def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
 class BaseLLMBackend:
     backend_name = "base"
 
-    def infer_panel(self, panel_image, caption_text: str, ocr_labels: list[str], system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def infer_panel(
+        self,
+        panel_image,
+        caption_text: str,
+        ocr_labels: list[str],
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
     def infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
@@ -164,7 +178,14 @@ class TransformersGemmaBackend(BaseLLMBackend):
     temperature: float = 0.1
     top_p: float = 0.9
 
-    def infer_panel(self, panel_image, caption_text: str, ocr_labels: list[str], system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def infer_panel(
+        self,
+        panel_image,
+        caption_text: str,
+        ocr_labels: list[str],
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
         import torch
 
         try:
@@ -249,7 +270,14 @@ class OllamaGemmaBackend(BaseLLMBackend):
         # always allowed).
         self.host = _validate_llm_host(self.host)
 
-    def infer_panel(self, panel_image, caption_text: str, ocr_labels: list[str], system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def infer_panel(
+        self,
+        panel_image,
+        caption_text: str,
+        ocr_labels: list[str],
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
         images = []
         if panel_image is not None:
             images.append(_encode_image_base64(panel_image))
@@ -265,7 +293,9 @@ class OllamaGemmaBackend(BaseLLMBackend):
             },
         }
         try:
-            resp = requests.post(f"{self.host.rstrip('/')}/api/generate", json=payload, timeout=self.timeout_sec)
+            resp = requests.post(
+                f"{self.host.rstrip('/')}/api/generate", json=payload, timeout=self.timeout_sec
+            )
             resp.raise_for_status()
             data = resp.json()
             text = str(data.get("response", ""))
@@ -295,7 +325,9 @@ class OllamaGemmaBackend(BaseLLMBackend):
             },
         }
         try:
-            resp = requests.post(f"{self.host.rstrip('/')}/api/generate", json=payload, timeout=self.timeout_sec)
+            resp = requests.post(
+                f"{self.host.rstrip('/')}/api/generate", json=payload, timeout=self.timeout_sec
+            )
             resp.raise_for_status()
             data = resp.json()
             text = str(data.get("response", ""))
@@ -333,7 +365,14 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
         # SSRF guard — see ``_validate_llm_host`` for the policy.
         self.host = _validate_llm_host(self.host)
 
-    def infer_panel(self, panel_image, caption_text: str, ocr_labels: list[str], system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def infer_panel(
+        self,
+        panel_image,
+        caption_text: str,
+        ocr_labels: list[str],
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
         try:
             text = self._chat_completion(panel_image, system_prompt, user_prompt)
             parsed = parse_json_from_text(text)
@@ -371,7 +410,10 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
         # 1) 优先尝试 OpenAI-compatible chat/completions
         payload = {
             "model": self.model or "default",
-            "messages": [self._system_message(system_prompt), self._user_message(user_prompt, panel_image)],
+            "messages": [
+                self._system_message(system_prompt),
+                self._user_message(user_prompt, panel_image),
+            ],
             "temperature": self.temperature,
             "top_p": self.top_p,
             "stream": False,
@@ -384,7 +426,9 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             return self._extract_chat_text(data)
         except Exception:
             # 2) 回退到 llama.cpp /completion 接口（纯文本）
-            logger.debug("llama.cpp /v1/chat/completions failed; falling back to /completion (text-only)")
+            logger.debug(
+                "llama.cpp /v1/chat/completions failed; falling back to /completion (text-only)"
+            )
             prompt = self._build_text_prompt(system_prompt, user_prompt)
             completion_payload = {
                 "prompt": prompt,
@@ -394,7 +438,11 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             }
             if self.model:
                 completion_payload["model"] = self.model
-            resp = requests.post(self.host.rstrip("/") + "/completion", json=completion_payload, timeout=self.timeout_sec)
+            resp = requests.post(
+                self.host.rstrip("/") + "/completion",
+                json=completion_payload,
+                timeout=self.timeout_sec,
+            )
             resp.raise_for_status()
             data = resp.json()
             return str(data.get("content") or data.get("response") or "")
@@ -511,22 +559,65 @@ class MiniMaxM3Backend(BaseLLMBackend):
     # Callback invoked when an error occurs and fallback is needed.
     # Signature: (error_info: dict) -> "gemma4" | "rules" | "stop"
     on_error: Callable[[dict[str, Any]], str] | None = None
+    # Data-outbound policy. One of:
+    #   * "api_full"    - send the full panel image + caption + OCR + GROBID
+    #                     paragraphs to the MiniMax API. This is the historical
+    #                     default and the only mode the upstream service
+    #                     actually consumes.
+    #   * "api_redacted"- strip long, identifiable text from the outbound
+    #                     payload (full caption -> first 200 chars;
+    #                     drop OCR text; replace panel image with a 256x256
+    #                     thumbnail). Useful for sensitive preprints
+    #                     (location-bearing geological context, copyright
+    #                     concerns) where the model only needs the
+    #                     species cue, not the whole text.
+    #   * "local_only"  - never contact the MiniMax API. ``infer_panel``
+    #                     and ``infer_text`` return a deterministic
+    #                     no-op result that the surrounding pipeline
+    #                     treats as "fallback_used=True", forcing the
+    #                     rule-based path to be authoritative. This
+    #                     is the correct setting for offline / air-gapped
+    #                     deployments (M3 weights not yet open-sourced,
+    #                     privacy-sensitive papers).
+    data_outbound_policy: str = "api_full"
 
     def __post_init__(self) -> None:
-        if not self.api_key:
-            raise ValueError("MiniMax api_key is required (set ANTHROPIC_API_KEY env or pass explicitly).")
-        try:
-            import anthropic  # type: ignore
-        except ImportError as exc:
-            raise RuntimeError(
-                "anthropic SDK not installed. Run: pip install 'anthropic>=0.40,<0.50'"
-            ) from exc
-        self._anthropic = anthropic
-        self._client = anthropic.Anthropic(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            timeout=self.timeout_sec,
-        )
+        # ``local_only`` does not need an API key: the backend will refuse
+        # every outbound request and return a no-op result, which the
+        # surrounding pipeline treats as a fallback.
+        if self.data_outbound_policy not in {"api_full", "api_redacted", "local_only"}:
+            raise ValueError(
+                f"data_outbound_policy must be one of api_full/api_redacted/local_only, "
+                f"got {self.data_outbound_policy!r}"
+            )
+        if not self.api_key and self.data_outbound_policy != "local_only":
+            raise ValueError(
+                "MiniMax api_key is required (set ANTHROPIC_API_KEY env or pass explicitly)."
+            )
+        # The ``local_only`` policy promises "no network, no SDK required":
+        # the backend short-circuits every ``infer_*`` call to a deterministic
+        # no-op result. In an air-gapped / offline deployment, the user
+        # frequently does NOT have the ``anthropic`` SDK installed at all,
+        # so the previous unconditional import broke construction. Skip the
+        # SDK import (and the ``Anthropic()`` client init) entirely when the
+        # policy says we will never make an outbound call.
+        if self.data_outbound_policy == "local_only":
+            self._anthropic = None
+            self._client = None
+        else:
+            try:
+                import anthropic  # type: ignore
+            except ImportError as exc:
+                raise RuntimeError(
+                    "anthropic SDK not installed. Run: pip install 'anthropic>=0.40,<0.50' "
+                    "(or set data_outbound_policy=local_only to run without the SDK)."
+                ) from exc
+            self._anthropic = anthropic
+            self._client = anthropic.Anthropic(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=self.timeout_sec,
+            )
         # Per-process semaphore (cheap; limits concurrent in-flight requests).
         self._sem = threading.Semaphore(self.max_concurrent)
         # Running totals (read by callers for cost dashboards).
@@ -551,7 +642,9 @@ class MiniMaxM3Backend(BaseLLMBackend):
     def _build_text_messages(self, user_prompt: str) -> list[dict[str, Any]]:
         return [{"role": "user", "content": user_prompt}]
 
-    def _build_request_kwargs(self, system_prompt: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    def _build_request_kwargs(
+        self, system_prompt: str, messages: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         # max_tokens must be > thinking_budget when thinking is enabled.
         max_out = max(self.max_output_tokens, self.thinking_budget_tokens + 256)
         kwargs: dict[str, Any] = {
@@ -580,6 +673,17 @@ class MiniMaxM3Backend(BaseLLMBackend):
         """
         kwargs = self._build_request_kwargs(system_prompt, messages)
         anthropic_mod = self._anthropic
+        # Guard: in ``local_only`` mode the anthropic SDK is never imported
+        # (``self._anthropic`` is None and ``self._client`` is None). The
+        # public ``infer_panel`` / ``infer_text`` methods short-circuit
+        # before reaching here, but a future code path that bypasses the
+        # short-circuit would hit ``None.RateLimitError`` in the except
+        # clauses below — an ``AttributeError`` that masks the real issue.
+        if anthropic_mod is None or self._client is None:
+            raise RuntimeError(
+                "MiniMax _call_api invoked without an Anthropic client "
+                "(data_outbound_policy=local_only or SDK not installed)."
+            )
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
             try:
@@ -594,13 +698,20 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 return resp
             except anthropic_mod.RateLimitError as exc:
                 last_exc = exc
-                wait = min(2 ** attempt, 30)
-                logger.warning("MiniMax rate-limited (attempt %d), sleeping %ds: %s", attempt + 1, wait, exc)
+                wait = min(2**attempt, 30)
+                logger.warning(
+                    "MiniMax rate-limited (attempt %d), sleeping %ds: %s", attempt + 1, wait, exc
+                )
                 time.sleep(wait)
             except anthropic_mod.APIConnectionError as exc:
                 last_exc = exc
-                wait = min(2 ** attempt, 30)
-                logger.warning("MiniMax connection error (attempt %d), sleeping %ds: %s", attempt + 1, wait, exc)
+                wait = min(2**attempt, 30)
+                logger.warning(
+                    "MiniMax connection error (attempt %d), sleeping %ds: %s",
+                    attempt + 1,
+                    wait,
+                    exc,
+                )
                 time.sleep(wait)
             except anthropic_mod.APIStatusError as exc:
                 last_exc = exc
@@ -615,10 +726,13 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 #     request is malformed or the resource doesn't
                 #     exist and retrying won't help.
                 if status >= 500 or status == 429 or status in (401, 403):
-                    wait = min(2 ** attempt, 30)
+                    wait = min(2**attempt, 30)
                     logger.warning(
                         "MiniMax %d (attempt %d), sleeping %ds: %s",
-                        status, attempt + 1, wait, exc,
+                        status,
+                        attempt + 1,
+                        wait,
+                        exc,
                     )
                     time.sleep(wait)
                 else:
@@ -632,7 +746,9 @@ class MiniMaxM3Backend(BaseLLMBackend):
         if last_exc is not None:
             logger.exception(
                 "MiniMax API call failed after %d retries: %s: %s",
-                self.max_retries, type(last_exc).__name__, last_exc,
+                self.max_retries,
+                type(last_exc).__name__,
+                last_exc,
             )
             raise last_exc
         raise RuntimeError("MiniMax call failed without explicit exception")
@@ -700,17 +816,128 @@ class MiniMaxM3Backend(BaseLLMBackend):
 
     # ------------------------------------------------------------------ public
 
-    def infer_panel(self, panel_image, caption_text: str, ocr_labels: list[str], system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def _local_only_noop(self, reason: str) -> dict[str, Any]:
+        """Deterministic no-op result used in local_only mode.
+
+        The shape matches ``_make_error_result`` so the caller's
+        fallback handler is triggered with a uniform error type.
+        The caller (``apply_gemma_to_matches``) sees
+        ``fallback_used=True`` and ``confidence=0.0`` and keeps the
+        rule-based prediction. No network IO is attempted.
+        """
+        return {
+            "label": None,
+            "species": None,
+            "confidence": 0.0,
+            "reasoning": f"local_only policy: {reason}",
+            "fallback_used": True,
+            "error": reason,
+            "error_type": "LocalOnlyPolicy",
+        }
+
+    def _redact_image(self, panel_image) -> Any:
+        """Replace a panel image with a 256-px thumbnail.
+
+        Preserves enough visual context for species cues (shape,
+        symmetry) while discarding enough pixel detail to make the
+        payload non-identifying for sensitive papers. Always returns
+        a PIL Image (not raw bytes) so the downstream
+        ``_encode_image_anthropic_block`` can reliably call
+        ``Image.fromarray`` / ``image.save(format='PNG')`` without
+        a type error.
+        """
+        if panel_image is None:
+            return None
         try:
-            messages = self._build_messages(panel_image, user_prompt)
+            from PIL import Image  # local import: PaddleOCR/EasyOCR users
+
+            # may not have PIL in the path.
+            if isinstance(panel_image, Image.Image):
+                img = panel_image.copy()
+                img.thumbnail((256, 256), Image.LANCZOS)
+                return img
+        except Exception:
+            pass
+        # Numpy / cv2 path: convert to PIL Image, resize, return PIL.
+        # The previous version returned raw JPEG bytes here, which
+        # broke ``_encode_image_anthropic_block`` (it only accepts
+        # PIL Image or numpy ndarray -- neither of which is a
+        # ``bytes`` object). Returning a PIL Image keeps the type
+        # contract consistent across all call sites.
+        try:
+            import numpy as np
+            from PIL import Image
+
+            arr = np.asarray(panel_image)
+            if arr.ndim == 3 and arr.shape[-1] == 3:
+                img = Image.fromarray(arr[..., ::-1])  # BGR -> RGB
+            else:
+                img = Image.fromarray(arr)
+            img.thumbnail((256, 256), Image.LANCZOS)
+            return img
+        except Exception:
+            return None
+
+    def _redact_text(self, text: str, limit: int = 200) -> str:
+        """Truncate long text payloads to a hard length cap.
+
+        The first N characters usually contain the species
+        enumeration, which is what the model needs; the rest is
+        supporting prose that may include location/formation
+        context the operator wants to keep private.
+        """
+        if not text:
+            return ""
+        s = str(text)
+        if len(s) <= limit:
+            return s
+        return s[:limit] + " ...[truncated by api_redacted policy]"
+
+    def _apply_outbound_policy(
+        self, panel_image, caption_text: str, ocr_labels: list[str], user_prompt: str
+    ) -> tuple[Any, str]:
+        """Return the redacted (panel_image, user_prompt) tuple based on
+        ``self.data_outbound_policy``. The original caption_text and
+        ocr_labels are also dropped from the user_prompt when the
+        policy is ``api_redacted``.
+        """
+        if self.data_outbound_policy == "api_full":
+            return panel_image, user_prompt
+        if self.data_outbound_policy == "local_only":
+            # Both branches return the same shape; the caller checks
+            # policy and short-circuits before this is even invoked,
+            # so this is just defensive in case the policy is changed
+            # at runtime.
+            return self._redact_image(panel_image), self._redact_text(user_prompt, limit=0)
+        # api_redacted
+        return self._redact_image(panel_image), self._redact_text(user_prompt, limit=200)
+
+    def infer_panel(
+        self,
+        panel_image,
+        caption_text: str,
+        ocr_labels: list[str],
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
+        if self.data_outbound_policy == "local_only":
+            return self._local_only_noop("MiniMax disabled (data_outbound_policy=local_only)")
+        try:
+            img, up = self._apply_outbound_policy(
+                panel_image, caption_text, ocr_labels, user_prompt
+            )
+            messages = self._build_messages(img, up)
             resp = self._call_api(system_prompt, messages)
             return self._make_result(resp)
         except Exception as exc:
             return self._make_error_result(exc)
 
     def infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        if self.data_outbound_policy == "local_only":
+            return self._local_only_noop("MiniMax disabled (data_outbound_policy=local_only)")
         try:
-            messages = self._build_text_messages(user_prompt)
+            _, up = self._apply_outbound_policy(None, "", [], user_prompt)
+            messages = self._build_text_messages(up)
             resp = self._call_api(system_prompt, messages)
             return self._make_result(resp)
         except Exception as exc:
@@ -751,6 +978,7 @@ def cli_fallback_prompt(error_info: dict[str, Any]) -> FallbackAction:
     the surrounding pipeline holds a lock around the Gemma call.
     """
     import sys as _sys
+
     _sys.stderr.write(
         "\n"
         "=" * 70 + "\n"
@@ -771,7 +999,9 @@ def cli_fallback_prompt(error_info: dict[str, Any]) -> FallbackAction:
         choice = input().strip()
     except EOFError:
         return "rules"
-    return {"1": "gemma4", "2": "rules", "3": "stop", "4": "retry", "": "rules"}.get(choice, "rules")
+    return {"1": "gemma4", "2": "rules", "3": "stop", "4": "retry", "": "rules"}.get(
+        choice, "rules"
+    )
 
 
 @dataclass(slots=True)
@@ -822,17 +1052,24 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
       - ``MiniMax_endpoint`` / ``ANTHROPIC_BASE_URL``
       - ``MiniMax_model``    / ``ANTHROPIC_MODEL`` / ``MiniMax_MODEL``
     """
+    # The data_outbound_policy gates whether we need an API key at all:
+    #   * api_full / api_redacted -> need a key
+    #   * local_only              -> key is optional; the backend will
+    #                                short-circuit every outbound call
+    policy = str(extra.get("data_outbound_policy", "api_full"))
     api_key = (
         extra.get("MiniMax_api_key")
         or os.environ.get("ANTHROPIC_API_KEY")
         or os.environ.get("MiniMax_API_KEY")
+        or os.environ.get("MINIMAX_API_KEY")
     )
-    if not api_key:
+    if not api_key and policy != "local_only":
         raise ValueError(
             "MiniMax api_key not set. Provide one via:\n"
             "  - PipelineConfig.extra['MiniMax_api_key']\n"
             "  - environment variable ANTHROPIC_API_KEY\n"
-            "  - .env file (see .env.example)"
+            "  - .env file (see .env.example)\n"
+            "Or set data_outbound_policy=local_only to run without the API."
         )
     base_url = (
         extra.get("MiniMax_endpoint")
@@ -846,9 +1083,10 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
         or "MiniMax-M3"
     )
     return MiniMaxM3Backend(
-        api_key=api_key,
+        api_key=api_key or "",
         base_url=base_url,
         model=model,
+        data_outbound_policy=policy,
         max_output_tokens=int(extra.get("MiniMax_max_output_tokens", 2048)),
         thinking_budget_tokens=int(extra.get("MiniMax_thinking_budget_tokens", 1024)),
         enable_thinking=bool(extra.get("MiniMax_enable_thinking", True)),

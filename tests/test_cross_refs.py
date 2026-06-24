@@ -1,4 +1,5 @@
 """Tests for cross-figure reference parsing."""
+
 from __future__ import annotations
 
 from rlpe.cross_refs import parse_cross_refs

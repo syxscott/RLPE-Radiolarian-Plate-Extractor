@@ -1,4 +1,5 @@
 """Tests for the gold loader and the 4-paper ground truth."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,6 +26,7 @@ class TestGoldFiles:
         lines = [ln for ln in path.read_text().splitlines() if ln.strip()]
         for ln in lines:
             import json
+
             d = json.loads(ln)
             assert "paper_id" in d
             assert "figure_id" in d
@@ -132,6 +134,7 @@ class TestSanityCounts:
     without pinning to exact numbers (which would break if the
     upstream manifest format changes).
     """
+
     def test_danelian_at_least_20_species(self):
         gold = load_gold(GOLD_DIR / "danelian2006.jsonl")
         # Danelian Plate 1 has 23 species clauses

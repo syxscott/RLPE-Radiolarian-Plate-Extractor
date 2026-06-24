@@ -19,6 +19,50 @@ SCALE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Words whose presence near a number-unit pair indicate a NON-scale-bar
+# context: specimen sizes, sieve apertures, sediment depths, etc. When
+# the SCALE_PATTERN matches a "bare number + unit" (no "scale bar"
+# prefix) and one of these tokens appears in the immediate left context,
+# we reject the match — otherwise "specimen 250 µm long" or
+# "100 µm sieve" gets stored as the figure's scale bar.
+_NON_SCALE_CONTEXT_WORDS = (
+    "specimen",
+    "specimens",
+    "sieve",
+    "sample",
+    "depth",
+    "length",
+    "long",
+    "wide",
+    "tall",
+    "diameter",
+    "radius",
+    "thick",
+    "aperture",
+    "mesh",
+    "grain",
+    "test",
+)
+
+
+def _is_real_scale_match(text: str, match: re.Match[str]) -> bool:
+    """Return True only if the SCALE_PATTERN match looks like a genuine
+    figure-scale-bar mention (not a specimen size measurement).
+
+    A match is "real" if either:
+      - it has the "scale bar" / "bar =" / "bars are" prefix (the
+        regex captures that as part of the group-0 span), OR
+      - the 30 chars immediately before the match contain none of the
+        non-scale-context words above.
+    """
+    span = match.group(0).lower()
+    # Has explicit "scale" / "bar" prefix in the matched text → real.
+    if "scale" in span or "bar" in span:
+        return True
+    # Otherwise check the left-context for specimen-size words.
+    left = text[max(0, match.start() - 30) : match.start()].lower()
+    return not any(w in left for w in _NON_SCALE_CONTEXT_WORDS)
+
 
 @dataclass(slots=True)
 class ScaleInfo:
@@ -36,7 +80,15 @@ class ScaleInfo:
 def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
     if not caption_text:
         return ScaleInfo()
-    m = SCALE_PATTERN.search(caption_text)
+    # Iterate matches and pick the first one that survives the
+    # specimen-size context filter. This prevents "specimen 250 µm
+    # long" from being recorded as the figure's scale bar when no
+    # real scale-bar mention exists in the caption.
+    m = None
+    for cand in SCALE_PATTERN.finditer(caption_text):
+        if _is_real_scale_match(caption_text, cand):
+            m = cand
+            break
     if not m:
         return ScaleInfo()
     val = float(m.group(1))
@@ -57,7 +109,9 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
             # warning level.
             logger.debug(
                 "scale caption: range form matched but group(2)=%r is not a "
-                "float: %s — keeping single value", m.group(2), exc,
+                "float: %s — keeping single value",
+                m.group(2),
+                exc,
             )
     return info
 
@@ -65,7 +119,11 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
 def extract_scale_from_ocr_text(ocr_text: str) -> ScaleInfo:
     if not ocr_text:
         return ScaleInfo()
-    m = SCALE_PATTERN.search(ocr_text)
+    m = None
+    for cand in SCALE_PATTERN.finditer(ocr_text):
+        if _is_real_scale_match(ocr_text, cand):
+            m = cand
+            break
     if not m:
         return ScaleInfo()
     val = float(m.group(1))
@@ -81,7 +139,9 @@ def extract_scale_from_ocr_text(ocr_text: str) -> ScaleInfo:
             # this is more common — log at debug level.
             logger.debug(
                 "scale ocr: range form matched but group(2)=%r is not a "
-                "float: %s — keeping single value", m.group(2), exc,
+                "float: %s — keeping single value",
+                m.group(2),
+                exc,
             )
     return info
 
@@ -108,7 +168,9 @@ def detect_scale_bar_length_px(image: np.ndarray) -> float | None:
     return best if best > 0 else None
 
 
-def estimate_um_per_px(scale_value: float | None, scale_unit: str | None, pixel_length: float | None) -> float | None:
+def estimate_um_per_px(
+    scale_value: float | None, scale_unit: str | None, pixel_length: float | None
+) -> float | None:
     if scale_value is None or scale_unit is None or pixel_length is None or pixel_length <= 0:
         return None
     um_value = to_um(scale_value, scale_unit)
@@ -117,7 +179,9 @@ def estimate_um_per_px(scale_value: float | None, scale_unit: str | None, pixel_
     return um_value / pixel_length
 
 
-def merge_scale_info(caption_info: ScaleInfo, ocr_info: ScaleInfo, pixel_length: float | None = None) -> ScaleInfo:
+def merge_scale_info(
+    caption_info: ScaleInfo, ocr_info: ScaleInfo, pixel_length: float | None = None
+) -> ScaleInfo:
     base = caption_info if caption_info.confidence >= ocr_info.confidence else ocr_info
     if base.value is None and ocr_info.value is not None:
         base = ocr_info

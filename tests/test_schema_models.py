@@ -1,4 +1,5 @@
 """Tests for rlpe.schema_models and rlpe.converters."""
+
 from __future__ import annotations
 
 import json
@@ -112,11 +113,17 @@ class TestRunOutput:
         prov = self._provenance()
         out = RunOutput(
             provenance=prov,
-            panels=[PanelRecord(
-                paper_id="p1", figure_id="f1", panel_id="1",
-                species="Genus sp", panel_path=None, bbox=[0,0,1,1],
-                confidence=0.7,
-            )],
+            panels=[
+                PanelRecord(
+                    paper_id="p1",
+                    figure_id="f1",
+                    panel_id="1",
+                    species="Genus sp",
+                    panel_path=None,
+                    bbox=[0, 0, 1, 1],
+                    confidence=0.7,
+                )
+            ],
         )
         s = json.dumps(out.model_dump())
         reloaded = json.loads(s)
@@ -141,8 +148,11 @@ class TestRunOutput:
             confidence=0.8,
         )
         rec = PanelRecord(
-            paper_id="p1", figure_id="f1", panel_id="1",
-            species="Genus sp", panel_path="/path/to/panel.png",
+            paper_id="p1",
+            figure_id="f1",
+            panel_id="1",
+            species="Genus sp",
+            panel_path="/path/to/panel.png",
             bbox=[10, 20, 100, 200],
             confidence=0.7,
             label_text="1",
@@ -159,17 +169,28 @@ class TestRunOutput:
                 "matcher_conf": 0.85,
                 "caption_pairs_used": True,
                 "scale_bar": {
-                    "value": 100.0, "unit": "um", "source": "caption",
-                    "pixel_length": 962.0, "um_per_px": 0.104,
+                    "value": 100.0,
+                    "unit": "um",
+                    "source": "caption",
+                    "pixel_length": 962.0,
+                    "um_per_px": 0.104,
                     "confidence": 0.8,
                 },
                 "geology_links": [
-                    {"age": "Late Jurassic", "chronostratigraphy": "Kimmeridgian",
-                     "formation": "Fonzaso", "locality": "Italy",
-                     "confidence": 0.7},
-                    {"age": "Late Jurassic", "chronostratigraphy": "Kimmeridgian",
-                     "formation": "Fonzaso", "locality": "Italy",
-                     "confidence": 0.6},
+                    {
+                        "age": "Late Jurassic",
+                        "chronostratigraphy": "Kimmeridgian",
+                        "formation": "Fonzaso",
+                        "locality": "Italy",
+                        "confidence": 0.7,
+                    },
+                    {
+                        "age": "Late Jurassic",
+                        "chronostratigraphy": "Kimmeridgian",
+                        "formation": "Fonzaso",
+                        "locality": "Italy",
+                        "confidence": 0.6,
+                    },
                 ],
                 "m3_diagnostic": {"regex_groups": 3, "fallback_used": False},
                 "extraction_source": "opendataloader",
@@ -211,6 +232,7 @@ class TestRunOutput:
         must preserve all data; if any field is silently dropped on
         one step, this catches it."""
         from rlpe.converters import run_output_from_provenance
+
         prov = self._provenance()
         out = run_output_from_provenance(prov, [_make_match()])
         # out is a dict, not a RunOutput
@@ -223,9 +245,7 @@ class TestRunOutput:
         d2 = json.loads(s)
         reloaded2 = validate_run_output(d2)
         assert reloaded2.panels[0].paper_id == reloaded.panels[0].paper_id
-        assert reloaded2.panels[0].paper_metadata.authors == [
-            "Author A"
-        ]
+        assert reloaded2.panels[0].paper_metadata.authors == ["Author A"]
 
     def test_validate_run_output_function(self):
         prov = self._provenance()
@@ -299,12 +319,22 @@ def _make_match() -> MatchResult:
             "matcher_type": "heuristic",
             "matcher_conf": 0.0,
             "caption_pairs_used": True,
-            "scale_bar": {"value": 100.0, "unit": "um", "source": "caption",
-                          "pixel_length": 962.0, "um_per_px": 0.104,
-                          "confidence": 0.8},
+            "scale_bar": {
+                "value": 100.0,
+                "unit": "um",
+                "source": "caption",
+                "pixel_length": 962.0,
+                "um_per_px": 0.104,
+                "confidence": 0.8,
+            },
             "geology_links": [
-                {"age": "Late Jurassic", "chronostratigraphy": "Kimmeridgian",
-                 "formation": "Fonzaso", "locality": "Italy", "confidence": 0.7},
+                {
+                    "age": "Late Jurassic",
+                    "chronostratigraphy": "Kimmeridgian",
+                    "formation": "Fonzaso",
+                    "locality": "Italy",
+                    "confidence": 0.7,
+                },
             ],
             "m3_diagnostic": {},
             "extraction_source": "opendataloader",
@@ -326,8 +356,14 @@ class TestConverters:
 
     def test_panel_metadata_handles_empty_meta(self):
         m = MatchResult(
-            paper_id="p", figure_id="f", panel_id=None, species=None,
-            panel_path=None, bbox=None, confidence=0.0, metadata={},
+            paper_id="p",
+            figure_id="f",
+            panel_id=None,
+            species=None,
+            panel_path=None,
+            bbox=None,
+            confidence=0.0,
+            metadata={},
         )
         pm = panel_metadata_from_match(m)
         assert pm.ocr_count == 0

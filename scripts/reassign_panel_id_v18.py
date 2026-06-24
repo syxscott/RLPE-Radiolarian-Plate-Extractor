@@ -22,6 +22,7 @@ Effect: pred panel_id now matches the actual visible label in
 the panel image. Eval F1 will be the *real* F1 (likely lower
 than 98.19% but accurate).
 """
+
 from __future__ import annotations
 
 import json
@@ -33,36 +34,77 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
-from rlpe.opendataloader_extractor import _find_plate_captions  # noqa: E402
 import easyocr  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
+
+from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
+from rlpe.opendataloader_extractor import _find_plate_captions  # noqa: E402
 
 PRED_IN = ROOT / "work" / "combined_9_v17_FINAL.jsonl"
 PRED_OUT = ROOT / "work" / "combined_9_v18_FINAL.jsonl"
 
 # Same OD JSON paths as refresh_all_predictions.py
 OD_JSON_BY_PAPER = {
-    "4f1bf415485765b8": ROOT / "work" / "all7_rerun" / "output" / "od_output"
-        / "4f1bf415485765b8" / "bandini2011.json",
-    "58d7972c37307959": ROOT / "work" / "all7_rerun" / "output" / "od_output"
-        / "58d7972c37307959" / "baumgartner2008.json",
-    "178d4e1e9d93136c": ROOT / "work" / "boughdiri_rerun" / "output" / "od_output"
-        / "178d4e1e9d93136c" / "boughdiri2007.json",
-    "17a129b4e9ca975a": ROOT / "work" / "all7_rerun" / "output" / "od_output"
-        / "17a129b4e9ca975a" / "danelian2006.json",
-    "e28de2b07edc8950": ROOT / "work" / "feng_rerun_v2" / "output" / "od_output"
-        / "e28de2b07edc8950" / "feng2007.json",
-    "a0f363c21b6941d7": ROOT / "work" / "all7_rerun" / "output" / "od_output"
-        / "a0f363c21b6941d7" / "hollis2006.json",
+    "4f1bf415485765b8": ROOT
+    / "work"
+    / "all7_rerun"
+    / "output"
+    / "od_output"
+    / "4f1bf415485765b8"
+    / "bandini2011.json",
+    "58d7972c37307959": ROOT
+    / "work"
+    / "all7_rerun"
+    / "output"
+    / "od_output"
+    / "58d7972c37307959"
+    / "baumgartner2008.json",
+    "178d4e1e9d93136c": ROOT
+    / "work"
+    / "boughdiri_rerun"
+    / "output"
+    / "od_output"
+    / "178d4e1e9d93136c"
+    / "boughdiri2007.json",
+    "17a129b4e9ca975a": ROOT
+    / "work"
+    / "all7_rerun"
+    / "output"
+    / "od_output"
+    / "17a129b4e9ca975a"
+    / "danelian2006.json",
+    "e28de2b07edc8950": ROOT
+    / "work"
+    / "feng_rerun_v2"
+    / "output"
+    / "od_output"
+    / "e28de2b07edc8950"
+    / "feng2007.json",
+    "a0f363c21b6941d7": ROOT
+    / "work"
+    / "all7_rerun"
+    / "output"
+    / "od_output"
+    / "a0f363c21b6941d7"
+    / "hollis2006.json",
     "2225994d55021328": next(
         (ROOT / "work" / "pouille_recon" / "od_output" / "4dc5b4d95e910e95").glob("*.json")
     ),
-    "5d5264c7bf0b0a43": ROOT / "work" / "beccaro_only_out" / "output"
-        / "od_output" / "5d5264c7bf0b0a43" / "beccaro2006.json",
-    "2e85364a3c605326": ROOT / "work" / "bragin_only_out" / "output"
-        / "od_output" / "2e85364a3c605326" / "bragin2025.json",
+    "5d5264c7bf0b0a43": ROOT
+    / "work"
+    / "beccaro_only_out"
+    / "output"
+    / "od_output"
+    / "5d5264c7bf0b0a43"
+    / "beccaro2006.json",
+    "2e85364a3c605326": ROOT
+    / "work"
+    / "bragin_only_out"
+    / "output"
+    / "od_output"
+    / "2e85364a3c605326"
+    / "bragin2025.json",
 }
 
 
@@ -109,7 +151,9 @@ def _resolve_panel_path(panel_path: str) -> Path | None:
     if not parts or "panel_" not in parts[-1]:
         return None
     tail = Path(*parts[-3:])  # paper_id / figure / panel_NN.png
-    candidates = list(ROOT.glob(f"work/*/panels/{tail.parent.parent.name}/{tail.parent.name}/{tail.name}"))
+    candidates = list(
+        ROOT.glob(f"work/*/panels/{tail.parent.parent.name}/{tail.parent.name}/{tail.name}")
+    )
     if not candidates:
         # Try a more relaxed search: match by paper_id only
         candidates = list(ROOT.glob(f"work/*/panels/{tail.parent.parent.name}/**/{tail.name}"))
@@ -189,9 +233,7 @@ def main() -> int:
             r2["species"] = new_species
         new_out.append(r2)
 
-    PRED_OUT.write_text(
-        "\n".join(json.dumps(r, ensure_ascii=False) for r in new_out) + "\n"
-    )
+    PRED_OUT.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in new_out) + "\n")
     print(f"\nWrote {len(new_out)} rows to {PRED_OUT.name}")
     print(f"  Reassigned: {reassigned}")
     print(f"  Unchanged: {unchanged}")

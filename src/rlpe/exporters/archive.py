@@ -12,6 +12,7 @@ We deliberately do **not** include the panel image crops in the
 archive; DwC-A is for occurrence records, not media. (Media can be
 referenced via ``associatedMedia`` if desired.)
 """
+
 from __future__ import annotations
 
 import csv
@@ -26,6 +27,7 @@ from ..schema_models import PanelRecord, RunOutput
 @dataclass(slots=True)
 class DwCAOptions:
     """Options for the Darwin Core Archive export."""
+
     include_unmatched: bool = False
     encoding: str = "utf-8"
     fields_terminated_by: str = "\\t"
@@ -38,27 +40,27 @@ class DwCAOptions:
 # DwC term URIs we emit. The order is also the column order in
 # occurrence.txt. Keep this list aligned with GBIF's occurrence core.
 DWC_FIELDS: list[tuple[str, str]] = [
-    ("occurrenceID",     "http://rs.tdwg.org/dwc/terms/occurrenceID"),
-    ("basisOfRecord",    "http://rs.tdwg.org/dwc/terms/basisOfRecord"),
-    ("scientificName",   "http://rs.tdwg.org/dwc/terms/scientificName"),
-    ("kingdom",          "http://rs.tdwg.org/dwc/terms/kingdom"),
-    ("phylum",           "http://rs.tdwg.org/dwc/terms/phylum"),
-    ("class",            "http://rs.tdwg.org/dwc/terms/class"),
-    ("order",            "http://rs.tdwg.org/dwc/terms/order"),
-    ("family",           "http://rs.tdwg.org/dwc/terms/family"),
-    ("genus",            "http://rs.tdwg.org/dwc/terms/genus"),
-    ("specificEpithet",  "http://rs.tdwg.org/dwc/terms/specificEpithet"),
-    ("eventDate",        "http://rs.tdwg.org/dwc/terms/eventDate"),
-    ("year",             "http://rs.tdwg.org/dwc/terms/year"),
-    ("locality",         "http://rs.tdwg.org/dwc/terms/locality"),
-    ("country",          "http://rs.tdwg.org/dwc/terms/country"),
-    ("decimalLatitude",  "http://rs.tdwg.org/dwc/terms/decimalLatitude"),
+    ("occurrenceID", "http://rs.tdwg.org/dwc/terms/occurrenceID"),
+    ("basisOfRecord", "http://rs.tdwg.org/dwc/terms/basisOfRecord"),
+    ("scientificName", "http://rs.tdwg.org/dwc/terms/scientificName"),
+    ("kingdom", "http://rs.tdwg.org/dwc/terms/kingdom"),
+    ("phylum", "http://rs.tdwg.org/dwc/terms/phylum"),
+    ("class", "http://rs.tdwg.org/dwc/terms/class"),
+    ("order", "http://rs.tdwg.org/dwc/terms/order"),
+    ("family", "http://rs.tdwg.org/dwc/terms/family"),
+    ("genus", "http://rs.tdwg.org/dwc/terms/genus"),
+    ("specificEpithet", "http://rs.tdwg.org/dwc/terms/specificEpithet"),
+    ("eventDate", "http://rs.tdwg.org/dwc/terms/eventDate"),
+    ("year", "http://rs.tdwg.org/dwc/terms/year"),
+    ("locality", "http://rs.tdwg.org/dwc/terms/locality"),
+    ("country", "http://rs.tdwg.org/dwc/terms/country"),
+    ("decimalLatitude", "http://rs.tdwg.org/dwc/terms/decimalLatitude"),
     ("decimalLongitude", "http://rs.tdwg.org/dwc/terms/decimalLongitude"),
     ("geologicalContextID", "http://rs.tdwg.org/dwc/terms/geologicalContextID"),
-    ("formation",        "http://rs.tdwg.org/dwc/terms/formation"),
-    ("identifiedBy",     "http://rs.tdwg.org/dwc/terms/identifiedBy"),
+    ("formation", "http://rs.tdwg.org/dwc/terms/formation"),
+    ("identifiedBy", "http://rs.tdwg.org/dwc/terms/identifiedBy"),
     ("associatedReferences", "http://rs.tdwg.org/dwc/terms/associatedReferences"),
-    ("associatedMedia",  "http://rs.tdwg.org/dwc/terms/associatedMedia"),
+    ("associatedMedia", "http://rs.tdwg.org/dwc/terms/associatedMedia"),
 ]
 
 
@@ -100,9 +102,7 @@ def _build_meta_xml(opts: DwCAOptions) -> str:
     """Build the meta.xml describing the occurrence core."""
     fields_xml_lines: list[str] = []
     for idx, (_field, uri) in enumerate(DWC_FIELDS, start=1):
-        fields_xml_lines.append(
-            f'    <field index="{idx}" term="{uri}"/>'
-        )
+        fields_xml_lines.append(f'    <field index="{idx}" term="{uri}"/>')
     fields_xml = "\n".join(fields_xml_lines)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -110,10 +110,10 @@ def _build_meta_xml(opts: DwCAOptions) -> str:
         '  <core encoding="UTF-8" fieldsTerminatedBy="\\t" '
         'linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1"'
         ' rowType="http://rs.tdwg.org/dwc/terms/Occurrence">\n'
-        '    <files><location>occurrence.txt</location></files>\n'
-        f'{fields_xml}\n'
-        '  </core>\n'
-        '</archive>\n'
+        "    <files><location>occurrence.txt</location></files>\n"
+        f"{fields_xml}\n"
+        "  </core>\n"
+        "</archive>\n"
     )
 
 
@@ -141,22 +141,22 @@ def _build_eml_xml(run: RunOutput) -> str:
             continue
         for author in pm.authors:
             creators_xml += (
-                f'    <creator><individualName><surName>{author}</surName>'
-                f'</individualName></creator>\n'
+                f"    <creator><individualName><surName>{author}</surName>"
+                f"</individualName></creator>\n"
             )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<eml:eml xmlns:eml="https://eml.ecoinformatics.org/eml-2.1.1"\n'
         '         xmlns:dc="http://purl.org/dc/terms/" packageId="rlpe-v1" '
         f'system="rlpe" scope="system" xml:lang="en">\n'
-        '  <dataset>\n'
-        f'    <title>{dataset_title}</title>\n'
-        f'    <abstract><para>{abstract}</para></abstract>\n'
-        '    <pubDate>' + prov.timestamp_utc[:10] + '</pubDate>\n'
-        '    <language>eng</language>\n'
-        f'    <creatorList>\n{creators_xml}    </creatorList>\n'
-        '  </dataset>\n'
-        '</eml:eml>\n'
+        "  <dataset>\n"
+        f"    <title>{dataset_title}</title>\n"
+        f"    <abstract><para>{abstract}</para></abstract>\n"
+        "    <pubDate>" + prov.timestamp_utc[:10] + "</pubDate>\n"
+        "    <language>eng</language>\n"
+        f"    <creatorList>\n{creators_xml}    </creatorList>\n"
+        "  </dataset>\n"
+        "</eml:eml>\n"
     )
 
 
@@ -179,8 +179,11 @@ def write_dwca_zip(
     # Build occurrence.txt in-memory
     buf = io.StringIO()
     w = csv.DictWriter(
-        buf, fieldnames=field_names, delimiter="\t",
-        extrasaction="ignore", lineterminator="\n",
+        buf,
+        fieldnames=field_names,
+        delimiter="\t",
+        extrasaction="ignore",
+        lineterminator="\n",
     )
     w.writeheader()
     for r in rows:

@@ -1,4 +1,5 @@
 """Tests for extended scale-bar regex (bare, range, en-dash, Greek mu)."""
+
 from __future__ import annotations
 
 from rlpe.scale_bar import (

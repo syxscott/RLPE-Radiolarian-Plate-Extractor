@@ -8,6 +8,7 @@ This is a stop-gap: the proper fix is to re-run the full pipeline, but
 that requires re-rendering the PDFs and re-segmenting panels (slow).
 Re-parsing the captions is O(panels) and lets us validate the fix.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,12 +25,14 @@ from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Re-apply caption parser to existing JSONL")
-    p.add_argument("--input", type=Path, required=True,
-                   help="Path to existing results.jsonl")
-    p.add_argument("--output", type=Path, required=True,
-                   help="Where to write the corrected JSONL")
-    p.add_argument("--paper-id", type=str, default="cb2011ef7be94959",
-                   help="Paper ID to reprocess (default: pouille)")
+    p.add_argument("--input", type=Path, required=True, help="Path to existing results.jsonl")
+    p.add_argument("--output", type=Path, required=True, help="Where to write the corrected JSONL")
+    p.add_argument(
+        "--paper-id",
+        type=str,
+        default="cb2011ef7be94959",
+        help="Paper ID to reprocess (default: pouille)",
+    )
     args = p.parse_args()
 
     # Read all rows; build (figure_id, panel_id) → row index

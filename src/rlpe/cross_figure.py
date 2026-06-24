@@ -7,6 +7,7 @@ public surface is ``_cross_figure_reassign_results`` (and the
 re-exported ``text_filters.looks_like_placeholder_caption`` shim that
 ``pipeline.py`` forwards to).
 """
+
 from __future__ import annotations
 
 import logging
@@ -54,7 +55,7 @@ def _cross_figure_reassign_results(results: list[dict[str, Any]]) -> list[dict[s
         for r in panels:
             meta = r.get("metadata") or {}
             if not cap:
-                cap = (r.get("caption_snippet") or "")
+                cap = r.get("caption_snippet") or ""
             if not page:
                 page = int(meta.get("page_index") or 0)
             if r.get("species"):
@@ -87,30 +88,49 @@ def _cross_figure_reassign_results(results: list[dict[str, Any]]) -> list[dict[s
         fid = r.get("figure_id", "")
         if fid in orphans and real_plates:
             # Find the nearest real plate by absolute page diff.
+            # Pages in this codebase are 1-indexed (see
+            # ``render_pdf_pages`` which uses ``start=1``), so a
+            # ``page_index`` of 0 means the metadata is missing. When
+            # either the orphan or the nearest real plate has a missing
+            # page, the page-distance is meaningless and reassignment
+            # would misattribute panels to an unrelated figure. Skip
+            # in that case and keep the panels in place.
             rp = figure_page.get(fid, 0)
+            if rp == 0:
+                reassigned.append(r)
+                continue
             nearest = min(
                 real_plates,
                 key=lambda f: abs(figure_page.get(f, 0) - rp),
             )
+            nearest_page = figure_page.get(nearest, 0)
+            if nearest_page == 0:
+                reassigned.append(r)
+                continue
             # Reassign only if the page gap is small (<=3).
-            if abs(figure_page.get(nearest, 0) - rp) <= 3:
+            if abs(nearest_page - rp) <= 3:
                 new = dict(r)
                 new["figure_id"] = nearest
                 new["metadata"] = dict(r.get("metadata") or {})
                 new["metadata"]["reassigned_from_figure"] = fid
                 new["metadata"]["reassigned_reason"] = (
-                    "orphan figure, caption empty/placeholder, "
-                    f"merged into plate figure {nearest}"
+                    f"orphan figure, caption empty/placeholder, merged into plate figure {nearest}"
                 )
                 reassigned.append(new)
                 continue
         reassigned.append(r)
-    if len(reassigned) != len(results):
-        return results
-    moved = sum(
-        1 for r in reassigned
-        if (r.get("metadata") or {}).get("reassigned_from_figure")
+    # Length invariant: every input row is appended exactly once (either
+    # the reassigned copy or the original). Assert it instead of the
+    # previous "if mismatched, return original" branch — that branch was
+    # unreachable because the loop above always appends, so a future
+    # refactor that adds a ``continue`` without an ``append`` would
+    # silently drop rows. The assertion converts a silent data-loss bug
+    # into a loud test failure.
+    assert len(reassigned) == len(results), (
+        f"cross_figure_reassign produced {len(reassigned)} rows from "
+        f"{len(results)} inputs; this should never happen"
     )
+    moved = sum(1 for r in reassigned if (r.get("metadata") or {}).get("reassigned_from_figure"))
     if moved:
         logger.info("Cross-figure reassignment: moved %d panels from orphan figures.", moved)
     return reassigned

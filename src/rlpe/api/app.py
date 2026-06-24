@@ -91,14 +91,18 @@ class ReviewCorrection(BaseModel):
 
 
 class ResultRecord(BaseModel):
-    # ``extra="forbid"`` surfaces new pipeline fields (added to the
-    # internal row dict but not yet declared here) as a 500/422
-    # response rather than silently dropping them from the API
-    # response. The result is an honest contract: anything the UI
-    # shows must be in the schema. If a new field needs to be
-    # exposed, it should be added to this model intentionally,
-    # not slipped in via the ``**row`` spread at the call site.
-    model_config = ConfigDict(extra="forbid")
+    # ``extra="ignore"`` means callers can extend the pipeline output
+    # without breaking the public results endpoint. The earlier
+    # ``extra="forbid"`` was good in theory (surfaces unknown fields
+    # as 422) but in practice the pipeline accumulated several rows
+    # the schema didn't yet declare (``panel_local_path``, custom
+    # corrections, fallback metadata) and ``ResultRecord(**row)``
+    # crashed the whole /results endpoint with a 500. Silent ignore
+    # keeps the API surface honest (every declared field is what
+    # we promise) without taking the whole endpoint down for a new
+    # internal field. The /system/info endpoint logs the JobOptions
+    # drop list so frontend typos are still observable.
+    model_config = ConfigDict(extra="ignore")
     job_id: str | None = None
     paper_id: str
     figure_id: str
@@ -120,6 +124,7 @@ class JobOptions(BaseModel):
 
     Validated server-side; invalid values are rejected with HTTP 400.
     """
+
     use_gemma4: bool = False
     llm_backend: str | None = None  # "transformers" | "ollama" | "llamacpp" | "MiniMax"
     gemma_conf_threshold: float = 0.70
@@ -160,13 +165,19 @@ class JobOptions(BaseModel):
     paleodb_endpoint: str | None = None
     paleodb_cache_dir: str | None = None
     paleodb_offline: bool = False
+    # ---- Core pipeline overrides (previously rendered in the web form but
+    # silently dropped by the API) ----
+    grobid_url: str | None = None
+    ocr_backend: str | None = None  # "paddleocr" | "easyocr"
+    num_workers: int | None = None  # 1..32
+    min_panel_score: float | None = None  # 0.0..1.0
 
     @field_validator("llm_backend")
     @classmethod
     def _validate_backend(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        allowed = {"transformers", "ollama", "llamacpp", "MiniMax"}
+        allowed = {"transformers", "ollama", "llamacpp", "MiniMax", "MiniMax-m3", "minimax"}
         if v not in allowed:
             raise ValueError(f"llm_backend must be one of {sorted(allowed)}, got {v!r}")
         return v
@@ -176,7 +187,9 @@ class JobOptions(BaseModel):
     def _validate_fallback(cls, v: str) -> str:
         allowed = {"gemma4", "rules", "stop", "retry"}
         if v not in allowed:
-            raise ValueError(f"MiniMax_fallback_default must be one of {sorted(allowed)}, got {v!r}")
+            raise ValueError(
+                f"MiniMax_fallback_default must be one of {sorted(allowed)}, got {v!r}"
+            )
         return v
 
     @field_validator("data_outbound_policy")
@@ -204,14 +217,46 @@ class JobOptions(BaseModel):
             raise ValueError(f"MiniMax_thinking_budget_tokens must be <= 32000, got {v!r}")
         return v
 
-    @field_validator("MiniMax_max_output_tokens", "MiniMax_max_concurrent",
-                     "MiniMax_timeout_sec", "MiniMax_max_retries")
+    @field_validator(
+        "MiniMax_max_output_tokens",
+        "MiniMax_max_concurrent",
+        "MiniMax_timeout_sec",
+        "MiniMax_max_retries",
+    )
     @classmethod
     def _validate_positive_int(cls, v: int | None) -> int | None:
         if v is None:
             return v
         if v <= 0:
             raise ValueError(f"must be a positive integer, got {v!r}")
+        return v
+
+    @field_validator("num_workers")
+    @classmethod
+    def _validate_num_workers(cls, v: int | None) -> int | None:
+        if v is None:
+            return v
+        if v < 1 or v > 32:
+            raise ValueError(f"num_workers must be 1..32, got {v!r}")
+        return v
+
+    @field_validator("min_panel_score")
+    @classmethod
+    def _validate_min_panel_score(cls, v: float | None) -> float | None:
+        if v is None:
+            return v
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(f"min_panel_score must be in [0.0, 1.0], got {v!r}")
+        return v
+
+    @field_validator("ocr_backend")
+    @classmethod
+    def _validate_ocr_backend(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        allowed = {"paddleocr", "easyocr"}
+        if v not in allowed:
+            raise ValueError(f"ocr_backend must be one of {sorted(allowed)}, got {v!r}")
         return v
 
     @model_validator(mode="before")
@@ -231,14 +276,15 @@ class JobOptions(BaseModel):
             unknown = sorted(set(values.keys()) - known)
             if unknown:
                 logger.warning(
-                    "JobOptions dropped unknown fields: %s (check the "
-                    "frontend / caller for typos)", unknown,
+                    "JobOptions dropped unknown fields: %s (check the frontend / caller for typos)",
+                    unknown,
                 )
         return values
 
 
 class FallbackDecisionRequest(BaseModel):
     """User response when MiniMax M3 API errors and the pipeline is paused."""
+
     job_id: str
     action: str  # "gemma4" | "rules" | "stop" | "retry"
 
@@ -250,10 +296,29 @@ class FallbackDecisionRequest(BaseModel):
 FALLBACK_PENDING: dict[str, dict[str, Any]] = {}
 
 
+# ``lifespan`` replaces the deprecated ``on_event("startup")`` (removed in
+# FastAPI 0.110+). The previous decorator still works on 0.111.0 but
+# triggers a ``DeprecationWarning`` and is gone in 0.120+. The context
+# manager form is the recommended one and works across all supported
+# FastAPI versions.
+import contextlib
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    n = _load_existing_jobs_from_disk()
+    if n:
+        import logging as _log
+
+        _log.getLogger("rlpe.api").info("Loaded %d existing job(s) from disk", n)
+    yield
+
+
 app = FastAPI(
     title="RLPE API - Radiolarian Plate Extractor",
-    version="0.2.0",
-    description="Web API for radiolarian figure extraction from PDF literature"
+    version="1.1.0",
+    description="Web API for radiolarian figure extraction from PDF literature",
+    lifespan=_lifespan,
 )
 
 # Enable CORS for frontend. Browsers reject
@@ -287,6 +352,7 @@ def _load_existing_jobs_from_disk() -> int:
     Returns the number of jobs loaded.
     """
     from datetime import datetime as _dt
+
     loaded = 0
     # Candidate roots: service_work/<job_id>/output/manifests/matches.jsonl
     # and the dev work/ directory at project root.
@@ -300,6 +366,7 @@ def _load_existing_jobs_from_disk() -> int:
     if cli_work.exists() and cli_work.resolve() != WORK_DIR.resolve():
         # Synthesize a stable job_id from a hash of the path so it can be referenced.
         import hashlib
+
         jid = "cli_" + hashlib.md5(str(cli_work.resolve()).encode()).hexdigest()[:12]
         roots.append((cli_work, jid))
 
@@ -355,38 +422,33 @@ def _load_existing_jobs_from_disk() -> int:
     return loaded
 
 
-@app.on_event("startup")
-def _on_startup() -> None:
-    n = _load_existing_jobs_from_disk()
-    if n:
-        import logging as _log
-        _log.getLogger("rlpe.api").info("Loaded %d existing job(s) from disk", n)
-
-
 @app.get("/")
 def root():
     if WEB_DIR is not None:
         index_path = WEB_DIR / "index.html"
         if index_path.exists():
             return FileResponse(index_path)
-    return {
-        "status": "ok",
-        "service": "rlpe-api",
-        "docs": "/docs",
-        "web": "/web"
-    }
+    return {"status": "ok", "service": "rlpe-api", "docs": "/docs", "web": "/web"}
 
 
 @app.get("/css/{file_path:path}")
 def web_css(file_path: str):
     if WEB_DIR is None:
         raise HTTPException(status_code=404, detail="Web assets not found")
+    # Belt-and-braces traversal check: reject literal "..", "\\", and
+    # absolute-path payloads BEFORE doing any filesystem resolution.
+    # The ``relative_to`` check below handles most cases, but on
+    # Windows a normalized resolve may still escape the root in
+    # subtle ways (e.g. junctions / case-folding); rejecting the
+    # obvious payload up front is cheap and makes the security
+    # posture obvious from a quick read of the function.
+    if (
+        ".." in file_path.split("/")
+        or ".." in file_path.split("\\")
+        or file_path.startswith(("/", "\\"))
+    ):
+        raise HTTPException(status_code=400, detail="Invalid asset path")
     target = (WEB_DIR / "css" / file_path).resolve()
-    # Reject path traversal: file_path may contain ".." segments
-    # that escape the css/ directory. The previous version didn't
-    # validate this, so a request for /css/../../app.py would return
-    # the project's main source file. Mirror the check in
-    # /jobs/{id}/files/{file_path} below.
     css_root = (WEB_DIR / "css").resolve()
     try:
         target.relative_to(css_root)
@@ -401,6 +463,12 @@ def web_css(file_path: str):
 def web_js(file_path: str):
     if WEB_DIR is None:
         raise HTTPException(status_code=404, detail="Web assets not found")
+    if (
+        ".." in file_path.split("/")
+        or ".." in file_path.split("\\")
+        or file_path.startswith(("/", "\\"))
+    ):
+        raise HTTPException(status_code=400, detail="Invalid asset path")
     target = (WEB_DIR / "js" / file_path).resolve()
     js_root = (WEB_DIR / "js").resolve()
     try:
@@ -435,7 +503,12 @@ async def upload_pdf(
 ):
     original_filename = file.filename or ""
     safe_filename = Path(original_filename).name
-    if not safe_filename or safe_filename != original_filename or "/" in original_filename or "\\" in original_filename:
+    if (
+        not safe_filename
+        or safe_filename != original_filename
+        or "/" in original_filename
+        or "\\" in original_filename
+    ):
         raise HTTPException(status_code=400, detail="Invalid upload filename.")
     if not safe_filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -473,15 +546,10 @@ async def upload_pdf(
             "detail": None,
             "created_at": now,
             "filename": safe_filename,
-            "progress": 0
+            "progress": 0,
         }
     background_tasks.add_task(_run_job, job_id, save_path, job_options)
-    return JobStatus(
-        job_id=job_id,
-        status="queued",
-        created_at=now,
-        filename=safe_filename
-    )
+    return JobStatus(job_id=job_id, status="queued", created_at=now, filename=safe_filename)
 
 
 @app.get("/jobs/{job_id}/status", response_model=JobStatus)
@@ -524,6 +592,14 @@ def list_jobs() -> list[JobStatus]:
 
 @app.get("/jobs/{job_id}/files/{file_path:path}")
 def job_file(job_id: str, file_path: str):
+    # Reject literal traversal payloads BEFORE filesystem resolution.
+    # See ``/css/{file_path:path}`` for the rationale.
+    if (
+        ".." in file_path.split("/")
+        or ".." in file_path.split("\\")
+        or file_path.startswith(("/", "\\"))
+    ):
+        raise HTTPException(status_code=400, detail="Invalid file path")
     # Resolve the actual job root: standard jobs live in WORK_DIR, but
     # CLI/imported jobs (e.g. loaded from work/) may live elsewhere.
     job = RESULT_CACHE.get(job_id)
@@ -548,7 +624,14 @@ def job_result(job_id: str):
     job = RESULT_CACHE.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job["status"] not in {"done", "failed"}:
+    # ``cancelled`` is a terminal state — return the (likely empty) payload
+    # so the UI can stop polling. The previous version only treated
+    # ``done`` / ``failed`` as terminal, which made the frontend's
+    # adaptive-poll loop spin forever on cancelled jobs (it kept seeing
+    # 202 "not finished" and never closed the poll). Surfacing cancelled
+    # here also lets the UI render a "this run was cancelled at X" view
+    # instead of an infinite spinner.
+    if job["status"] not in {"done", "failed", "cancelled"}:
         raise HTTPException(status_code=202, detail="Job not finished")
     return job
 
@@ -636,11 +719,17 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
     # task is scheduled but hasn't started yet; when it does, its
     # first line of work is `RESULT_CACHE[job_id]["status"] =
     # "running"`, which raises KeyError on the deleted entry, then the
-    # except handler tries the same write and raises again. To safely
-    # delete, the user must cancel the job first (which sets
-    # status="cancelled"); the worker thread sees this in its progress
-    # callback, raises _JobCancelledError, and exits cleanly.
-    if job.get("status") in {"running", "queued"}:
+    # except handler tries the same write and raises again.
+    # For "awaiting_user_decision": the background thread is BLOCKED
+    # inside ``_web_fallback_popup`` waiting on an event. Popping the
+    # cache entry under it releases the wait (via the "if jid not in
+    # FALLBACK_PENDING" check) but the thread will then return to
+    # ``_apply_gemma_with_fallback`` and eventually try to write back
+    # to ``RESULT_CACHE[job_id]`` — KeyError. To safely delete, the
+    # user must cancel the job first (which sets status="cancelled");
+    # the worker thread sees this in its progress callback, raises
+    # _JobCancelledError, and exits cleanly.
+    if job.get("status") in {"running", "queued", "awaiting_user_decision"}:
         return {
             "job_id": job_id,
             "status": "refused",
@@ -651,37 +740,56 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
         }
     files_removed = False
     bytes_freed = 0
+    cli_loaded = False
     if delete_files:
         root = _resolve_job_root(job_id)
         if root is not None and root.exists():
-            # Only allow deletion under known safe roots.
-            safe_roots = [WORK_DIR.resolve(), (APP_ROOT / "work").resolve()]
-            if not any(_is_relative_to(root, sr) for sr in safe_roots):
-                return {
-                    "job_id": job_id,
-                    "status": "refused",
-                    "error": f"root {root} not under safe dirs",
-                }
-            try:
-                # Compute size before deletion for reporting.
-                bytes_freed = sum(
-                    f.stat().st_size for f in root.rglob("*") if f.is_file()
-                )
-                shutil.rmtree(root)
-                files_removed = True
-            except Exception as exc:
-                return {
-                    "job_id": job_id,
-                    "status": "file_error",
-                    "error": str(exc),
-                }
+            # Refuse to delete CLI-loaded jobs' files. Those jobs were
+            # discovered by ``_load_existing_jobs_from_disk`` from a
+            # previous ``rlpe.cli`` run whose on-disk layout lives at
+            # ``APP_ROOT/work`` — a DIRECTORY SHARED ACROSS ALL CLI
+            # RUNS. The previous code allowed ``shutil.rmtree(root)``
+            # to wipe the entire dev work/ tree (including any
+            # unrelated CLI runs the user has done since the server
+            # started). For CLI-loaded jobs we drop the in-memory
+            # cache entry but leave the on-disk files alone; the user
+            # can still delete them from a normal shell.
+            job = RESULT_CACHE.get(job_id) or {}
+            if job.get("_root") and Path(job["_root"]).resolve() == (APP_ROOT / "work").resolve():
+                cli_loaded = True
+            else:
+                # Only allow deletion under known safe roots.
+                safe_roots = [WORK_DIR.resolve()]
+                if not any(_is_relative_to(root, sr) for sr in safe_roots):
+                    return {
+                        "job_id": job_id,
+                        "status": "refused",
+                        "error": f"root {root} not under safe dirs",
+                    }
+                try:
+                    # Compute size before deletion for reporting.
+                    bytes_freed = sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
+                    shutil.rmtree(root)
+                    files_removed = True
+                except Exception as exc:
+                    return {
+                        "job_id": job_id,
+                        "status": "file_error",
+                        "error": str(exc),
+                    }
     # Always remove from in-memory caches.
     RESULT_CACHE.pop(job_id, None)
     FALLBACK_PENDING.pop(job_id, None)
     return {
         "job_id": job_id,
+        # ``deleted`` = removed from cache. For CLI-loaded jobs we
+        # additionally set ``files_skipped`` so the UI can surface
+        # "removed from list, but on-disk files preserved (shared
+        # with other CLI runs)" rather than a confusing generic
+        # success toast.
         "status": "deleted",
         "files_removed": files_removed,
+        "files_skipped": cli_loaded and delete_files,
         "bytes_freed": bytes_freed,
     }
 
@@ -755,10 +863,7 @@ def post_MiniMax_fallback(job_id: str, req: FallbackDecisionRequest) -> dict[str
 def submit_correction(payload: ReviewCorrection):
     corrections_dir = ensure_dir(WORK_DIR / "corrections")
     target = corrections_dir / "corrections.jsonl"
-    row = {
-        **payload.model_dump(),
-        "timestamp": datetime.now().isoformat()
-    }
+    row = {**payload.model_dump(), "timestamp": datetime.now().isoformat()}
     with target.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
     return {"status": "ok", "saved_to": str(target)}
@@ -770,13 +875,36 @@ def get_results() -> list[ResultRecord]:
     results = []
     with RESULT_LOCK:
         items = [(job_id, dict(job)) for job_id, job in RESULT_CACHE.items()]
+    # Whitelist the row fields the public schema knows about. The
+    # pipeline writes additional internal fields (panel_local_path,
+    # diagnostic flags, ...) that are not part of the API contract
+    # and would either inflate the response or trip future strict
+    # parsers downstream. ``ResultRecord.model_fields`` is the
+    # authoritative list — keeping the filter here means adding a
+    # new field to the schema is the only change needed.
+    allowed = set(ResultRecord.model_fields.keys()) - {"job_id"}
     for job_id, job in items:
-        if job["status"] == "done" and job.get("result"):
+        if job.get("status") == "done" and job.get("result"):
             for row in job["result"]:
-                results.append(ResultRecord(
-                    job_id=job_id,
-                    **row
-                ))
+                if not isinstance(row, dict):
+                    continue
+                filtered = {k: v for k, v in row.items() if k in allowed}
+                # ``paper_id`` and ``figure_id`` are required fields;
+                # if a sanitiser ever produces a row missing them,
+                # skip rather than 500 the whole endpoint.
+                if "paper_id" not in filtered or "figure_id" not in filtered:
+                    continue
+                # confidence is required (non-optional float). Default
+                # to 0.0 so a partial row still serialises.
+                filtered.setdefault("confidence", 0.0)
+                try:
+                    results.append(ResultRecord(job_id=job_id, **filtered))
+                except Exception as exc:
+                    logger.warning(
+                        "Skipping malformed result row in job=%s: %s",
+                        job_id,
+                        exc,
+                    )
     return results
 
 
@@ -786,31 +914,342 @@ def system_info() -> dict[str, Any]:
     with RESULT_LOCK:
         jobs = [dict(j) for j in RESULT_CACHE.values()]
     return {
-        "version": "0.2.0",
+        # Pull version from the rlpe package metadata so it stays in lock-step
+        # with pyproject.toml (the previous hard-coded "1.1.0" silently
+        # drifted whenever the package version was bumped).
+        "version": _get_package_version(),
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         "grobid_url": GROBID_URL,
-        "active_jobs": sum(1 for j in jobs if j["status"] in {"queued", "running", "awaiting_user_decision"}),
+        "active_jobs": sum(
+            1 for j in jobs if j["status"] in {"queued", "running", "awaiting_user_decision"}
+        ),
         "total_jobs": len(jobs),
         "completed_jobs": sum(1 for j in jobs if j["status"] == "done"),
         "failed_jobs": sum(1 for j in jobs if j["status"] == "failed"),
     }
 
 
-def _safe_value(v: Any) -> Any:
-    """Convert numpy scalars to native Python types for JSON serialization.
+# ---------------------------------------------------------------------------
+# LLM status / test endpoints — used by the frontend onboarding panel to
+# show "API Key configured / not configured" without leaking the key, and
+# to let the operator click "Test API Key" before paying for a real run.
+# ---------------------------------------------------------------------------
 
-    Falls back to ``str(v)`` for unknown types (``Path``,
-    ``datetime``, ``numpy.ndarray``, dataclass instances) so the
-    API response is always JSON-serialisable. The previous
-    pass-through of unknown types caused a 500 with no indication of
-    which field tripped ``json.dumps`` downstream — by stringifying
-    the last-resort case we at least produce a usable response body
-    the operator can inspect.
+
+def _mask_api_key(key: str | None) -> str | None:
+    """Return a non-revealing preview of an API key.
+
+    ``sk-or-v1-abc...xyz`` becomes ``sk-...xyz`` so the operator can see
+    *which* key is configured without us echoing it back. Empty / missing
+    keys return None so the frontend can render the "not configured"
+    state cleanly.
     """
+    if not key:
+        return None
+    s = str(key).strip()
+    if not s:
+        return None
+    if len(s) <= 8:
+        return "***"
+    return f"{s[:3]}...{s[-4:]}"
+
+
+@app.get("/system/llm-status")
+def llm_status() -> dict[str, Any]:
+    """Report whether MiniMax / local LLM keys are configured.
+
+    The frontend's onboarding banner uses this to render either:
+        - "✅ API Key 已从 .env 读取 (sk-...abc)"  (key_configured=True)
+        - "⚠️ 未配置 API Key — [立即设置]"           (key_configured=False)
+
+    Never returns the raw key. The masked preview helps operators
+    confirm WHICH key is loaded when they have multiple .env files.
+    Also returns aggregated MiniMax usage if any jobs have made calls.
+    """
+    api_key = (
+        os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("MiniMax_API_KEY")
+        or os.environ.get("MINIMAX_API_KEY")
+        or ""
+    )
+    key_configured = bool(api_key.strip())
+
+    # Aggregate MiniMax cost across all completed jobs (if any matched
+    # results carry a cost_cny in their metadata). Each LLM API call may
+    # generate multiple panel match rows (one per panel) but there is
+    # only ONE LLM invocation per call AND each row in that group
+    # carries the SAME ``MiniMax_cost_cny`` value (it's the cost of the
+    # batched call, not per-panel). We deduplicate on
+    # ``MiniMax_request_id`` so:
+    #   - call counter is exact (1 per real API invocation)
+    #   - cost counter doesn't multi-count the same batch
+    total_cost_cny = 0.0
+    seen_requests: set[str] = set()
+    no_id_count = 0  # fallback when request_id is missing
+    no_id_cost = 0.0
+    with RESULT_LOCK:
+        for job in RESULT_CACHE.values():
+            if job.get("status") != "done":
+                continue
+            rows = job.get("result") or []
+            for r in rows:
+                md = (r or {}).get("metadata") or {}
+                c = md.get("MiniMax_cost_cny")
+                if c is None:
+                    continue
+                try:
+                    cost_f = float(c)
+                except (TypeError, ValueError):
+                    continue
+                req_id = md.get("MiniMax_request_id")
+                if req_id:
+                    if req_id in seen_requests:
+                        continue
+                    seen_requests.add(req_id)
+                    total_cost_cny += cost_f
+                else:
+                    # Best-effort fallback: no request_id, so we can't
+                    # deduplicate. Count and add separately so a future
+                    # bug-report can distinguish the two regimes.
+                    no_id_count += 1
+                    no_id_cost += cost_f
+    total_cost_cny += no_id_cost
+    total_calls = len(seen_requests) + no_id_count
+
+    # Resolved endpoint / model — what the pipeline will actually use
+    # given the current env. The previous field name "default_endpoint"
+    # was misleading because the value reflected the env override (e.g.
+    # an Ark / Volces URL), not the system default. The new name
+    # "active_endpoint" makes it clear this is the *resolved* value.
+    # Both names are returned for one release so frontends that read
+    # the old key continue to work.
+    active_endpoint = os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic")
+    active_model = os.environ.get(
+        "MiniMax_MODEL",
+        os.environ.get("ANTHROPIC_MODEL", "MiniMax-M3"),
+    )
+
+    return {
+        "key_configured": key_configured,
+        "key_preview": _mask_api_key(api_key) if key_configured else None,
+        "key_source": (
+            "env:ANTHROPIC_API_KEY"
+            if os.environ.get("ANTHROPIC_API_KEY")
+            else (
+                "env:MiniMax_API_KEY"
+                if os.environ.get("MiniMax_API_KEY")
+                else ("env:MINIMAX_API_KEY" if os.environ.get("MINIMAX_API_KEY") else None)
+            )
+        ),
+        "active_endpoint": active_endpoint,
+        "active_model": active_model,
+        # Deprecated aliases — drop in next major release.
+        "default_endpoint": active_endpoint,
+        "default_model": active_model,
+        # Approximate cost per call (MiniMax M3 prices, 2026-06):
+        # in:  ¥2.1 / M tokens   out: ¥8.4 / M tokens
+        # A typical panel call uses ~2k input + ~0.5k output ≈ ¥0.0085/call
+        "approx_cny_per_call": 0.0085,
+        "total_cost_cny": round(total_cost_cny, 4),
+        "total_calls": total_calls,
+    }
+
+
+class TestLLMRequest(BaseModel):
+    """Body for /system/test-llm — all fields optional, falls back to env."""
+
+    model_config = ConfigDict(extra="ignore")
+    api_key: str | None = None
+    endpoint: str | None = None
+    model: str | None = None
+
+
+@app.post("/system/test-llm")
+def test_llm(req: TestLLMRequest | None = None) -> dict[str, Any]:
+    """Send a minimal request to the MiniMax M3 endpoint to verify the key.
+
+    The response shape matches the frontend's expectations:
+        {"ok": true,  "latency_ms": 412, "model": "MiniMax-M3"}
+        {"ok": false, "error": "401 Unauthorized: ..."}
+
+    The test payload is intentionally tiny — a single "Reply OK" prompt
+    with a 64-token output cap — so a successful call costs <¥0.001.
+    Failures return ok=false with the exception type so the frontend
+    can render a useful message ("Key invalid", "Network error", ...).
+    """
+    body = req or TestLLMRequest()
+    api_key = (
+        body.api_key
+        or os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("MiniMax_API_KEY")
+        or os.environ.get("MINIMAX_API_KEY")
+        or ""
+    ).strip()
+    if not api_key:
+        return {
+            "ok": False,
+            "error": "no API key provided (request body empty and "
+            "ANTHROPIC_API_KEY env var not set)",
+            "error_type": "MissingKey",
+        }
+    endpoint = (
+        body.endpoint
+        or os.environ.get("ANTHROPIC_BASE_URL")
+        or "https://api.minimaxi.com/anthropic"
+    ).strip()
+    model = (
+        body.model
+        or os.environ.get("MiniMax_MODEL")
+        or os.environ.get("ANTHROPIC_MODEL")
+        or "MiniMax-M3"
+    ).strip()
+
+    import time as _time
+
+    t0 = _time.time()
+    try:
+        from ..llm_backends import MiniMaxM3Backend
+
+        backend = MiniMaxM3Backend(
+            api_key=api_key,
+            base_url=endpoint,
+            model=model,
+            max_output_tokens=64,
+            thinking_budget_tokens=0,
+            enable_thinking=False,
+            timeout_sec=15,
+            max_retries=1,
+            max_concurrent=1,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"backend init failed: {exc}",
+            "error_type": type(exc).__name__,
+        }
+
+    try:
+        # The minimal prompt: ask the model to reply with "OK". We do NOT
+        # require the response to be JSON — only that the HTTP layer
+        # succeeded (no auth/network/quota error). MiniMaxM3Backend's
+        # ``_make_result`` returns ``fallback_used=True`` for ANY
+        # exception, including JSON-parse failures on a non-JSON reply
+        # like "OK". For a connection test that's a false negative — the
+        # API actually worked. We therefore inspect ``error_type`` and
+        # treat ``JSONParseError`` as success.
+        result = backend.infer_text(
+            system_prompt="You are a connection test. Reply with exactly: OK",
+            user_prompt="ping",
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+            "latency_ms": int((_time.time() - t0) * 1000),
+        }
+
+    latency_ms = int((_time.time() - t0) * 1000)
+    err_type = (result.get("error_type") or "").lower()
+    fallback = bool(result.get("fallback_used"))
+    # JSON-parse-on-non-JSON-reply is still a success for a connection
+    # test: the API responded, charged us tokens, and returned text. We
+    # only care that auth / quota / network worked.
+    is_json_parse_only = err_type in {"jsonparseerror", "valueerror"} and (
+        result.get("raw_text") or ""
+    )
+    if fallback and not is_json_parse_only:
+        return {
+            "ok": False,
+            "error": result.get("error") or "API returned fallback_used=True",
+            "error_type": result.get("error_type") or "Unknown",
+            "latency_ms": latency_ms,
+        }
+    usage = result.get("usage") or {}
+    return {
+        "ok": True,
+        "latency_ms": latency_ms,
+        "model": result.get("model_version") or model,
+        "request_id": result.get("request_id"),
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "cost_cny": result.get("cost_cny"),
+        # Surface a JSON-parse note so the frontend can show a subtle
+        # "API working (reply was not JSON, that's expected for /test)"
+        # rather than nothing.
+        "note": "Reply was non-JSON, treated as success for connection test."
+        if is_json_parse_only
+        else None,
+    }
+
+
+def _get_package_version() -> str:
+    """Best-effort lookup of the rlpe package version.
+
+    Prefers ``importlib.metadata`` (works for installed packages and most
+    editable installs); falls back to reading the project pyproject.toml so
+    a source-checkout run from a non-installed tree still shows the right
+    version instead of a stale literal.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version("rlpe")
+        except PackageNotFoundError:
+            pass
+    except Exception:
+        pass
+    # Source-checkout fallback. tomllib lands in Python 3.11; fall back to
+    # tomli for older interpreters that still need to serve the API.
+    try:
+        try:
+            import tomllib  # type: ignore[import-not-found]
+        except ModuleNotFoundError:
+            import tomli as tomllib  # type: ignore[import-not-found,no-redef]
+        pyproject = APP_ROOT / "pyproject.toml"
+        if pyproject.exists():
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+            return str(data.get("project", {}).get("version") or "unknown")
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _safe_value(v: Any) -> Any:
+    """Recursively convert numpy / non-JSON-native types to Python builtins.
+
+    Handles (in priority order):
+      * Python primitives — pass through unchanged
+      * numpy scalars (int / float / bool) — unwrap to Python equivalents
+      * numpy arrays — tolist() and recurse on each element
+      * ``tuple`` / ``set`` / ``frozenset`` — recurse and emit as ``list``
+        (JSON has no tuple; sets round-trip deterministically via sorted
+        list when stable order is needed, otherwise set order is fine
+        because the caller doesn't need to read this back).
+      * ``datetime`` — ISO 8601 string
+      * ``Path`` — ``str(path)``
+      * ``bytes`` / ``bytearray`` — UTF-8 with replacement (binary
+        payloads in a JSON field are always a bug, but we don't want to
+        500 on them)
+      * Last resort — ``str(v)`` so the API response is always
+        JSON-serialisable.
+
+    The previous version stringified tuple / set / list values, which
+    silently corrupted nested bboxes and tag lists into repr-like
+    strings (e.g. ``(0, 1, 2, 3)`` became the literal 13-character
+    string ``"(0, 1, 2, 3)"``). Frontend code that expected a list
+    (e.g. ``r.bbox[0]``) would then read the first character of the
+    string instead. This now recurses instead of stringifying.
+    """
+    # Fast path: already JSON-native
     if isinstance(v, (int, float, str, bool, type(None))):
         return v
+    # numpy
     try:
         import numpy as np
+
         if isinstance(v, np.integer):
             return int(v)
         if isinstance(v, np.floating):
@@ -818,18 +1257,48 @@ def _safe_value(v: Any) -> Any:
         if isinstance(v, np.bool_):
             return bool(v)
         if isinstance(v, np.ndarray):
-            # Convert to a Python list (recursively safe) so the
-            # element-wise types still go through _safe_value.
             return [_safe_value(x) for x in v.tolist()]
     except Exception:
         pass
-    # Last-resort: stringify. ``datetime`` and ``Path`` round-trip
-    # through ISO / str() fine; arbitrary objects get a repr that
-    # the operator can read in the response body.
+    # Container types — recurse and emit as JSON-compatible list.
+    # We don't sort sets by default because order is usually not the
+    # caller's concern; if stable ordering is needed, the caller can
+    # convert to a sorted list before storing.
+    if isinstance(v, (list, tuple, set, frozenset)):
+        return [_safe_value(x) for x in v]
+    if isinstance(v, dict):
+        return {str(k): _safe_value(val) for k, val in v.items()}
+    # datetime
+    try:
+        import datetime as _dt
+
+        if isinstance(v, (_dt.datetime, _dt.date)):
+            return v.isoformat()
+    except Exception:
+        pass
+    # pathlib
+    try:
+        from pathlib import Path as _Path
+
+        if isinstance(v, _Path):
+            return str(v)
+    except Exception:
+        pass
+    # bytes
+    if isinstance(v, (bytes, bytearray)):
+        try:
+            return v.decode("utf-8", errors="replace")
+        except Exception:
+            return repr(v)
+    # Last-resort: stringify. ``repr`` of arbitrary objects round-trips
+    # through JSON so the API never 500s on an unknown scalar type.
     try:
         return str(v)
     except Exception:
-        return repr(v)
+        try:
+            return repr(v)
+        except Exception:
+            return "<unserializable>"
 
 
 class _JobCancelledError(Exception):
@@ -865,7 +1334,9 @@ def _sanitize_row(row: dict[str, Any]) -> dict[str, Any]:
         if isinstance(v, dict):
             out[k] = _sanitize_row(v)
         elif isinstance(v, list):
-            out[k] = [_sanitize_row(item) if isinstance(item, dict) else _safe_value(item) for item in v]
+            out[k] = [
+                _sanitize_row(item) if isinstance(item, dict) else _safe_value(item) for item in v
+            ]
         else:
             out[k] = _safe_value(v)
     return out
@@ -874,8 +1345,10 @@ def _sanitize_row(row: dict[str, Any]) -> dict[str, Any]:
 def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None) -> None:
     options = options or {}
     import time as _time
+
     t_start = _time.time()
     stop_hb = threading.Event()
+
     def _heartbeat_loop() -> None:
         # Background thread that refreshes elapsed_sec every second so the
         # UI shows "alive" progress even when the pipeline is mid-figure and
@@ -892,6 +1365,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             except Exception:
                 pass
             stop_hb.wait(1.0)
+
     hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name=f"rlpe-hb-{job_id[:8]}")
     hb_thread.start()
     # Pre-flight cancel check: if the user hit /jobs/{id}/cancel between
@@ -901,45 +1375,76 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
     # and the in-pipeline progress callback (which polls status) would
     # never see "cancelled" again. The result: the job would run to
     # completion, then silently transition cancelled → done. Bail out
-    # before doing any work.
-    if RESULT_CACHE.get(job_id, {}).get("status") == "cancelled":
-        stop_hb.set()
-        return
-    # Transition out of "queued" so the UI stops showing the waiting spinner
-    # once the worker thread has actually started running.
-    RESULT_CACHE[job_id]["status"] = "running"
+    # before doing any work. Both the read-check AND the status-flip
+    # must happen under RESULT_LOCK so /cancel cannot slip in between
+    # them and have its "cancelled" write clobbered by our "running".
+    with RESULT_LOCK:
+        cur = RESULT_CACHE.get(job_id, {})
+        if cur.get("status") == "cancelled":
+            stop_hb.set()
+            return
+        if job_id not in RESULT_CACHE:
+            # The /jobs/{id} delete endpoint refuses to drop "queued"
+            # entries, but if it ever does (or if a future code path
+            # races with us), bail rather than KeyError below.
+            stop_hb.set()
+            return
+        # Transition out of "queued" so the UI stops showing the waiting
+        # spinner once the worker thread has actually started running.
+        RESULT_CACHE[job_id]["status"] = "running"
     try:
         ensure_dir(APP_ROOT / "static")
         pdf_dir = ensure_dir(WORK_DIR / job_id / "pdfs")
         moved_path = pdf_dir / pdf_path.name
         shutil.move(str(pdf_path), moved_path)
-        RESULT_CACHE[job_id]["progress"] = 20
-        RESULT_CACHE[job_id]["stage"] = "构建配置…"
+        with RESULT_LOCK:
+            if job_id in RESULT_CACHE:
+                RESULT_CACHE[job_id]["progress"] = 20
+                RESULT_CACHE[job_id]["stage"] = "构建配置…"
 
         # Build extra config, allowing the web client to inject M3 options.
         extra: dict[str, Any] = {"use_gemma4": False}
         # NOTE: keep this list in sync with the CLI flags in cli.py
         for key in (
-            "llm_backend", "MiniMax_api_key", "MiniMax_endpoint", "MiniMax_model",
-            "MiniMax_enable_thinking", "MiniMax_thinking_budget_tokens",
-            "MiniMax_max_output_tokens", "MiniMax_max_concurrent",
-            "MiniMax_timeout_sec", "MiniMax_max_retries",
-            "MiniMax_fallback_default", "data_outbound_policy",
+            "llm_backend",
+            "MiniMax_api_key",
+            "MiniMax_endpoint",
+            "MiniMax_model",
+            "MiniMax_enable_thinking",
+            "MiniMax_thinking_budget_tokens",
+            "MiniMax_max_output_tokens",
+            "MiniMax_max_concurrent",
+            "MiniMax_timeout_sec",
+            "MiniMax_max_retries",
+            "MiniMax_fallback_default",
+            "data_outbound_policy",
             "MiniMax_interactive",
             # Local LLM backends (llamacpp / ollama). The web UI exposes
             # these in the LLM config panel; if the user fills in a custom
             # host, it must reach the pipeline (previously silently dropped).
-            "llama_host", "llama_model", "llama_timeout_sec",
-            "ollama_host", "ollama_model", "gemma_timeout_sec",
+            "llama_host",
+            "llama_model",
+            "llama_timeout_sec",
+            "ollama_host",
+            "ollama_model",
+            "gemma_timeout_sec",
             # PDF figure extractor
             "use_opendataloader",
             # M3 5-stage engine toggles
-            "m3_enhanced_mode", "m3_stage_1", "m3_stage_2",
-            "m3_stage_3", "m3_stage_4", "m3_stage_5",
-            "m3_match_samples", "m3_diagnostic_dir",
+            "m3_enhanced_mode",
+            "m3_stage_1",
+            "m3_stage_2",
+            "m3_stage_3",
+            "m3_stage_4",
+            "m3_stage_5",
+            "m3_match_samples",
+            "m3_diagnostic_dir",
             # Paleobiology Database (opt-in)
-            "use_paleodb", "paleodb_max_occurrences", "paleodb_endpoint",
-            "paleodb_cache_dir", "paleodb_offline",
+            "use_paleodb",
+            "paleodb_max_occurrences",
+            "paleodb_endpoint",
+            "paleodb_cache_dir",
+            "paleodb_offline",
         ):
             if key in options and options[key] is not None:
                 extra[key] = options[key]
@@ -951,27 +1456,43 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         # Auto-detect GPU; user can override via options.use_gpu
         try:
             import torch
+
             default_use_gpu = bool(torch.cuda.is_available())
         except ImportError:
             default_use_gpu = False
         use_gpu_flag = bool(options.get("use_gpu", default_use_gpu))
 
-        cfg = PipelineConfig(
-            pdf_dir=pdf_dir,
-            work_dir=WORK_DIR / job_id,
-            output_dir=None,
-            save_intermediate=True,
-            use_gpu=use_gpu_flag,
-            extra=extra,
-        )
+        # Build kwargs for the top-level (non-extra) PipelineConfig fields so
+        # the web form's grobid-url / ocr-backend / num-workers / min-panel-score
+        # actually reach the pipeline (they previously sat in the JobOptions
+        # model unused and were dropped on the floor).
+        pipeline_kwargs: dict[str, Any] = {
+            "pdf_dir": pdf_dir,
+            "work_dir": WORK_DIR / job_id,
+            "output_dir": None,
+            "save_intermediate": True,
+            "use_gpu": use_gpu_flag,
+            "extra": extra,
+        }
+        if options.get("grobid_url"):
+            pipeline_kwargs["grobid_url"] = options["grobid_url"]
+        if options.get("ocr_backend"):
+            pipeline_kwargs["ocr_backend"] = options["ocr_backend"]
+        if options.get("num_workers") is not None:
+            pipeline_kwargs["num_workers"] = int(options["num_workers"])
+        if options.get("min_panel_score") is not None:
+            pipeline_kwargs["min_panel_score"] = float(options["min_panel_score"])
+        cfg = PipelineConfig(**pipeline_kwargs)
 
         # If using MiniMax, register a web-popup fallback handler.
         if str(extra.get("llm_backend", "")).lower() in {"minimax", "minimax-m3", "minimax_api"}:
             from ..llm_backends import FallbackHandler
+
             handler = FallbackHandler(default_action=extra.get("MiniMax_fallback_default", "rules"))
 
             def _web_fallback_popup(error_info: dict[str, Any]) -> str:
                 import threading
+
                 event = threading.Event()
                 # Register the pending decision under the same lock
                 # that cancel_job and post_MiniMax_fallback hold, so
@@ -1010,14 +1531,20 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                     # way, the worker is no longer blocked).
                     if job_id not in FALLBACK_PENDING:
                         return handler.default_action
-                decision = FALLBACK_PENDING.pop(job_id, {}).get("decision") or handler.default_action
+                decision = (
+                    FALLBACK_PENDING.pop(job_id, {}).get("decision") or handler.default_action
+                )
                 return decision
 
             handler.on_error = _web_fallback_popup
             cfg.extra["_MiniMax_external_handler"] = handler
-            RESULT_CACHE[job_id]["MiniMax_fallback_handler"] = handler
-        RESULT_CACHE[job_id]["progress"] = 30
-        RESULT_CACHE[job_id]["stage"] = "开始处理 PDF…"
+            with RESULT_LOCK:
+                if job_id in RESULT_CACHE:
+                    RESULT_CACHE[job_id]["MiniMax_fallback_handler"] = handler
+        with RESULT_LOCK:
+            if job_id in RESULT_CACHE:
+                RESULT_CACHE[job_id]["progress"] = 30
+                RESULT_CACHE[job_id]["stage"] = "开始处理 PDF…"
 
         # Build the pipeline with a progress callback that maps the pipeline's
         # (current, total) onto the 30-90% band of the job progress bar. This
@@ -1027,21 +1554,28 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 pct = 50  # unknown total → sit in the middle
             else:
                 pct = 30 + int(60 * current / total)
-            RESULT_CACHE[job_id]["progress"] = max(30, min(89, pct))
-            RESULT_CACHE[job_id]["stage"] = message
-            # Cancellation poll: the user may have POSTed /jobs/{id}/cancel
-            # while the pipeline is mid-figure. Without this check, the task
-            # would run to completion and overwrite the "cancelled" status
-            # with "done", making the cancel look like a no-op. Raising
-            # here propagates out of pipeline.run() and is caught below.
-            if RESULT_CACHE.get(job_id, {}).get("status") == "cancelled":
-                raise _JobCancelledError(f"Job {job_id} cancelled by user")
+            # Hold RESULT_LOCK so the cancel endpoint cannot pop the
+            # entry under us between the read and the writes. The lock
+            # also serialises this with the heartbeat thread's elapsed_sec
+            # write — both touch the same dict in unrelated threads.
+            with RESULT_LOCK:
+                entry = RESULT_CACHE.get(job_id)
+                if entry is None:
+                    # Job was deleted while we were running. Treat as
+                    # cancellation so the worker exits cleanly.
+                    raise _JobCancelledError(f"Job {job_id} was deleted")
+                if entry.get("status") == "cancelled":
+                    raise _JobCancelledError(f"Job {job_id} cancelled by user")
+                entry["progress"] = max(30, min(89, pct))
+                entry["stage"] = message
 
         rows = RadiolarianPipeline(cfg, progress_callback=_on_progress).run()
         normalized_rows: list[dict[str, Any]] = []
         job_root = (WORK_DIR / job_id).resolve()
         for row in rows:
-            normalized = _sanitize_row(asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row))
+            normalized = _sanitize_row(
+                asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row)
+            )
             panel_path = normalized.get("panel_path")
             if panel_path:
                 # Resolve relative panel_paths against job_root, NOT against
@@ -1057,24 +1591,32 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                     # Keep original path when file is outside this job workspace.
                     pass
             normalized_rows.append(normalized)
-        RESULT_CACHE[job_id]["progress"] = 90
-        RESULT_CACHE[job_id]["status"] = "done"
-        RESULT_CACHE[job_id]["result"] = normalized_rows
-        if normalized_rows:
-            RESULT_CACHE[job_id]["detail"] = f"Generated {len(normalized_rows)} result rows"
-        else:
-            RESULT_CACHE[job_id]["detail"] = "Pipeline finished but no panels/matches were produced"
-        RESULT_CACHE[job_id]["progress"] = 100
+        with RESULT_LOCK:
+            entry = RESULT_CACHE.get(job_id)
+            if entry is not None:
+                # If a cancel/delete slipped in between run() returning and
+                # this lock, don't resurrect the job into "done".
+                if entry.get("status") not in {"cancelled"}:
+                    entry["progress"] = 90
+                    entry["status"] = "done"
+                    entry["result"] = normalized_rows
+                    if normalized_rows:
+                        entry["detail"] = f"Generated {len(normalized_rows)} result rows"
+                    else:
+                        entry["detail"] = "Pipeline finished but no panels/matches were produced"
+                    entry["progress"] = 100
     except _JobCancelledError:
         # Cancellation raised from the progress callback. Keep the
         # "cancelled" status that /jobs/{id}/cancel set; don't overwrite it
         # with "failed" (which would have been the previous behaviour for
         # any uncaught exception in the pipeline).
-        RESULT_CACHE[job_id]["status"] = "cancelled"
-        RESULT_CACHE[job_id]["detail"] = "Cancelled by user"
-        RESULT_CACHE[job_id]["progress"] = RESULT_CACHE[job_id].get("progress", 0)
+        with RESULT_LOCK:
+            entry = RESULT_CACHE.get(job_id)
+            if entry is not None:
+                entry["status"] = "cancelled"
+                entry["detail"] = "Cancelled by user"
+                entry["progress"] = entry.get("progress", 0)
     except Exception as exc:
-        RESULT_CACHE[job_id]["status"] = "failed"
         tb = traceback.format_exc(limit=8)
         err = str(exc)
         if "object has no attribute 'route'" in err and "Starlette" in err:
@@ -1082,10 +1624,14 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 f"{err}. Possible PyMuPDF/fitz package conflict. "
                 "Install `pymupdf` and uninstall non-PyMuPDF `fitz`."
             )
-        RESULT_CACHE[job_id]["error"] = err
-        RESULT_CACHE[job_id]["error_trace"] = tb
-        RESULT_CACHE[job_id]["detail"] = "Pipeline execution failed"
-        RESULT_CACHE[job_id]["progress"] = 0
+        with RESULT_LOCK:
+            entry = RESULT_CACHE.get(job_id)
+            if entry is not None:
+                entry["status"] = "failed"
+                entry["error"] = err
+                entry["error_trace"] = tb
+                entry["detail"] = "Pipeline execution failed"
+                entry["progress"] = 0
     finally:
         # Stop the heartbeat thread so it doesn't keep a reference to the
         # job entry in RESULT_CACHE forever.

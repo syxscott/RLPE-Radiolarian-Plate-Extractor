@@ -14,7 +14,9 @@ def run_batch(config: PipelineConfig) -> list[dict[str, Any]]:
     return pipeline.run()
 
 
-def run_batch_parallel(config: PipelineConfig, max_workers: int | None = None) -> list[dict[str, Any]]:
+def run_batch_parallel(
+    config: PipelineConfig, max_workers: int | None = None
+) -> list[dict[str, Any]]:
     pdf_files = sorted(config.pdf_dir.glob("*.pdf"))
     if not pdf_files:
         return []

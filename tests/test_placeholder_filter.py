@@ -1,4 +1,5 @@
 """Tests for non-specimen placeholder detection in pipeline captions."""
+
 from __future__ import annotations
 
 from rlpe.text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
@@ -43,7 +44,28 @@ class TestLooksLikePlaceholderCaption:
         )
 
     def test_empty(self):
-        assert not _looks_like_placeholder_caption("")
+        # Empty / whitespace-only captions are now treated as placeholders.
+        # An empty caption signals "we have nothing to extract from this
+        # figure" and the LLM-first / geology fallback paths should skip
+        # it rather than waste an API call on an empty user prompt. The
+        # earlier behaviour (return False) made the LLM see an empty
+        # caption as a valid input, which produced confusing
+        # "no specimen visible" verdicts.
+        assert _looks_like_placeholder_caption("")
+        assert _looks_like_placeholder_caption("   ")
+        assert _looks_like_placeholder_caption("\n\t  ")
+
+    # Publisher and license tests below.
+
+    def test_publisher_no_longer_matches_in_running_text(self):
+        # The publisher-name regex was tightened (#13 audit fix) so a
+        # legitimate caption ending with "...published in Elsevier" is
+        # NOT flagged as a placeholder. The match is anchored at the
+        # start of a short line and requires the publisher name to be
+        # essentially the whole content.
+        assert not _looks_like_placeholder_caption(
+            "Fig. 1. Specimens collected during a survey published in Elsevier journal"
+        )
 
     def test_real_caption_with_license_mention(self):
         # Real captions can mention "license" but aren't JUST a license line
@@ -57,6 +79,7 @@ class TestStage4SkipLogic:
 
     def test_non_radiolarian_flag_does_not_count_as_fallback_error(self):
         from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
+
         # Build a fake match dict with m3_rejected_non_radiolarian
         class _FakeMatch:
             def __init__(self):
@@ -64,23 +87,28 @@ class TestStage4SkipLogic:
                     "m3_rejected_non_radiolarian": True,
                     "gemma_reasoning": "该panel并非古生物标本图版",
                 }
+
         m = _FakeMatch()
         # _matches_have_fallback_error should return False for this match
         assert _matches_have_fallback_error([m]) is False
 
     def test_real_fallback_error_still_triggers(self):
         from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
+
         class _FakeMatch:
             def __init__(self):
                 self.metadata = {"gemma_error": "API timeout"}
+
         m = _FakeMatch()
         assert _matches_have_fallback_error([m]) is True
 
     def test_low_confidence_fallback_still_triggers(self):
         from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
+
         class _FakeMatch:
             def __init__(self):
                 self.metadata = {"gemma_fallback": True, "gemma_reasoning": "low conf"}
+
         m = _FakeMatch()
         assert _matches_have_fallback_error([m]) is True
 

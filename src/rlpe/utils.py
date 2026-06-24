@@ -49,16 +49,80 @@ def stable_id(path: Path | str) -> str:
     return hashlib.sha1(str(path).encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
+def _json_default(obj: Any) -> Any:
+    """Best-effort JSON encoder for objects ``json.dumps`` cannot serialise.
+
+    Covers:
+      - ``Path``    → ``str(path)``
+      - dataclass / objects with ``to_dict`` → recurse on the dict
+      - numpy scalars / arrays → Python equivalents
+      - ``set`` / ``frozenset`` / ``tuple`` → list
+      - ``datetime`` / ``date`` → ISO 8601 string
+      - ``bytes`` → utf-8 with replacement
+      - everything else → ``str(obj)`` so the call never raises.
+    """
+    # Path
+    if isinstance(obj, Path):
+        return str(obj)
+    # numpy
+    try:
+        import numpy as _np  # type: ignore[import-not-found]
+
+        if isinstance(obj, _np.integer):
+            return int(obj)
+        if isinstance(obj, _np.floating):
+            return float(obj)
+        if isinstance(obj, _np.bool_):
+            return bool(obj)
+        if isinstance(obj, _np.ndarray):
+            return obj.tolist()
+    except Exception:
+        pass
+    # to_dict / dataclass
+    if hasattr(obj, "to_dict") and callable(obj.to_dict):
+        try:
+            return obj.to_dict()
+        except Exception:
+            pass
+    # collections
+    if isinstance(obj, (set, frozenset)):
+        return sorted(obj, key=lambda x: str(x))
+    if isinstance(obj, tuple):
+        return list(obj)
+    # datetime
+    try:
+        import datetime as _dt
+
+        if isinstance(obj, (_dt.datetime, _dt.date)):
+            return obj.isoformat()
+    except Exception:
+        pass
+    # bytes
+    if isinstance(obj, (bytes, bytearray)):
+        try:
+            return obj.decode("utf-8", errors="replace")
+        except Exception:
+            return repr(obj)
+    # last resort
+    try:
+        return str(obj)
+    except Exception:
+        return repr(obj)
+
+
 def write_json(path: Path, data: Any) -> None:
     ensure_dir(path.parent)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, default=_json_default),
+        encoding="utf-8",
+    )
 
 
 def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     ensure_dir(path.parent)
     with path.open("w", encoding="utf-8") as f:
         for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            f.write(json.dumps(row, ensure_ascii=False, default=_json_default) + "\n")
 
 
 def read_text(path: Path, default: str = "") -> str:

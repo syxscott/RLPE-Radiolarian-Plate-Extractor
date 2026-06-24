@@ -8,6 +8,7 @@ These tests verify that the enhanced pipeline recovers enough panels on a
 dense-plate fixture that the prior default (close kernel = 9) missed, and
 that the merge-with-Otsu logic does not double-count.
 """
+
 from __future__ import annotations
 
 import sys
@@ -25,10 +26,22 @@ from rlpe.segmentation import PanelSegmenter, SegmentationConfig
 def _hollis_pl03_path() -> Path | None:
     """Locate the hollis2006 pl03 image fixture if the work/ tree has it."""
     candidates = [
-        REPO_ROOT / "work" / "all7_rerun" / "output" / "od_output"
-        / "a0f363c21b6941d7" / "hollis2006_images" / "imageFile3.png",
-        REPO_ROOT / "work" / "all5_out" / "output" / "od_output"
-        / "a0f363c21b6941d7" / "hollis2006_images" / "imageFile3.png",
+        REPO_ROOT
+        / "work"
+        / "all7_rerun"
+        / "output"
+        / "od_output"
+        / "a0f363c21b6941d7"
+        / "hollis2006_images"
+        / "imageFile3.png",
+        REPO_ROOT
+        / "work"
+        / "all5_out"
+        / "output"
+        / "od_output"
+        / "a0f363c21b6941d7"
+        / "hollis2006_images"
+        / "imageFile3.png",
     ]
     for c in candidates:
         if c.exists():
@@ -49,15 +62,18 @@ def test_enhanced_close_kernel_breaks_dense_rows():
     if img_path is None:
         # Fixture absent from the work/ tree (CI without PDFs). Skip.
         import pytest
+
         pytest.skip("hollis pl03 fixture not present in work/ tree")
     img = cv2.imread(str(img_path))
     assert img is not None, f"failed to load {img_path}"
 
-    seg = PanelSegmenter(SegmentationConfig(
-        min_area=2500,
-        max_single_panel_area_frac=0.20,
-        max_aspect_ratio=4.0,
-    ))
+    seg = PanelSegmenter(
+        SegmentationConfig(
+            min_area=2500,
+            max_single_panel_area_frac=0.20,
+            max_aspect_ratio=4.0,
+        )
+    )
     panels = seg._segment_with_opencv(img)
     assert len(panels) >= 19, (
         f"hollis pl03: expected >=19 panels after k_close=7, got {len(panels)}"
@@ -80,6 +96,7 @@ def test_opencv_path_returns_sorted_panels():
     img_path = _hollis_pl03_path()
     if img_path is None:
         import pytest
+
         pytest.skip("hollis pl03 fixture not present in work/ tree")
     img = cv2.imread(str(img_path))
 
@@ -107,6 +124,7 @@ def test_enhanced_path_handles_gray_input():
     img_path = _hollis_pl03_path()
     if img_path is None:
         import pytest
+
         pytest.skip("hollis pl03 fixture not present in work/ tree")
     img = cv2.imread(str(img_path))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -119,7 +137,9 @@ def test_enhanced_path_handles_gray_input():
     )
 
 
-def _make_touching_circles(width: int, height: int, centers: list[tuple[int, int]], radius: int) -> np.ndarray:
+def _make_touching_circles(
+    width: int, height: int, centers: list[tuple[int, int]], radius: int
+) -> np.ndarray:
     """Helper: build a synthetic BGR image with touching white
     circles on a black background. Used to exercise the watershed
     splitter without needing a real radiolarian plate image."""
@@ -148,9 +168,9 @@ def test_watershed_splits_touching_circles():
     img = np.zeros((1200, 1800, 3), dtype=np.uint8)
     for cy in (400, 800):
         # Place circles so they overlap: r1+r2 > dist between centers
-        cv2.circle(img, (900, cy), 90, (255, 255, 255), -1)    # centre
-        cv2.circle(img, (750, cy), 90, (255, 255, 255), -1)    # left (overlaps centre)
-        cv2.circle(img, (1050, cy), 90, (255, 255, 255), -1)   # right (overlaps centre)
+        cv2.circle(img, (900, cy), 90, (255, 255, 255), -1)  # centre
+        cv2.circle(img, (750, cy), 90, (255, 255, 255), -1)  # left (overlaps centre)
+        cv2.circle(img, (1050, cy), 90, (255, 255, 255), -1)  # right (overlaps centre)
 
     panels_w = seg_w.segment_image(img)
     panels_n = seg_n.segment_image(img)
@@ -179,7 +199,8 @@ def test_watershed_does_not_split_isolated_circle():
     """
     seg = PanelSegmenter(SegmentationConfig(min_area=2500, use_watershed=True))
     img = _make_touching_circles(
-        width=400, height=400,
+        width=400,
+        height=400,
         centers=[(200, 200)],
         radius=80,
     )

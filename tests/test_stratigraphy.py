@@ -1,4 +1,5 @@
 """Tests for stratigraphy classification and ICS table lookup."""
+
 from __future__ import annotations
 
 from rlpe.stratigraphy import (
@@ -111,7 +112,18 @@ class TestICSChart:
 
     def test_canonical_periods_present(self):
         names = {row["name"] for row in ICS_CHART if row["rank"] == "period"}
-        for must in ("Cambrian", "Ordovician", "Silurian", "Devonian",
-                     "Carboniferous", "Permian", "Triassic", "Jurassic",
-                     "Cretaceous", "Paleogene", "Neogene", "Quaternary"):
+        for must in (
+            "Cambrian",
+            "Ordovician",
+            "Silurian",
+            "Devonian",
+            "Carboniferous",
+            "Permian",
+            "Triassic",
+            "Jurassic",
+            "Cretaceous",
+            "Paleogene",
+            "Neogene",
+            "Quaternary",
+        ):
             assert must in names, f"Missing period {must}"

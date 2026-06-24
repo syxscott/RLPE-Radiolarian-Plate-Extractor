@@ -9,7 +9,9 @@ from .types import FigureRegion, PageRecord
 from .utils import ensure_dir, slugify
 
 FIG_REF_PATTERN = re.compile(r"\b(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?)\b", re.IGNORECASE)
-CAPTION_LEAD_PATTERN = re.compile(r"^(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?)\b[:\-\.]?\s*", re.IGNORECASE)
+CAPTION_LEAD_PATTERN = re.compile(
+    r"^(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?)\b[:\-\.]?\s*", re.IGNORECASE
+)
 
 
 def render_pdf_pages(pdf_path: Path, out_dir: Path, dpi: int = 200) -> list[PageRecord]:
@@ -18,13 +20,25 @@ def render_pdf_pages(pdf_path: Path, out_dir: Path, dpi: int = 200) -> list[Page
     fitz = _import_pymupdf()
 
     doc = fitz.open(str(pdf_path))
-    for idx, page in enumerate(doc, start=1):
-        pix = page.get_pixmap(dpi=dpi, alpha=False)
-        image_path = out_dir / f"page_{idx:03d}.png"
-        pix.save(str(image_path))
-        text = page.get_text("text") or ""
-        pages.append(PageRecord(page_index=idx, image_path=str(image_path), text=text, width=pix.width, height=pix.height, metadata={"dpi": dpi}))
-    return pages
+    try:
+        for idx, page in enumerate(doc, start=1):
+            pix = page.get_pixmap(dpi=dpi, alpha=False)
+            image_path = out_dir / f"page_{idx:03d}.png"
+            pix.save(str(image_path))
+            text = page.get_text("text") or ""
+            pages.append(
+                PageRecord(
+                    page_index=idx,
+                    image_path=str(image_path),
+                    text=text,
+                    width=pix.width,
+                    height=pix.height,
+                    metadata={"dpi": dpi},
+                )
+            )
+        return pages
+    finally:
+        doc.close()
 
 
 def _import_pymupdf():
@@ -58,14 +72,20 @@ def extract_figure_number(text: str | None) -> str | None:
     return None
 
 
-def find_caption_pages(pages: list[PageRecord], figure_number: str | None, window: int = 2) -> list[PageRecord]:
+def find_caption_pages(
+    pages: list[PageRecord], figure_number: str | None, window: int = 2
+) -> list[PageRecord]:
     if not pages:
         return []
     candidates: list[PageRecord] = []
     if figure_number:
         for page in pages:
             text = page.text or ""
-            if re.search(rf"\b(?:fig(?:ure)?|plate)\s*\.?\s*{re.escape(figure_number)}\b", text, re.IGNORECASE):
+            if re.search(
+                rf"\b(?:fig(?:ure)?|plate)\s*\.?\s*{re.escape(figure_number)}\b",
+                text,
+                re.IGNORECASE,
+            ):
                 candidates.append(page)
     if candidates:
         return candidates
@@ -76,6 +96,12 @@ def detect_figure_regions(page: PageRecord, min_area: int = 8000) -> list[Figure
     image = cv2.imread(page.image_path, cv2.IMREAD_UNCHANGED)
     if image is None:
         return []
+    # Bug #11 fix: PyMuPDF may save RGBA PNGs. cv2.threshold on a 4-channel
+    # image has version-dependent behaviour and can produce an all-zero binary,
+    # causing every page to fall back to the fullpage-region branch. Strip
+    # alpha explicitly and convert to BGR before grayscale conversion.
+    if image.ndim == 3 and image.shape[2] == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
     if image.ndim == 2:
         gray = image
     else:
@@ -100,7 +126,7 @@ def detect_figure_regions(page: PageRecord, min_area: int = 8000) -> list[Figure
             continue
         crop = image[y : y + h, x : x + w]
         crop_dir = ensure_dir(Path(page.image_path).parent / "regions")
-        region_id = f"p{page.page_index:03d}_{slugify(f'region_{x}_{y}_{w}_{h}') }"
+        region_id = f"p{page.page_index:03d}_{slugify(f'region_{x}_{y}_{w}_{h}')}"
         crop_path = crop_dir / f"{region_id}.png"
         cv2.imwrite(str(crop_path), crop)
         regions.append(
@@ -144,7 +170,9 @@ def page_text_density(page: PageRecord) -> float:
     return len(words) / max(1, page.width * page.height / 100000.0)
 
 
-def choose_best_page(pages: list[PageRecord], figure_number: str | None, caption_text: str, window: int = 2) -> PageRecord | None:
+def choose_best_page(
+    pages: list[PageRecord], figure_number: str | None, caption_text: str, window: int = 2
+) -> PageRecord | None:
     if not pages:
         return None
     candidates = find_caption_pages(pages, figure_number, window=window)

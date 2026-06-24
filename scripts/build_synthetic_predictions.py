@@ -20,6 +20,7 @@ Usage:
         --caption "Plate I. ...full caption..." \\
         --out   work/synth_bragin.jsonl
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,19 +30,24 @@ from pathlib import Path
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--gold", type=Path, required=True,
-                   help="Gold JSONL to mirror as predictions")
-    p.add_argument("--caption", type=str, default="",
-                   help="Original caption text (recorded as caption_snippet)")
-    p.add_argument("--out", type=Path, required=True,
-                   help="Output predictions JSONL path")
-    p.add_argument("--confidence", type=float, default=0.85,
-                   help="Confidence assigned to the synthetic predictions")
+    p.add_argument("--gold", type=Path, required=True, help="Gold JSONL to mirror as predictions")
+    p.add_argument(
+        "--caption",
+        type=str,
+        default="",
+        help="Original caption text (recorded as caption_snippet)",
+    )
+    p.add_argument("--out", type=Path, required=True, help="Output predictions JSONL path")
+    p.add_argument(
+        "--confidence",
+        type=float,
+        default=0.85,
+        help="Confidence assigned to the synthetic predictions",
+    )
     args = p.parse_args()
 
     n = 0
-    with args.gold.open("r", encoding="utf-8") as fin, \
-         args.out.open("w", encoding="utf-8") as fout:
+    with args.gold.open("r", encoding="utf-8") as fin, args.out.open("w", encoding="utf-8") as fout:
         for line in fin:
             line = line.strip()
             if not line:

@@ -13,6 +13,7 @@ literature:
 Returned ``Coordinate`` has both signed decimal degrees and a normalised
 representation, so downstream consumers can pick whichever they need.
 """
+
 from __future__ import annotations
 
 import re
@@ -24,8 +25,8 @@ from typing import Any
 class Coordinate:
     latitude: float
     longitude: float
-    source: str = ""        # the snippet where it was found
-    raw: str = ""           # the original match
+    source: str = ""  # the snippet where it was found
+    raw: str = ""  # the original match
     confidence: float = 0.9
 
     def to_dict(self) -> dict[str, Any]:
@@ -89,8 +90,10 @@ def parse_coordinate(text: str) -> Coordinate | None:
             # debug so the failure is observable without spamming
             # warnings on every paper.
             import logging
+
             logging.getLogger(__name__).debug(
-                "geo_coords: DMS regex matched but conversion failed: %s", exc,
+                "geo_coords: DMS regex matched but conversion failed: %s",
+                exc,
             )
     # 2. Decimal
     m = _DECIMAL_RE.search(text)
@@ -106,8 +109,10 @@ def parse_coordinate(text: str) -> Coordinate | None:
                 return Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
         except (TypeError, ValueError) as exc:
             import logging
+
             logging.getLogger(__name__).debug(
-                "geo_coords: decimal regex matched but conversion failed: %s", exc,
+                "geo_coords: decimal regex matched but conversion failed: %s",
+                exc,
             )
     return None
 
@@ -119,14 +124,24 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
     out: list[Coordinate] = []
     for m in _DMS_RE.finditer(text):
         try:
-            lat = int(m.group("lat_d")) + int(m.group("lat_m")) / 60.0 + float(m.group("lat_s")) / 3600.0
-            lon = int(m.group("lon_d")) + int(m.group("lon_m")) / 60.0 + float(m.group("lon_s")) / 3600.0
+            lat = (
+                int(m.group("lat_d"))
+                + int(m.group("lat_m")) / 60.0
+                + float(m.group("lat_s")) / 3600.0
+            )
+            lon = (
+                int(m.group("lon_d"))
+                + int(m.group("lon_m")) / 60.0
+                + float(m.group("lon_s")) / 3600.0
+            )
             if m.group("lat_h") and m.group("lat_h").upper() in ("S", "W"):
                 lat = -lat
             if m.group("lon_h") and m.group("lon_h").upper() in ("W", "S"):
                 lon = -lon
             if _valid(lat, lon):
-                out.append(Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0)))
+                out.append(
+                    Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
+                )
         except Exception:
             pass
     for m in _DECIMAL_RE.finditer(text):
@@ -138,7 +153,9 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
             if m.group("lon_h") and m.group("lon_h").upper() in ("W", "S"):
                 lon = -lon
             if _valid(lat, lon):
-                out.append(Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0)))
+                out.append(
+                    Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
+                )
         except Exception:
             pass
     return out

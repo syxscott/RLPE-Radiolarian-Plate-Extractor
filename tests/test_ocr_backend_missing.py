@@ -13,6 +13,7 @@ These tests verify that:
   4. The lazy init is not retried on every call (only once after first
      failure — prevents 5-min hangs when OCR is broken)
 """
+
 from __future__ import annotations
 
 import sys

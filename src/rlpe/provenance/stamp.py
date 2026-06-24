@@ -17,6 +17,7 @@ The function is pure-ish: it inspects the filesystem and ``git`` binary
 but does not modify state. Calling it twice in the same second produces
 the same timestamp.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -25,11 +26,56 @@ import platform
 import socket
 import subprocess
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+
+# Compat shim: ``datetime.UTC`` was added in Python 3.11; on 3.10
+# (and earlier) the canonical spelling is ``datetime.timezone.utc``.
+# Using ``timezone.utc`` keeps this module importable on Python 3.10
+# even though pyproject.toml formally requires >=3.11, so users who
+# run the pipeline in an older conda env aren't blocked at import time.
+UTC = timezone.utc  # noqa: UP017
 from pathlib import Path
 from typing import Any
 
-PIPELINE_VERSION = "1.1.0"
+
+def _resolve_pipeline_version() -> str:
+    """Read the rlpe package version from installed metadata, falling
+    back to the project's pyproject.toml in source-checkout runs.
+
+    The previous code hard-coded ``"1.1.0"`` here AND in the API
+    layer; bumping the version in pyproject.toml left the provenance
+    stamp lying about which release produced an output. Reading
+    ``importlib.metadata`` keeps the two in lock-step.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version("rlpe")
+        except PackageNotFoundError:
+            pass
+    except Exception:
+        pass
+    # source-checkout fallback
+    try:
+        try:
+            import tomllib  # type: ignore[import-not-found]
+        except ModuleNotFoundError:
+            import tomli as tomllib  # type: ignore[import-not-found,no-redef]
+        # provenance/stamp.py -> provenance/ -> rlpe/ -> src/ -> repo root
+        pyproject = Path(__file__).resolve().parents[3] / "pyproject.toml"
+        if pyproject.exists():
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+            v = (data.get("project") or {}).get("version")
+            if v:
+                return str(v)
+    except Exception:
+        pass
+    return "unknown"
+
+
+PIPELINE_VERSION = _resolve_pipeline_version()
 SCHEMA_VERSION = "1.0.0"
 
 

@@ -6,6 +6,7 @@ the parser returns 0 pairs for an entire paper and the order-based
 fallback tags every panel with taxa[0] from the truncated caption
 preamble.
 """
+
 from __future__ import annotations
 
 from rlpe.m3_engine import _regex_parse_caption
@@ -35,7 +36,9 @@ def test_baumgartner_plate1_full_caption():
             by_label[lbl] = p.species
     assert by_label.get("1") == "Williriedellum marcucciae"
     assert by_label.get("2") == "Williriedellum marcucciae"
-    assert by_label.get("3") == "Williriedellum sp. S" or "Williriedellum sp" in by_label.get("3", "")
+    assert by_label.get("3") == "Williriedellum sp. S" or "Williriedellum sp" in by_label.get(
+        "3", ""
+    )
     assert by_label.get("6") == "Zhamoidellum sp."
     assert by_label.get("7") == "Zhamoidellum sp."
     assert by_label.get("10") == "Pseudodictyomitra primitiva"
@@ -142,9 +145,7 @@ def test_baumgartner_uncertainty_marker_after_genus():
     strips it so the captured species matches the gold convention
     (which omits the uncertainty marker)."""
     pairs = _regex_parse_caption(
-        "1- Stichomitra (?) sp. cf. S. (?) acuta; "
-        "2- Acaeniotyle (?) sp.; "
-        "3- Hiscocapsa (?) sp."
+        "1- Stichomitra (?) sp. cf. S. (?) acuta; 2- Acaeniotyle (?) sp.; 3- Hiscocapsa (?) sp."
     )
     by_label = {lbl: p.species for p in pairs for lbl in p.labels}
     assert by_label.get("1") == "Stichomitra sp. cf. S. acuta"

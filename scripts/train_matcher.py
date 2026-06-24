@@ -44,7 +44,9 @@ def train(args) -> int:
     ds = MatchDataset(Path(args.train_jsonl))
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True)
 
-    model = PanelLabelSpeciesMatcher(feature_dim=args.feature_dim, hidden_dim=args.hidden_dim).to(device)
+    model = PanelLabelSpeciesMatcher(feature_dim=args.feature_dim, hidden_dim=args.hidden_dim).to(
+        device
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     ce = nn.CrossEntropyLoss()
 
@@ -52,18 +54,31 @@ def train(args) -> int:
     for epoch in range(args.epochs):
         loss_sum = 0.0
         for p, l, s, y_pl, y_ps in loader:
-            p, l, s, y_pl, y_ps = p.to(device), l.to(device), s.to(device), y_pl.to(device), y_ps.to(device)
+            p, l, s, y_pl, y_ps = (
+                p.to(device),
+                l.to(device),
+                s.to(device),
+                y_pl.to(device),
+                y_ps.to(device),
+            )
             logits_pl, logits_ps = model(p, l, s)
             loss = ce(logits_pl, y_pl) + ce(logits_ps, y_ps)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             loss_sum += float(loss.item())
-        print(f"epoch={epoch+1} loss={loss_sum/max(1, len(loader)):.4f}")
+        print(f"epoch={epoch + 1} loss={loss_sum / max(1, len(loader)):.4f}")
 
     output = Path(args.output_ckpt)
     output.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "feature_dim": args.feature_dim, "hidden_dim": args.hidden_dim}, output)
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "feature_dim": args.feature_dim,
+            "hidden_dim": args.hidden_dim,
+        },
+        output,
+    )
     print(f"saved={output}")
     return 0
 

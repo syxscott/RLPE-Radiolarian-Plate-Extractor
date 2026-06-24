@@ -26,6 +26,7 @@ Stages (in dependency order):
 The output JSON is suitable for diffing in CI: stable schema, no
 timestamps, no host-specific fields.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -61,6 +62,7 @@ def _time_n(fn: callable, n: int = 3) -> dict[str, float]:
 def bench_pdf_metadata(pdf_path: Path) -> dict[str, Any]:
     """Open the PDF, count pages, and read the text layer."""
     import fitz  # pymupdf
+
     def _run() -> None:
         doc = fitz.open(pdf_path)
         try:
@@ -68,26 +70,31 @@ def bench_pdf_metadata(pdf_path: Path) -> dict[str, Any]:
             text_bytes = sum(len(doc.load_page(i).get_text()) for i in range(n_pages))
         finally:
             doc.close()
+
     return {"n_pages_or_bytes": _run.__doc__ or "", **_time_n(_run, n=3)}
 
 
 def bench_opendataloader(pdf_path: Path, work_dir: Path) -> dict[str, Any]:
     """Run OpenDataLoader on the PDF. Skips if not installed."""
     from rlpe.opendataloader_extractor import OpenDataLoaderExtractor
+
     ext = OpenDataLoaderExtractor()
     if not ext.is_available():
         return {"skipped": "opendataloader-pdf not installed"}
     out = work_dir / "bench_od"
     out.mkdir(parents=True, exist_ok=True)
+
     def _run() -> None:
         ext.extract(pdf_path, out)
+
     return _time_n(_run, n=1)  # OD is slow; only 1 run
 
 
 def bench_segmentation() -> dict[str, Any]:
     """Watershed split on a synthetic 5-specimen figure."""
-    import numpy as np
     import cv2
+    import numpy as np
+
     from rlpe.segmentation import PanelSegmenter
 
     def _make_synthetic() -> np.ndarray:
@@ -101,8 +108,10 @@ def bench_segmentation() -> dict[str, Any]:
 
     img = _make_synthetic()
     segmenter = PanelSegmenter()
+
     def _run() -> None:
         segmenter.segment_image(img)
+
     return _time_n(_run, n=3)
 
 
@@ -113,8 +122,9 @@ def bench_ocr() -> dict[str, Any]:
     except ImportError:
         return {"skipped": "rlpe.ocr not importable"}
 
-    import numpy as np
     import cv2
+    import numpy as np
+
     try:
         engine = OCRBackend(backend="paddleocr", use_gpu=False)
     except Exception as exc:
@@ -123,8 +133,10 @@ def bench_ocr() -> dict[str, Any]:
     # Synthetic panel: dark background with white text
     img = np.zeros((100, 400, 3), dtype=np.uint8)
     cv2.putText(img, "Testocr 123", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
     def _run() -> None:
         engine.recognize(img)
+
     return _time_n(_run, n=2)
 
 
@@ -152,20 +164,24 @@ def bench_caption_parser() -> dict[str, Any]:
         "9-10 Triactoma cellulosa; "
         "11-12 Triactoma hexeris",
     ]
+
     def _run() -> None:
         for c in captions:
             _regex_parse_caption(c)
+
     return _time_n(_run, n=3)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--paper", default="beccaro2006",
+        "--paper",
+        default="beccaro2006",
         help="Committed paper to benchmark (default: beccaro2006, the smallest PDF)",
     )
     parser.add_argument(
-        "--output", default=None,
+        "--output",
+        default=None,
         help="Write JSON report to this path (default: stdout)",
     )
     args = parser.parse_args()

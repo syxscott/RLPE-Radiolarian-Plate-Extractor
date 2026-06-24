@@ -1,4 +1,5 @@
 """Tests for export sanitisation and CSV flattening."""
+
 from __future__ import annotations
 
 import json
@@ -46,9 +47,13 @@ class TestSanitize:
         assert out == [1, 2, 3]
 
     def test_path_becomes_str(self):
-        p = Path("/tmp/test.pdf")
+        # Use a platform-agnostic assertion: str(Path(...)) on
+        # Linux/macOS gives forward slashes; on Windows backslashes.
+        # The contract we care about is "Path gets coerced to a str".
+        p = Path(r"some\path\test.pdf")
         out = _sanitize(p)
-        assert out == "/tmp/test.pdf"
+        assert out == str(p)
+        assert isinstance(out, str)
 
     def test_bytes_becomes_str(self):
         out = _sanitize(b"hello")

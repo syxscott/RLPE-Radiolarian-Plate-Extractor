@@ -13,7 +13,9 @@ if str(SRC) not in sys.path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Train domain Taxon NER model for RLPE.")
-    parser.add_argument("--train-json", type=str, required=True, help="Path to token-level labeled data.")
+    parser.add_argument(
+        "--train-json", type=str, required=True, help="Path to token-level labeled data."
+    )
     parser.add_argument("--base-model", type=str, default="distilbert-base-cased")
     parser.add_argument("--output-dir", type=str, required=True)
     parser.add_argument("--epochs", type=int, default=3)

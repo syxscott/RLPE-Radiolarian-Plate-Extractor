@@ -1,5 +1,7 @@
 """Evaluation harness — see gold.py and metrics.py for the public API."""
+
 from .gold import GOLD_SCHEMA_VERSION, GoldPanel, load_gold, match_panel, write_gold
+from .image_label_check import ImageLabelStats, run_image_label_check
 from .metrics import (
     EvaluationReport,
     PaperMetrics,
@@ -8,7 +10,6 @@ from .metrics import (
     load_predictions_jsonl,
 )
 from .report import write_json_report, write_markdown_report
-from .image_label_check import ImageLabelStats, run_image_label_check
 
 __all__ = [
     "GOLD_SCHEMA_VERSION",

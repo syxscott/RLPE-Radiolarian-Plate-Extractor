@@ -9,6 +9,7 @@ PDF + GROBID / OpenDataLoader running).
 The tests use FastAPI's TestClient with a real app instance.
 Run with: `PYTHONPATH=src python -m pytest tests/test_api_app.py -q`.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -82,9 +83,7 @@ def test_review_correction_accepts_minimal_payload(client: TestClient) -> None:
             "corrected_species": "Genus species",
         },
     )
-    assert r.status_code in (200, 202, 404), (
-        f"unexpected status {r.status_code}: {r.text}"
-    )
+    assert r.status_code in (200, 202, 404), f"unexpected status {r.status_code}: {r.text}"
 
 
 def test_job_options_rejects_invalid_fallback(client: TestClient) -> None:
@@ -171,9 +170,7 @@ class TestUploadJobLifecycle:
         )
         assert body.get("filename") == small_pdf.name
 
-    def test_upload_then_status_then_cancel(
-        self, client: TestClient, small_pdf: Path
-    ) -> None:
+    def test_upload_then_status_then_cancel(self, client: TestClient, small_pdf: Path) -> None:
         # 1. Upload
         with small_pdf.open("rb") as f:
             r = client.post(

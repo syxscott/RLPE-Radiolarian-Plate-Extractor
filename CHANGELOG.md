@@ -1,10 +1,224 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to RLPE are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 8] - 2026-06-10 -- geology links visible in the panel-detail modal
+
+The panel-detail modal (`web/js/app.js::openImageModal`) now renders the
+`metadata.geology_links` list attached by the pipeline (age / formation /
+locality, with per-record confidence). The links were already attached by
+the pipeline and exposed through the API; the front-end just wasn't
+showing them. With this change, the operator can see WHY a panel got a
+given species prediction (or why it has none) without leaving the Web UI.
+
+### Added
+
+- New `modal-row` block in `openImageModal` that walks
+  `record.metadata.geology_links` and renders each entry as a list item:
+  `<strong>age</strong> Â· <em>formation</em> Â· <span>locality</span>`
+  followed by a confidence badge. The block is a self-contained IIFE so
+  failure modes (null metadata, empty list, all-blank records) silently
+  collapse to an empty string instead of breaking the modal.
+- `g.age || g.chronostratigraphy` fallback so papers that only report the
+  chronostratigraphic stage (e.g. 'Changhsingian') still get a visible age.
+- `escapeHtml(...)` wrapping on every user-supplied string in the new
+  block, so a malicious caption with `<script>` in the formation name
+  cannot XSS the panel-detail view.
+- CSS for `.modal-geo-list` and `.modal-geo-conf` in
+  `web/css/style.css`: list uses the same monospace-friendly style as
+  `.modal-caption`, with `max-height: 140px; overflow-y: auto;` so a
+  paper with 5+ geology records doesn't push the modal off-screen.
+
+### Added (tests)
+
+- **`tests/test_geology_modal_ui.py` (15 tests)** pins the front-end
+  contract for the new block:
+  - 8 structural tests check that `openImageModal` references the new
+    classes (`modal-geo-list`, `modal-geo-conf`), calls `escapeHtml` on
+    the user-supplied fields, and that the new template literal is
+    balanced (backticks + `${...}` interpolation count is sane).
+  - 7 render tests port the JS IIFE to Python and verify the HTML
+    output for the empty-list / missing-metadata / full-record /
+    chrono-fallback / formation-only / all-blank / multiple-record cases.
+
+### Notes
+
+- Full suite: 433 passed (15 new), 23 skipped (fixture / optional-dep
+  missing), 1 deselected (easyocr env-dependent). No regressions.
+- The front-end still renders the empty-state cleanly when
+  `geology_links` is missing or empty (the IIFE returns '' and the
+  surrounding template literal interpolates an empty string).
+
+ - 2026-06-10 -- web server Unicode fix + cross-platform tests
+
+Closes the last few platform-specific papercuts that were making the web
+server and the test suite unreliable on Windows / non-UTF-8 locales.
+
+### Fixed
+
+- run_web_server.py UnicodeEncodeError on non-UTF-8 Windows.
+  The startup banner contains a box-drawing header and an emoji (U+1F52C).
+  On Windows code pages 936/1252 the print crashed before uvicorn even
+  started. The launcher now calls sys.stdout.reconfigure(encoding='utf-8')
+  on import so the banner prints cleanly regardless of the active code page.
+- tests/test_provenance.py::test_creates_sidecar GBK failure.
+  The test called sidecar.read_text() without an explicit encoding; on
+  Windows the default is cp936 / GBK, which crashes on the non-ASCII bytes
+  the sidecar may carry. Switched to read_text(encoding='utf-8').
+- tests/test_export_sanitize.py::test_path_becomes_str Windows path
+  inconsistency. The hard-coded /tmp/test.pdf expectation broke on
+  Windows (where str(Path('/tmp/test.pdf')) is 'tmp\test.pdf').
+  Replaced with a platform-agnostic assertion (out == str(p)).
+- tests/test_fresh_paper_smoke.py ValueError at setup.
+  SMOKE_MATCHES was a relative Path(...) while REPO_ROOT was absolute,
+  so SMOKE_MATCHES.relative_to(REPO_ROOT) raised. Switched SMOKE_MATCHES
+  to REPO_ROOT / 'work/papers_smoke/...' (and moved the REPO_ROOT line
+  above it so it is defined first). The 7 tests now correctly SKIP when the
+  fresh-paper smoke output is missing instead of erroring out.
+- tests/test_fig_caption_re.py StopIteration on missing fixtures.
+  The 6 fixture-dependent tests called next(dir.glob(...)) with no
+  fallback, which raised StopIteration (rendered as RuntimeError by
+  pytest 8) when the work-directory artifacts were not present. Added
+  pytest.skip(...) guards at the top of each test so the suite can run
+  cleanly without the heavy work/batch4_v2 + work/wever_check fixtures.
+
+### Notes
+
+- Full suite: 418 passed, 23 skipped (all skip reasons are documented
+  fixture-missing or optional-dep-missing), 1 deselected (easyocr env).
+- The end-to-end smoke (POST /jobs/upload -> /jobs/{id}/status ->
+  /jobs/{id}/result) on the committed Xiao Yifan 2017 micro-XCT PDF
+  produces 93 panel rows with valid panel_path + panel_local_path,
+  and the /jobs/{id}/files/{path:path} image route serves the panel PNG
+  with content-type: image/png (verified via TestClient).
+  No OCR / TaxoNERD / OpenDataLoader backends in this env, so species
+  and GROBID-derived captions are empty (graceful degradation, as designed).
+
+ - 2026-06-10 -- local_only is real + end-to-end test
+
+Hardens the local-only data-outbound path and pins it with end-to-end tests
+that exercise the full pipeline on the committed Xiao Yifan 2017 micro-XCT PDF.
+
+### Added
+
+- **Real `data_outbound_policy` enforcement** (`src/rlpe/llm_backends.py`).
+  `MiniMaxM3Backend` now accepts a `data_outbound_policy` field (`api_full` /
+  `api_redacted` / `local_only`) and refuses to contact the API in
+  `local_only` mode. `api_redacted` truncates user-prompt text to 200 chars
+  and replaces panel images with a 256x256 thumbnail before sending.
+- **`build_MiniMax_backend_from_env_or_config` no longer requires an API key
+  when `data_outbound_policy=local_only`**.
+- **End-to-end test on the committed PDF**
+  (`tests/test_e2e_real_pdf_smoke.py`): runs `RadiolarianPipeline.run()`
+  on the committed Xiao Yifan 2017 micro-XCT PDF, persists the result to
+  a tmp work dir, and verifies that any produced rows round-trip through
+  the published `PanelRecord` schema. Tolerates graceful degradation when
+  PaddleOCR / EasyOCR / TaxoNERD / OpenDataLoader are missing.
+- **End-to-end Web upload test** (`tests/test_e2e_web_upload.py`): drives
+  the real `POST /jobs/upload` -> `GET /jobs/{id}/status` ->
+  `GET /jobs/{id}/result` flow via FastAPI's `TestClient` on the
+  Xiao Yifan PDF, asserts the API envelope stays valid even when the
+  pipeline produces 0 rows.
+- **End-to-end `local_only` test suite** (`tests/test_e2e_local_only.py`,
+  7 tests): pins the contract that the policy names actually behave
+  differently, that the schema round-trips, that the API app version
+  stays in sync with `pyproject.toml`, and that the pipeline can be
+  constructed in offline environments.
+- **`work/xiao_yifan_2017/` baseline** (gitignored): a 93-row result of
+  running the pipeline offline on the committed micro-XCT PDF.
+  57 unique figures, 0 species (no OCR backend), 93/93 panels have a
+  real `panel_path` on disk, 93/93 carry a `geology_links` block.
+
+### Fixed
+
+- **API app version drift**: `FastAPI(version=...)` and
+  `GET /system/info` returned `0.2.0` while `pyproject.toml` and the
+  git tag are at `1.1.0`. Now both report `1.1.0`.
+- **Deprecated `@app.on_event("startup")`** removed in favor of the
+  `lifespan` async-context-manager form (FastAPI 0.110+).
+- **Duplicate `pydantic` declaration in `requirements.txt`**: the
+  `schema` section redundantly required `pydantic>=2.5` while the
+  `service` section required `pydantic>=2.8.0`. Removed.
+
+### Notes
+
+- 406 tests pass, 11 skip, 9 fail (all 9 are env-dependent and predate
+  this change). No regressions.
+- Open follow-ups, in priority order:
+  1. **Geology link precision**: closed in `[Unreleased 6]`.
+     links every panel to every age/formation mentioned anywhere in
+     the paper. Scope the search to the panel's own caption.
+  2. **OCR backend graceful no-op**: too many log warnings on init
+     failure. Consolidate.
+  3. **Gold set expansion to Cambrian + modern radiolarians**.
+  4. **Replace regex caption parsers with a single LLM call** to break
+     the 55% cold-start barrier on unseen paper styles.
+
+
+
+## [Unreleased 6] - 2026-06-10 -- panel-level geology links (no more 5-record dump)
+
+Pins the panel ↔ geology-link association to the panel's OWN caption
+instead of dumping every age/formation in the paper onto every panel.
+Closes the "Auto-generated figure for page N" inherits the whole
+paper's geology_list bug.
+
+### Fixed
+
+- **`link_species_to_geology` no longer fabricates a fallback record**
+  (`src/rlpe/geology_extraction.py`). Previously, an unmatched
+  species was silently given the first record in the paper as a
+  fallback. Now an unmatched species yields an empty list -- the
+  operator can see the miss rather than chase a fabricated fact.
+- **New `link_panels_to_geology(captions, fallback_sections)`**
+  (`src/rlpe/geology_extraction.py`). Extracts age/formation/locality
+  facts from each panel's own caption, with fulltext sections used
+  as a *candidate pool* (not as the search text). Placeholder
+  captions ("Auto-generated figure for page N") get the first
+  fulltext section's record attached as a sensible default -- not
+  the union of every record in the paper.
+- **`_process_region` wires the panel-level link as a fallback**
+  (`src/rlpe/pipeline.py`). When the species-level link is empty
+  (no species detected), the panel-level link is used instead of
+  the previous buggy "use the first species' links for every panel".
+
+### Added
+
+- **`tests/test_geology_panel_linking.py` (8 tests)** pins the new
+  behaviour:
+  - Two panels with distinct captions get distinct geology facts
+  - No panel yields more than a handful of records
+  - Placeholder captions get the first fulltext section's record
+  - Placeholder with no fulltext yields empty list (no fabrication)
+  - Real caption with no fulltext still extracts from the caption
+  - `link_species_to_geology` no longer fabricates a fallback
+  - Species present in a fulltext section yields that section's records
+  - `_is_placeholder_caption` mirror is in sync with
+    `text_filters.looks_like_placeholder_caption`
+- **End-to-end mock-grobid verification** (`scratch_verify_geo_e2e.py`):
+  runs the Xiao Yifan PDF through the GROBID path with a fake
+  GROBID client that returns a synthetic Geological setting
+  section. Result: 14 rows, 14/14 with exactly 1 `geology_link`
+  pointing at "Upper Permian / Dalong Formation" (the previous bug
+  gave every row the full 5-record list).
+
+### Notes
+
+- 17/17 e2e + geology-linking tests pass.
+- Full suite baseline: 399 passed, 8 skipped, 3 pre-existing env-
+  dependent failures (`test_image_label_check_uses_cache` needs
+  `easyocr`, `test_path_becomes_str` is Windows path-related,
+  `test_creates_sidecar` is GBK locale on `Path.read_text`).
+- Open follow-ups:
+  1. **OCR backend graceful no-op**: TaxoNERD init prints a warning
+     on every panel (50+ lines in the run log). Add a class-level
+     `_warned` flag and emit once.
+  2. **Gold set expansion to Cambrian + modern radiolarians**.
+  3. **Replace regex caption parsers with a single LLM call** to
+     break the 55% cold-start barrier on unseen paper styles.
 ## [Unreleased]
 
 ### Added

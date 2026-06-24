@@ -13,6 +13,7 @@ or are scale bars).
 The gold files are stored in ``data/gold/<paper>.jsonl`` and are also
 published in the same schemas/ directory for downstream consumers.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,12 +48,14 @@ def load_gold(path: Path) -> list[GoldPanel]:
             if not line:
                 continue
             d = json.loads(line)
-            out.append(GoldPanel(
-                paper_id=str(d["paper_id"]),
-                figure_id=str(d["figure_id"]),
-                panel_id=d.get("panel_id"),
-                species=d.get("species"),
-            ))
+            out.append(
+                GoldPanel(
+                    paper_id=str(d["paper_id"]),
+                    figure_id=str(d["figure_id"]),
+                    panel_id=d.get("panel_id"),
+                    species=d.get("species"),
+                )
+            )
     return out
 
 
@@ -85,7 +88,7 @@ def _extension_is_alpha(shorter: str, longer: str) -> bool:
     """
     if not longer.startswith(shorter):
         return False
-    suffix = longer[len(shorter):]
+    suffix = longer[len(shorter) :]
     if not suffix:
         return False
     return suffix.isalpha()
