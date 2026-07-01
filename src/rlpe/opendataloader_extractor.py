@@ -1206,6 +1206,14 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # routing for the buried plates; without it, leftover images
     # on those pages get stamped with bogus ``od_fig_*`` IDs and
     # the strict ``match_panel(figure_id)`` matcher rejects them.
+    #
+    # When the entire list contains a single list_item matching
+    # ``_PLATE_CAPTION_RE`` (the bandini pattern: one "Plate N ..."
+    # list_item with no other content), we DROP the original list
+    # element to avoid duplicating its text in the synthetic
+    # paragraph expansion. Lists with mixed content (one Plate
+    # header + other body text) are preserved as siblings so the
+    # caption parser can still pick up the body text.
     expanded_kids: list[dict[str, Any]] = []
     for _kid in kids:
         if (
@@ -1213,7 +1221,9 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
             and _kid.get("type") == "list"
         ):
             _list_page = _kid.get("page number", 0)
-            for _li in _kid.get("list items") or []:
+            _list_items = _kid.get("list items") or []
+            _plate_match_count = 0
+            for _li in _list_items:
                 if not isinstance(_li, dict):
                     continue
                 _txt = (_li.get("content") or "").strip()
@@ -1223,6 +1233,16 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "page number": _list_page,
                         "content": _txt,
                     })
+                    _plate_match_count += 1
+            # Drop the original list ONLY when it has exactly one
+            # list_item AND that one is the Plate N header (would
+            # otherwise duplicate the synthetic paragraph's text).
+            # Otherwise keep the list as a sibling.
+            if (
+                len(_list_items) == 1
+                and _plate_match_count == 1
+            ):
+                continue
         expanded_kids.append(_kid)
     for idx, kid in enumerate(expanded_kids):
         if not isinstance(kid, dict):
@@ -1282,10 +1302,10 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # the expansion when the matched element is itself a paragraph.
         if etype == "heading":
             extra = _collect_following_text(
-                kids, idx, page, max_items=3, kinds=("paragraph", "list")
+                expanded_kids, idx, page, max_items=3, kinds=("paragraph", "list")
             )
         elif etype in ("paragraph", "caption"):
-            extra = _collect_following_text(kids, idx, page, max_items=3, kinds=("list",))
+            extra = _collect_following_text(expanded_kids, idx, page, max_items=3, kinds=("list",))
         else:
             extra = ""
         if extra:
