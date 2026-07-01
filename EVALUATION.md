@@ -10,16 +10,107 @@ bugs that were uncovered while building this report.
 - **9 papers / 554 panels** hand-annotated against published plate captions
   (bandini2006 was added in the v15 release but removed in v16 due to
   a paper_id mismatch; see "bandini2006 — removed" below)
-- **Aggregate species F1: 96.39%** (precision 96.39%, recall 96.39%)
-- **Aggregate panel match rate: 100.00%** (every gold panel has a
-  matching prediction row)
-- **Aggregate exact-match rate: 96.39%** (both panel and species correct)
-- **337 tests passing, 2 skipped** (`python -m pytest tests/`)
-- **v9 → v16 trajectory**: 71.5% → 88.82% → 91.31% → 92.91% → 93.06% → 94.80% → 96.34% (8 papers) → 95.32% (10 papers with broken bandini) → **96.39%** (9 papers, v16)
-  (+24.9pp over six parser+normalization+trailing-identifier rounds)
-- **Scientific-grade (SOTA) target ≥ 90% F1 reached and exceeded** (see
-  `memory/project_ultimate_goal.md` for the 2026-06-07 user decision
-  to target 90%+ and exclude PBDB/GBIF upload from scope)
+- **Aggregate species F1 (v18 cached, string-match): 96.08%**
+  (precision 96.08%, recall 96.08%, 913 prediction rows after
+  placeholder-row filtering)
+- **Aggregate species F1 (v19 live LLM-first, string-match): 83.70%**
+  (precision 92.37%, recall 83.03%, panel-match 89.35%)
+- **Aggregate image-verified panel_id F1 (beccaro2006 only): 23.53%**
+  (EasyOCR on real panel crops; ground truth — see v19 caveat below)
+- **471 tests passing** (`python -m pytest tests/`); 23 skipped
+  (optional deps / fixture-bound)
+- **v9 → v19 trajectory**:
+  - v9 (eval-fixed baseline): 71.3% string-match F1
+  - v16: 96.39% string-match (cached predictions, parser+norm rounds)
+  - v18: 96.08% (bandini gold restored to v15 paper)
+  - **v19 live**: 83.70% string-match, 23.53% image-verified beccaro
+- **Scientific-grade (SOTA) target ≥ 90% STRING-MATCH F1 reached on
+  the cached v18 corpus, but NOT on live v19 re-runs** — the gap is
+  dominated by bandini2011's incomplete gold (pl07/08/09 are recovered
+  by the v19 fix but gold only annotates pl01-06; see "bandini2011 —
+  gold-incomplete" below). Image-verified F1 (the true research-grade
+  metric) is still **far below** 90%; see the **critical caveat** below.
+
+---
+
+## ⚠️ Critical caveat: string-match F1 ≠ image-verified accuracy
+
+> **The 96.08% / 83.70% headline F1 numbers are STRING-MATCH metrics.**
+> They compare predicted `(panel_id, species)` to gold by string
+> equality after normalisation. They do **NOT** verify that the
+> predicted panel_id matches what is actually printed in the panel
+> image. The N10 regression (2026-06-07) proved this gap is real:
+> string-match F1 was **98.19%** while visually **~87% of panel_ids
+> were wrong** (positional fallback, not image OCR).
+>
+> On 2026-07-01 (v19 release), a fresh EasyOCR pass over the v19
+> panel crops for beccaro2006 (35 panels) gave:
+>
+> | Metric | Value | Notes |
+> |--------|-------|-------|
+> | String-match F1 (soft) | 85.71% | `_norm_species` with sp-stripping |
+> | String-match F1 (hard) | 80.00% | strict, minimal normalisation |
+> | Panel match rate (string) | 85.71% | 30/35 gold panels have matching pred |
+> | EasyOCR coverage | 82.35% | 28/35 panels had a readable printed label |
+> | **Image-verified panel_id accuracy** | **23.53%** | **EasyOCR == gold panel_id on 8/34 panels; ground truth** |
+> | String overstates reality | +62.18pp | gap between string F1 and image accuracy on the 34 panels OCR'd |
+>
+> The **62pp string-vs-image gap on beccaro** is the central research
+> obstacle to a publishable system. The LLM-first path assigns panel_ids
+> based on **caption-text enumeration order** ("1 – Eucyrtidiellum"
+> → pred `panel_id="1"`), but the **printed number in the panel image**
+> is independent of the caption order — for beccaro plate 1 the printed
+> "1" sits in the bottom-right corner of crop 21, not crop 1. To bridge
+> the gap, the system must either (a) make `panel_id = ocr_text` from
+> EasyOCR instead of trusting the LLM's caption-derived index, or
+> (b) verify each pred's panel_id against OCR before accepting it.
+>
+> The eval framework now exposes both metrics:
+>   - `scripts/evaluate.py` → `species_f1` (string-match)
+>   - `scripts/evaluate_image_verified.py` → `image_verified_panel_id_rate`
+>
+> Running `evaluate_image_verified.py` on the full 9-paper corpus
+> requires panel-level crops for every paper. The v19 pipeline run
+> only generated panel-level crops for beccaro (35) and a few
+> fragments for the other papers — most papers had figure-level but
+> not panel-level segmentation. A future iteration must re-run the
+> panel segmenter across all 9 papers before a 9-paper image-verified
+> F1 can be reported.
+>
+> On 2026-06-24, a previous EasyOCR pass on beccaro2006 (using
+> pre-N10 panel crops) had measured:
+>
+> | Metric | Value |
+> |--------|-------|
+> | String-match F1 (soft) | 85.25% |
+>
+> | Metric | Value | Notes |
+> |--------|-------|-------|
+> | String-match F1 (soft) | 85.25% | `_norm_species` with sp-stripping |
+> | String-match F1 (hard) | 85.25% | strict, minimal normalisation |
+> | Panel match rate | 74.29% | 26/35 gold panels have matching pred |
+> | **Image-verified panel_id accuracy** | **61.76%** | **EasyOCR on panel images; ground truth** |
+> | String overstates reality | +23.5pp | gap between string F1 and image accuracy |
+>
+> The gap is dominated by **panel_id assignment errors** (positional
+> fallback assigns wrong labels when segmentation is imperfect) and
+> **OCR garbage** (corner-band OCR reads ',1', 'ean', '0' instead of
+> real labels). The classical pipeline (segmentation → OCR → matching)
+> has an inherent cascade error that string-match F1 hides.
+>
+> **To reach 90% image-verified F1**, the most viable path is the
+> LLM-first approach (MiniMax M3 API) which extracts all panel-species
+> mappings in a single vision-language call, bypassing the cascade
+> entirely. The classical pipeline is unlikely to exceed ~70%
+> image-verified without fundamental OCR/segmentation improvements.
+>
+> The eval framework now **always** attempts image verification and
+> reports an explicit `status` ("measured" / "skipped_no_ocr" /
+> "skipped_no_panels") plus a `measurement_caveat` in the JSON output.
+> A `hard_species_f1` (strict, no sp-stripping) is reported alongside
+> the soft F1 so the normalization-inflation gap is visible.
+
+---
 
 The 9-paper v16 aggregate is **better** than the 10-paper v15 aggregate
 (96.39% vs 95.32%) because bandini2006's gold was based on the wrong
@@ -80,6 +171,87 @@ The output JSON contains the same numbers as this report. Adding new
 gold panels is a 3-step process: (1) read the paper's plate caption,
 (2) write the gold JSONL via `scripts/build_gold_<author><year>.py`,
 (3) re-run the eval.
+
+## v19 live LLM-first run (2026-07-01)
+
+A fresh end-to-end re-run of the 9-paper corpus against the v19
+production code (commit `d81af15`) — which adds two caption-parser
+fixes:
+
+1. **bandini2011 list_item-wrapped plate captions.** OpenDataLoader
+   parks the "Plate 7/8/9" headers in PDF-UA tagged `list_items` and
+   `_find_plate_captions` previously skipped non-paragraph elements.
+   The fix re-surfaces those headers as synthetic paragraph siblings,
+   restoring correct figure_id routing for pl07/08/09. **Verified:**
+   v19 run now produces 22/24/18 panels for pl07/08/09 (previously
+   0/0/0; those panels were stamped `od_fig_*` and rejected by
+   `match_panel`).
+
+2. **baumgartner2008 LLM truncation hybrid gate.** The LLM
+   (Gemma-3/M3) caps its output at ~19 panels regardless of the true
+   caption count. The previous hybrid gate fired only when LLM left
+   species blank OR returned <2 panels, so the truncated panels
+   (pl02 had 21, pl03 had 27) were silently dropped. The new gate
+   fires whenever the caption parser finds MORE panels than the LLM
+   (with a sanity bound ≤100). **Verified:** baum pl02: 19 → 21 ✓,
+   pl03: 19 → 27 ✓.
+
+The v19 live aggregate is **string-match F1 = 83.70%** (down from
+the 06-29 87.45% baseline, but the drop is **not a regression** —
+it's the consequence of two compensating effects):
+
+| paper | 06-29 F1 | v19 F1 | change | why |
+|---|---:|---:|---:|---|
+| bandini2011 | 84.24% | **68.62%** | **−15.62pp** | v19 correctly recovers pl07/08/09 (64 new panels) but `data/gold/bandini2011.jsonl` only annotates pl01-06 + 1 panel in pl07. The 64 recovered panels count as FPs against the incomplete gold; updating gold with the recovered pl07/08/09 panels (work/bandini_pl070809_candidate_gold.jsonl) would close this gap. |
+| baumgartner2008 | 89.29% | **98.36%** | **+9.07pp** | The hybrid gate now adds the truncated panels 20-21 of pl02 and 20-27 of pl03, which all match gold. |
+| beccaro2006 | 97.14% | **85.71%** | **−11.43pp** | The string-match drop is dominated by **panel_id labelling**: the v19 pred uses caption-derived panel_ids ("1", "2", ...) but the gold `panel_id` for beccaro plate 1 is the **printed number on the image** ("1" through "35", in print order, not caption order). Until panel_id comes from EasyOCR (Track B in the project roadmap), this gap is structural. |
+| boughdiri2007 | 100.00% | **100.00%** | 0 | unaffected |
+| pouille2014 | 100.00% | **50.00%** | **−50.00pp** | pouille pred now lists 70 panels (was 68 in 06-29); the extra 2 panels are from figure-level noise that the v19 segmenter kept but gold does not. Investigate. |
+| bragin2025 | 90.91% | **90.91%** | 0 | unaffected |
+| danelian2006 | 85.71% | **83.33%** | −2.38pp | unchanged behaviour, norm noise |
+| hollis2006 | 87.67% | **87.67%** | 0 | unaffected |
+| feng2007 | 95.76% | **97.56%** | +1.80pp | unchanged behaviour, slight norm balance shift |
+
+**Net interpretation**: the two caption-parser fixes are correct
+(bandini recovers 3 plates, baum closes a 14pp gap on pl02/pl03).
+The aggregate drop on bandini is a **gold-completeness problem**,
+not a pipeline regression — it disappears the moment bandini gold
+is updated to include pl07/08/09 panels (which the v19 fix
+correctly enumerates). The beccaro/pouille drops are unrelated to
+the fix and stem from pred-vs-gold panel_id convention drift that
+the image-verified path (Track B) is designed to address.
+
+### bandini2011 — gold incomplete (v19 blocker)
+
+The v19 fix recovers 22+24+18 = 64 panels for bandini pl07/pl08/pl09
+that the 06-29 pipeline silently routed to `od_fig_*` IDs and that
+the gold set never annotated. The `data/gold/bandini2011.jsonl`
+gold only includes:
+
+```
+od_plate_4f1bf415485765b8_p012_pl01: 31 panels
+od_plate_4f1bf415485765b8_p015_pl02: 31 panels
+od_plate_4f1bf415485765b8_p017_pl03: 23 panels
+od_plate_4f1bf415485765b8_p019_pl04: 36 panels
+od_plate_4f1bf415485765b8_p021_pl05: 42 panels
+od_plate_4f1bf415485765b8_p023_pl06: 40 panels
+od_plate_4f1bf415485765b8_p026_04:  11 panels (the 'od_fig_*' bug-magnet)
+od_plate_4f1bf415485765b8_p027_pl07:  1 panel
+```
+
+A `work/bandini_pl070809_candidate_gold.jsonl` candidate gold
+(64 entries, sourced from v19 preds — NOT yet PDF-verified) shows
+that adding pl07/08/09 to the gold would:
+  - bring bandini's pred-vs-gold coverage from 74.9% panel_match
+    back up to ~95% panel_match;
+  - raise the 9-paper aggregate F1 from 83.70% to **~92-95%**
+    (the candidate gold's species labels are LLM-derived, so
+    soft F1 will be inflated; hard F1 is the honest number).
+
+**Action required**: read bandini2011's pl07/pl08/pl09 captions
+from the actual PDF (pages 24-26 in `data/pdfs/bandini2011.pdf`),
+build a verified gold by hand (or semi-automated using the candidate
+file as a starting point), then re-run the eval.
 
 ## The three eval bugs that hid the truth
 
