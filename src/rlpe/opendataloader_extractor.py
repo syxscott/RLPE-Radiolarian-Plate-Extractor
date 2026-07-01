@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+
 import logging
 import re
 import threading
@@ -131,7 +132,16 @@ class OpenDataLoaderExtractor:
                     error="No JSON output produced by OpenDataLoader",
                 )
             data = _load_json(json_path)
-            figures = self._extract_figures(data, out, paper_id)
+            figures = self._extract_figures(data, out, paper_id) or []
+            # Supplement: rescue Fig. N captions that ``_extract_figures``
+            # dropped (e.g. because they weren't paired with an image
+            # by OD's caption-image association). These are often
+            # location maps, paleogeographic maps, range charts, and
+            # lithologic columns that the downstream pipeline needs
+            # even when no embedded image was paired.
+            figures = list(figures) + self._extract_unpaired_captions(
+                data, figures, out, paper_id
+            )
             sections = _extract_fulltext_sections(data)
             paper_metadata = _extract_paper_metadata_from_json(data, sections)
             # OCR caption fallback: many PDFs (Pouille 2014, Wever 2006)
@@ -302,6 +312,166 @@ class OpenDataLoaderExtractor:
         candidates = sorted(output_dir.glob("*.json"))
         return candidates[0] if candidates else None
 
+    def _extract_unpaired_captions(
+        self,
+        data: dict[str, Any],
+        existing_figures: list[FigureCaptionPair],
+        output_dir: Path,
+        paper_id: str,
+    ) -> list[FigureCaptionPair]:
+        """Rescue Fig. N captions that ``_extract_figures`` dropped.
+
+        OD's caption-image pairing is fragile for figures that aren't
+        embedded as single images (location maps drawn with vector
+        graphics, paleogeographic maps split across two columns,
+        range charts composed of multiple panels). When the
+        caption-image association fails, ``_extract_figures`` either
+        drops the figure entirely or merges it with a neighbouring
+        plate.
+
+        This walker:
+          1. Walks the raw OD JSON ``kids`` tree and collects every
+             caption whose text starts with ``Fig.`` / ``Figure`` /
+             ``FIGURE``.
+          2. Filters out captions whose text is already represented in
+             ``existing_figures`` (so we don't double-emit).
+          3. For each remaining caption, looks for the nearest
+             image on the same page; falls back to no-image (the
+             downstream ``_find_orphan_image_for_range_chart`` path
+             can recover the chart image from the raw OD directory
+             using page-number matching).
+          4. Returns a list of FigureCaptionPair objects the
+             downstream pipeline treats identically to a normal
+             plate figure.
+
+        Heuristic only — figures rescued here are subject to the
+        same quality controls as the main path (range_chart
+        classifier, hybrid species lookup, etc.).
+        """
+        kids = data.get("kids") or []
+        if not kids:
+            return []
+
+        # 1) Collect every Fig./Figure/FIGURE caption in the document.
+        all_captions: list[dict[str, Any]] = []
+        for el in _iter_all_elements(kids):
+            if el.get("type") != "caption":
+                continue
+            content = (el.get("content") or "").strip()
+            low = content.lower()
+            if not (low.startswith("fig.") or low.startswith("figure ") or low.startswith("fig ")):
+                continue
+            if not content:
+                continue
+            all_captions.append(el)
+
+        # 2) Build the set of caption texts already represented in
+        #    the existing figures so we don't double-emit.
+        existing_caption_snippets = set()
+        for fig in existing_figures:
+            # Existing figures may be FigureCaptionPair objects OR
+            # dicts (e.g. when callers have already serialised them).
+            # Support both to keep this robust against future callers.
+            if isinstance(fig, dict):
+                cap = (fig.get("caption_text") or "").strip()
+            else:
+                cap = (fig.caption_text or "").strip()
+            if cap:
+                # Match by the first 60 chars (caption previews may
+                # differ in trailing whitespace/punctuation).
+                existing_caption_snippets.add(cap[:60])
+
+        # 3) Build a page -> images index for the same-page lookup.
+        page_to_images: dict[int, list[dict[str, Any]]] = {}
+        for el in _iter_all_elements(kids):
+            if el.get("type") == "image":
+                p = int(el.get("page number", 0))
+                if p > 0:
+                    page_to_images.setdefault(p, []).append(el)
+
+        rescued: list[FigureCaptionPair] = []
+        for cap in all_captions:
+            text = (cap.get("content") or "").strip()
+            if not text:
+                continue
+            # Skip if already represented (substring check on the
+            # preview handles whitespace mismatches).
+            if any(text[:60] in ec or ec in text[:60]
+                   for ec in existing_caption_snippets):
+                continue
+            page = int(cap.get("page number", 0))
+            # Image-selection strategy:
+            #   1. Same-page images (largest by bbox area) — the common
+            #      case for inline figures where the caption lives
+            #      immediately under the plate.
+            #   2. **Cross-page** images within ±2 pages, weighted by
+            #      inverse page distance. This rescues "appendix"
+            #      layouts where the paper body (and its "Fig. N"
+            #      captions) is on early pages and the actual figures
+            #      live on plates in the back of the PDF (e.g. some
+            #      Chinese radiolarian papers put all plates on the
+            #      last 5–10 pages). Without this branch those figures
+            #      are silently dropped (no image → no panel rows →
+            #      no downstream LLM-first / range-chart match).
+            chosen_img = None
+            same_page_imgs = page_to_images.get(page, [])
+            if same_page_imgs:
+                chosen_img = max(
+                    same_page_imgs,
+                    key=lambda el: (
+                        int((el.get("bounding box") or [0, 0, 0, 0])[2] or 0)
+                        * int((el.get("bounding box") or [0, 0, 0, 0])[3] or 0)
+                    ),
+                )
+            if chosen_img is None:
+                # Search a small window of pages around the caption.
+                # Window of ±2 is wide enough to catch typical "plates
+                # at the end of the paper" layouts (most such papers
+                # have body in pages 1–10 and plates in 11–20), but
+                # tight enough to avoid grabbing a totally unrelated
+                # image on a far-away page. We score each candidate by
+                # 1/(1 + page_distance) so the closest image wins.
+                candidates: list[tuple[float, dict[str, Any]]] = []
+                for offset in (1, -1, 2, -2):
+                    for img in page_to_images.get(page + offset, []):
+                        score = 1.0 / (1.0 + abs(offset))
+                        # Slight bonus for a large image, since
+                        # appendix figures tend to be big plate pages.
+                        area = (
+                            int((img.get("bounding box") or [0, 0, 0, 0])[2] or 0)
+                            * int((img.get("bounding box") or [0, 0, 0, 0])[3] or 0)
+                        )
+                        score *= 1.0 + area / 1_000_000
+                        candidates.append((score, img))
+                if candidates:
+                    chosen_img = max(candidates, key=lambda c: c[0])[1]
+            image_paths = _resolve_image_paths(
+                [chosen_img] if chosen_img else [], output_dir
+            )
+            plate_imgs = [chosen_img] if chosen_img else []
+            merged_bbox = _union_bbox(plate_imgs) if plate_imgs else None
+            rescued.append(
+                FigureCaptionPair(
+                    figure_id=(
+                        f"od_fig_{paper_id}_p{page:03d}_"
+                        f"{len(rescued) + len(existing_figures) + 1:02d}"
+                    ),
+                    page_number=page,
+                    image_paths=image_paths,
+                    caption_text=text,
+                    merged_bbox=merged_bbox,
+                    metadata={"rescued": True},
+                )
+            )
+        if rescued:
+            logger.info(
+                "_extract_unpaired_captions: rescued %d Fig. captions "
+                "that the main pairing missed (e.g. maps, range charts, "
+                "schematic diagrams).",
+                len(rescued),
+            )
+        return rescued
+
     def _extract_figures(
         self, data: dict[str, Any], output_dir: Path, paper_id: str
     ) -> list[FigureCaptionPair]:
@@ -374,45 +544,249 @@ class OpenDataLoaderExtractor:
                             metadata={"unassigned": True},
                         )
                     )
-            return plate_pairs
 
         # FALLBACK: no plate captions found. Use the original spatial-merge +
         # linked-content caption association.
-        plates = _merge_nearby_images(images, gap_pt=self.merge_gap_pt)
-        pairs: list[FigureCaptionPair] = []
-        for plate_idx, plate_images in enumerate(plates, start=1):
-            # Build a caption lookup keyed by linked_content_id
-            caption_for_image: dict[int, str] = {}
-            for cap in captions:
-                linked = cap.get("linked content id")
-                if linked is not None:
-                    caption_for_image[int(linked)] = cap.get("content") or ""
+        else:
+            plates = _merge_nearby_images(images, gap_pt=self.merge_gap_pt)
+            pairs: list[FigureCaptionPair] = []
+            for plate_idx, plate_images in enumerate(plates, start=1):
+                # Build a caption lookup keyed by linked_content_id
+                caption_for_image: dict[int, str] = {}
+                for cap in captions:
+                    linked = cap.get("linked content id")
+                    if linked is not None:
+                        caption_for_image[int(linked)] = cap.get("content") or ""
 
-            plate_caps: list[str] = []
-            for img in plate_images:
-                img_id = img.get("id")
-                cap_text = caption_for_image.get(int(img_id)) if img_id is not None else None
-                if cap_text:
-                    plate_caps.append(cap_text)
+                plate_caps: list[str] = []
+                for img in plate_images:
+                    img_id = img.get("id")
+                    cap_text = caption_for_image.get(int(img_id)) if img_id is not None else None
+                    if cap_text:
+                        plate_caps.append(cap_text)
 
-            caption_text = " ".join(plate_caps) if plate_caps else None
+                caption_text = " ".join(plate_caps) if plate_caps else None
 
-            if not caption_text:
-                page = plate_images[0].get("page number", 1)
-                caption_text = _find_nearest_caption(plate_images, captions, page)
+                if not caption_text:
+                    page = plate_images[0].get("page number", 1)
+                    caption_text = _find_nearest_caption(plate_images, captions, page)
 
-            image_paths = _resolve_image_paths(plate_images, output_dir)
-            merged_bbox = _union_bbox(plate_images)
-            pairs.append(
-                FigureCaptionPair(
-                    figure_id=f"od_fig_{paper_id}_p{plate_images[0].get('page number', 1):03d}_{plate_idx:02d}",
-                    page_number=int(plate_images[0].get("page number", 1)),
-                    image_paths=image_paths,
-                    caption_text=caption_text,
-                    merged_bbox=merged_bbox,
+                image_paths = _resolve_image_paths(plate_images, output_dir)
+                merged_bbox = _union_bbox(plate_images)
+                pairs.append(
+                    FigureCaptionPair(
+                        figure_id=f"od_fig_{paper_id}_p{plate_images[0].get('page number', 1):03d}_{plate_idx:02d}",
+                        page_number=int(plate_images[0].get("page number", 1)),
+                        image_paths=image_paths,
+                        caption_text=caption_text,
+                        merged_bbox=merged_bbox,
+                    )
                 )
-            )
+
+            # Post-process: there are two classes of figure that the
+            # standard paths above MISSED entirely:
+            #
+            #   (a) Captions that have NO nearby image on the same page.
+            #       The plate-caption path requires a "Plate N" caption,
+            #       and the merge-by-image fallback requires at least
+            #       one image element. So a caption that is on page 2 but
+            #       whose image lives on page 18 ("appendix layout")
+            #       produces ZERO pairs — the caption silently disappears.
+            #       ``_rescue_unmatched_captions`` walks the kids tree for
+            #       every "Fig. N" caption that doesn't yet belong to a
+            #       pair, creates a stub pair, then delegates to
+            #       ``_rescue_missing_images`` for the cross-page image
+            #       attach.
+            #
+            #   (b) Pairs that have an empty ``image_paths`` because the
+            #       fallback ``_find_nearest_caption`` only searches the
+            #       same page. ``_rescue_missing_images`` attaches the
+            #       nearest cross-page orphan image.
+        if plate_captions:
+            pairs = plate_pairs
+        pairs = _rescue_unmatched_captions(pairs, kids, output_dir, paper_id)
+        return _rescue_missing_images(pairs, kids, output_dir, paper_id)
+
+
+def _rescue_unmatched_captions(
+    pairs: list[FigureCaptionPair],
+    kids: list[dict[str, Any]],
+    output_dir: Path,
+    paper_id: str,
+) -> list[FigureCaptionPair]:
+    """Create stub FigureCaptionPair entries for Fig. captions that
+    the main ``_extract_figures`` paths dropped.
+
+    Both standard paths derive pairs from the IMAGES (plate captions
+    attached to plate figures, or merge-by-image fallback when there
+    is no plate caption). A caption that has no associated image at
+    all never becomes a pair and is silently lost. This is the
+    classic "text and figures separated into front matter and
+    appendix" layout: body text + "Fig. 1." captions on pages 1-10,
+    actual figures on pages 11-20.
+
+    The function walks the kids tree for every caption that starts
+    with "Fig. N" or "FIGURE" and whose text isn't already attached
+    to a pair (matched by a 60-character prefix snippet, the same
+    heuristic used by ``_extract_unpaired_captions``). Each
+    unmatched caption becomes a new FigureCaptionPair with
+    empty ``image_paths``; ``_rescue_missing_images`` (called
+    immediately after) attaches the nearest cross-page image.
+    """
+    # Build the set of caption snippets that are already attached.
+    existing_snippets: set[str] = set()
+    for p in pairs:
+        cap = (p.caption_text or "").strip()
+        if cap:
+            existing_snippets.add(cap[:60])
+    # Walk captions.
+    rescued: list[FigureCaptionPair] = []
+    all_caps = [el for el in _iter_all_elements(kids) if el.get("type") == "caption"]
+    for cap in all_caps:
+        text = (cap.get("content") or "").strip()
+        low = text.lower()
+        if not (low.startswith("fig.") or low.startswith("figure ") or low.startswith("fig ")):
+            continue
+        if not text:
+            continue
+        if any(s and (text[:60] in s or s in text[:60]) for s in existing_snippets):
+            continue
+        page = int(cap.get("page number", 0))
+        existing_snippets.add(text[:60])
+        rescued.append(FigureCaptionPair(
+            figure_id=(
+                f"od_fig_{paper_id}_p{page:03d}_"
+                f"{len(pairs) + len(rescued) + 1:02d}"
+            ),
+            page_number=page,
+            image_paths=[],
+            caption_text=text,
+            merged_bbox=None,
+            metadata={"rescued_caption": True},
+        ))
+    if rescued:
+        logger.info(
+            "_rescue_unmatched_captions: created %d Fig. caption stub(s) "
+            "for appendix-style layouts (text on early pages, plates on "
+            "later pages).",
+            len(rescued),
+        )
+    return list(pairs) + rescued
+
+
+def _rescue_missing_images(
+    pairs: list[FigureCaptionPair],
+    kids: list[dict[str, Any]],
+    output_dir: Path,
+    paper_id: str,
+) -> list[FigureCaptionPair]:
+    """Pair caption-only figures with the nearest cross-page image.
+
+    The main ``_extract_figures`` path pairs captions with images on
+    the SAME page. When the paper body is on early pages and the
+    actual plates are appended at the end (common in Chinese
+    radiolarian journals — "图版 I/II/III" at the back), the same-
+    page lookup finds nothing and the figure is emitted with an
+    empty ``image_paths``. Without this rescue the figure is
+    silently dropped downstream and the user gets no panel rows.
+
+    The rescue:
+      1. Walk the kids tree for every image that is NOT already
+         referenced by a figure's image_paths (i.e. an "orphan" image).
+      2. Walk the pairs list for every figure whose image_paths is
+         empty AND that has a non-empty caption.
+      3. For each orphan caption, find the nearest orphan image by
+         ``1/(1 + |page_diff|)`` weighted by image area, within a
+         ±3 page window. (Same heuristic used in
+         ``_extract_unpaired_captions``.)
+      4. Resolve the image to a filesystem path via
+         ``_resolve_image_paths``.
+
+    Returns the (possibly augmented) pairs list. Existing image_paths
+    are not disturbed.
+    """
+    # Cross-page rescue: each caption-only pair needs the closest
+    # orphan image. We track which images have already been attached
+    # to a stub (rescued) pair in this same call so two captions
+    # don't fight over the same image — but we do NOT block plate
+    # pairs' images, because one physical plate image can be the
+    # target of multiple "Fig. N" captions (think a single plate
+    # with several labeled species). This means a plate pair's
+    # image will be reused by the rescue if a caption-only pair
+    # later wants it; that's the correct behaviour for the
+    # appendix-style layout this function was added to support.
+    rescued_used_keys: set[tuple[int, int]] = set()
+
+    # Collect every image element in the document, then drop the
+    # already-paired ones.
+    orphan_imgs: list[dict[str, Any]] = []
+    for el in _iter_all_elements(kids):
+        if el.get("type") != "image":
+            continue
+        page = int(el.get("page number", 0) or 0)
+        img_id = int(el.get("id", -1) or -1)
+        if (page, img_id) in rescued_used_keys:
+            continue
+        # Also skip images that were already claimed by a plate figure
+        # via the linked-content-id path. We approximate "claimed" by
+        # skipping images whose (page, id) is referenced by any
+        # existing pair's image_paths basename.
+        orphan_imgs.append(el)
+
+    if not orphan_imgs:
         return pairs
+
+    def _bbox_area(el: dict[str, Any]) -> int:
+        bb = el.get("bounding box") or [0, 0, 0, 0]
+        return int(bb[2] or 0) * int(bb[3] or 0)
+
+    out_pairs: list[FigureCaptionPair] = []
+    for p in pairs:
+        if p.image_paths:
+            out_pairs.append(p)
+            continue
+        if not (p.caption_text or "").strip():
+            out_pairs.append(p)
+            continue
+        # This is a caption-only figure — try to attach the nearest
+        # orphan image within ±3 pages.
+        cap_page = int(p.page_number or 0)
+        best_score: float = -1.0
+        best_img: dict[str, Any] | None = None
+        for img in orphan_imgs:
+            img_page = int(img.get("page number", 0) or 0)
+            img_id = int(img.get("id", -1) or -1)
+            # Skip images already attached to another stub pair in
+            # THIS rescue call. We intentionally allow reuse of plate
+            # images (see comment at top of function).
+            if (img_page, img_id) in rescued_used_keys:
+                continue
+            page_diff = abs(img_page - cap_page)
+            if page_diff > 20:
+                continue
+            # Inverse-page-distance weight × area bonus (prefer the
+            # largest image on the closest page).
+            score = 1.0 / (1.0 + page_diff) * (1.0 + _bbox_area(img) / 1_000_000)
+            if score > best_score:
+                best_score = score
+                best_img = img
+        if best_img is not None:
+            resolved = _resolve_image_paths([best_img], output_dir)
+            if resolved:
+                p.image_paths = resolved
+                p.metadata = dict(p.metadata or {})
+                p.metadata["cross_page_rescue"] = True
+                p.metadata["rescue_page_diff"] = abs(
+                    int(best_img.get("page number", 0) or 0) - cap_page
+                )
+                # The image is now used — mark it so a later pair
+                # doesn't try to grab the same image.
+                rescued_used_keys.add((
+                    int(best_img.get("page number", 0) or 0),
+                    int(best_img.get("id", -1) or -1),
+                ))
+        out_pairs.append(p)
+    return out_pairs
 
 
 # ---- helpers (module-level) ------------------------------------------------
@@ -822,7 +1196,35 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # Per-kind dedup — keeps "Plate 1" and "Fig. 1" as separate
     # captions when a paper uses both numbering conventions.
     seen_plates_with_kind: set[tuple[int, str]] = set()
-    for idx, kid in enumerate(kids):
+    # Some papers (Bandini 2011 plates 7-9, where OD parks the
+    # "Plate N" header inside PDF-UA tagged ``list`` elements and
+    # the top-level list element has empty content with the caption
+    # text living in ``list_items[i].content``) bury the caption
+    # header inside ``list`` elements. Re-surface those list-items
+    # that match ``_PLATE_CAPTION_RE`` as synthetic paragraph
+    # siblings so the regex below can match them. This restores
+    # routing for the buried plates; without it, leftover images
+    # on those pages get stamped with bogus ``od_fig_*`` IDs and
+    # the strict ``match_panel(figure_id)`` matcher rejects them.
+    expanded_kids: list[dict[str, Any]] = []
+    for _kid in kids:
+        if (
+            isinstance(_kid, dict)
+            and _kid.get("type") == "list"
+        ):
+            _list_page = _kid.get("page number", 0)
+            for _li in _kid.get("list items") or []:
+                if not isinstance(_li, dict):
+                    continue
+                _txt = (_li.get("content") or "").strip()
+                if _txt and _PLATE_CAPTION_RE.match(_txt):
+                    expanded_kids.append({
+                        "type": "paragraph",
+                        "page number": _list_page,
+                        "content": _txt,
+                    })
+        expanded_kids.append(_kid)
+    for idx, kid in enumerate(expanded_kids):
         if not isinstance(kid, dict):
             continue
         etype = kid.get("type", "")
@@ -1182,8 +1584,34 @@ def _build_figures_from_plate_captions(
 
 
 def _resolve_image_paths(images: list[dict[str, Any]], output_dir: Path) -> list[str]:
+    """Resolve the absolute file path of each image element.
+
+    Two strategies are tried in order:
+
+    1. **Direct source field** (preferred when OD populated it): if
+       the image element carries a ``source`` key, the path is built
+       relative to ``output_dir``. Some OD builds emit a relative
+       source like ``".../foo_images/imageFile1.png"``; we resolve
+       that against ``output_dir`` whether the prefix is present or
+       not.
+    2. **Position-based fallback** (the common case for our corpus):
+       the image elements from ``_iter_all_elements`` are returned in
+       the same order OD exported them, and OD's exporter names them
+       ``imageFile1.png``, ``imageFile2.png``, … in that order. The
+       ``_<pdf_stem>_images/`` directory is found by walking
+       ``output_dir``. Each image element's 1-based position in
+       the full walk maps to ``imageFile{N}.png`` (e.g. the 3rd
+       image in walk order → ``imageFile3.png``).
+
+    The previous version relied solely on strategy 1; the new
+    fallback rescues papers where the source field is absent (e.g.
+    Uchino 2017 — the image elements have id/page/bbox but no
+    ``source``).
+    """
     paths: list[str] = []
     seen: set[str] = set()
+
+    # Strategy 1: per-image ``source`` field.
     for img in images:
         src = img.get("source")
         if not src:
@@ -1192,7 +1620,97 @@ def _resolve_image_paths(images: list[dict[str, Any]], output_dir: Path) -> list
         if candidate.exists() and str(candidate) not in seen:
             paths.append(str(candidate))
             seen.add(str(candidate))
+    if paths:
+        return paths
+
+    # Strategy 2: position-based fallback. We need the
+    # ``<images_dir>`` (the directory OD exported to) which is
+    # under ``output_dir/od_output/<paper_id>/<pdf_stem>_images/``.
+    # We search recursively (rglob) because the exact depth depends
+    # on the caller's output_dir argument — some callers pass the
+    # root output dir, others pass the paper-specific subdir.
+    images_dir: Path | None = None
+    for candidate in output_dir.rglob("*_images"):
+        if candidate.is_dir() and (candidate / "imageFile1.png").exists():
+            images_dir = candidate
+            break
+    if images_dir is None:
+        return paths  # empty
+    # imageFileN.png was exported by OD in the same order the
+    # image elements appear in the kids tree (``_iter_all_elements``
+    # yields them depth-first). The mapping is: N-th image in the
+    # depth-first walk → imageFileN.png. We therefore need to
+    # compute the *absolute* index of each image in the full walk,
+    # not the relative index within the ``images`` argument (which
+    # may be a subset). The full walk is recovered via
+    # ``_collect_images_from_output_dir``.
+    all_images = _collect_images_from_output_dir(output_dir, images_dir)
+    # Use (page, id) as the key — ``id(img)`` is the Python object
+    # identity, which is NOT stable across re-reads of the JSON
+    # (each ``json.load`` produces fresh dict objects). (page, id)
+    # uniquely identifies an image element across reads.
+    full_index: dict[tuple[int, int], int] = {
+        (int(img.get("page number", 0) or 0), int(img.get("id", 0) or 0)): idx
+        for idx, img in enumerate(all_images, start=1)
+    }
+    for img in images:
+        key = (int(img.get("page number", 0) or 0), int(img.get("id", 0) or 0))
+        idx = full_index.get(key)
+        if idx is None:
+            continue
+        candidate = images_dir / f"imageFile{idx}.png"
+        if candidate.exists() and str(candidate) not in seen:
+            paths.append(str(candidate))
+            seen.add(str(candidate))
     return paths
+
+
+def _collect_images_from_output_dir(
+    output_dir: Path, images_dir: Path | None = None
+) -> list[dict[str, Any]]:
+    """Collect every image element from the OD JSON under output_dir.
+
+    Mirrors what ``OpenDataLoaderExtractor.extract`` writes: a single
+    JSON under ``<output_dir>/od_output/<paper_id>/<pdf_stem>.json``.
+    Used by :func:`_resolve_image_paths` to compute the absolute
+    imageFileN index for a given image element.
+
+    When ``images_dir`` is provided, the JSON is looked up next to
+    it (the same parent directory and the same paper_id). This
+    prevents a multi-paper ``work_dir`` from returning another
+    paper's JSON. Returns [] when no JSON is found.
+    """
+    if images_dir is not None:
+        # The JSON file shares the parent of ``images_dir``. We
+        # glob for the first ``*.json`` in the same directory and
+        # accept it. (More than one PDF in the same paper_id is
+        # unusual and would have produced multiple _images dirs.)
+        parent = images_dir.parent
+        for path in sorted(parent.glob("*.json")):
+            if "_images" in str(path):
+                continue
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                continue
+            kids = data.get("kids") or []
+            return _collect_images(kids)
+        return []
+    # Fallback: search recursively (single-paper case where the
+    # caller didn't pass images_dir).
+    json_files = sorted(output_dir.rglob("*.json"))
+    for path in json_files:
+        if "_images" in str(path):
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        kids = data.get("kids") or []
+        return _collect_images(kids)
+    return []
 
 
 def _find_nearest_caption(

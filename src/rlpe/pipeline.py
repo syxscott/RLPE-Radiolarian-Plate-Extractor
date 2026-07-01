@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 # evaluation harness and unit tests can import it without dragging in
 # the torch/gemma/paddleocr chain pulled by the full pipeline.
 
-from .association import _normalize_panel_label, match_panels
+from .association import _label_in_pair_lookup, _normalize_panel_label, is_valid_panel_label, match_panels
 from .config import PipelineConfig
 from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
 from .geology_extraction import build_knowledge_graph, link_species_to_geology
@@ -36,6 +37,12 @@ from .scale_bar import (
 from .segmentation import PanelSegmenter, SegmentationConfig
 from .taxon import TaxonRecognizer
 from .text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
+from .range_chart_extractor import (
+    RangeChartResult,
+    build_geology_links_for_panels,
+    classify_figure_type,
+    extract_range_chart,
+)
 from .types import (
     CaptionEntity,
     CaptionRecord,
@@ -273,6 +280,450 @@ class RadiolarianPipeline:
     # OpenDataLoader-based processing
     # -----------------------------------------------------------------------
 
+    def _process_map(
+        self,
+        *,
+        paper_id: str,
+        figure_id: str,
+        caption_text: str,
+        image_path: str,
+    ) -> list[dict[str, Any]]:
+        """Process a map / paleogeographic-map figure and produce stub
+        panel records carrying the geographic context.
+
+        Maps don't have species or panel_id, so the output is a single
+        stub record (panel_id="MAP_CONTEXT") whose metadata carries:
+          - location names mentioned in the caption
+          - lat/lon coordinates extracted from the caption text
+          - the full caption as evidence
+          - the image path for downstream display
+        Downstream ``_link_range_chart_geology`` can link this stub's
+        context to other panels via the shared paper_id + section
+        name. For now we just record it as a paper-level context
+        anchor so an operator can find it.
+
+        Heuristic-only — map caption parsing is hard and the existing
+        regex-based geology_extraction already covers most of the
+        location name extraction. This method mostly ensures the
+        map figure isn't silently dropped by the pipeline.
+        """
+        from .geo_coords import parse_coordinate
+        loc_names: list[str] = []
+        coords: list[tuple[float, float, str]] = []
+        # Lightweight location-name extraction: capitalized
+        # multi-word tokens that aren't common English words. The
+        # full geology_extraction module handles the more complex
+        # patterns; this is a quick safety net for map-only figures
+        # that don't reach the caption parser.
+        import re as _re
+        for m in _re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b", caption_text or ""):
+            tok = m.group(1)
+            if tok in {"Fig", "Figure", "Scale", "Bar", "The", "This", "Map"}:
+                continue
+            loc_names.append(tok)
+        # Try to extract coordinates.
+        for m in _re.finditer(
+            r"\b(\d{1,3}(?:\.\d+)?)\s*°?\s*([NSns])?[,\s]+(\d{1,3}(?:\.\d+)?)\s*°?\s*([EWew])?\b",
+            caption_text or "",
+        ):
+            try:
+                lat = float(m.group(1))
+                lon = float(m.group(3))
+                if m.group(2) and m.group(2).upper() == "S":
+                    lat = -lat
+                if m.group(4) and m.group(4).upper() == "W":
+                    lon = -lon
+                if -90 <= lat <= 90 and -180 <= lon <= 180:
+                    coords.append((lat, lon, m.group(0)))
+            except ValueError:
+                continue
+        # Cap to a reasonable number of location names to avoid
+        # noise from generic capitalized words.
+        loc_names = loc_names[:10]
+        coords = coords[:5]
+        return [{
+            "paper_id": paper_id,
+            "figure_id": figure_id,
+            "panel_id": "MAP_CONTEXT",
+            "species": None,
+            "panel_path": image_path,
+            "bbox": None,
+            "confidence": 0.0,
+            "label_text": None,
+            "caption_snippet": (caption_text or "")[:240],
+            "ocr_text": None,
+            "paper_metadata": None,
+            "metadata": {
+                "extraction_method": "map_caption_heuristic",
+                "extraction_source": "map",
+                "location_names": loc_names,
+                "coordinates": [{"lat": lat, "lon": lon, "raw": raw} for lat, lon, raw in coords],
+                "evidence_text": (caption_text or "")[:300],
+            },
+        }]
+
+    def _cross_link_map_and_range_chart(
+        self, results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Link map locations to range-chart section names.
+
+        Conservative matcher: a panel's range-chart section field
+        ("SK-01") is linked to a map location only when the
+        section name is a substring of the location, the location
+        is a substring of the section, or the first two characters
+        of one are the first two characters of the other. Each
+        match is tagged with the rule it satisfied so an operator
+        can filter the loose ones (e.g. "S" matching "Sikhote",
+        "Saharan" — the second-letter test would split them).
+
+        Range-chart sections that are 2-3 char codes ("SK-01",
+        "NS-01") typically correspond to the first letters of the
+        full place name. When no match is found, the section code
+        is still preserved on each panel's ``geology_links`` and
+        the map context is recorded as paper-level metadata, so an
+        operator can still reconcile them by hand.
+        """
+        # Collect map locations per paper.
+        map_locs_by_paper: dict[str, list[tuple[str, str]]] = {}
+        for r in results:
+            if r.get("panel_id") != "MAP_CONTEXT":
+                continue
+            pid = r.get("paper_id")
+            md = r.get("metadata") or {}
+            for loc in md.get("location_names") or []:
+                if loc:
+                    map_locs_by_paper.setdefault(pid, []).append(
+                        (loc, r.get("figure_id", ""))
+                    )
+        if not map_locs_by_paper:
+            return results
+
+        for r in results:
+            pid = r.get("paper_id")
+            if r.get("panel_id") == "MAP_CONTEXT":
+                continue
+            md = r.get("metadata") or {}
+            sections = set()
+            for link in md.get("geology_links") or []:
+                sec = link.get("locality")
+                if sec and "range_chart" in link.get("evidence_text", ""):
+                    sections.add(sec)
+            if not sections:
+                continue
+            map_locs = map_locs_by_paper.get(pid, [])
+            matched: list[dict[str, str]] = []
+            for sec in sections:
+                # Extract just the alpha prefix (drop the "-01" suffix).
+                sec_alpha = "".join(c for c in sec if c.isalpha())
+                if not sec_alpha:
+                    continue
+                for loc, fig_id in map_locs:
+                    # Rule 1: case-insensitive exact substring match.
+                    if (
+                        sec.lower() in loc.lower()
+                        or loc.lower() in sec.lower()
+                    ):
+                        matched.append({
+                            "section": sec, "location": loc,
+                            "match_type": "substring",
+                            "map_figure": fig_id,
+                        })
+                        continue
+                    # Rule 2: first 2 characters of section alpha prefix
+                    # match first 2 characters of any word in the
+                    # location. E.g. "SK" → "Sikhote", "NS" →
+                    # "Nadanhada South" if "Nadanhada" or "South"
+                    # both start with NS — this is rare; the
+                    # substring rule is the workhorse.
+                    if len(sec_alpha) >= 2:
+                        s2 = sec_alpha[:2].lower()
+                        for word in loc.split():
+                            if word[:2].lower() == s2:
+                                matched.append({
+                                    "section": sec, "location": loc,
+                                    "match_type": "prefix2",
+                                    "map_figure": fig_id,
+                                })
+                                break
+                    # Rule 3: section code letters match the first
+                    # letters of successive words in a hyphenated
+                    # location name. E.g. "SK" → "Sikhote-Khabarovsk"
+                    # (S + K are the first letters of each word).
+                    # This catches the common radiolarian-paper
+                    # convention where the range-chart section code
+                    # is an acronym of the section's full name.
+                    if len(sec_alpha) >= 2 and "-" in loc:
+                        words = [w for w in loc.replace("Range", "").replace("River", "").split("-") if w]
+                        if len(words) == len(sec_alpha):
+                            if all(
+                                w[:1].lower() == sec_alpha[i].lower()
+                                for i, w in enumerate(words)
+                                if w
+                            ):
+                                matched.append({
+                                    "section": sec, "location": loc,
+                                    "match_type": "acronym",
+                                    "map_figure": fig_id,
+                                })
+            if matched:
+                # Deduplicate by (section, location, match_type)
+                seen = set()
+                deduped = []
+                for m in matched:
+                    key = (m["section"], m["location"], m["match_type"])
+                    if key not in seen:
+                        seen.add(key)
+                        deduped.append(m)
+                md.setdefault("matched_location", []).extend(deduped)
+        return results
+
+    def _process_range_chart(
+        self,
+        *,
+        paper_id: str,
+        figure_id: str,
+        caption_text: str,
+        image_path: str,
+    ) -> list[dict[str, Any]]:
+        """Run range-chart extraction and produce stub panel records.
+
+        The vision extractor returns a RangeChartResult with sections,
+        species_ranges, biozones, and other_fossils. We wrap each
+        species_range into a stub panel record that carries the
+        geology as a ``geology_links`` entry, matching the downstream
+        PanelRecord schema. These stubs are useful for downstream
+        consumers (DwC export, web UI) without needing a separate
+        range-chart data path.
+
+        The stub has ``panel_id="RANGE_CHART"`` so it can be filtered
+        out of the standard "per-panel species" evaluation — it does
+        not represent a real specimen panel, only a geological context
+        anchor.
+        """
+        # Source API config: read directly from the environment so this
+        # works even when ``self.gemma_runtime`` is not initialised
+        # (the MiniMax-M3 vision path is independent of the local
+        # Gemma4 loader).
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or self.config.extra.get("MiniMax_api_key")
+        base_url = os.environ.get("ANTHROPIC_BASE_URL") or self.config.extra.get(
+            "MiniMax_endpoint", "https://api.minimaxi.com/anthropic"
+        )
+        model = os.environ.get("ANTHROPIC_MODEL") or self.config.extra.get(
+            "MiniMax_model", "MiniMax-M3"
+        )
+        if not api_key:
+            logger.warning("range_chart: no ANTHROPIC_API_KEY set; skipping %s/%s", paper_id, figure_id)
+            return []
+
+        chart = extract_range_chart(
+            paper_id=paper_id,
+            figure_id=figure_id,
+            caption=caption_text,
+            image_path=image_path,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+        )
+        # Build stub panel records (one per species_range entry) so
+        # downstream code can join by figure_id. Each stub carries the
+        # full RangeChartResult in ``metadata.range_chart`` so the web
+        # UI can display the chart-level context.
+        out: list[dict[str, Any]] = []
+        for sr in chart.species_ranges:
+            stub = {
+                "paper_id": paper_id,
+                "figure_id": figure_id,
+                "panel_id": "RANGE_CHART",
+                "species": sr.species,
+                "panel_path": None,
+                "bbox": None,
+                "confidence": chart.confidence,
+                "label_text": None,
+                "caption_snippet": caption_text[:240] if caption_text else None,
+                "ocr_text": None,
+                "paper_metadata": None,
+                "metadata": {
+                    "extraction_method": "range_chart_vision",
+                    "extraction_source": "range_chart",
+                    "section": sr.section,
+                    "range_top": sr.range_top,
+                    "range_base": sr.range_base,
+                    "biozone": sr.biozone,
+                    "range_chart": chart.to_dict(),
+                },
+            }
+            out.append(stub)
+        return out
+
+    @staticmethod
+    def _find_orphan_image_for_range_chart(
+        figures: list[Any], target: Any, od_raw: dict[str, Any] | None = None
+    ) -> str | None:
+        """Search for an orphan figure-image to associate with a range chart
+        whose own ``image_paths`` came back empty.
+
+        OD sometimes extracts the range-chart image but fails to
+        associate it with its caption (the chart isn't a single
+        embedded image in the PDF text layer, so
+        ``_find_nearest_caption`` gives up). In that case the image
+        sits in the OD ``..._images/`` directory unreferenced by any
+        figure. We need a stronger search than the figure-level
+        orphan loop: walk the raw OD JSON's image elements, find the
+        one whose ``page number`` matches the range-chart caption's
+        page, and return its resolved file path.
+
+        The search order is:
+          1. Images on the same page as the range-chart caption
+             (the chart is virtually always on the same page as its
+             "Fig. N" caption in radiolarian papers).
+          2. Images on adjacent pages.
+          3. The largest orphan-figure image from ``figures`` (the
+             legacy fallback that handles the case where OD at least
+             paired the image with a stub figure).
+
+        Returns the absolute path of the best candidate, or None.
+        """
+        target_page = int(target.page_number)
+        import os as _os
+
+        # Phase 1: scan the raw OD JSON for images on the same page
+        # that are NOT referenced by any figure. This is the most
+        # common failure mode for range charts (OD extracts the image
+        # but the caption-image association falls apart).
+        unpaired: list[tuple[int, int, str]] = []  # (page_diff, size, path)
+        logger.debug("orphan search for range_chart page=%d (od_raw=%s, figures=%d)",
+                    target_page, bool(od_raw), len(figures))
+        if od_raw:
+            try:
+                from .opendataloader_extractor import _iter_all_elements
+                # Collect all image paths that are referenced by figures
+                referenced: set[str] = set()
+                for fig in figures:
+                    for p in fig.image_paths or []:
+                        referenced.add(_os.path.basename(p))
+                # Walk the raw JSON for all image elements
+                kids = od_raw.get("kids") or []
+                images_dir = self.config.resolved_output_dir() / "od_output" / target.paper_id if hasattr(target, "paper_id") else None
+                # images_dir is constructed by the OD extractor under
+                # <output_dir>/od_output/<paper_id>/<pdf_stem>_images/.
+                # We don't know paper_id from the target pair here, so
+                # derive it from the figures' image paths.
+                if figures and figures[0].image_paths:
+                    sample = figures[0].image_paths[0]
+                    # <work>/od_output/<paper_id>/<pdf_stem>_images/imageFileN.png
+                    images_dir = _os.path.dirname(sample)
+                # Enumerate ALL images in the directory (not just
+                # unpaired ones — OD sometimes wrongly pairs a range
+                # chart image with a different figure's caption, and
+                # those "stolen" images are exactly what we need). The
+                # ``referenced`` set is used only to log which images
+                # are already associated, NOT to filter candidates.
+                #
+                # We pair file names to OD image elements by
+                # alphabetical/sequential order — OD exports
+                # imageFile1.png, imageFile2.png, ... in the order it
+                # encountered the <image> elements in the PDF. The raw
+                # JSON's image list gives us each element's page
+                # number, so we map the i-th file to the i-th image
+                # element's page. This mapping is correct for the
+                # common case where OD doesn't reorder images.
+                od_image_pages: list[int] = []
+                for el in _iter_all_elements(kids):
+                    if el.get("type") == "image":
+                        p = int(el.get("page number", 0))
+                        if p > 0:
+                            od_image_pages.append(p)
+                # images_dir is constructed by the OD extractor under
+                # <output_dir>/od_output/<paper_id>/<pdf_stem>_images/.
+                # We don't know paper_id from the target pair here, so
+                # derive it from the figures' image paths.
+                if figures and figures[0].image_paths:
+                    sample = figures[0].image_paths[0]
+                    # <work>/od_output/<paper_id>/<pdf_stem>_images/imageFileN.png
+                    images_dir = _os.path.dirname(sample)
+                    for i, fname in enumerate(png_files):
+                        fpath = _os.path.join(images_dir, fname)
+                        try:
+                            sz = _os.path.getsize(fpath)
+                        except OSError:
+                            sz = 0
+                        is_referenced = fname in referenced
+                        # Map file index → OD image page. If we have
+                        # fewer OD entries than files, fall back to 0
+                        # (unknown page).
+                        img_page = od_image_pages[i] if i < len(od_image_pages) else 0
+                        page_diff = abs(img_page - target_page) if img_page else 999
+                        unpaired.append((page_diff, sz, fpath, is_referenced))
+                        logger.debug(
+                            "raw OD image: %s size=%d page=%d page_diff=%d referenced=%s",
+                            fpath, sz, img_page, page_diff, is_referenced,
+                        )
+                # Enumerate the images directory and match by reading
+                # the page number from each file (use PyMuPDF to get
+                # the page count — too expensive). Simpler: just
+                # collect all PNGs in images_dir and let the caller
+                # pick by page_diff.
+                if images_dir and _os.path.isdir(images_dir):
+                    for fname in sorted(_os.listdir(images_dir)):
+                        if not fname.lower().endswith(".png"):
+                            continue
+                        fpath = _os.path.join(images_dir, fname)
+                        if _os.path.basename(fpath) in referenced:
+                            logger.debug("raw OD scan: skipping %s (referenced)", fname)
+                            continue
+                        try:
+                            sz = _os.path.getsize(fpath)
+                        except OSError:
+                            sz = 0
+                        # All raw OD unpaired images are assigned page_diff=0
+                        # because we don't have per-file page info here
+                        # (the OD JSON's image elements have page numbers,
+                        # but the file naming is sequential, not page-
+                        # indexed). The caller will then merge these with
+                        # the figure-level orphans which DO have page_diff.
+                        # For now, treat them all as same-page candidates.
+                        unpaired.append((0, sz, fpath))
+                        logger.info(
+                            "raw OD unpaired image: %s (size=%d)",
+                            fpath, sz,
+                        )
+            except Exception as exc:
+                logger.debug("raw OD scan failed: %s", exc)
+
+        # Phase 2: figure-level orphans (legacy path). These are
+        # figures that OD paired with a stub but no caption.
+        for fig in figures:
+            if fig is target:
+                continue
+            if not (fig.image_paths) or (fig.caption_text or "").strip():
+                continue
+            page_diff = abs(int(fig.page_number) - target_page)
+            for img_path in fig.image_paths or []:
+                try:
+                    sz = _os.path.getsize(img_path)
+                except OSError:
+                    sz = 0
+                unpaired.append((page_diff, sz, img_path, True))
+
+        if not unpaired:
+            return None
+        # Sort: prefer smallest page_diff (raw OD scan has all 0, so it
+        # becomes a pure size sort). Among same-page_diff, prefer
+        # SMALLEST size — range charts are line drawings and are
+        # typically smaller than plate images (plates have dense
+        # detail → bigger PNGs). This is the opposite of the
+        # previous heuristic and is correct for the most common case
+        # where OD has wrongly paired the chart with a different
+        # figure (in which case the chart is "stolen" and would be
+        # filtered out by a referenced-only search).
+        unpaired.sort(key=lambda t: (t[0], t[1]))
+        chosen = unpaired[0][2]
+        logger.info(
+            "orphan search: chose %s (page_diff=%d, size=%d) from %d candidates",
+            chosen, unpaired[0][0], unpaired[0][1], len(unpaired),
+        )
+        return chosen
+
     def _process_one_pdf_od(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         od_result = self.od_extractor.extract(pdf_path, self.config.resolved_output_dir())
 
@@ -284,9 +735,40 @@ class RadiolarianPipeline:
             return self._process_one_pdf_grobid(paper_id, pdf_path)
 
         figures = od_result.figures
-        if not figures:
-            logger.info("No figures found by OpenDataLoader for %s; falling back.", paper_id)
+        # OD's caption-image pairing is fragile and the Java subprocess
+        # can occasionally return figures=None even when the JSON
+        # contains the captions. Retry once before falling back — the
+        # second call is virtually always stable.
+        if not figures and od_result.json_data:
+            try:
+                od_result = self.od_extractor.extract(
+                    pdf_path, self.config.resolved_output_dir()
+                )
+                figures = od_result.figures
+                if figures:
+                    logger.info(
+                        "OD retry recovered %d figures for %s",
+                        len(figures), paper_id,
+                    )
+            except Exception as exc:
+                logger.debug("OD retry failed: %s", exc)
+        # IMPORTANT: even when ``figures`` is empty (OD paired 0),
+        # the kids tree in ``od_result.json_data`` may still hold
+        # every Fig. N caption. ``_extract_unpaired_captions``
+        # below rescues them with orphan-image association. So
+        # falling back to GROBID here would lose the entire paper.
+        # The fallback below is only reached if ``json_data`` is
+        # also missing (truly fatal).
+        if not figures and not od_result.json_data:
+            logger.info(
+                "No figures AND no JSON data from OpenDataLoader for %s; "
+                "falling back to GROBID.",
+                paper_id,
+            )
             return self._process_one_pdf_grobid(paper_id, pdf_path)
+        # Make sure ``figures`` is a list (OD occasionally returns
+        # None instead of [] when the Java pairing stage fails).
+        figures = list(figures or [])
 
         # Geology / fulltext — collect taxon entities from all captions.
         all_taxon_names: list[str] = []
@@ -312,12 +794,20 @@ class RadiolarianPipeline:
         results: list[dict[str, Any]] = []
         n_figs = len(figures)
         for fig_idx, pair in enumerate(figures, start=1):
-            if not pair.image_paths:
-                continue
+            # NOTE: do NOT skip ``if not pair.image_paths`` here — the
+            # range-chart pre-detection below needs to see those figures
+            # so it can detect "distribution of" captions and find an
+            # orphan image for them.
             self._emit_progress(
                 fig_idx - 1,
                 n_figs,
                 f"[{fig_idx}/{n_figs}] {pair.caption_text[:40] if pair.caption_text else pair.figure_id}",
+            )
+            logger.debug(
+                "fig=%s page=%d imgs=%d cap='%s...'",
+                pair.figure_id, pair.page_number,
+                len(pair.image_paths or []),
+                (pair.caption_text or "")[:50],
             )
 
             # Pick the LARGEST image as the primary region. OpenDataLoader
@@ -335,6 +825,45 @@ class RadiolarianPipeline:
             # the for-loop binding the name in some branch,
             # which silently re-used the previous figure's
             # region_img when every imread() call failed.
+
+            # ---- Range-chart pre-detection (BEFORE image selection) ----
+            # Detect range-chart figures by caption BEFORE we look at
+            # the images. Range charts often have ``image_paths == []``
+            # because the chart isn't a single embedded image in the
+            # PDF — it can be a vector drawing, a scan, or a multi-panel
+            # composition. In those cases we need to detect the chart
+            # from its caption first, then find its image via the
+            # orphan-image search below.
+            if not pair.image_paths:
+                logger.debug("fig=%s has no image_paths; caption='%s...' (running pre-detect)",
+                            pair.figure_id, (pair.caption_text or "")[:50])
+                early_type = classify_figure_type(pair.caption_text, None)
+                logger.debug("pre-detect fig=%s type=%s caption='%s...'",
+                             pair.figure_id, early_type, (pair.caption_text or "")[:50])
+                if early_type == "range_chart":
+                    rc_image = self._find_orphan_image_for_range_chart(
+                        figures, pair, od_result.json_data
+                    )
+                    logger.info("range_chart %s: orphan search returned %s",
+                                pair.figure_id, rc_image)
+                    if rc_image is not None:
+                        logger.info(
+                            "range_chart %s: no paired image, using orphan %s",
+                            pair.figure_id, rc_image,
+                        )
+                        rc_results = self._process_range_chart(
+                            paper_id=paper_id,
+                            figure_id=pair.figure_id,
+                            caption_text=pair.caption_text or "",
+                            image_path=rc_image,
+                        )
+                        results.extend(rc_results)
+                        self._emit_progress(
+                            fig_idx, n_figs,
+                            f"[{fig_idx}/{n_figs}] range_chart (orphan) → {len(rc_results)} links",
+                        )
+                continue
+
             for cand_path in pair.image_paths:
                 if not cand_path:
                     continue
@@ -347,6 +876,85 @@ class RadiolarianPipeline:
                     primary_path = cand_path
                     region_img = cand
             if primary_path is None or region_img is None:
+                continue
+
+            # ---- Range-chart detection ----
+            # OpenDataLoader returns every figure on a page as a "pair";
+            # stratigraphic range charts look like plates to OD but are
+            # fundamentally different (a chart, not specimens). Detect
+            # them by caption keyword and extract geology via vision
+            # BEFORE feeding the image into _process_region (which would
+            # otherwise try to segment a chart as if it were a plate and
+            # produce bogus panels).
+            fig_type = classify_figure_type(pair.caption_text, primary_path)
+            if fig_type == "range_chart":
+                # OD sometimes fails to associate the chart image with
+                # its caption (the chart has no embedded image metadata
+                # in the PDF text layer, so the caption-image pairing
+                # falls back to ``_find_nearest_caption`` which is
+                # brittle across page layouts). When primary_path is None
+                # (no image was paired), scan OTHER pairs on the same or
+                # adjacent pages for an orphan image (image present but
+                # caption empty) and use it. Without this, the range
+                # chart is silently lost.
+                rc_image_path = primary_path
+                if rc_image_path is None:
+                    rc_image_path = self._find_orphan_image_for_range_chart(
+                        figures, pair, od_result.json_data
+                    )
+                    logger.info(
+                        "range_chart %s: no image paired; using orphan image %s",
+                        pair.figure_id, rc_image_path,
+                    )
+                if rc_image_path is not None:
+                    rc_results = self._process_range_chart(
+                        paper_id=paper_id,
+                        figure_id=pair.figure_id,
+                        caption_text=pair.caption_text or "",
+                        image_path=rc_image_path,
+                    )
+                    results.extend(rc_results)
+                    self._emit_progress(
+                        fig_idx, n_figs,
+                        f"[{fig_idx}/{n_figs}] range_chart → {len(rc_results)} species links",
+                    )
+                else:
+                    logger.warning(
+                        "range_chart %s: no image found (caption='%s...')",
+                        pair.figure_id, (pair.caption_text or "")[:60],
+                    )
+                continue
+
+            # Map / location / paleogeographic figure: extract
+            # geographic context (location names, lat/lon) from the
+            # caption and produce a stub record. This ensures these
+            # figures aren't silently dropped by the pipeline.
+            if fig_type == "map":
+                # Use the largest image on the same page (or
+                # primary_path if available).
+                map_image = primary_path
+                if map_image is None:
+                    map_image = self._find_orphan_image_for_range_chart(
+                        figures, pair, od_result.json_data
+                    )
+                if map_image is not None:
+                    map_results = self._process_map(
+                        paper_id=paper_id,
+                        figure_id=pair.figure_id,
+                        caption_text=pair.caption_text or "",
+                        image_path=map_image,
+                    )
+                    results.extend(map_results)
+                    logger.info(
+                        "map %s: extracted %d location names, %d coords",
+                        pair.figure_id,
+                        len(map_results[0]["metadata"]["location_names"]) if map_results else 0,
+                        len(map_results[0]["metadata"]["coordinates"]) if map_results else 0,
+                    )
+                self._emit_progress(
+                    fig_idx, n_figs,
+                    f"[{fig_idx}/{n_figs}] map → {len(map_results) if map_results else 0} context",
+                )
                 continue
 
             h_img, w_img = region_img.shape[:2]
@@ -409,6 +1017,93 @@ class RadiolarianPipeline:
         # to the nearest real plate figure so they participate in caption
         # matching and aren't silently dropped.
         results = self._cross_figure_reassign(results)
+        # Link range-chart geology to per-panel records. The range-chart
+        # path produces stub panel records (panel_id="RANGE_CHART") that
+        # carry the chart-level context. For each real panel, we look
+        # up matching species in the range-chart stubs and attach a
+        # geology_links entry with section/age_range/biozone. This
+        # connects the visual stratigraphy data to the panel records
+        # that drive the DwC export.
+        results = self._link_range_chart_geology(results)
+        # After range-chart links are attached, bridge any map-figure
+        # location names to range-chart section abbreviations so a
+        # downstream consumer can pivot by either representation.
+        results = self._cross_link_map_and_range_chart(results)
+        return results
+
+    def _link_range_chart_geology(
+        self, results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Attach range-chart geology context to matching panel records.
+
+        Iterates over all paper-level RangeChartResult objects produced
+        in this run; for each one, calls
+        ``build_geology_links_for_panels`` against the non-stub panel
+        records in the same paper and appends the resulting links to
+        each panel's ``metadata.geology_links``.
+
+        Stub records (panel_id="RANGE_CHART") are passed through
+        unchanged; their chart context already lives in
+        ``metadata.range_chart``.
+        """
+        from .range_chart_extractor import (
+            BiozoneRecord,
+            RangeChartSection,
+            RangeChartResult,
+            SpeciesRange,
+        )
+        # Index range-chart results by paper_id.
+        rc_by_paper: dict[str, list[RangeChartResult]] = {}
+        for r in results:
+            if str(r.get("panel_id")) != "RANGE_CHART":
+                continue
+            # Rebuild a RangeChartResult from the stub's stored metadata
+            # so the linker can consume the original dataclass API.
+            md = r.get("metadata") or {}
+            rc_dict = md.get("range_chart")
+            if not rc_dict:
+                continue
+            chart = RangeChartResult(
+                figure_id=rc_dict.get("figure_id", ""),
+                paper_id=rc_dict.get("paper_id", ""),
+                image_path=rc_dict.get("image_path", ""),
+                caption=rc_dict.get("caption", ""),
+                confidence=float(rc_dict.get("confidence", 0.0)),
+            )
+            for sec in rc_dict.get("sections", []):
+                chart.sections.append(RangeChartSection(**{
+                    k: sec.get(k, "") for k in ("name", "age_range",
+                        "formation_thickness_m", "coordinates")
+                }, formations=list(sec.get("formations") or [])))
+            for sr in rc_dict.get("species_ranges", []):
+                chart.species_ranges.append(SpeciesRange(**{
+                    k: sr.get(k, "") for k in ("species", "section",
+                        "range_top", "range_base", "biozone")
+                }))
+            for bz in rc_dict.get("biozones", []):
+                chart.biozones.append(BiozoneRecord(**{
+                    k: bz.get(k, "") for k in ("name", "age", "thickness_m")
+                }))
+            chart.other_fossils = list(rc_dict.get("other_fossils") or [])
+            rc_by_paper.setdefault(chart.paper_id, []).append(chart)
+
+        if not rc_by_paper:
+            return results
+
+        for r in results:
+            if str(r.get("panel_id")) == "RANGE_CHART":
+                continue
+            paper_id = r.get("paper_id")
+            charts = rc_by_paper.get(paper_id)
+            if not charts:
+                continue
+            md = r.setdefault("metadata", {})
+            existing_links = list(md.get("geology_links") or [])
+            for chart in charts:
+                new_links = build_geology_links_for_panels(chart, [r])
+                if new_links:
+                    md["geology_links"] = existing_links + new_links
+                    existing_links = md["geology_links"]
         return results
 
     # -----------------------------------------------------------------------
@@ -513,6 +1208,15 @@ class RadiolarianPipeline:
                 paper_metadata=paper_meta,
             )
             results.extend(figure_matches)
+        # Cross-figure panel reassignment (same rationale as the OD path
+        # at the bottom of ``_process_one_pdf_od``): GROBID can also emit
+        # orphan figures — a thumbnail or sub-image of the real plate that
+        # gets a placeholder/empty caption and therefore no species. Without
+        # reassignment those panels are silently dropped. The OD path has
+        # always done this; applying it here keeps the two extraction paths
+        # consistent so the eval numbers don't swing depending on which
+        # upstream extractor happened to run.
+        results = self._cross_figure_reassign(results)
         return results
 
     # ---- LLM-first extraction (new architecture) --------------------------------
@@ -524,9 +1228,15 @@ class RadiolarianPipeline:
     #   - No error amplification from segmentation→OCR→matching cascade
     #   - One call per figure instead of per-panel calls for stage 4
 
+    # A lone panel from the LLM is accepted only at/above this confidence.
+    # Below it, the classical CV path may segment better (the LLM may have
+    # collapsed a multi-specimen plate into one). Tuned conservatively so a
+    # high-confidence single-panel micrograph is kept without retrying.
+    _LLM_FIRST_SINGLE_PANEL_MIN_CONF: float = 0.75
+
     _LLM_FIRST_SYSTEM_PROMPT = """You are an expert paleontologist specializing in radiolarian microfossils. You will see an image of a radiolarian plate (figure) from a scientific publication, along with its caption text.
 
-Your task: identify every distinct specimen panel (sub-figure) in this plate and determine its label (A, B, C... or 1, 2, 3... as printed on the image) and the Latin binomial species name from the caption.
+Your task: identify every distinct specimen panel (sub-figure) in this plate and determine its label (A, B, C... or 1, 2, 3... as printed on the image) and the Latin binomial species name.
 
 Return ONLY valid JSON (no markdown fences). The JSON must be an object with a single key "panels" whose value is an array of objects, each with:
 - "label": the panel label as printed (string, e.g. "1", "A", "14b")
@@ -535,11 +1245,13 @@ Return ONLY valid JSON (no markdown fences). The JSON must be an object with a s
 
 Rules:
 - Include ALL visible specimen panels, even partially visible ones
-- Use the caption text to determine species for each label
+- FIRST: use the caption text to determine species for each label
 - If the caption uses ranges like "1-4. Species name", expand to individual entries
+- SECOND: if the caption does NOT mention species for a panel, try to identify the species from the image morphology using your knowledge of radiolarian taxonomy. Set confidence lower (0.3-0.5) to indicate this is a morphology-based guess, not a caption-confirmed identification.
 - If a panel has no identifiable label, use your best spatial inference
 - If the caption is a placeholder (auto-generated), return {"panels": []}
-- Do NOT include non-specimen elements (scale bars, maps, diagrams)"""
+- Do NOT include non-specimen elements (scale bars, maps, diagrams)
+- NEVER invent species names that don't exist in radiolarian taxonomy"""
 
     def _llm_first_extract(
         self,
@@ -609,8 +1321,17 @@ Rules:
                 return None
             try:
                 import json as _json
+                import re as _re
 
-                parsed = _json.loads(raw)
+                # Strip markdown code fences (```json ... ```) that M3
+                # wraps around its JSON output. Without this, _json.loads
+                # fails on the raw_text and we silently fall back to the
+                # classical pipeline (which drops to ~83% F1 on beccaro).
+                cleaned = raw.strip()
+                cleaned = _re.sub(r"^```(?:json)?\s*", "", cleaned, flags=_re.MULTILINE)
+                cleaned = _re.sub(r"\s*```\s*$", "", cleaned, flags=_re.MULTILINE)
+                cleaned = cleaned.strip()
+                parsed = _json.loads(cleaned)
                 panels_data = parsed.get("panels") or parsed
             except Exception:
                 return None
@@ -618,10 +1339,24 @@ Rules:
         if not isinstance(panels_data, list) or len(panels_data) == 0:
             return None
 
-        # Minimum quality gate: at least 2 panels detected
+        # Quality gate: accept 1-panel results only when the LLM is
+        # confident. Many real plates are a single SEM micrograph with
+        # one specimen; the previous "< 2 → reject" rule silently
+        # dropped those and forced the (error-prone) classical path.
+        # We still reject a lone panel that the LLM itself rated low.
         if len(panels_data) < 2:
-            logger.debug("LLM-first found only %d panel(s), falling back", len(panels_data))
-            return None
+            lone_conf = 0.0
+            try:
+                lone_conf = float(panels_data[0].get("confidence", 0.0))
+            except (TypeError, ValueError, IndexError):
+                lone_conf = 0.0
+            if lone_conf < self._LLM_FIRST_SINGLE_PANEL_MIN_CONF:
+                logger.debug(
+                    "LLM-first found 1 low-confidence panel (%.2f < %.2f), falling back",
+                    lone_conf,
+                    self._LLM_FIRST_SINGLE_PANEL_MIN_CONF,
+                )
+                return None
 
         # Convert to MatchResult dicts
         out: list[dict[str, Any]] = []
@@ -641,7 +1376,7 @@ Rules:
                 bbox=None,
                 confidence=conf,
                 label_text=label,
-                caption_snippet=caption_text[:240],
+                caption_snippet=caption.caption[:240] if hasattr(caption, "caption") else "",
                 ocr_text=None,
                 paper_metadata=paper_metadata,
                 metadata={
@@ -707,6 +1442,137 @@ Rules:
                 paper_metadata=paper_metadata,
             )
             if llm_results is not None:
+                # Hybrid approach: LLM-first found all panels (100%
+                # panel_match) but may have left some species=None when
+                # the caption was incomplete or the LLM couldn't
+                # determine the species from the image alone. Run the
+                # caption parser (M3 Stage 1 or regex) to fill in the
+                # gaps — this is cheap (text-only, no image) and gives
+                # the best of both worlds: LLM-first's panel detection
+                # + classical path's species assignment.
+                #
+                # The hybrid fires when EITHER:
+                #   (a) the LLM left any species blank, OR
+                #   (b) the LLM returned fewer than 2 panels, OR
+                #   (c) the caption parser finds MORE panels than the LLM did.
+                # (c) is critical: Gemma-3/M3 frequently caps its output
+                # at ~19 panels (it's a soft training-data ceiling) while
+                # real plates can have 21-27 panels (baumgartner2008 pl02=21,
+                # pl03=27, beccaro2006=35). Without (c), the truncated
+                # panels are silently dropped and the figure ends up with
+                # fewer panels than the caption actually enumerates.
+                #
+                # We pre-parse the caption once so the gate can compare
+                # LLM count vs caption count without parsing twice.
+                missing_species = [r for r in llm_results if not r.get("species")]
+                pair_lookup: dict[str, str] = {}
+                # The regex parser is faster + more reliable for
+                # caption species extraction on standard layouts
+                # (Pouille, Danelian, Beccaro). M3 stage 1 adds API
+                # calls and tends to TRUNCATE long captions
+                # (beccaro has 35 species — M3 returned only 33).
+                # Use regex as the primary source; only fall back
+                # to M3 if regex returns nothing.
+                try:
+                    from .m3_engine import _regex_parse_caption as _regex
+                    regex_pairs = _regex(caption.caption or "")
+                    for cp in regex_pairs:
+                        for lbl in (cp.labels or []):
+                            pair_lookup.setdefault(lbl.strip(), cp.species)
+                except Exception as exc:
+                    logger.debug("Regex caption parser failed: %s", exc)
+                if not pair_lookup and self.m3_engine is not None:
+                    try:
+                        caption_pairs = self.m3_engine.parse_caption(caption.caption or "")
+                        for cp in caption_pairs:
+                            for lbl in (cp.labels or []):
+                                pair_lookup.setdefault(lbl.strip(), cp.species)
+                    except Exception as exc:
+                        logger.debug("M3 caption parser failed: %s", exc)
+                # Gate: fire hybrid when LLM truncated its output.
+                # Bound (pair_lookup <= 100) guards against runaway
+                # regex over-matching on degenerate captions (rare
+                # but seen on wever2006 1918-panel runs).
+                caption_has_more = bool(pair_lookup) and len(pair_lookup) > len(llm_results)
+                if (
+                    missing_species
+                    or len(llm_results) < 2
+                    or (caption_has_more and len(pair_lookup) <= 100)
+                ):
+                    if pair_lookup:
+                        # 1) Fill in species for any LLM rows that had None.
+                        # Normalize labels for comparison: "1a" and "1A" must
+                        # be treated as the same panel, otherwise the
+                        # "if lbl in existing_labels" check below would
+                        # miss the match and we'd insert a duplicate
+                        # row. _normalize_panel_label canonicalises
+                        # "00" → "0" and keeps "1a" / "1A" as-is (no
+                        # case folding), so we also lowercase.
+                        existing_labels = {
+                            _normalize_panel_label(
+                                r.get("panel_id") or r.get("label_text") or ""
+                            ).strip().lower()
+                            for r in llm_results
+                            if (r.get("panel_id") or r.get("label_text") or "").strip()
+                        }
+                        filled = 0
+                        for r in llm_results:
+                            if r.get("species"):
+                                continue
+                            label = r.get("panel_id") or r.get("label_text") or ""
+                            matched_key = _label_in_pair_lookup(label, pair_lookup)
+                            if matched_key:
+                                r["species"] = pair_lookup[matched_key]
+                                r.setdefault("metadata", {})["species_source"] = (
+                                    "caption_parser_hybrid" if self.m3_engine is not None
+                                    else "regex_caption_hybrid"
+                                )
+                                filled += 1
+                        # 2) Add NEW rows for any caption labels the LLM
+                        #    didn't return at all. This is the critical
+                        #    recovery for "LLM truncated its output to
+                        #    panels 1..30 instead of 1..35" — without
+                        #    this, panel_match_rate drops from 100% to
+                        #    ~85% on beccaro.
+                        added = 0
+                        for lbl, species in pair_lookup.items():
+                            lbl_norm = _normalize_panel_label(lbl).strip().lower() if lbl else ""
+                            if lbl_norm and lbl_norm in existing_labels:
+                                continue
+                            if not is_valid_panel_label(lbl):
+                                continue
+                            llm_results.append(
+                                MatchResult(
+                                    paper_id=paper_id,
+                                    figure_id=str(figure_id),
+                                    panel_id=lbl,
+                                    species=species,
+                                    panel_path=None,
+                                    bbox=None,
+                                    confidence=0.0,
+                                    label_text=lbl,
+                                    caption_snippet=(caption.caption or "")[:240],
+                                    ocr_text=None,
+                                    paper_metadata=paper_metadata,
+                                    metadata={
+                                        "extraction_method": "llm_first",
+                                        "llm_backend": getattr(self.gemma_runtime, "backend_name", "unknown"),
+                                        "panel_count": len(llm_results) + 1,
+                                        "figure_number": caption.figure_number,
+                                        "page_index": caption.page_index,
+                                        "species_source": (
+                                            "caption_parser_hybrid" if self.m3_engine is not None
+                                            else "regex_caption_hybrid_added"
+                                        ),
+                                    },
+                                ).to_dict()
+                            )
+                            added += 1
+                        if filled or added:
+                            logger.info(
+                                "LLM-first hybrid for %s/%s: filled %d species, added %d panels from caption",
+                                paper_id, figure_id, filled, added,
+                            )
                 # Enrich LLM-first results with scale_bar + geology_links.
                 # Without this, the LLM-first path skips the metadata
                 # enrichment that the classical path applies at the end of
@@ -942,9 +1808,15 @@ Rules:
                             best = tok
                     if best is not None:
                         norm = _normalize_panel_label(best.text)
-                        if norm and (norm.isdigit() or len(norm) <= 3):
-                            # Only override if the new label looks like
-                            # a real label (digit / short letter).
+                        # Only override if the OCR'd token is a genuine
+                        # panel label shape. The previous check
+                        # ``(norm.isdigit() or len(norm) <= 3)`` accepted
+                        # any 1-3 char string, so OCR garbage like 'ean',
+                        # 'L', 'P1', ',1' became panel_ids — polluting
+                        # the figure's label space and colliding with real
+                        # labels via positional fallback (N10-class drift).
+                        # ``is_valid_panel_label`` rejects those.
+                        if norm and is_valid_panel_label(norm):
                             panel.panel_id = norm
                             panel.metadata["label_region_picked"] = best.text
             except Exception:
