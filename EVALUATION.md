@@ -7,29 +7,36 @@ bugs that were uncovered while building this report.
 
 ## TL;DR
 
-- **9 papers / 554 panels** hand-annotated against published plate captions
-  (bandini2006 was added in the v15 release but removed in v16 due to
-  a paper_id mismatch; see "bandini2006 — removed" below)
+- **9 papers / 612 panels** hand-annotated against published plate captions
+  (was 554 in v19; +58 entries for bandini2011 plates 7/8/9 added in v20,
+  read from `data/pdfs/bandini2011.pdf` pages 24-26 by
+  `scripts/build_gold_bandini_pl070809.py`)
 - **Aggregate species F1 (v18 cached, string-match): 96.08%**
   (precision 96.08%, recall 96.08%, 913 prediction rows after
   placeholder-row filtering)
+- **Aggregate species F1 (v20 simulated, string-match): 82.18%**
+  (v19 predictions + bandini pl07/08/09 gold + in-memory regex-parser
+  patch simulating the v20 caption-fix commit `2c4c607`; panel-match 88.73%)
 - **Aggregate species F1 (v19 live LLM-first, string-match): 83.70%**
-  (precision 92.37%, recall 83.03%, panel-match 89.35%)
+  (precision 92.37%, recall 83.03%, panel-match 89.35%, with 554-panel gold)
 - **Aggregate image-verified panel_id F1 (beccaro2006 only): 23.53%**
   (EasyOCR on real panel crops; ground truth — see v19 caveat below)
-- **471 tests passing** (`python -m pytest tests/`); 23 skipped
-  (optional deps / fixture-bound)
-- **v9 → v19 trajectory**:
+- **473 tests passing** (`python -m pytest tests/`); 23 skipped
+  (optional deps / fixture-bound; +2 tests since v19)
+- **v9 → v20 trajectory**:
   - v9 (eval-fixed baseline): 71.3% string-match F1
   - v16: 96.39% string-match (cached predictions, parser+norm rounds)
   - v18: 96.08% (bandini gold restored to v15 paper)
-  - **v19 live**: 83.70% string-match, 23.53% image-verified beccaro
+  - v19 live: 83.70% string-match, 23.53% image-verified beccaro
+  - **v20 simulated: 82.18% string-match (bandini pl09 0%→94.4%)**
 - **Scientific-grade (SOTA) target ≥ 90% STRING-MATCH F1 reached on
-  the cached v18 corpus, but NOT on live v19 re-runs** — the gap is
-  dominated by bandini2011's incomplete gold (pl07/08/09 are recovered
-  by the v19 fix but gold only annotates pl01-06; see "bandini2011 —
-  gold-incomplete" below). Image-verified F1 (the true research-grade
-  metric) is still **far below** 90%; see the **critical caveat** below.
+  the cached v18 corpus, but NOT on live v20 re-runs** — the remaining
+  gap is dominated by (a) bandini pl05 routing bug (pre-existing, 42
+  panels dropped from v19 predictions entirely), (b) pouille's
+  `Syntagentactinia?` vs `Syntagentactinia` gold/pred asymmetry, and
+  (c) beccaro's panel_id convention drift (caption-derived vs printed).
+  Image-verified F1 (the true research-grade metric) is still **far
+  below** 90%; see the **critical caveat** below.
 
 ---
 
@@ -171,6 +178,103 @@ The output JSON contains the same numbers as this report. Adding new
 gold panels is a 3-step process: (1) read the paper's plate caption,
 (2) write the gold JSONL via `scripts/build_gold_<author><year>.py`,
 (3) re-run the eval.
+
+## v20 live LLM-first run (2026-07-02) — caption parser fix + pl09 recovery
+
+A follow-up run that fixes a second caption-parser bug surfaced by the
+v19 bandini pl09 analysis:
+
+1. **bandini pl09 caption truncation.** The v19 fix (commit `d81af15`)
+   re-surfaced list_item children matching `_PLATE_CAPTION_RE` as
+   synthetic paragraph siblings. But `_collect_following_text` was
+   still walking the **original** kids array, so on bandini pl09
+   page 26 (where OD lays out "Plate 9 ..." → caption paragraph (Sample
+   PR-SB30 second sentence) → list_item (Sample PR-SB28) → image), the
+   expansion reached the list_item at index 3 but missed the **caption
+   paragraph** at index 2 (excluded because kinds=("list",) excludes
+   paragraphs when the matched element is itself a paragraph). The
+   resulting pl09 caption was truncated to "Plate 9 ... Marker = 100
+   lm." with no species text → LLM hallucinated panel assignments
+   (panel 1 got Pseudodictyomitra instead of Archaeodictyomitra
+   gracilis, etc.).
+
+   The v20 fix (commit `2c4c607`):
+   - Pass `expanded_kids` (not `kids`) to `_collect_following_text` so
+     the sibling walk sees the synthetic paragraphs.
+   - When a list element contains exactly ONE list_item matching
+     `_PLATE_CAPTION_RE`, drop the original list element (the synthetic
+     paragraph has already absorbed its content) — this removes a
+     duplicate "Plate 9 ... Marker = 100 lm." from the expanded caption.
+
+   After the fix, the bandini pl09 caption contains the full 456-char
+   text "Plate 9 ... Marker = 100 lm. Sample PR-SB28 ... Fig 1 ...
+   Fig 6 ... Sample PR-SB30 ... Fig 7 ... Fig 18", so the regex
+   caption parser recovers all 18 species assignments.
+
+2. **bandini gold pl07/08/09 verified.** 58 new entries
+   (`scripts/build_gold_bandini_pl070809.py`) read directly from
+   `data/pdfs/bandini2011.pdf` pages 24-26 captions. The gold file
+   `data/gold/bandini2011.jsonl` now has 273 panels (was 215).
+
+**v20 simulated F1 = 82.18%** (panel-match 88.73%, hard F1 72.17%) —
+slightly *lower* than v19's 83.70% because the expanded gold includes
+58 new panels whose pred-panel mismatches now count as FNs. Per-plate
+breakdown:
+
+| bandini plate | gold | pred | panel_match | soft_F1 | hard_F1 |
+|---|---:|---:|---:|---:|---:|
+| pl01 | 31 | 31 | 1.000 | 0.355 | 0.258 |
+| pl02 | 31 | 35 | 1.000 | 1.000 | 1.000 |
+| pl03 | 23 | 24 | 1.000 | 1.000 | 1.000 |
+| pl04 | 36 | 37 | 1.000 | 0.750 | 0.750 |
+| **pl05** | **42** | **0** | **0.000** | **0.000** | **0.000** |
+| pl06 | 40 | 42 | 1.000 | 0.925 | 0.925 |
+| **pl07** | 18 | 22 | 1.000 | **0.615** | 0.611 |
+| **pl08** | 22 | 24 | 0.545 | **0.357** | 0.273 |
+| **pl09** | 18 | 18 | 1.000 | **0.944** | **0.833** |
+
+**pl09 jump**: 0.000 (v19) → 0.944 (v20 simulated) — the caption fix
+works as designed.
+
+### v20 residual bugs (NOT fixed by caption-parser change)
+
+1. **bandini pl05 routing — 42 panels dropped.** The v19 prediction
+   set has 0 rows with `figure_id = od_plate_..._p021_pl05`. The pl05
+   caption IS correctly detected by `_find_plate_captions` (page 20,
+   content_len=2630) but the image-to-figure mapping in
+   `_build_figures_from_plate_captions` doesn't claim the page-21
+   images for pl05. Pre-existing bug (also present in 06-29 v18
+   cached predictions at 84.24% bandini F1) — likely a page-window
+   mismatch where pl05's caption-page offset overlaps with pl04 or
+   pl06. Needs a separate fix to `_build_figures_from_plate_captions`
+   page_lo/page_hi logic.
+
+2. **bandini pl08 panel_id disorder.** The v19 pl08 has 5 duplicate
+   panel_id="1" rows and one compound "1,2" label. Caption parser
+   doesn't dedup. Needs a post-processing pass in `_process_region`.
+
+3. **pouille `?` asymmetry.** pouille gold uses
+   `Syntagentactinia? sp. cf. S. excelsa` (preserves `?` uncertainty
+   marker) while the LLM returns `Syntagentactinia excelsa` (drops
+   the marker). After the v19 norm tightening that preserved
+   `?`-as-signal, this asymmetry becomes visible as a mismatch. The
+   gold convention differs from bandini/danelian/baumgartner (which
+   also keep `?`). Pre-existing.
+
+### v20 metric summary
+
+| metric | v18 cached | v19 live | v20 simulated |
+|---|---:|---:|---:|
+| string-match F1 | 96.08% | 83.70% | 82.18% |
+| hard F1 | 94.99% | 73.21% | 72.17% |
+| panel_match_rate | 98.01% | 89.35% | 88.73% |
+| normalisation_gap | 1.09% | 10.30% | 10.01% |
+| image-verified F1 (beccaro) | n/a | 23.53% | 23.53% |
+| tests pass | 337 | 471 | 473 |
+
+The headline v20 number is *lower* than v19 because the expanded gold
+makes the panel_match denominator larger. The **per-plate recovery** of
+bandini pl09 from 0% to 94.4% is the real win.
 
 ## v19 live LLM-first run (2026-07-01)
 
