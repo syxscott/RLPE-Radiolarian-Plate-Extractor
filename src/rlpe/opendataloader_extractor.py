@@ -1471,16 +1471,39 @@ def _looks_like_fig_caption(content: str) -> bool:
     """Return True if a paragraph whose text starts with "Fig. N" is
     actually a figure caption (not body text).
 
-    Rejects two common false-positive patterns:
+    Rejects three common false-positive patterns:
       1. too-short matches (< 25 chars) — typically list references
          like "Fig. 26" or continuation markers like "Fig. 14 continued c".
       2. body-text species descriptions — a paragraph whose first 200
          chars contain a "(UPPERCASE)" author citation is almost
          always a species list / description, not a caption.
+      3. inline body-text "Fig. N X" mentions where X is a known
+         non-caption verb (Photograph, Map, Schematic, Diagram, ...)
+         — these are always inline body-text references to figures
+         that have their own caption elsewhere, NOT a new caption.
+         Without this guard, bandini2011's "Fig. 7 Photograph of
+         the Early Cretaceous radiolarite ..." body paragraph was
+         promoted to a plate figure, hijacking page-27 images
+         from plate 8 and breaking the pl08 image routing.
     """
     if len(content) < 25:
         return False
     if _FIG_HEAD_AUTHOR_CITE_RE.search(content[:200]):
+        return False
+    # Inline body-text "Fig. N" mentions: a leading word like
+    # "Photograph" right after the figure number signals that this
+    # is an inline body-text reference to a figure that has its
+    # own caption elsewhere, NOT a new caption. Conservative list —
+    # only includes words that are unambiguous body-text patterns
+    # in the radiolarian literature (e.g. bandini2011's "Fig. 7
+    # Photograph of the Early Cretaceous radiolarite..."). "Schematic"
+    # / "Diagram" / "Map" are excluded because some papers use
+    # them as legitimate caption titles ("Fig. 1 Schematic of the
+    # apparatus").
+    first_words = content.split(None, 3)[:3]
+    if len(first_words) >= 3 and first_words[2].lower() in (
+        "photograph", "photographs",
+    ):
         return False
     return True
 
@@ -1586,7 +1609,7 @@ def _build_figures_from_plate_captions(
             if img_id >= 0:
                 claimed_image_ids.add(img_id)
 
-        image_paths = _resolve_image_paths(candidates, output_dir)
+        image_paths = _resolve_image_paths(candidates, output_dir, paper_id=paper_id)
         merged_bbox = _union_bbox(candidates)
         # Anchor the figure_id on the first image's page.
         first_page = int(candidates[0].get("page number", page_lo))
@@ -1603,7 +1626,11 @@ def _build_figures_from_plate_captions(
     return pairs, claimed_image_ids
 
 
-def _resolve_image_paths(images: list[dict[str, Any]], output_dir: Path) -> list[str]:
+def _resolve_image_paths(
+    images: list[dict[str, Any]],
+    output_dir: Path,
+    paper_id: str | None = None,
+) -> list[str]:
     """Resolve the absolute file path of each image element.
 
     Two strategies are tried in order:
@@ -1646,14 +1673,22 @@ def _resolve_image_paths(images: list[dict[str, Any]], output_dir: Path) -> list
     # Strategy 2: position-based fallback. We need the
     # ``<images_dir>`` (the directory OD exported to) which is
     # under ``output_dir/od_output/<paper_id>/<pdf_stem>_images/``.
-    # We search recursively (rglob) because the exact depth depends
-    # on the caller's output_dir argument — some callers pass the
-    # root output dir, others pass the paper-specific subdir.
+    # When ``paper_id`` is known we scope the search to the
+    # paper-specific subdirectory so a multi-paper work_dir picks
+    # the correct paper's images instead of alphabetically-first.
     images_dir: Path | None = None
-    for candidate in output_dir.rglob("*_images"):
-        if candidate.is_dir() and (candidate / "imageFile1.png").exists():
-            images_dir = candidate
-            break
+    if paper_id:
+        scoped = output_dir / "od_output" / paper_id
+        if scoped.is_dir():
+            for candidate in sorted(scoped.glob("*_images")):
+                if candidate.is_dir() and (candidate / "imageFile1.png").exists():
+                    images_dir = candidate
+                    break
+    if images_dir is None:
+        for candidate in output_dir.rglob("*_images"):
+            if candidate.is_dir() and (candidate / "imageFile1.png").exists():
+                images_dir = candidate
+                break
     if images_dir is None:
         return paths  # empty
     # imageFileN.png was exported by OD in the same order the
@@ -1664,7 +1699,9 @@ def _resolve_image_paths(images: list[dict[str, Any]], output_dir: Path) -> list
     # not the relative index within the ``images`` argument (which
     # may be a subset). The full walk is recovered via
     # ``_collect_images_from_output_dir``.
-    all_images = _collect_images_from_output_dir(output_dir, images_dir)
+    all_images = _collect_images_from_output_dir(
+        output_dir, images_dir, paper_id=paper_id
+    )
     # Use (page, id) as the key — ``id(img)`` is the Python object
     # identity, which is NOT stable across re-reads of the JSON
     # (each ``json.load`` produces fresh dict objects). (page, id)
@@ -1686,7 +1723,9 @@ def _resolve_image_paths(images: list[dict[str, Any]], output_dir: Path) -> list
 
 
 def _collect_images_from_output_dir(
-    output_dir: Path, images_dir: Path | None = None
+    output_dir: Path,
+    images_dir: Path | None = None,
+    paper_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Collect every image element from the OD JSON under output_dir.
 
@@ -1699,6 +1738,12 @@ def _collect_images_from_output_dir(
     it (the same parent directory and the same paper_id). This
     prevents a multi-paper ``work_dir`` from returning another
     paper's JSON. Returns [] when no JSON is found.
+
+    When ``paper_id`` is provided (without images_dir), we scope
+    the recursive search to the paper-specific subdirectory so
+    multi-paper ``work_dir``s return the correct paper's images
+    instead of merging all papers (which collides on (page, id)
+    keys). Returns [] when no JSON is found.
     """
     if images_dir is not None:
         # The JSON file shares the parent of ``images_dir``. We
@@ -1717,9 +1762,29 @@ def _collect_images_from_output_dir(
             kids = data.get("kids") or []
             return _collect_images(kids)
         return []
-    # Fallback: search recursively (single-paper case where the
-    # caller didn't pass images_dir).
+    # Fallback: scope to paper_id subdirectory when known so a
+    # multi-paper work_dir resolves the right paper's JSON.
+    if paper_id:
+        paper_dir = output_dir / "od_output" / paper_id
+        if paper_dir.is_dir():
+            for path in sorted(paper_dir.glob("*.json")):
+                if "_images" in str(path):
+                    continue
+                try:
+                    with path.open("r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except (OSError, ValueError):
+                    continue
+                kids = data.get("kids") or []
+                return _collect_images(kids)
+        return []
+    # No paper_id and no images_dir — search the whole output_dir.
+    # Single-paper case: take the only/first JSON. Multi-paper case
+    # with no paper_id hint: fall back to merging all (suboptimal
+    # because (page, id) keys can collide; callers should pass
+    # paper_id when possible).
     json_files = sorted(output_dir.rglob("*.json"))
+    collected: list[dict[str, Any]] = []
     for path in json_files:
         if "_images" in str(path):
             continue
@@ -1729,8 +1794,8 @@ def _collect_images_from_output_dir(
         except (OSError, ValueError):
             continue
         kids = data.get("kids") or []
-        return _collect_images(kids)
-    return []
+        collected.extend(_collect_images(kids))
+    return collected
 
 
 def _find_nearest_caption(
