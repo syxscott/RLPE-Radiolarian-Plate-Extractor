@@ -1817,16 +1817,33 @@ function openImageModal(src, title, record) {
                 ${record.bbox && Array.isArray(record.bbox) && record.bbox.some(v => v > 0) ? `<div class="modal-row"><span class="modal-label">BBox:</span> <code>[${record.bbox.map(v => escapeHtml(String(v))).join(', ')}]</code></div>` : ''}
                 ${captionSnippet ? `<div class="modal-row modal-row-wide"><span class="modal-label">Caption:</span><div class="modal-caption">${escapeHtml(captionSnippet)}${captionSnippet.length >= 280 ? '…' : ''}</div></div>` : ''}
                 ${(() => {
-                    // Render geology_links (age / formation / locality) so the
-                    // operator can see WHY a panel got a given species prediction.
-                    // Skip silently if the metadata is missing or empty.
+                    // Render geology_links (age / formation / locality / Ma range /
+                    // lithology / member / group / biozone) so the operator can see
+                    // WHY a panel got a given species prediction. Skip silently if
+                    // the metadata is missing or empty.
+                    //
+                    // Ma range format: "ma_top–ma_base Ma" (e.g. "251.90–254.14 Ma").
+                    // Lithology / member / group / biozone are optional and
+                    // rendered only when present so the existing simple captions
+                    // (where only age + formation + locality are known) still look
+                    // clean.
                     const links = (record.metadata && record.metadata.geology_links) || [];
                     if (!links.length) return '';
+                    const fmtMa = (g) => {
+                        const t = g.ma_top, b = g.ma_base;
+                        if (t == null || b == null) return '';
+                        return `<span class="modal-geo-ma">${(+t).toFixed(2)}–${(+b).toFixed(2)} Ma</span>`;
+                    };
                     const items = links.map(g => {
                         const age = g.age || g.chronostratigraphy;
                         const head = [
                             age ? `<strong>${escapeHtml(age)}</strong>` : '',
+                            fmtMa(g),
+                            g.lithology ? `<span>${escapeHtml(g.lithology)}</span>` : '',
                             g.formation ? `<em>${escapeHtml(g.formation)}</em>` : '',
+                            g.member ? `<span>${escapeHtml(g.member)}</span>` : '',
+                            g.group ? `<span>${escapeHtml(g.group)}</span>` : '',
+                            g.biozone ? `<span>${escapeHtml(g.biozone)}</span>` : '',
                             g.locality ? `<span>${escapeHtml(g.locality)}</span>` : ''
                         ].filter(Boolean).join(' · ');
                         if (!head) return '';

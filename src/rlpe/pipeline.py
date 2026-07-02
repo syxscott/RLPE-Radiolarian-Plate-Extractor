@@ -301,13 +301,9 @@ class RadiolarianPipeline:
             try:
                 summary = self._collect_llm_usage()
                 if summary:
-                    write_json(
-                        manifest_path.parent / "llm_usage.json", summary
-                    )
+                    write_json(manifest_path.parent / "llm_usage.json", summary)
             except Exception:
-                logger.exception(
-                    "Failed to write llm_usage.json; matches.jsonl is unaffected"
-                )
+                logger.exception("Failed to write llm_usage.json; matches.jsonl is unaffected")
         self._emit_progress(total, total, f"Done — {len(rows)} matches")
         return rows
 

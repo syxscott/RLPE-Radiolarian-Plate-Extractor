@@ -60,6 +60,30 @@ class TestGeologyModalCode:
         assert "escapeHtml(g.formation)" in body
         assert "escapeHtml(g.locality)" in body
 
+    def test_renders_extended_geology_fields(self, js: str) -> None:
+        """Task 6 enrichment: the modal must render Ma range (ma_top /
+        ma_base), lithology, member, group, and biozone when present.
+        These fields come from Task 5's deterministic Ma propagation
+        and the planned MiniMax-assisted lithology/member/group
+        extractor. They were previously dropped on the floor.
+        """
+        i = js.find("function openImageModal(")
+        j = js.find("// Attach close handlers", i)
+        body = js[i:j]
+        for field in ("g.lithology", "g.member", "g.group", "g.biozone"):
+            assert field in body, f"missing {field} in modal render"
+        assert "ma_top" in body
+        assert "ma_base" in body
+        assert "modal-geo-ma" in body, "missing Ma badge CSS class"
+
+    def test_escape_html_used_on_extended_geo_fields(self, js: str) -> None:
+        """All new optional fields must also be HTML-escaped."""
+        i = js.find("function openImageModal(")
+        j = js.find("// Attach close handlers", i)
+        body = js[i:j]
+        for field in ("g.lithology", "g.member", "g.group", "g.biozone"):
+            assert f"escapeHtml({field})" in body, f"missing escapeHtml for {field} in modal render"
+
     def test_geology_block_template_literal_terminated(self, js: str) -> None:
         "No stray template literal: the IIFE and its template must close."
         i = js.find("function openImageModal(")
