@@ -22,8 +22,8 @@ from .schema_models import (
     LocalityRecord,
     PanelMetadata,
     PanelRecord,
-    PaperRecord,
     PaperMetadataRecord,
+    PaperRecord,
     ProvenanceRecord,
     SampleRecord,
     ScaleBarRecord,
@@ -262,21 +262,27 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
         # Locate the next qualifier boundary inside rest. The first
         # lower-cased token (after the optional initial author-prefix)
         # becomes the epithet; everything from the next qualifier /
-        # author-initial onwards is the qualifier.
-        epithet = None
+        # author-initial onwards is the qualifier. We use scoped
+        # ``__`` names here so they do not collide with the
+        # function-scope ``epithet``/``qualifier`` declared below.
+        gen_epithet: str | None = None
         for i, tok in enumerate(rest):
             if _is_qualifier_token(tok) or _is_author_initial(tok):
                 break
             bare = tok.rstrip(".,;?")
             if bare and bare[0].islower():
-                epithet = bare
+                gen_epithet = bare
                 break
-        qualifier = "?"
+        gen_qualifier = "?"
         if rest and (rest[0] != "?"):
             # The "?" is on the genus; no separate qualifier token to
             # emit beyond the marker itself.
-            qualifier = "?"
-        return {"genus": genus, "specific_epithet": epithet, "qualifier": qualifier}
+            gen_qualifier = "?"
+        return {
+            "genus": genus,
+            "specific_epithet": gen_epithet,
+            "qualifier": gen_qualifier,
+        }
 
     # If the second token is itself a qualifier (e.g. "cf."), the
     # binomial is incomplete; emit the qualifier as everything from

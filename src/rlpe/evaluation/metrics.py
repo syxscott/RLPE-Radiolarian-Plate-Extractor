@@ -98,6 +98,19 @@ class EvaluationReport:
         }
 
 
+def _strict_norm_species(s: str | None) -> str:
+    """Strict-normalised species string for the hard-F1 metric.
+
+    Only whitespace + case + the leading ``?`` uncertainty marker are
+    touched. The strict view exposes how much of the soft F1 is
+    earned by string-cleaning (qualifier-strip, trinomial-collapse,
+    etc.) vs by genuine prediction accuracy.
+    """
+    if not s:
+        return ""
+    return " ".join(s.split()).lstrip("?").rstrip(".,;").lstrip()
+
+
 def _norm_species(s: str | None) -> str:
     if not s:
         return ""
@@ -108,14 +121,27 @@ def _norm_species(s: str | None) -> str:
     # parser captures it; treating it as a non-significant token makes
     # the eval robust to that asymmetry.
     s = " ".join(s.split()).lstrip("?").rstrip(".,;").lstrip()
+    # Strip bare "(?)" uncertainty markers inside the species string.
+    # This is a gold/prediction asymmetry on captions like
+    # "Stichomitra (?) sp." vs "Stichomitra sp."; it does NOT touch
+    # cf./aff. or meaningful morphotype suffixes.
+    s = re.sub(r"\s*\(\s*\?\s*\)\s*", " ", s).strip()
     # Collapse the verbose "X gen. et sp. indet" form (gold convention in
     # hollis2006 plate 1 item 22) to the abbreviated "X indet" form that
     # the caption parser produces. This is purely a gold/prediction
     # asymmetry fix — both forms are equivalent in the literature, and
     # the abbreviated form is the IRIS/Modern standard.
     s = re.sub(
-        r"^(spumellaria[n]?|nassellaria[n]?)\s+gen(?:\.\s+et\s+sp\.)?\s+indet$",
-        lambda m: m.group(1) + " indet",
+        r"^(spumellaria[n]?|nassellaria[n]?)\s+gen(?:\.\s+et\s+sp\.)?\s+indet\.?(?:\s+)?([A-Z])?$",
+        lambda m: m.group(1) + " indet" + ((" " + m.group(2)) if m.group(2) else ""),
+        s,
+        flags=re.IGNORECASE,
+    )
+    # Strip the period after "indet" in the short form:
+    # "Spumellaria indet. A" → "Spumellaria indet A".
+    s = re.sub(
+        r"^(spumellaria[n]?|nassellaria[n]?)\s+indet\.\s+([A-Z])$",
+        lambda m: m.group(1) + " indet " + m.group(2),
         s,
         flags=re.IGNORECASE,
     )
@@ -153,8 +179,32 @@ def _norm_species(s: str | None) -> str:
     #    Only when the trailing word is all-lowercase (subspecies shape);
     #    a trinomial with a capitalised tail (e.g. an author) is left
     #    alone — that's handled by the Author-strip rule below.
+    #
+    #    The collapse STOPS at the first open-nomenclature qualifier
+    #    (cf./aff./sp./spp./indet./gr./group/subsp./var./f./nom.). This
+    #    prevents ``Hiscocapsa cf. kaminogoensis`` from collapsing to
+    #    ``Hiscocapsa cf.`` (which would silently drop the epithet).
+    #    It also stops at author-initial tokens so author-citation
+    #    trinomials like ``Genus species cf. S. excelsa`` are preserved.
+    _TRINOMIAL_STOP = {
+        "cf", "aff", "sp", "spp", "indet", "gr", "group",
+        "subsp", "var", "f", "nom",
+    }
+
+    def _has_trailing_uncertainty(token: str) -> bool:
+        bare = token.rstrip(".,;")
+        return bare.endswith("?")
+
     parts = s.split()
-    if len(parts) >= 3 and all(p and p[0].islower() for p in parts[1:]):
+    trinomial_safe = True
+    for p in parts[1:]:
+        bare = p.rstrip(".,;?").lower()
+        if bare in _TRINOMIAL_STOP or _has_trailing_uncertainty(p):
+            trinomial_safe = False
+            break
+    if len(parts) >= 3 and trinomial_safe and all(
+        p and p[0].islower() for p in parts[1:]
+    ):
         s = " ".join(parts[:2])
     # 4) Spelling variants: "Archaeo" / "Archeo" prefix — the two
     #    spellings are interchangeable in informal usage; canonicalise
@@ -166,22 +216,11 @@ def _norm_species(s: str | None) -> str:
     #    The "gen. et sp. indet" → "indet" collapse above handles the
     #    gold side; this handles the pred side.
     s = re.sub(r"\s+gen$", " indet", s, flags=re.IGNORECASE)
-    # Strip a trailing Author token (e.g. "Theocorys? phyzella Foreman"
-    # in hollis2006 plate 2 item 22). The caption parser does not capture
-    # author names; gold often does for the first appearance of a species.
-    # Only strip if the species already has a binomial (Genus epithet)
-    # shape so we don't accidentally reduce "Genus Species" to "Genus"
-    # (the case-insensitive test would then mismatch the prediction).
-    if re.match(
-        r"^[A-Z][a-z]+\??\s+[a-z][a-zA-Z-]+(\s+[a-z][a-zA-Z-]+)?\s+"
-        r"[A-Z][a-z]+(?:\s+(?:and|et|&)\s+[A-Z][a-z]+)*$",
-        s,
-    ):
-        s = re.sub(
-            r"\s+[A-Z][a-z]+(?:\s+(?:and|et|&)\s+[A-Z][a-z]+)*$",
-            "",
-            s,
-        )
+    # 6) Trailing "?" after genus (uncertainty marker). The leading-?
+    #    lstrip above only handles prefix "?"; papers also use
+    #    "Theocorys? phyzella" (genus+?+epithet). Drop the in-line "?"
+    #    so gold "Theocorys? phyzella" matches pred "Theocorys phyzella".
+    s = re.sub(r"^([A-Z][a-z]+)\?\s+", r"\1 ", s)
     return s
 
 

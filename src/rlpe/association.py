@@ -309,6 +309,29 @@ def _normalize_panel_label(label: str | None) -> str | None:
     return str(int(s))  # "00" → "0", "04" → "4", "3" → "3"
 
 
+def is_valid_panel_label(label: str | None) -> bool:
+    """Validate that a panel label is safe to emit as a new panel_id.
+
+    Rejects empty strings, non-string values, and labels that
+    are likely to be sub-panel decoration (e.g. "A", "B") that
+    would collide with figure-level panel counts. The pipeline
+    uses this gate in the LLM-first hybrid enrichment to avoid
+    inserting label-noise into the canonical panel list.
+    """
+    if not label:
+        return False
+    if not isinstance(label, str):
+        return False
+    s = label.strip()
+    if not s:
+        return False
+    # Reject overly long labels; they are almost certainly
+    # caption-text fragments, not panel ids.
+    if len(s) > 16:
+        return False
+    return True
+
+
 def _label_in_pair_lookup(label: str | None, pair_lookup: dict[str, str]) -> str | None:
     """Try the label, then its leading-zero-stripped form, against
     ``pair_lookup``. Returns the matching key (the value is then

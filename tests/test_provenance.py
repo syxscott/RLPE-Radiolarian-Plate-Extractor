@@ -9,9 +9,9 @@ from pathlib import Path
 from rlpe.provenance import (
     Provenance,
     build_provenance,
+    stamp,
     write_provenance_sidecar,
 )
-from rlpe.provenance import stamp
 from rlpe.provenance.stamp import _sha256_file
 from rlpe.schema_models import SCHEMA_VERSION
 

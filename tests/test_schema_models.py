@@ -10,6 +10,8 @@ import pytest
 from pydantic import ValidationError
 
 from rlpe.converters import (
+    _resolve_modern_coord,
+    _taxon_parts,
     figure_records_from_matches,
     geology_contexts_from_matches,
     locality_records_from_geology,
@@ -239,8 +241,6 @@ class TestRunOutput:
         dict → json.dumps → json.loads → Pydantic again. Each step
         must preserve all data; if any field is silently dropped on
         one step, this catches it."""
-        from rlpe.converters import run_output_from_provenance
-
         prov = self._provenance()
         out = run_output_from_provenance(prov, [_make_match()])
         # out is a dict, not a RunOutput
@@ -487,8 +487,6 @@ class TestProductDataPackage:
         """'cf. species' (no genus) must not produce genus='cf.'; the
         parser must refuse to invent a genus from a qualifier token.
         """
-        from rlpe.converters import _taxon_parts
-
         assert _taxon_parts("cf. species") == {
             "genus": None,
             "specific_epithet": None,
@@ -500,11 +498,9 @@ class TestProductDataPackage:
         distinct SampleRecord entries. The earlier code deduped on
         sample_id alone, which silently dropped the second paper.
         """
-        from dataclasses import replace as _replace
-
         snippet = "Sample PR-SB26 (early Cretaceous)."
-        m1 = _replace(_make_match(), caption_snippet=snippet, metadata={})
-        m2 = _replace(_make_match(), paper_id="paper-2", caption_snippet=snippet, metadata={})
+        m1 = replace(_make_match(), caption_snippet=snippet, metadata={})
+        m2 = replace(_make_match(), paper_id="paper-2", caption_snippet=snippet, metadata={})
         samples = sample_records_from_matches([m1, m2])
         assert len(samples) == 2
         paper_ids = {s["paper_id"] for s in samples}
@@ -515,15 +511,13 @@ class TestProductDataPackage:
         """Two papers both reporting 'Italy' at (45.0, 10.0) must
         produce two distinct LocalityRecord entries.
         """
-        from dataclasses import replace as _replace
-
         meta = {
             "geology_links": [
                 {"locality": "Italy", "latitude": 45.0, "longitude": 10.0}
             ]
         }
-        m1 = _replace(_make_match(), metadata=meta)
-        m2 = _replace(_make_match(), paper_id="paper-2", metadata=meta)
+        m1 = replace(_make_match(), metadata=meta)
+        m2 = replace(_make_match(), paper_id="paper-2", metadata=meta)
         locs = locality_records_from_geology([m1, m2])
         assert len(locs) == 2
         assert {l["locality_id"] for l in locs} == {locs[0]["locality_id"]} ^ {locs[1]["locality_id"]}
@@ -535,8 +529,6 @@ class TestProductDataPackage:
         used directly. The dedup key still uses the legacy value when
         present so the key and the record agree.
         """
-        from rlpe.converters import _resolve_modern_coord
-
         assert _resolve_modern_coord(1.0, 2.0) == 1.0  # modern wins
         assert _resolve_modern_coord(None, 2.0) == 2.0  # legacy falls through
         assert _resolve_modern_coord(1.0, None) == 1.0  # modern only
@@ -550,9 +542,7 @@ class TestProductDataPackage:
         be content-derived only. Re-ordering the matches must not
         change the set of warning_ids.
         """
-        from dataclasses import replace as _replace
-
-        m1 = _replace(
+        m1 = replace(
             _make_match(),
             figure_id="fig_1",
             panel_id="1",
@@ -560,7 +550,7 @@ class TestProductDataPackage:
             panel_path=None,
             bbox=None,
         )
-        m2 = _replace(
+        m2 = replace(
             _make_match(),
             figure_id="fig_2",
             panel_id="2",
@@ -580,8 +570,6 @@ class TestProductDataPackage:
         are coerced to None so downstream consumers do not have to
         distinguish between "" and missing.
         """
-        from dataclasses import replace as _replace
-
         meta = {
             "figure_number": "   ",
             "figure_type": "",
@@ -589,7 +577,7 @@ class TestProductDataPackage:
             "image_path": " ",
             "bbox": None,
         }
-        m = _replace(_make_match(), metadata=meta)
+        m = replace(_make_match(), metadata=meta)
         figs = figure_records_from_matches([m])
         assert len(figs) == 1
         f = figs[0]
@@ -603,17 +591,13 @@ class TestProductDataPackage:
         run must emit a single ``paleocoord_backend_missing`` warning
         so the empty list is not mistaken for an oversight.
         """
-        from dataclasses import replace as _replace
-        from rlpe.schema_models import ProvenanceRecord as _Prov
-        from rlpe.provenance.stamp import build_provenance as _bp
-
         meta = {
             "geology_links": [
                 {"locality": "Italy", "latitude": 45.0, "longitude": 10.0}
             ]
         }
-        m = _replace(_make_match(), metadata=meta)
-        prov = _Prov(**_bp().to_dict())
+        m = replace(_make_match(), metadata=meta)
+        prov = ProvenanceRecord(**build_provenance().to_dict())
         out = run_output_from_provenance(prov, [m])
         codes = [w["code"] for w in out["warnings"]]
         assert "paleocoord_backend_missing" in codes
@@ -623,12 +607,8 @@ class TestProductDataPackage:
         """When no localities exist the empty paleo_coordinates list is
         expected and we do not emit a noisy warning.
         """
-        from dataclasses import replace as _replace
-        from rlpe.schema_models import ProvenanceRecord as _Prov
-        from rlpe.provenance.stamp import build_provenance as _bp
-
-        m = _replace(_make_match(), metadata={})
-        prov = _Prov(**_bp().to_dict())
+        m = replace(_make_match(), metadata={})
+        prov = ProvenanceRecord(**build_provenance().to_dict())
         out = run_output_from_provenance(prov, [m])
         codes = [w["code"] for w in out["warnings"]]
         assert "paleocoord_backend_missing" not in codes
