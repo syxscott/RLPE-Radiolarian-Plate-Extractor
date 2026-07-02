@@ -20,7 +20,12 @@ logger = logging.getLogger(__name__)
 # evaluation harness and unit tests can import it without dragging in
 # the torch/gemma/paddleocr chain pulled by the full pipeline.
 
-from .association import _label_in_pair_lookup, _normalize_panel_label, is_valid_panel_label, match_panels
+from .association import (
+    _label_in_pair_lookup,
+    _normalize_panel_label,
+    is_valid_panel_label,
+    match_panels,
+)
 from .config import PipelineConfig
 from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
 from .geology_extraction import build_knowledge_graph, link_species_to_geology
@@ -28,6 +33,12 @@ from .grobid import GrobidClient, parse_paper_metadata_from_tei
 from .layout import choose_best_page, detect_figure_regions, extract_figure_number, render_pdf_pages
 from .m3_engine import CaptionPair, M3Engine, PanelBox, PanelMatch
 from .ocr import OCRBackend, normalize_ocr_tokens
+from .range_chart_extractor import (
+    RangeChartResult,
+    build_geology_links_for_panels,
+    classify_figure_type,
+    extract_range_chart,
+)
 from .scale_bar import (
     detect_scale_bar_length_px,
     extract_scale_from_caption,
@@ -37,12 +48,6 @@ from .scale_bar import (
 from .segmentation import PanelSegmenter, SegmentationConfig
 from .taxon import TaxonRecognizer
 from .text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
-from .range_chart_extractor import (
-    RangeChartResult,
-    build_geology_links_for_panels,
-    classify_figure_type,
-    extract_range_chart,
-)
 from .types import (
     CaptionEntity,
     CaptionRecord,
@@ -307,7 +312,6 @@ class RadiolarianPipeline:
         location name extraction. This method mostly ensures the
         map figure isn't silently dropped by the pipeline.
         """
-        from .geo_coords import parse_coordinate
         loc_names: list[str] = []
         coords: list[tuple[float, float, str]] = []
         # Lightweight location-name extraction: capitalized
@@ -603,11 +607,12 @@ class RadiolarianPipeline:
                         referenced.add(_os.path.basename(p))
                 # Walk the raw JSON for all image elements
                 kids = od_raw.get("kids") or []
-                images_dir = self.config.resolved_output_dir() / "od_output" / target.paper_id if hasattr(target, "paper_id") else None
+                images_dir = None
                 # images_dir is constructed by the OD extractor under
-                # <output_dir>/od_output/<paper_id>/<pdf_stem>_images/.
-                # We don't know paper_id from the target pair here, so
-                # derive it from the figures' image paths.
+                # <output_dir>/od_output/<paper_id>/<pdf_stem>_images.
+                # Derive it from the figures' image paths because this
+                # helper is nested inside run-level logic and does not
+                # own a self/config reference.
                 if figures and figures[0].image_paths:
                     sample = figures[0].image_paths[0]
                     # <work>/od_output/<paper_id>/<pdf_stem>_images/imageFileN.png
@@ -641,6 +646,10 @@ class RadiolarianPipeline:
                     sample = figures[0].image_paths[0]
                     # <work>/od_output/<paper_id>/<pdf_stem>_images/imageFileN.png
                     images_dir = _os.path.dirname(sample)
+                    png_files = sorted(
+                        f for f in _os.listdir(images_dir)
+                        if f.lower().endswith((".png", ".jpg", ".jpeg"))
+                    )
                     for i, fname in enumerate(png_files):
                         fpath = _os.path.join(images_dir, fname)
                         try:
@@ -1048,8 +1057,8 @@ class RadiolarianPipeline:
         """
         from .range_chart_extractor import (
             BiozoneRecord,
-            RangeChartSection,
             RangeChartResult,
+            RangeChartSection,
             SpeciesRange,
         )
         # Index range-chart results by paper_id.

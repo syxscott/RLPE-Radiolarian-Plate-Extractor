@@ -43,7 +43,6 @@ from rlpe.opendataloader_extractor import (  # noqa: E402
     _resolve_image_paths,
 )
 
-
 # ---------------------------------------------------------------------------
 # _looks_like_fig_caption: body-text rejection
 # ---------------------------------------------------------------------------

@@ -24,8 +24,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlpe.opendataloader_extractor import (  # noqa: E402
-    _find_plate_captions,
     _PLATE_CAPTION_RE,
+    _find_plate_captions,
 )
 
 
@@ -178,7 +178,7 @@ def test_real_bandini_od_output_detects_plates_1_through_9():
         f"Plate 8 must be detected in real bandini2011 OD JSON; got {detected_numbers}"
     )
     assert 9 in detected_numbers, (
-        f"Plate 9 must be detected in real bandini2011 OD JSON; got {detured_numbers}"
+        f"Plate 9 must be detected in real bandini2011 OD JSON; got {detected_numbers}"
     )
 
 
