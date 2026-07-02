@@ -111,15 +111,23 @@ class TestLLMFirstExtract:
         result = self._run_with_mock_backend(mock_backend)
         assert result is None
 
-    def test_returns_none_for_single_panel(self):
-        """Fewer than 2 panels should trigger fallback."""
+    def test_returns_single_panel_when_no_caption_additions(self):
+        """A single-panel LLM result is returned as-is (1 panel, no
+        fallback to None) when the caption parser does not find more
+        panels than the LLM returned. Pre-fix behaviour was to return
+        None on len(llm_results) < 2; the v21 hybrid gate replaced
+        that strict "needs ≥2 panels" requirement with a more lenient
+        "needs fallback if the LLM truncated its output" rule."""
         mock_backend = MagicMock()
         mock_backend.infer_panel.return_value = {
             "fallback_used": False,
             "panels": [{"label": "A", "species": "Test sp.", "confidence": 0.9}],
         }
         result = self._run_with_mock_backend(mock_backend)
-        assert result is None
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["panel_id"] == "A"
+        assert result[0]["species"] == "Test sp."
 
     def test_returns_match_results_on_success(self):
         """Successful LLM extraction returns MatchResult dicts."""
