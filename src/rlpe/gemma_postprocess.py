@@ -282,17 +282,26 @@ def apply_gemma_to_matches(
         # ``RadiolarianPipeline._matches_have_fallback_error`` to misclassify
         # a successful call as failed, triggering unnecessary fallback.
         actually_failed = bool(out.get("fallback_used")) or gemma_conf < conf_threshold
+        # Telemetry (cost / request id / model version / token usage) MUST be
+        # propagated on every call that returns them, success or failure.
+        # The previous version only stamped them inside the failure branch,
+        # which silently hid MiniMax usage in successful runs and made
+        # /system/llm-status report zero cost on the default MiniMax path.
+        # error / error_type remain gated by ``actually_failed`` (Bug #3
+        # regression guard).
+        if out.get("request_id"):
+            match.metadata["MiniMax_request_id"] = str(out.get("request_id"))
+        if out.get("cost_cny") is not None:
+            match.metadata["MiniMax_cost_cny"] = float(out.get("cost_cny"))
+        if out.get("model_version"):
+            match.metadata["MiniMax_model_version"] = str(out.get("model_version"))
+        if isinstance(out.get("usage"), dict):
+            match.metadata["MiniMax_usage"] = dict(out.get("usage"))
         if actually_failed:
             if out.get("error"):
                 match.metadata["gemma_error"] = str(out.get("error"))
             if out.get("error_type"):
                 match.metadata["gemma_error_type"] = str(out.get("error_type"))
-            if out.get("request_id"):
-                match.metadata["MiniMax_request_id"] = str(out.get("request_id"))
-            if out.get("cost_cny") is not None:
-                match.metadata["MiniMax_cost_cny"] = float(out.get("cost_cny"))
-            if out.get("model_version"):
-                match.metadata["MiniMax_model_version"] = str(out.get("model_version"))
 
         if gemma_conf >= conf_threshold and not out.get("fallback_used"):
             match.panel_id = out.get("label") or match.panel_id
