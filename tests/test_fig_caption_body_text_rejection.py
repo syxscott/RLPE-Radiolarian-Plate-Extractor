@@ -26,6 +26,7 @@ Three related bugs surfaced after v19:
 These tests lock down the fixes: paper_id-scoped JSON lookup,
 paper_id-scoped images_dir, and body-text rejection.
 """
+
 from __future__ import annotations
 
 import json
@@ -80,9 +81,7 @@ def test_accepts_real_caption_starting_with_schematic():
 def test_accepts_real_caption_with_stratigraphic():
     """Real captions like 'Fig. 1. Stratigraphic ranges...' must still
     pass."""
-    assert _looks_like_fig_caption(
-        "Fig. 1. Stratigraphic ranges of radiolarian families."
-    )
+    assert _looks_like_fig_caption("Fig. 1. Stratigraphic ranges of radiolarian families.")
 
 
 def test_rejects_short_body_text():
@@ -106,14 +105,14 @@ def _write_paper_json(paper_dir: Path, paper_id: str, num_images: int = 3) -> No
     # Write the OD JSON with N image elements per page.
     kids = []
     for i in range(1, num_images + 1):
-        kids.append({
-            "type": "image",
-            "id": i,
-            "page number": i,
-        })
-    (paper_dir / f"{paper_id}.json").write_text(
-        json.dumps({"kids": kids})
-    )
+        kids.append(
+            {
+                "type": "image",
+                "id": i,
+                "page number": i,
+            }
+        )
+    (paper_dir / f"{paper_id}.json").write_text(json.dumps({"kids": kids}))
 
 
 def test_multi_paper_collect_scoped_by_paper_id():
@@ -178,9 +177,7 @@ def test_resolve_image_paths_with_paper_id_finds_correct_dir():
         # bbbb's imageFile5.png, NOT aaaa's imageFile5.png (which
         # doesn't exist — aaaa only has 3 images).
         candidates = [{"page number": 5, "id": 5}]
-        paths = _resolve_image_paths(
-            candidates, out, paper_id="bbbb"
-        )
+        paths = _resolve_image_paths(candidates, out, paper_id="bbbb")
         assert len(paths) == 1
         assert "bbbb_images" in paths[0]
         assert paths[0].endswith("imageFile5.png")

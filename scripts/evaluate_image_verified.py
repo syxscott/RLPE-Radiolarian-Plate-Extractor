@@ -58,6 +58,7 @@ Output JSON schema:
   },
 }
 """
+
 from __future__ import annotations
 
 import argparse
@@ -76,9 +77,7 @@ from rlpe.evaluation.gold import GoldPanel, load_gold  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
-def find_panel_crop(
-    panels_root: Path, paper_id: str, figure_id: str, panel_id: str
-) -> Path | None:
+def find_panel_crop(panels_root: Path, paper_id: str, figure_id: str, panel_id: str) -> Path | None:
     """Locate the panel crop PNG. Convention: panels-root/{paper_id}/{figure_id}/panel_{panel_id}.png.
 
     Falls back to glob if exact match not found (some pipelines pad
@@ -211,14 +210,9 @@ def evaluate_image_verified(
         n_gold = len(gold_list)
         n_pred = len(pred_list)
         # Build pred lookup keyed on (figure_id, panel_id)
-        pred_keys = {
-            (p.get("figure_id", ""), str(p.get("panel_id", "")))
-            for p in pred_list
-        }
+        pred_keys = {(p.get("figure_id", ""), str(p.get("panel_id", ""))) for p in pred_list}
         n_string_match = sum(
-            1
-            for g in gold_list
-            if (g.figure_id or "", str(g.panel_id)) in pred_keys
+            1 for g in gold_list if (g.figure_id or "", str(g.panel_id)) in pred_keys
         )
         # Image-verified: EasyOCR each panel's crop, compare to gold panel_id
         n_image_verified = 0
@@ -253,11 +247,7 @@ def evaluate_image_verified(
             "n_ocr_coverage": n_ocr_coverage,
             "string_match_panel_id_rate": str_match_rate,
             "image_verified_panel_id_rate": iv_rate,
-            "gap_pp": (
-                (str_match_rate - iv_rate) * 100
-                if iv_rate is not None
-                else None
-            ),
+            "gap_pp": ((str_match_rate - iv_rate) * 100 if iv_rate is not None else None),
             "blocked": n_checked == 0,
         }
 

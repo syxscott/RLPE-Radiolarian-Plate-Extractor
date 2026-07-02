@@ -10,6 +10,7 @@ These tests cover both the rules that DO apply and the rules that
 DO NOT apply (adversarial regression tests so a future patch that
 re-introduces aff./cf. stripping will fail loudly).
 """
+
 from __future__ import annotations
 
 import sys

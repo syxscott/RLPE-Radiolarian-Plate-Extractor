@@ -511,16 +511,14 @@ class TestProductDataPackage:
         """Two papers both reporting 'Italy' at (45.0, 10.0) must
         produce two distinct LocalityRecord entries.
         """
-        meta = {
-            "geology_links": [
-                {"locality": "Italy", "latitude": 45.0, "longitude": 10.0}
-            ]
-        }
+        meta = {"geology_links": [{"locality": "Italy", "latitude": 45.0, "longitude": 10.0}]}
         m1 = replace(_make_match(), metadata=meta)
         m2 = replace(_make_match(), paper_id="paper-2", metadata=meta)
         locs = locality_records_from_geology([m1, m2])
         assert len(locs) == 2
-        assert {l["locality_id"] for l in locs} == {locs[0]["locality_id"]} ^ {locs[1]["locality_id"]}
+        assert {l["locality_id"] for l in locs} == {locs[0]["locality_id"]} ^ {
+            locs[1]["locality_id"]
+        }
 
     def test_modern_coord_prefers_modern_over_legacy(self):
         """When both modern_latitude and legacy latitude are present,
@@ -563,7 +561,9 @@ class TestProductDataPackage:
         ids_f = sorted(w["warning_id"] for w in forward)
         ids_r = sorted(w["warning_id"] for w in reversed_)
         assert ids_f == ids_r
-        assert len(ids_f) >= 4  # missing_species + missing_panel_image + missing_bbox + missing_printed_panel_id per panel
+        assert (
+            len(ids_f) >= 4
+        )  # missing_species + missing_panel_image + missing_bbox + missing_printed_panel_id per panel
 
     def test_figure_records_coerce_blank_strings_to_none(self):
         """Blank / whitespace figure_number / caption / caption_source
@@ -591,11 +591,7 @@ class TestProductDataPackage:
         run must emit a single ``paleocoord_backend_missing`` warning
         so the empty list is not mistaken for an oversight.
         """
-        meta = {
-            "geology_links": [
-                {"locality": "Italy", "latitude": 45.0, "longitude": 10.0}
-            ]
-        }
+        meta = {"geology_links": [{"locality": "Italy", "latitude": 45.0, "longitude": 10.0}]}
         m = replace(_make_match(), metadata=meta)
         prov = ProvenanceRecord(**build_provenance().to_dict())
         out = run_output_from_provenance(prov, [m])
@@ -720,9 +716,11 @@ class TestProductDataPackage:
         """
         assert SCHEMA_VERSION == "1.0.0"
         prov = ProvenanceRecord(**build_provenance().to_dict())
-        ro = validate_run_output({
-            "schema_version": SCHEMA_VERSION,
-            "provenance": prov.model_dump(),
-            "panels": [],
-        })
+        ro = validate_run_output(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "provenance": prov.model_dump(),
+                "panels": [],
+            }
+        )
         assert ro.schema_version == "1.0.0"

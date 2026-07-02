@@ -6,6 +6,7 @@ by CI. Each test case corresponds to a (pred, gold) pair actually observed
 in the 9-paper corpus — see :mod:`rlpe.ocr_corrections` for the source
 derivation.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -22,6 +23,7 @@ from rlpe.ocr_corrections import (
 # apply_corrections: empty / None input
 # ---------------------------------------------------------------------------
 
+
 def test_apply_corrections_none_returns_empty():
     assert apply_corrections(None) == ""
 
@@ -37,6 +39,7 @@ def test_apply_corrections_whitespace_only_returns_empty():
 # ---------------------------------------------------------------------------
 # apply_corrections: paper-specific whitelist (hollis2006)
 # ---------------------------------------------------------------------------
+
 
 def test_hollis_gloss_stripped():
     """LLM emits the verbose "(cf. Theocosphaerella rotunda)" gloss on
@@ -75,6 +78,7 @@ def test_hollis_foreman_suffix_dropped():
 # apply_corrections: paper-specific whitelist (feng2007)
 # ---------------------------------------------------------------------------
 
+
 def test_feng_trilonche_pseudo_restored():
     """LLM drops the "pseudo-" prefix on Trilonche pseudocimelia."""
     pred = "Trilonche cimelia"
@@ -85,6 +89,7 @@ def test_feng_trilonche_pseudo_restored():
 # apply_corrections: paper-specific whitelist (beccaro2006)
 # ---------------------------------------------------------------------------
 
+
 def test_beccaro_pseudoeucyrtis_group_b_restored():
     """Parser drops the group letter " B" on Pseudoeucyrtis."""
     pred = "Pseudoeucyrtis sp."
@@ -94,6 +99,7 @@ def test_beccaro_pseudoeucyrtis_group_b_restored():
 # ---------------------------------------------------------------------------
 # apply_corrections: global substring corrections
 # ---------------------------------------------------------------------------
+
 
 def test_global_archaeodictyomitracf_split():
     """LLM fuses 'cf.' into the genus token."""
@@ -113,6 +119,7 @@ def test_global_transhsuumcf_split():
 # apply_corrections: passthrough / no-op cases
 # ---------------------------------------------------------------------------
 
+
 def test_passthrough_when_no_rule_fires():
     """A normal pred string with no known OCR error returns unchanged."""
     pred = "Pseudodictyomitra sp."
@@ -131,9 +138,11 @@ def test_unknown_paper_id_skips_whitelist():
 # API surface / introspection
 # ---------------------------------------------------------------------------
 
+
 def test_corrections_dict_is_json_serialisable():
     """The CORRECTIONS dict must round-trip through json.dumps."""
     import json
+
     encoded = json.dumps(CORRECTIONS)
     decoded = json.loads(encoded)
     assert decoded == CORRECTIONS
@@ -143,10 +152,8 @@ def test_paper_whitelist_is_json_serialisable():
     """The PAPER_WHITELIST values are lists of (str, str) tuples — verify
     the JSON-friendly form (lists of [src, dst] pairs) round-trips."""
     import json
-    payload = {
-        pid: [[src, dst] for src, dst in rules]
-        for pid, rules in PAPER_WHITELIST.items()
-    }
+
+    payload = {pid: [[src, dst] for src, dst in rules] for pid, rules in PAPER_WHITELIST.items()}
     encoded = json.dumps(payload)
     decoded = json.loads(encoded)
     assert decoded == payload

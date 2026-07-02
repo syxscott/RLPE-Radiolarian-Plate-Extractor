@@ -13,6 +13,7 @@ Rather than wait, this script validates the routing fix by:
    what the routing fix achieves (figure_id stability) and what
    still requires a full pipeline re-run (species assignment).
 """
+
 from __future__ import annotations
 
 import json
@@ -65,13 +66,15 @@ def main() -> int:
         for line in f:
             d = json.loads(line)
             if d.get("paper_id") not in ("19cd1def9ef08554", "cf16f28a9601baf3"):
-                preds.append({
-                    "paper_id": d["paper_id"],
-                    "figure_id": d["figure_id"],
-                    "panel_id": d["panel_id"],
-                    "species": d["species"],
-                    "metadata": d.get("metadata") or {},
-                })
+                preds.append(
+                    {
+                        "paper_id": d["paper_id"],
+                        "figure_id": d["figure_id"],
+                        "panel_id": d["panel_id"],
+                        "species": d["species"],
+                        "metadata": d.get("metadata") or {},
+                    }
+                )
 
     # Patch pl09 species via regex parser (caption was truncated in v19)
     PL09_FIG = "od_plate_4f1bf415485765b8_p026_pl09"

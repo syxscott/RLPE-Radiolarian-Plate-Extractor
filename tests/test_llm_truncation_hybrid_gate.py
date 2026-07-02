@@ -18,6 +18,7 @@ guard against degenerate regex over-matching.
 These tests lock in the gate's new behaviour via the helper functions
 that determine ``pair_lookup`` and the gate's boolean output.
 """
+
 from __future__ import annotations
 
 import sys
@@ -56,9 +57,7 @@ def _gate(llm_results, pair_lookup):
     missing_species = [r for r in llm_results if not r.get("species")]
     caption_has_more = bool(pair_lookup) and len(pair_lookup) > len(llm_results)
     return bool(
-        missing_species
-        or len(llm_results) < 2
-        or (caption_has_more and len(pair_lookup) <= 100)
+        missing_species or len(llm_results) < 2 or (caption_has_more and len(pair_lookup) <= 100)
     )
 
 
@@ -104,9 +103,7 @@ class TestHybridGate:
         runaway (wever2006 produced 1918-panel pair_lookup once)."""
         llm = _make_llm_results(19, with_species=True)
         pairs = _make_pair_lookup(1918)  # degenerate
-        assert _gate(llm, pairs) is False, (
-            "Gate must bound caption_has_more by pair_lookup <= 100"
-        )
+        assert _gate(llm, pairs) is False, "Gate must bound caption_has_more by pair_lookup <= 100"
 
     def test_boundary_100_panels_fires(self):
         """Boundary check: pair_lookup of exactly 100 panels, LLM has 19.

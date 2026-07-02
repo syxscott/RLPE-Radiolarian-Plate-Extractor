@@ -70,7 +70,9 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
                 latitude=g.get("latitude"),
                 longitude=g.get("longitude"),
                 modern_latitude=_resolve_modern_coord(g.get("modern_latitude"), g.get("latitude")),
-                modern_longitude=_resolve_modern_coord(g.get("modern_longitude"), g.get("longitude")),
+                modern_longitude=_resolve_modern_coord(
+                    g.get("modern_longitude"), g.get("longitude")
+                ),
                 paleo_latitude=g.get("paleo_latitude"),
                 paleo_longitude=g.get("paleo_longitude"),
                 plate_id=g.get("plate_id"),
@@ -144,7 +146,6 @@ def paper_metadata_from_internal(pm: InternalPaperMetadata | None) -> PaperMetad
         source=pm.source,
         confidence=confidence_val,
     )
-
 
 
 def _stable_id(prefix: str, *parts: Any) -> str:
@@ -347,10 +348,10 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
     caption_panel_id = meta.get("caption_panel_id") or match.panel_id
     printed_panel_id = meta.get("printed_panel_id") or meta.get("image_panel_id")
     canonical_panel_id = meta.get("canonical_panel_id") or match.panel_id
-    panel_id_source = meta.get("panel_id_source") or (
-        "image_ocr" if printed_panel_id else "legacy"
+    panel_id_source = meta.get("panel_id_source") or ("image_ocr" if printed_panel_id else "legacy")
+    taxon_id = (
+        _stable_id("taxon", _normalise_species_name(match.species)) if match.species else None
     )
-    taxon_id = _stable_id("taxon", _normalise_species_name(match.species)) if match.species else None
     geology_context_id = None
     geos = meta.get("geology_links") or []
     if geos and isinstance(geos[0], dict):
@@ -404,9 +405,7 @@ def _paleocoord_missing_warning(locality_dump: list[dict[str, Any]]) -> dict[str
     if not locality_dump:
         return None
     return {
-        "warning_id": _stable_id(
-            "warn", "paleocoord_backend_missing", str(len(locality_dump))
-        ),
+        "warning_id": _stable_id("warn", "paleocoord_backend_missing", str(len(locality_dump))),
         "level": "warning",
         "code": "paleocoord_backend_missing",
         "message": (
@@ -525,9 +524,7 @@ def figure_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
             page_index=meta.get("page_index"),
             caption=_blank_to_none(m.caption_snippet),
             caption_source=_blank_to_none(meta.get("caption_source")),
-            image_path=_blank_to_none(
-                meta.get("image_path") or meta.get("figure_image_path")
-            ),
+            image_path=_blank_to_none(meta.get("image_path") or meta.get("figure_image_path")),
             bbox=list(meta.get("bbox")) if isinstance(meta.get("bbox"), list) else None,
             scale_bar=_scale_bar_from_meta(meta),
             panel_ids=list(meta.get("panel_ids") or []),
@@ -636,7 +633,9 @@ def geology_contexts_from_matches(matches: list[MatchResult]) -> list[dict[str, 
                     g.get("locality"),
                     g.get("latitude"),
                     g.get("longitude"),
-                ) if g.get("locality") else None,
+                )
+                if g.get("locality")
+                else None,
                 evidence_text=g.get("evidence_text"),
                 confidence=float(g.get("confidence", 0.0) or 0.0),
             )
@@ -678,7 +677,9 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
                 region=None,
                 section_name=g.get("section_title"),
                 modern_latitude=_resolve_modern_coord(g.get("modern_latitude"), g.get("latitude")),
-                modern_longitude=_resolve_modern_coord(g.get("modern_longitude"), g.get("longitude")),
+                modern_longitude=_resolve_modern_coord(
+                    g.get("modern_longitude"), g.get("longitude")
+                ),
                 coordinate_source="caption" if g.get("latitude") is not None else None,
                 geocoding_source=None,
                 confidence=float(g.get("confidence", 0.0) or 0.0),
@@ -694,9 +695,7 @@ def warnings_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
             # The warning_id is content-derived only (no loop index) so
             # it is stable when matches are re-ordered. Two runs over
             # the same logical panel emit the same warning_id.
-            warning_id = _stable_id(
-                "warn", m.paper_id, m.figure_id, m.panel_id, code
-            )
+            warning_id = _stable_id("warn", m.paper_id, m.figure_id, m.panel_id, code)
             wr = WarningRecord(
                 warning_id=warning_id,
                 level="warning",

@@ -70,9 +70,7 @@ if env_path.exists():
                     continue
                 # Decide whether to override an existing env var.
                 should_override = (
-                    _force_override
-                    or key in _RLPE_PROJECT_OVERRIDE_KEYS
-                    or key not in os.environ
+                    _force_override or key in _RLPE_PROJECT_OVERRIDE_KEYS or key not in os.environ
                 )
                 if should_override:
                     os.environ[key] = value

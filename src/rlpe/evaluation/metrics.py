@@ -187,8 +187,17 @@ def _norm_species(s: str | None) -> str:
     #    It also stops at author-initial tokens so author-citation
     #    trinomials like ``Genus species cf. S. excelsa`` are preserved.
     _TRINOMIAL_STOP = {
-        "cf", "aff", "sp", "spp", "indet", "gr", "group",
-        "subsp", "var", "f", "nom",
+        "cf",
+        "aff",
+        "sp",
+        "spp",
+        "indet",
+        "gr",
+        "group",
+        "subsp",
+        "var",
+        "f",
+        "nom",
     }
 
     def _has_trailing_uncertainty(token: str) -> bool:
@@ -202,9 +211,7 @@ def _norm_species(s: str | None) -> str:
         if bare in _TRINOMIAL_STOP or _has_trailing_uncertainty(p):
             trinomial_safe = False
             break
-    if len(parts) >= 3 and trinomial_safe and all(
-        p and p[0].islower() for p in parts[1:]
-    ):
+    if len(parts) >= 3 and trinomial_safe and all(p and p[0].islower() for p in parts[1:]):
         s = " ".join(parts[:2])
     # 4) Spelling variants: "Archaeo" / "Archeo" prefix — the two
     #    spellings are interchangeable in informal usage; canonicalise

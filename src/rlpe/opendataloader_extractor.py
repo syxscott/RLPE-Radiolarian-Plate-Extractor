@@ -138,9 +138,7 @@ class OpenDataLoaderExtractor:
             # location maps, paleogeographic maps, range charts, and
             # lithologic columns that the downstream pipeline needs
             # even when no embedded image was paired.
-            figures = list(figures) + self._extract_unpaired_captions(
-                data, figures, out, paper_id
-            )
+            figures = list(figures) + self._extract_unpaired_captions(data, figures, out, paper_id)
             sections = _extract_fulltext_sections(data)
             paper_metadata = _extract_paper_metadata_from_json(data, sections)
             # OCR caption fallback: many PDFs (Pouille 2014, Wever 2006)
@@ -395,8 +393,7 @@ class OpenDataLoaderExtractor:
                 continue
             # Skip if already represented (substring check on the
             # preview handles whitespace mismatches).
-            if any(text[:60] in ec or ec in text[:60]
-                   for ec in existing_caption_snippets):
+            if any(text[:60] in ec or ec in text[:60] for ec in existing_caption_snippets):
                 continue
             page = int(cap.get("page number", 0))
             # Image-selection strategy:
@@ -436,17 +433,14 @@ class OpenDataLoaderExtractor:
                         score = 1.0 / (1.0 + abs(offset))
                         # Slight bonus for a large image, since
                         # appendix figures tend to be big plate pages.
-                        area = (
-                            int((img.get("bounding box") or [0, 0, 0, 0])[2] or 0)
-                            * int((img.get("bounding box") or [0, 0, 0, 0])[3] or 0)
+                        area = int((img.get("bounding box") or [0, 0, 0, 0])[2] or 0) * int(
+                            (img.get("bounding box") or [0, 0, 0, 0])[3] or 0
                         )
                         score *= 1.0 + area / 1_000_000
                         candidates.append((score, img))
                 if candidates:
                     chosen_img = max(candidates, key=lambda c: c[0])[1]
-            image_paths = _resolve_image_paths(
-                [chosen_img] if chosen_img else [], output_dir
-            )
+            image_paths = _resolve_image_paths([chosen_img] if chosen_img else [], output_dir)
             plate_imgs = [chosen_img] if chosen_img else []
             merged_bbox = _union_bbox(plate_imgs) if plate_imgs else None
             rescued.append(
@@ -652,17 +646,16 @@ def _rescue_unmatched_captions(
             continue
         page = int(cap.get("page number", 0))
         existing_snippets.add(text[:60])
-        rescued.append(FigureCaptionPair(
-            figure_id=(
-                f"od_fig_{paper_id}_p{page:03d}_"
-                f"{len(pairs) + len(rescued) + 1:02d}"
-            ),
-            page_number=page,
-            image_paths=[],
-            caption_text=text,
-            merged_bbox=None,
-            metadata={"rescued_caption": True},
-        ))
+        rescued.append(
+            FigureCaptionPair(
+                figure_id=(f"od_fig_{paper_id}_p{page:03d}_{len(pairs) + len(rescued) + 1:02d}"),
+                page_number=page,
+                image_paths=[],
+                caption_text=text,
+                merged_bbox=None,
+                metadata={"rescued_caption": True},
+            )
+        )
     if rescued:
         logger.info(
             "_rescue_unmatched_captions: created %d Fig. caption stub(s) "
@@ -780,10 +773,12 @@ def _rescue_missing_images(
                 )
                 # The image is now used — mark it so a later pair
                 # doesn't try to grab the same image.
-                rescued_used_keys.add((
-                    int(best_img.get("page number", 0) or 0),
-                    int(best_img.get("id", -1) or -1),
-                ))
+                rescued_used_keys.add(
+                    (
+                        int(best_img.get("page number", 0) or 0),
+                        int(best_img.get("id", -1) or -1),
+                    )
+                )
         out_pairs.append(p)
     return out_pairs
 
@@ -1215,10 +1210,7 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # caption parser can still pick up the body text.
     expanded_kids: list[dict[str, Any]] = []
     for _kid in kids:
-        if (
-            isinstance(_kid, dict)
-            and _kid.get("type") == "list"
-        ):
+        if isinstance(_kid, dict) and _kid.get("type") == "list":
             _list_page = _kid.get("page number", 0)
             _list_items = _kid.get("list items") or []
             _plate_match_count = 0
@@ -1227,20 +1219,19 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     continue
                 _txt = (_li.get("content") or "").strip()
                 if _txt and _PLATE_CAPTION_RE.match(_txt):
-                    expanded_kids.append({
-                        "type": "paragraph",
-                        "page number": _list_page,
-                        "content": _txt,
-                    })
+                    expanded_kids.append(
+                        {
+                            "type": "paragraph",
+                            "page number": _list_page,
+                            "content": _txt,
+                        }
+                    )
                     _plate_match_count += 1
             # Drop the original list ONLY when it has exactly one
             # list_item AND that one is the Plate N header (would
             # otherwise duplicate the synthetic paragraph's text).
             # Otherwise keep the list as a sibling.
-            if (
-                len(_list_items) == 1
-                and _plate_match_count == 1
-            ):
+            if len(_list_items) == 1 and _plate_match_count == 1:
                 continue
         expanded_kids.append(_kid)
     for idx, kid in enumerate(expanded_kids):
@@ -1501,7 +1492,8 @@ def _looks_like_fig_caption(content: str) -> bool:
     # apparatus").
     first_words = content.split(None, 3)[:3]
     if len(first_words) >= 3 and first_words[2].lower() in (
-        "photograph", "photographs",
+        "photograph",
+        "photographs",
     ):
         return False
     return True
@@ -1698,9 +1690,7 @@ def _resolve_image_paths(
     # not the relative index within the ``images`` argument (which
     # may be a subset). The full walk is recovered via
     # ``_collect_images_from_output_dir``.
-    all_images = _collect_images_from_output_dir(
-        output_dir, images_dir, paper_id=paper_id
-    )
+    all_images = _collect_images_from_output_dir(output_dir, images_dir, paper_id=paper_id)
     # Use (page, id) as the key — ``id(img)`` is the Python object
     # identity, which is NOT stable across re-reads of the JSON
     # (each ``json.load`` produces fresh dict objects). (page, id)

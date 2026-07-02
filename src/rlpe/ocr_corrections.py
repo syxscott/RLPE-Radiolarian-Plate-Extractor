@@ -98,12 +98,18 @@ _CORRECTION_FREQ: dict[str, tuple[str, int, str]] = {
     # bandini2011 llm_first (e.g. "Archaeodictyomitracf vulgaris"). We
     # reinsert the missing dot+space so the corrected string matches
     # the gold "X cf. vulgaris".
-    "Archaeodictyomitracf ": ("Archaeodictyomitra cf. ", 2,
-        "LLM fused 'cf.' into the genus token; restore whitespace+dot"),
-    "Transhsuumcf ": ("Transhsuum cf. ", 1,
+    "Archaeodictyomitracf ": (
+        "Archaeodictyomitra cf. ",
+        2,
+        "LLM fused 'cf.' into the genus token; restore whitespace+dot",
+    ),
+    "Transhsuumcf ": (
+        "Transhsuum cf. ",
+        1,
         "LLM fused 'cf.' into the genus token (single occurrence but "
         "rule-of-three waived — genus-level fused 'cf' is a generic "
-        "LLM artefact, expect to recur on any new paper)"),
+        "LLM artefact, expect to recur on any new paper)",
+    ),
     # Strip the verbose "(cf. <other>)" gloss that the LLM sometimes
     # emits when the gold is the bare group label, e.g.
     # pred="Haliomma gr. b. (cf. Theocosphaerella rotunda)" →
@@ -154,8 +160,7 @@ PAPER_WHITELIST: dict[str, list[tuple[str, str]]] = {
         # 2. Strip the "(cf. Theocosphaerella rotunda)" gloss from the
         #    group-b label so pred "Haliomma gr. b. (cf. T. rotunda)"
         #    matches gold "Haliomma gr. b".
-        ("Haliomma gr. b. (cf. Theocosphaerella rotunda)",
-         "Haliomma gr. b"),
+        ("Haliomma gr. b. (cf. Theocosphaerella rotunda)", "Haliomma gr. b"),
         # 3. LLM dropped the trailing period on "Haliomma gr. b." —
         #    pred "Haliomma gr. b." matches gold "Haliomma gr. b" already
         #    via rstrip(.,;). Listed for completeness.
@@ -201,6 +206,7 @@ PAPER_WHITELIST: dict[str, list[tuple[str, str]]] = {
 # ---------------------------------------------------------------------------
 # apply_corrections
 # ---------------------------------------------------------------------------
+
 
 def _build_correction_regex() -> re.Pattern[str]:
     """Build a longest-first alternation regex from :data:`CORRECTIONS`.
@@ -263,9 +269,7 @@ def apply_corrections(species_str: str | None, paper_id: str | None = None) -> s
                 # same string on feng2007 plates — both must be fixed).
     # Global substring corrections, longest-match first.
     if CORRECTIONS:
-        s = _CORRECTION_RE.sub(
-            lambda m: CORRECTIONS[m.group(0)], s
-        )
+        s = _CORRECTION_RE.sub(lambda m: CORRECTIONS[m.group(0)], s)
     return s
 
 
@@ -274,9 +278,7 @@ def known_corrections() -> list[tuple[str, str, int, str]]:
     :data:`_CORRECTION_FREQ`. Useful for the eval report's "corrections
     applied" footer so reviewers can see which rules fired and why.
     """
-    return [
-        (k, v[0], v[1], v[2]) for k, v in _CORRECTION_FREQ.items()
-    ]
+    return [(k, v[0], v[1], v[2]) for k, v in _CORRECTION_FREQ.items()]
 
 
 def whitelist_for_paper(paper_id: str | None) -> list[tuple[str, str]]:

@@ -20,6 +20,7 @@ not modify the underlying v19 predictions JSONL. If it shows a
 meaningful F1 lift, we can promote the same logic to the matcher
 in src/rlpe/evaluation/metrics.py so future runs benefit automatically.
 """
+
 from __future__ import annotations
 
 import json
@@ -88,13 +89,15 @@ def normalize_predictions(preds: list[dict]) -> list[dict]:
         species = (p.get("species") or "").strip()
         sub_ids = _split_panel_id(str(pid))
         for sid in sub_ids:
-            out.append({
-                "paper_id": p.get("paper_id"),
-                "figure_id": p.get("figure_id"),
-                "panel_id": sid,
-                "species": species,
-                "metadata": p.get("metadata") or {},
-            })
+            out.append(
+                {
+                    "paper_id": p.get("paper_id"),
+                    "figure_id": p.get("figure_id"),
+                    "panel_id": sid,
+                    "species": species,
+                    "metadata": p.get("metadata") or {},
+                }
+            )
     # Second pass: dedup by (figure_id, panel_id) keeping non-empty species
     by_key: dict[tuple, list[dict]] = defaultdict(list)
     for p in out:
@@ -119,13 +122,15 @@ def main() -> int:
             if not line:
                 continue
             d = json.loads(line)
-            preds.append({
-                "paper_id": d.get("paper_id"),
-                "figure_id": d.get("figure_id"),
-                "panel_id": d.get("panel_id"),
-                "species": d.get("species"),
-                "metadata": d.get("metadata") or {},
-            })
+            preds.append(
+                {
+                    "paper_id": d.get("paper_id"),
+                    "figure_id": d.get("figure_id"),
+                    "panel_id": d.get("panel_id"),
+                    "species": d.get("species"),
+                    "metadata": d.get("metadata") or {},
+                }
+            )
     print(f"Loaded {len(preds)} raw predictions")
     preds_norm = normalize_predictions(preds)
     print(f"After normalize: {len(preds_norm)} predictions")
@@ -149,10 +154,14 @@ def main() -> int:
     print("=" * 70)
 
     agg_raw = evaluate(preds_clean, gold).aggregate
-    print(f"  RAW  (no panel_id norm):  F1={agg_raw['species_f1']:.4f}  panel_match={agg_raw['panel_match_rate']:.4f}")
+    print(
+        f"  RAW  (no panel_id norm):  F1={agg_raw['species_f1']:.4f}  panel_match={agg_raw['panel_match_rate']:.4f}"
+    )
 
     agg_norm = evaluate(preds_norm_clean, gold).aggregate
-    print(f"  NORM (panel_id split):    F1={agg_norm['species_f1']:.4f}  panel_match={agg_norm['panel_match_rate']:.4f}")
+    print(
+        f"  NORM (panel_id split):    F1={agg_norm['species_f1']:.4f}  panel_match={agg_norm['panel_match_rate']:.4f}"
+    )
 
     print()
     print("Per paper:")
@@ -163,8 +172,10 @@ def main() -> int:
         paper_preds = [p for p in preds_norm_clean if p["paper_id"] == pid]
         paper_gold = [g for g in gold if g.paper_id == pid]
         a = evaluate(paper_preds, paper_gold).aggregate
-        print(f"  {pid[:14]:<14}  gold={a['n_gold']:>3} pred={a['n_pred_panels']:>3} "
-              f"panel_match={a['panel_match_rate']:.3f} soft_F1={a['species_f1']:.3f}")
+        print(
+            f"  {pid[:14]:<14}  gold={a['n_gold']:>3} pred={a['n_pred_panels']:>3} "
+            f"panel_match={a['panel_match_rate']:.3f} soft_F1={a['species_f1']:.3f}"
+        )
 
     return 0
 

@@ -76,7 +76,6 @@ COPY pyproject.toml README.md ./
 COPY scripts ./scripts
 COPY data ./data
 COPY tests ./tests
-COPY work/combined_9_v16_FINAL.jsonl ./work/combined_9_v16_FINAL.jsonl
 
 USER rlpe
 VOLUME ["/app/work", "/app/data"]

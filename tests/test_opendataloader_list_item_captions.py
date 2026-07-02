@@ -13,6 +13,7 @@ These tests lock in the fix: ``_find_plate_captions`` must re-surface
 list_item children that match ``_PLATE_CAPTION_RE`` as synthetic paragraph
 siblings BEFORE the main detector loop runs.
 """
+
 from __future__ import annotations
 
 import json
@@ -75,9 +76,7 @@ def test_list_item_non_caption_is_ignored():
         ),
     ]
     captions = _find_plate_captions(kids)
-    assert captions == [], (
-        f"'Plate was donated...' should NOT be a plate caption; got {captions}"
-    )
+    assert captions == [], f"'Plate was donated...' should NOT be a plate caption; got {captions}"
 
 
 def test_list_item_partial_match_is_ignored():

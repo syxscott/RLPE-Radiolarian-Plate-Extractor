@@ -320,6 +320,7 @@ class RadiolarianPipeline:
         # patterns; this is a quick safety net for map-only figures
         # that don't reach the caption parser.
         import re as _re
+
         for m in _re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b", caption_text or ""):
             tok = m.group(1)
             if tok in {"Fig", "Figure", "Scale", "Bar", "The", "This", "Map"}:
@@ -345,26 +346,30 @@ class RadiolarianPipeline:
         # noise from generic capitalized words.
         loc_names = loc_names[:10]
         coords = coords[:5]
-        return [{
-            "paper_id": paper_id,
-            "figure_id": figure_id,
-            "panel_id": "MAP_CONTEXT",
-            "species": None,
-            "panel_path": image_path,
-            "bbox": None,
-            "confidence": 0.0,
-            "label_text": None,
-            "caption_snippet": (caption_text or "")[:240],
-            "ocr_text": None,
-            "paper_metadata": None,
-            "metadata": {
-                "extraction_method": "map_caption_heuristic",
-                "extraction_source": "map",
-                "location_names": loc_names,
-                "coordinates": [{"lat": lat, "lon": lon, "raw": raw} for lat, lon, raw in coords],
-                "evidence_text": (caption_text or "")[:300],
-            },
-        }]
+        return [
+            {
+                "paper_id": paper_id,
+                "figure_id": figure_id,
+                "panel_id": "MAP_CONTEXT",
+                "species": None,
+                "panel_path": image_path,
+                "bbox": None,
+                "confidence": 0.0,
+                "label_text": None,
+                "caption_snippet": (caption_text or "")[:240],
+                "ocr_text": None,
+                "paper_metadata": None,
+                "metadata": {
+                    "extraction_method": "map_caption_heuristic",
+                    "extraction_source": "map",
+                    "location_names": loc_names,
+                    "coordinates": [
+                        {"lat": lat, "lon": lon, "raw": raw} for lat, lon, raw in coords
+                    ],
+                    "evidence_text": (caption_text or "")[:300],
+                },
+            }
+        ]
 
     def _cross_link_map_and_range_chart(
         self, results: list[dict[str, Any]]
@@ -396,9 +401,7 @@ class RadiolarianPipeline:
             md = r.get("metadata") or {}
             for loc in md.get("location_names") or []:
                 if loc:
-                    map_locs_by_paper.setdefault(pid, []).append(
-                        (loc, r.get("figure_id", ""))
-                    )
+                    map_locs_by_paper.setdefault(pid, []).append((loc, r.get("figure_id", "")))
         if not map_locs_by_paper:
             return results
 
@@ -423,15 +426,15 @@ class RadiolarianPipeline:
                     continue
                 for loc, fig_id in map_locs:
                     # Rule 1: case-insensitive exact substring match.
-                    if (
-                        sec.lower() in loc.lower()
-                        or loc.lower() in sec.lower()
-                    ):
-                        matched.append({
-                            "section": sec, "location": loc,
-                            "match_type": "substring",
-                            "map_figure": fig_id,
-                        })
+                    if sec.lower() in loc.lower() or loc.lower() in sec.lower():
+                        matched.append(
+                            {
+                                "section": sec,
+                                "location": loc,
+                                "match_type": "substring",
+                                "map_figure": fig_id,
+                            }
+                        )
                         continue
                     # Rule 2: first 2 characters of section alpha prefix
                     # match first 2 characters of any word in the
@@ -443,11 +446,14 @@ class RadiolarianPipeline:
                         s2 = sec_alpha[:2].lower()
                         for word in loc.split():
                             if word[:2].lower() == s2:
-                                matched.append({
-                                    "section": sec, "location": loc,
-                                    "match_type": "prefix2",
-                                    "map_figure": fig_id,
-                                })
+                                matched.append(
+                                    {
+                                        "section": sec,
+                                        "location": loc,
+                                        "match_type": "prefix2",
+                                        "map_figure": fig_id,
+                                    }
+                                )
                                 break
                     # Rule 3: section code letters match the first
                     # letters of successive words in a hyphenated
@@ -457,18 +463,23 @@ class RadiolarianPipeline:
                     # convention where the range-chart section code
                     # is an acronym of the section's full name.
                     if len(sec_alpha) >= 2 and "-" in loc:
-                        words = [w for w in loc.replace("Range", "").replace("River", "").split("-") if w]
+                        words = [
+                            w for w in loc.replace("Range", "").replace("River", "").split("-") if w
+                        ]
                         if len(words) == len(sec_alpha):
                             if all(
                                 w[:1].lower() == sec_alpha[i].lower()
                                 for i, w in enumerate(words)
                                 if w
                             ):
-                                matched.append({
-                                    "section": sec, "location": loc,
-                                    "match_type": "acronym",
-                                    "map_figure": fig_id,
-                                })
+                                matched.append(
+                                    {
+                                        "section": sec,
+                                        "location": loc,
+                                        "match_type": "acronym",
+                                        "map_figure": fig_id,
+                                    }
+                                )
             if matched:
                 # Deduplicate by (section, location, match_type)
                 seen = set()
@@ -516,7 +527,9 @@ class RadiolarianPipeline:
             "MiniMax_model", "MiniMax-M3"
         )
         if not api_key:
-            logger.warning("range_chart: no ANTHROPIC_API_KEY set; skipping %s/%s", paper_id, figure_id)
+            logger.warning(
+                "range_chart: no ANTHROPIC_API_KEY set; skipping %s/%s", paper_id, figure_id
+            )
             return []
 
         chart = extract_range_chart(
@@ -595,11 +608,16 @@ class RadiolarianPipeline:
         # common failure mode for range charts (OD extracts the image
         # but the caption-image association falls apart).
         unpaired: list[tuple[int, int, str]] = []  # (page_diff, size, path)
-        logger.debug("orphan search for range_chart page=%d (od_raw=%s, figures=%d)",
-                    target_page, bool(od_raw), len(figures))
+        logger.debug(
+            "orphan search for range_chart page=%d (od_raw=%s, figures=%d)",
+            target_page,
+            bool(od_raw),
+            len(figures),
+        )
         if od_raw:
             try:
                 from .opendataloader_extractor import _iter_all_elements
+
                 # Collect all image paths that are referenced by figures
                 referenced: set[str] = set()
                 for fig in figures:
@@ -647,7 +665,8 @@ class RadiolarianPipeline:
                     # <work>/od_output/<paper_id>/<pdf_stem>_images/imageFileN.png
                     images_dir = _os.path.dirname(sample)
                     png_files = sorted(
-                        f for f in _os.listdir(images_dir)
+                        f
+                        for f in _os.listdir(images_dir)
                         if f.lower().endswith((".png", ".jpg", ".jpeg"))
                     )
                     for i, fname in enumerate(png_files):
@@ -665,7 +684,11 @@ class RadiolarianPipeline:
                         unpaired.append((page_diff, sz, fpath, is_referenced))
                         logger.debug(
                             "raw OD image: %s size=%d page=%d page_diff=%d referenced=%s",
-                            fpath, sz, img_page, page_diff, is_referenced,
+                            fpath,
+                            sz,
+                            img_page,
+                            page_diff,
+                            is_referenced,
                         )
                 # Enumerate the images directory and match by reading
                 # the page number from each file (use PyMuPDF to get
@@ -694,7 +717,8 @@ class RadiolarianPipeline:
                         unpaired.append((0, sz, fpath))
                         logger.info(
                             "raw OD unpaired image: %s (size=%d)",
-                            fpath, sz,
+                            fpath,
+                            sz,
                         )
             except Exception as exc:
                 logger.debug("raw OD scan failed: %s", exc)
@@ -729,7 +753,10 @@ class RadiolarianPipeline:
         chosen = unpaired[0][2]
         logger.info(
             "orphan search: chose %s (page_diff=%d, size=%d) from %d candidates",
-            chosen, unpaired[0][0], unpaired[0][1], len(unpaired),
+            chosen,
+            unpaired[0][0],
+            unpaired[0][1],
+            len(unpaired),
         )
         return chosen
 
@@ -750,14 +777,13 @@ class RadiolarianPipeline:
         # second call is virtually always stable.
         if not figures and od_result.json_data:
             try:
-                od_result = self.od_extractor.extract(
-                    pdf_path, self.config.resolved_output_dir()
-                )
+                od_result = self.od_extractor.extract(pdf_path, self.config.resolved_output_dir())
                 figures = od_result.figures
                 if figures:
                     logger.info(
                         "OD retry recovered %d figures for %s",
-                        len(figures), paper_id,
+                        len(figures),
+                        paper_id,
                     )
             except Exception as exc:
                 logger.debug("OD retry failed: %s", exc)
@@ -770,8 +796,7 @@ class RadiolarianPipeline:
         # also missing (truly fatal).
         if not figures and not od_result.json_data:
             logger.info(
-                "No figures AND no JSON data from OpenDataLoader for %s; "
-                "falling back to GROBID.",
+                "No figures AND no JSON data from OpenDataLoader for %s; falling back to GROBID.",
                 paper_id,
             )
             return self._process_one_pdf_grobid(paper_id, pdf_path)
@@ -814,7 +839,8 @@ class RadiolarianPipeline:
             )
             logger.debug(
                 "fig=%s page=%d imgs=%d cap='%s...'",
-                pair.figure_id, pair.page_number,
+                pair.figure_id,
+                pair.page_number,
                 len(pair.image_paths or []),
                 (pair.caption_text or "")[:50],
             )
@@ -844,21 +870,30 @@ class RadiolarianPipeline:
             # from its caption first, then find its image via the
             # orphan-image search below.
             if not pair.image_paths:
-                logger.debug("fig=%s has no image_paths; caption='%s...' (running pre-detect)",
-                            pair.figure_id, (pair.caption_text or "")[:50])
+                logger.debug(
+                    "fig=%s has no image_paths; caption='%s...' (running pre-detect)",
+                    pair.figure_id,
+                    (pair.caption_text or "")[:50],
+                )
                 early_type = classify_figure_type(pair.caption_text, None)
-                logger.debug("pre-detect fig=%s type=%s caption='%s...'",
-                             pair.figure_id, early_type, (pair.caption_text or "")[:50])
+                logger.debug(
+                    "pre-detect fig=%s type=%s caption='%s...'",
+                    pair.figure_id,
+                    early_type,
+                    (pair.caption_text or "")[:50],
+                )
                 if early_type == "range_chart":
                     rc_image = self._find_orphan_image_for_range_chart(
                         figures, pair, od_result.json_data
                     )
-                    logger.info("range_chart %s: orphan search returned %s",
-                                pair.figure_id, rc_image)
+                    logger.info(
+                        "range_chart %s: orphan search returned %s", pair.figure_id, rc_image
+                    )
                     if rc_image is not None:
                         logger.info(
                             "range_chart %s: no paired image, using orphan %s",
-                            pair.figure_id, rc_image,
+                            pair.figure_id,
+                            rc_image,
                         )
                         rc_results = self._process_range_chart(
                             paper_id=paper_id,
@@ -868,7 +903,8 @@ class RadiolarianPipeline:
                         )
                         results.extend(rc_results)
                         self._emit_progress(
-                            fig_idx, n_figs,
+                            fig_idx,
+                            n_figs,
                             f"[{fig_idx}/{n_figs}] range_chart (orphan) → {len(rc_results)} links",
                         )
                 continue
@@ -913,7 +949,8 @@ class RadiolarianPipeline:
                     )
                     logger.info(
                         "range_chart %s: no image paired; using orphan image %s",
-                        pair.figure_id, rc_image_path,
+                        pair.figure_id,
+                        rc_image_path,
                     )
                 if rc_image_path is not None:
                     rc_results = self._process_range_chart(
@@ -924,13 +961,15 @@ class RadiolarianPipeline:
                     )
                     results.extend(rc_results)
                     self._emit_progress(
-                        fig_idx, n_figs,
+                        fig_idx,
+                        n_figs,
                         f"[{fig_idx}/{n_figs}] range_chart → {len(rc_results)} species links",
                     )
                 else:
                     logger.warning(
                         "range_chart %s: no image found (caption='%s...')",
-                        pair.figure_id, (pair.caption_text or "")[:60],
+                        pair.figure_id,
+                        (pair.caption_text or "")[:60],
                     )
                 continue
 
@@ -961,7 +1000,8 @@ class RadiolarianPipeline:
                         len(map_results[0]["metadata"]["coordinates"]) if map_results else 0,
                     )
                 self._emit_progress(
-                    fig_idx, n_figs,
+                    fig_idx,
+                    n_figs,
                     f"[{fig_idx}/{n_figs}] map → {len(map_results) if map_results else 0} context",
                 )
                 continue
@@ -1040,9 +1080,7 @@ class RadiolarianPipeline:
         results = self._cross_link_map_and_range_chart(results)
         return results
 
-    def _link_range_chart_geology(
-        self, results: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _link_range_chart_geology(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Attach range-chart geology context to matching panel records.
 
         Iterates over all paper-level RangeChartResult objects produced
@@ -1061,6 +1099,7 @@ class RadiolarianPipeline:
             RangeChartSection,
             SpeciesRange,
         )
+
         # Index range-chart results by paper_id.
         rc_by_paper: dict[str, list[RangeChartResult]] = {}
         for r in results:
@@ -1080,19 +1119,28 @@ class RadiolarianPipeline:
                 confidence=float(rc_dict.get("confidence", 0.0)),
             )
             for sec in rc_dict.get("sections", []):
-                chart.sections.append(RangeChartSection(**{
-                    k: sec.get(k, "") for k in ("name", "age_range",
-                        "formation_thickness_m", "coordinates")
-                }, formations=list(sec.get("formations") or [])))
+                chart.sections.append(
+                    RangeChartSection(
+                        **{
+                            k: sec.get(k, "")
+                            for k in ("name", "age_range", "formation_thickness_m", "coordinates")
+                        },
+                        formations=list(sec.get("formations") or []),
+                    )
+                )
             for sr in rc_dict.get("species_ranges", []):
-                chart.species_ranges.append(SpeciesRange(**{
-                    k: sr.get(k, "") for k in ("species", "section",
-                        "range_top", "range_base", "biozone")
-                }))
+                chart.species_ranges.append(
+                    SpeciesRange(
+                        **{
+                            k: sr.get(k, "")
+                            for k in ("species", "section", "range_top", "range_base", "biozone")
+                        }
+                    )
+                )
             for bz in rc_dict.get("biozones", []):
-                chart.biozones.append(BiozoneRecord(**{
-                    k: bz.get(k, "") for k in ("name", "age", "thickness_m")
-                }))
+                chart.biozones.append(
+                    BiozoneRecord(**{k: bz.get(k, "") for k in ("name", "age", "thickness_m")})
+                )
             chart.other_fossils = list(rc_dict.get("other_fossils") or [])
             rc_by_paper.setdefault(chart.paper_id, []).append(chart)
 
@@ -1484,9 +1532,10 @@ Rules:
                 # to M3 if regex returns nothing.
                 try:
                     from .m3_engine import _regex_parse_caption as _regex
+
                     regex_pairs = _regex(caption.caption or "")
                     for cp in regex_pairs:
-                        for lbl in (cp.labels or []):
+                        for lbl in cp.labels or []:
                             pair_lookup.setdefault(lbl.strip(), cp.species)
                 except Exception as exc:
                     logger.debug("Regex caption parser failed: %s", exc)
@@ -1494,7 +1543,7 @@ Rules:
                     try:
                         caption_pairs = self.m3_engine.parse_caption(caption.caption or "")
                         for cp in caption_pairs:
-                            for lbl in (cp.labels or []):
+                            for lbl in cp.labels or []:
                                 pair_lookup.setdefault(lbl.strip(), cp.species)
                     except Exception as exc:
                         logger.debug("M3 caption parser failed: %s", exc)
@@ -1518,9 +1567,9 @@ Rules:
                         # "00" → "0" and keeps "1a" / "1A" as-is (no
                         # case folding), so we also lowercase.
                         existing_labels = {
-                            _normalize_panel_label(
-                                r.get("panel_id") or r.get("label_text") or ""
-                            ).strip().lower()
+                            _normalize_panel_label(r.get("panel_id") or r.get("label_text") or "")
+                            .strip()
+                            .lower()
                             for r in llm_results
                             if (r.get("panel_id") or r.get("label_text") or "").strip()
                         }
@@ -1533,7 +1582,8 @@ Rules:
                             if matched_key:
                                 r["species"] = pair_lookup[matched_key]
                                 r.setdefault("metadata", {})["species_source"] = (
-                                    "caption_parser_hybrid" if self.m3_engine is not None
+                                    "caption_parser_hybrid"
+                                    if self.m3_engine is not None
                                     else "regex_caption_hybrid"
                                 )
                                 filled += 1
@@ -1565,12 +1615,15 @@ Rules:
                                     paper_metadata=paper_metadata,
                                     metadata={
                                         "extraction_method": "llm_first",
-                                        "llm_backend": getattr(self.gemma_runtime, "backend_name", "unknown"),
+                                        "llm_backend": getattr(
+                                            self.gemma_runtime, "backend_name", "unknown"
+                                        ),
                                         "panel_count": len(llm_results) + 1,
                                         "figure_number": caption.figure_number,
                                         "page_index": caption.page_index,
                                         "species_source": (
-                                            "caption_parser_hybrid" if self.m3_engine is not None
+                                            "caption_parser_hybrid"
+                                            if self.m3_engine is not None
                                             else "regex_caption_hybrid_added"
                                         ),
                                     },
@@ -1580,7 +1633,10 @@ Rules:
                         if filled or added:
                             logger.info(
                                 "LLM-first hybrid for %s/%s: filled %d species, added %d panels from caption",
-                                paper_id, figure_id, filled, added,
+                                paper_id,
+                                figure_id,
+                                filled,
+                                added,
                             )
                 # Enrich LLM-first results with scale_bar + geology_links.
                 # Without this, the LLM-first path skips the metadata

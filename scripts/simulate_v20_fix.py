@@ -10,6 +10,7 @@ pl09 caption and patching the v19 species assignments.
 
 Output: work/eval_v19_plus_caption_fix.json — full 9-paper eval.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,13 +36,15 @@ with open(PREDS, encoding="utf-8") as f:
         if not line:
             continue
         d = json.loads(line)
-        preds.append({
-            "paper_id": d.get("paper_id"),
-            "figure_id": d.get("figure_id"),
-            "panel_id": d.get("panel_id"),
-            "species": d.get("species"),
-            "metadata": d.get("metadata") or {},
-        })
+        preds.append(
+            {
+                "paper_id": d.get("paper_id"),
+                "figure_id": d.get("figure_id"),
+                "panel_id": d.get("panel_id"),
+                "species": d.get("species"),
+                "metadata": d.get("metadata") or {},
+            }
+        )
 
 # Load gold
 all_gold = []
@@ -66,7 +69,7 @@ for cp in pairs:
     sp = cp.species.strip()
     if cp.modifier:
         sp = (sp + " " + cp.modifier).strip()
-    for lbl in (cp.labels or []):
+    for lbl in cp.labels or []:
         panel_to_species[lbl.strip()] = sp
 
 n_patched = 0
@@ -102,8 +105,10 @@ for pid in sorted(set(g.paper_id for g in all_gold)):
     pp = [p for p in preds_clean if p["paper_id"] == pid]
     pg = [g for g in all_gold if g.paper_id == pid]
     a = evaluate(pp, pg).aggregate
-    print(f"  {pid[:14]:<14}  gold={a['n_gold']:>3} pred={len(pp):>3} "
-          f"panel_match={a['panel_match_rate']:.3f} soft_F1={a['species_f1']:.3f} hard_F1={a['hard_species_f1']:.3f}")
+    print(
+        f"  {pid[:14]:<14}  gold={a['n_gold']:>3} pred={len(pp):>3} "
+        f"panel_match={a['panel_match_rate']:.3f} soft_F1={a['species_f1']:.3f} hard_F1={a['hard_species_f1']:.3f}"
+    )
 
 # Save full report
 rep = evaluate(preds_clean, all_gold)
