@@ -132,6 +132,42 @@ def _extract_balanced_objects(text: str) -> list[Any]:
     return out
 
 
+_TELEMETRY_KEYS = (
+    "MiniMax_request_id",
+    "MiniMax_cost_cny",
+    "MiniMax_model_version",
+    "MiniMax_usage",
+)
+
+
+def _telemetry_subset(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Pick MiniMax telemetry fields from a backend raw result.
+
+    M3 stage callers propagate ``raw`` into ``PanelMatch.raw``; pipeline
+    stage-4 then copies these into MatchResult metadata so /system/llm-
+    status can aggregate cost across all stages.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    rid = raw.get("request_id")
+    if rid:
+        out["MiniMax_request_id"] = str(rid)
+    cost = raw.get("cost_cny")
+    if cost is not None:
+        try:
+            out["MiniMax_cost_cny"] = float(cost)
+        except (TypeError, ValueError):
+            pass
+    mv = raw.get("model_version")
+    if mv:
+        out["MiniMax_model_version"] = str(mv)
+    usage = raw.get("usage")
+    if isinstance(usage, dict):
+        out["MiniMax_usage"] = dict(usage)
+    return out
+
+
 # Regex-based caption parser. Handles the convention used in most OA
 # radiolarian papers, where each clause is "figs X-Y. Species Name" or
 # "fig N. Species Name", separated by periods, semicolons, or newlines.
@@ -1500,6 +1536,7 @@ class M3Engine:
         n_samples = max(1, int(self.config.get("m3_match_samples", 1)))
         results: list[dict[str, Any]] = []
         last_error: str | None = None
+        last_raw_kept: dict[str, Any] | None = None
         for _ in range(n_samples):
             raw = self._infer_vision(system_prompt, prompt, panel_image)
             if not raw or raw.get("fallback_used"):
@@ -1515,6 +1552,14 @@ class M3Engine:
                 continue
             if isinstance(data, dict):
                 results.append(data)
+                # Capture the last successful raw so that the winning
+                # PanelMatch can carry backend telemetry (request id, cost,
+                # usage, model version) into MatchResult metadata. Without
+                # this plumbing, M3 stage-4 calls never reach /system/llm-
+                # status because the cost only lived transiently inside
+                # ``raw``. Lossy on multi-sample self-consistency: last
+                # successful sample wins (one request's worth of cost).
+                last_raw_kept = raw
         if not results:
             # Two distinct failure modes that the pipeline treats very
             # differently. The previous code conflated them by setting
@@ -1595,7 +1640,11 @@ class M3Engine:
             reasoning=str(best.get("reasoning") or "").strip(),
             alternative=runner_up,
             is_radiolarian=bool(best.get("is_radiolarian", True)),
-            raw={"votes": len(results), "agreement": len(best_group) / max(1, len(results))},
+            raw={
+                "votes": len(results),
+                "agreement": len(best_group) / max(1, len(results)),
+                **_telemetry_subset(last_raw_kept),
+            },
         )
 
     # ------------------------------------------------------------------ stage 5

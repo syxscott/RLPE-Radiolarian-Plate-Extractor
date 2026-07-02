@@ -2188,6 +2188,15 @@ Rules:
                     "votes": (panel_match.raw or {}).get("votes", 1),
                     "agreement": (panel_match.raw or {}).get("agreement", 1.0),
                 }
+                # Carry MiniMax telemetry (request id, cost, model version,
+                # token usage) from the backend call into MatchResult
+                # metadata. Without this plumbing, M3 stage-4 calls never
+                # reach /system/llm-status aggregation because the cost
+                # only lived transiently inside ``PanelMatch.raw``. /system/
+                # llm-status aggregates via match.metadata across the row.
+                for tk, tv in (panel_match.raw or {}).items():
+                    if tk.startswith("MiniMax_") and tk not in md:
+                        md[tk] = tv
                 use_m3 = False
                 if panel_match.is_radiolarian and panel_match.species:
                     # Use M3 if it's at least moderately confident AND

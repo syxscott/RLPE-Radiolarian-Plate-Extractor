@@ -175,6 +175,79 @@ def test_apply_critiques_unknown_panel_no_effect():
     assert "critique" not in out[0].raw
 
 
+def test_match_panel_carries_MiniMax_telemetry_in_raw():
+    """Backend cost/request_id/usage/model_version set on PanelMatch.raw so
+    pipeline._apply_m3_stage4 can copy them into MatchResult.metadata.
+    Without this plumbing, M3 stage-4 calls never reach /system/llm-status.
+    """
+
+    import json as _json
+
+    from PIL import Image
+
+    from rlpe.m3_engine import CaptionPair
+
+    captured: dict[str, object] = {}
+
+    raw_text = _json.dumps(
+        {
+            "label": "1",
+            "species": "Actinomma leptodermum",
+            "confidence": 0.9,
+            "is_radiolarian": True,
+            "reasoning": "ok",
+        }
+    )
+
+    class FakeBackend:
+        backend_name = "MiniMax"
+
+        def infer_panel(
+            self,
+            *,
+            panel_image,
+            caption_text,
+            ocr_labels,
+            system_prompt,
+            user_prompt,
+        ):
+            captured["called"] = True
+            return {
+                "label": "1",
+                "species": "Actinomma leptodermum",
+                "confidence": 0.9,
+                "reasoning": "ok",
+                "fallback_used": False,
+                "raw_text": raw_text,
+                "request_id": "req-m3-stage4-1",
+                "model_version": "MiniMax-M3",
+                "cost_cny": 0.045,
+                "usage": {"input_tokens": 2000, "output_tokens": 80},
+            }
+
+    engine = M3Engine(FakeBackend(), {"m3_match_samples": 1})
+    pairs = [
+        CaptionPair(
+            labels=["1"],
+            species="Actinomma leptodermum",
+            raw_text="Plate 1. figs 1. Actinomma leptodermum",
+        )
+    ]
+    out = engine.match_panel(
+        panel_image=Image.new("RGB", (100, 100)),
+        caption_pairs=pairs,
+        caption_text="Plate 1. figs 1. Actinomma leptodermum",
+    )
+    assert captured.get("called") is True
+    raw = out.raw or {}
+    assert raw.get("MiniMax_request_id") == "req-m3-stage4-1"
+    assert abs(float(raw.get("MiniMax_cost_cny", 0)) - 0.045) < 1e-9
+    assert raw.get("MiniMax_model_version") == "MiniMax-M3"
+    assert raw.get("MiniMax_usage") == {"input_tokens": 2000, "output_tokens": 80}
+    # Existing self-consistency keys must still be present.
+    assert "votes" in raw and "agreement" in raw
+
+
 def test_prompts_present_and_nonempty():
     for p in (
         _PARSE_CAPTION_SYSTEM,
