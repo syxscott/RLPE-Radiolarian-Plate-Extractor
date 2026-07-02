@@ -1,8 +1,152 @@
 {
   "$defs": {
-    "GeologyLinkRecord": {
+    "FigureRecord": {
       "additionalProperties": false,
-      "description": "A geology-fact link associated with a panel's caption context.",
+      "description": "A figure/plate/map/range-chart detected in a paper.",
+      "properties": {
+        "bbox": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bbox"
+        },
+        "caption": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Caption"
+        },
+        "caption_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Caption Source"
+        },
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "figure_id": {
+          "title": "Figure Id",
+          "type": "string"
+        },
+        "figure_number": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Figure Number"
+        },
+        "figure_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Figure Type"
+        },
+        "image_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Path"
+        },
+        "needs_review": {
+          "default": false,
+          "title": "Needs Review",
+          "type": "boolean"
+        },
+        "page_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Index"
+        },
+        "panel_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Panel Ids",
+          "type": "array"
+        },
+        "paper_id": {
+          "title": "Paper Id",
+          "type": "string"
+        },
+        "review_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Reasons",
+          "type": "array"
+        },
+        "scale_bar": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScaleBarRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "figure_id",
+        "paper_id"
+      ],
+      "title": "FigureRecord",
+      "type": "object"
+    },
+    "GeologyContextRecord": {
+      "additionalProperties": false,
+      "description": "Structured geological context attached to a sample, panel, or paper.",
       "properties": {
         "age": {
           "anyOf": [
@@ -15,6 +159,18 @@
           ],
           "default": null,
           "title": "Age"
+        },
+        "biozone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Biozone"
         },
         "chronostratigraphy": {
           "anyOf": [
@@ -69,6 +225,218 @@
           "default": null,
           "title": "Formation"
         },
+        "geology_context_id": {
+          "title": "Geology Context Id",
+          "type": "string"
+        },
+        "group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group"
+        },
+        "lithology": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lithology"
+        },
+        "locality_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locality Id"
+        },
+        "ma_base": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ma Base"
+        },
+        "ma_mid": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ma Mid"
+        },
+        "ma_top": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ma Top"
+        },
+        "member": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Member"
+        },
+        "sample_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Id"
+        }
+      },
+      "required": [
+        "geology_context_id"
+      ],
+      "title": "GeologyContextRecord",
+      "type": "object"
+    },
+    "GeologyLinkRecord": {
+      "additionalProperties": false,
+      "description": "A geology-fact link associated with a panel's caption context.",
+      "properties": {
+        "age": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Age"
+        },
+        "biozone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Biozone"
+        },
+        "chronostratigraphy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chronostratigraphy"
+        },
+        "chronostratigraphy_rank": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chronostratigraphy Rank"
+        },
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Country"
+        },
+        "evidence_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Text"
+        },
+        "formation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formation"
+        },
+        "group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group"
+        },
         "latitude": {
           "anyOf": [
             {
@@ -80,6 +448,18 @@
           ],
           "default": null,
           "title": "Latitude"
+        },
+        "lithology": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lithology"
         },
         "locality": {
           "anyOf": [
@@ -104,6 +484,150 @@
           ],
           "default": null,
           "title": "Longitude"
+        },
+        "ma_base": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ma Base"
+        },
+        "ma_mid": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ma Mid"
+        },
+        "ma_top": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ma Top"
+        },
+        "member": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Member"
+        },
+        "modern_latitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modern Latitude"
+        },
+        "modern_longitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modern Longitude"
+        },
+        "paleo_latitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paleo Latitude"
+        },
+        "paleo_longitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paleo Longitude"
+        },
+        "plate_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plate Id"
+        },
+        "reconstruction_age_ma": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reconstruction Age Ma"
+        },
+        "reconstruction_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reconstruction Model"
+        },
+        "sample_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Id"
         },
         "section_title": {
           "anyOf": [
@@ -133,6 +657,262 @@
       "title": "GeologyLinkRecord",
       "type": "object"
     },
+    "LocalityRecord": {
+      "additionalProperties": false,
+      "description": "Modern locality and optional coordinate evidence.",
+      "properties": {
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "coordinate_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coordinate Source"
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Country"
+        },
+        "geocoding_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Geocoding Source"
+        },
+        "locality_id": {
+          "title": "Locality Id",
+          "type": "string"
+        },
+        "modern_latitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modern Latitude"
+        },
+        "modern_longitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modern Longitude"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        },
+        "section_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Name"
+        }
+      },
+      "required": [
+        "locality_id"
+      ],
+      "title": "LocalityRecord",
+      "type": "object"
+    },
+    "PaleoCoordinateRecord": {
+      "additionalProperties": false,
+      "description": "Paleogeographic reconstruction result for one locality/time.",
+      "properties": {
+        "backend_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Backend Status"
+        },
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "locality_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locality Id"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        },
+        "modern_latitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modern Latitude"
+        },
+        "modern_longitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modern Longitude"
+        },
+        "paleo_coordinate_id": {
+          "title": "Paleo Coordinate Id",
+          "type": "string"
+        },
+        "paleo_latitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paleo Latitude"
+        },
+        "paleo_longitude": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paleo Longitude"
+        },
+        "plate_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plate Id"
+        },
+        "reconstruction_age_ma": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reconstruction Age Ma"
+        },
+        "reconstruction_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reconstruction Model"
+        }
+      },
+      "required": [
+        "paleo_coordinate_id"
+      ],
+      "title": "PaleoCoordinateRecord",
+      "type": "object"
+    },
     "PanelMetadata": {
       "additionalProperties": false,
       "description": "Per-panel diagnostic metadata (no business data here).",
@@ -141,6 +921,11 @@
           "default": false,
           "title": "Caption Pairs Used",
           "type": "boolean"
+        },
+        "extraction_method": {
+          "default": "",
+          "title": "Extraction Method",
+          "type": "string"
         },
         "extraction_source": {
           "default": "",
@@ -184,6 +969,11 @@
         "matcher_used": {
           "default": false,
           "title": "Matcher Used",
+          "type": "boolean"
+        },
+        "needs_review": {
+          "default": false,
+          "title": "Needs Review",
           "type": "boolean"
         },
         "ocr_count": {
@@ -239,6 +1029,13 @@
           "default": null,
           "title": "Reassigned Reason"
         },
+        "review_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Reasons",
+          "type": "array"
+        },
         "scale_bar": {
           "anyOf": [
             {
@@ -280,6 +1077,30 @@
           "default": null,
           "title": "Bbox"
         },
+        "canonical_panel_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Canonical Panel Id"
+        },
+        "caption_panel_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Caption Panel Id"
+        },
         "caption_snippet": {
           "anyOf": [
             {
@@ -296,9 +1117,38 @@
           "title": "Confidence",
           "type": "number"
         },
+        "extraction_method": {
+          "default": "",
+          "title": "Extraction Method",
+          "type": "string"
+        },
         "figure_id": {
           "title": "Figure Id",
           "type": "string"
+        },
+        "figure_image_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Figure Image Path"
+        },
+        "geology_context_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Geology Context Id"
         },
         "label_text": {
           "anyOf": [
@@ -314,6 +1164,11 @@
         },
         "metadata": {
           "$ref": "#/$defs/PanelMetadata"
+        },
+        "needs_review": {
+          "default": false,
+          "title": "Needs Review",
+          "type": "boolean"
         },
         "ocr_text": {
           "anyOf": [
@@ -337,6 +1192,18 @@
             }
           ],
           "title": "Panel Id"
+        },
+        "panel_id_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Panel Id Source"
         },
         "panel_path": {
           "anyOf": [
@@ -364,6 +1231,49 @@
           ],
           "default": null
         },
+        "pipeline_panel_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pipeline Panel Index"
+        },
+        "printed_panel_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Printed Panel Id"
+        },
+        "review_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Reasons",
+          "type": "array"
+        },
+        "sample_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Id"
+        },
         "species": {
           "anyOf": [
             {
@@ -374,6 +1284,18 @@
             }
           ],
           "title": "Species"
+        },
+        "taxon_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Taxon Id"
         }
       },
       "required": [
@@ -539,6 +1461,189 @@
       "title": "PaperMetadataRecord",
       "type": "object"
     },
+    "PaperRecord": {
+      "additionalProperties": false,
+      "description": "One source paper in an RLPE run.\n\nThis is the paper-level view of :class:`PaperMetadataRecord`. It is\noptional and additive: legacy RunOutput payloads without ``papers``\nremain valid.",
+      "properties": {
+        "abstract": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Abstract"
+        },
+        "authors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Authors",
+          "type": "array"
+        },
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "doi": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Doi"
+        },
+        "issue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issue"
+        },
+        "journal": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Journal"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        },
+        "page_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Count"
+        },
+        "pages": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pages"
+        },
+        "paper_id": {
+          "title": "Paper Id",
+          "type": "string"
+        },
+        "pdf_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pdf Sha256"
+        },
+        "publisher": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Publisher"
+        },
+        "source": {
+          "default": "",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_pdf": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Pdf"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Volume"
+        },
+        "year": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Year"
+        }
+      },
+      "required": [
+        "paper_id"
+      ],
+      "title": "PaperRecord",
+      "type": "object"
+    },
     "ProvenanceRecord": {
       "additionalProperties": false,
       "description": "Provenance metadata stamped onto every exported run.",
@@ -594,6 +1699,103 @@
         "python_version"
       ],
       "title": "ProvenanceRecord",
+      "type": "object"
+    },
+    "SampleRecord": {
+      "additionalProperties": false,
+      "description": "A sample or specimen group mentioned in a caption or text section.",
+      "properties": {
+        "caption_panel_range": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Caption Panel Range"
+        },
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "evidence_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Text"
+        },
+        "figure_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Figure Id"
+        },
+        "geology_context_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Geology Context Id"
+        },
+        "locality_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locality Id"
+        },
+        "page_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Index"
+        },
+        "paper_id": {
+          "title": "Paper Id",
+          "type": "string"
+        },
+        "sample_id": {
+          "title": "Sample Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sample_id",
+        "paper_id"
+      ],
+      "title": "SampleRecord",
       "type": "object"
     },
     "ScaleBarRecord": {
@@ -668,12 +1870,270 @@
       },
       "title": "ScaleBarRecord",
       "type": "object"
+    },
+    "TaxonRecord": {
+      "additionalProperties": false,
+      "description": "Structured taxonomic name extracted for one or more panels.",
+      "properties": {
+        "authority": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authority"
+        },
+        "class_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Class Name"
+        },
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Family"
+        },
+        "genus": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Genus"
+        },
+        "needs_review": {
+          "default": false,
+          "title": "Needs Review",
+          "type": "boolean"
+        },
+        "normalized_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Normalized Name"
+        },
+        "order": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Order"
+        },
+        "qualifier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Qualifier"
+        },
+        "rank": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rank"
+        },
+        "review_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Reasons",
+          "type": "array"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "specific_epithet": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Specific Epithet"
+        },
+        "taxon_id": {
+          "title": "Taxon Id",
+          "type": "string"
+        },
+        "verbatim_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verbatim Name"
+        }
+      },
+      "required": [
+        "taxon_id"
+      ],
+      "title": "TaxonRecord",
+      "type": "object"
+    },
+    "WarningRecord": {
+      "additionalProperties": false,
+      "description": "A machine-readable warning/review issue emitted during extraction.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity Id"
+        },
+        "entity_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity Type"
+        },
+        "evidence_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Text"
+        },
+        "level": {
+          "default": "warning",
+          "title": "Level",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "warning_id": {
+          "title": "Warning Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "warning_id",
+        "code",
+        "message"
+      ],
+      "title": "WarningRecord",
+      "type": "object"
     }
   },
   "$id": "https://rlpe.local/schemas/rlpe-v1.0.0.json",
   "additionalProperties": false,
   "description": "Canonical export shape of a Radiolarian Literature Plate Extractor run. Each RunOutput carries a ProvenanceRecord and a list of PanelRecord entries. Downstream views (analysis/ML/archive) are projections of this shape.",
   "properties": {
+    "figures": {
+      "items": {
+        "$ref": "#/$defs/FigureRecord"
+      },
+      "title": "Figures",
+      "type": "array"
+    },
+    "geology_contexts": {
+      "items": {
+        "$ref": "#/$defs/GeologyContextRecord"
+      },
+      "title": "Geology Contexts",
+      "type": "array"
+    },
+    "localities": {
+      "items": {
+        "$ref": "#/$defs/LocalityRecord"
+      },
+      "title": "Localities",
+      "type": "array"
+    },
+    "paleo_coordinates": {
+      "items": {
+        "$ref": "#/$defs/PaleoCoordinateRecord"
+      },
+      "title": "Paleo Coordinates",
+      "type": "array"
+    },
     "panels": {
       "items": {
         "$ref": "#/$defs/PanelRecord"
@@ -681,13 +2141,41 @@
       "title": "Panels",
       "type": "array"
     },
+    "papers": {
+      "items": {
+        "$ref": "#/$defs/PaperRecord"
+      },
+      "title": "Papers",
+      "type": "array"
+    },
     "provenance": {
       "$ref": "#/$defs/ProvenanceRecord"
+    },
+    "samples": {
+      "items": {
+        "$ref": "#/$defs/SampleRecord"
+      },
+      "title": "Samples",
+      "type": "array"
     },
     "schema_version": {
       "default": "1.0.0",
       "title": "Schema Version",
       "type": "string"
+    },
+    "taxa": {
+      "items": {
+        "$ref": "#/$defs/TaxonRecord"
+      },
+      "title": "Taxa",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "$ref": "#/$defs/WarningRecord"
+      },
+      "title": "Warnings",
+      "type": "array"
     }
   },
   "required": [

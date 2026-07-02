@@ -54,14 +54,33 @@ class GeologyLinkRecord(BaseModel):
     age: str | None = None
     chronostratigraphy: str | None = None
     chronostratigraphy_rank: str | None = None
+    # Numeric age interval in Ma, when the chronostratigraphic term can
+    # be mapped to an ICS interval. Optional so legacy records remain
+    # valid; first-stage exporters may leave these empty.
+    ma_top: float | None = None
+    ma_base: float | None = None
+    ma_mid: float | None = None
     formation: str | None = None
+    member: str | None = None
+    group: str | None = None
+    lithology: str | None = None
     locality: str | None = None
+    country: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    modern_latitude: float | None = None
+    modern_longitude: float | None = None
+    paleo_latitude: float | None = None
+    paleo_longitude: float | None = None
+    plate_id: str | None = None
+    reconstruction_model: str | None = None
+    reconstruction_age_ma: float | None = None
+    sample_id: str | None = None
     section_type: str | None = None
     section_title: str | None = None
     evidence_text: str | None = None
     confidence: float = 0.0
+    biozone: str | None = None  # optional biozone name (e.g. "N. optima Zone")
 
 
 class PaperMetadataRecord(BaseModel):
@@ -99,6 +118,170 @@ class ProvenanceRecord(BaseModel):
     python_version: str
 
 
+class PaperRecord(BaseModel):
+    """One source paper in an RLPE run.
+
+    This is the paper-level view of :class:`PaperMetadataRecord`. It is
+    optional and additive: legacy RunOutput payloads without ``papers``
+    remain valid.
+    """
+
+    model_config = StrictModel
+    paper_id: str
+    title: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    journal: str | None = None
+    volume: str | None = None
+    issue: str | None = None
+    pages: str | None = None
+    doi: str | None = None
+    abstract: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    publisher: str | None = None
+    page_count: int | None = None
+    source_pdf: str | None = None
+    pdf_sha256: str | None = None
+    source: str = ""
+    confidence: float = 0.0
+
+
+class ReviewFlagRecord(BaseModel):
+    """Human-review state for one extracted entity."""
+
+    model_config = StrictModel
+    entity_type: str
+    entity_id: str
+    needs_review: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
+    reviewer_status: str | None = None
+
+
+class FigureRecord(BaseModel):
+    """A figure/plate/map/range-chart detected in a paper."""
+
+    model_config = StrictModel
+    figure_id: str
+    paper_id: str
+    figure_number: str | None = None
+    figure_type: str | None = None  # "plate" | "map" | "range_chart" | "photo" | ...
+    page_index: int | None = None
+    caption: str | None = None
+    caption_source: str | None = None
+    image_path: str | None = None
+    bbox: list[int] | None = Field(default=None, min_length=4, max_length=4)
+    scale_bar: ScaleBarRecord | None = None
+    panel_ids: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    needs_review: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
+
+
+class TaxonRecord(BaseModel):
+    """Structured taxonomic name extracted for one or more panels."""
+
+    model_config = StrictModel
+    taxon_id: str
+    verbatim_name: str | None = None
+    normalized_name: str | None = None
+    genus: str | None = None
+    specific_epithet: str | None = None
+    qualifier: str | None = None  # "cf." | "aff." | "?" | "sp." | "spp." | ...
+    authority: str | None = None
+    rank: str | None = None
+    family: str | None = None
+    order: str | None = None
+    class_name: str | None = None
+    source: str | None = None
+    confidence: float = 0.0
+    needs_review: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
+
+
+class SampleRecord(BaseModel):
+    """A sample or specimen group mentioned in a caption or text section."""
+
+    model_config = StrictModel
+    sample_id: str
+    paper_id: str
+    figure_id: str | None = None
+    caption_panel_range: str | None = None
+    locality_id: str | None = None
+    geology_context_id: str | None = None
+    evidence_text: str | None = None
+    page_index: int | None = None
+    confidence: float = 0.0
+
+
+class GeologyContextRecord(BaseModel):
+    """Structured geological context attached to a sample, panel, or paper."""
+
+    model_config = StrictModel
+    geology_context_id: str
+    sample_id: str | None = None
+    age: str | None = None
+    chronostratigraphy: str | None = None
+    chronostratigraphy_rank: str | None = None
+    ma_top: float | None = None
+    ma_base: float | None = None
+    ma_mid: float | None = None
+    formation: str | None = None
+    member: str | None = None
+    group: str | None = None
+    lithology: str | None = None
+    biozone: str | None = None
+    locality_id: str | None = None
+    evidence_text: str | None = None
+    confidence: float = 0.0
+
+
+class LocalityRecord(BaseModel):
+    """Modern locality and optional coordinate evidence."""
+
+    model_config = StrictModel
+    locality_id: str
+    name: str | None = None
+    country: str | None = None
+    region: str | None = None
+    section_name: str | None = None
+    modern_latitude: float | None = None
+    modern_longitude: float | None = None
+    coordinate_source: str | None = None
+    geocoding_source: str | None = None
+    confidence: float = 0.0
+
+
+class PaleoCoordinateRecord(BaseModel):
+    """Paleogeographic reconstruction result for one locality/time."""
+
+    model_config = StrictModel
+    paleo_coordinate_id: str
+    locality_id: str | None = None
+    modern_latitude: float | None = None
+    modern_longitude: float | None = None
+    reconstruction_age_ma: float | None = None
+    paleo_latitude: float | None = None
+    paleo_longitude: float | None = None
+    plate_id: str | None = None
+    reconstruction_model: str | None = None
+    method: str | None = None
+    confidence: float = 0.0
+    backend_status: str | None = None
+
+
+class WarningRecord(BaseModel):
+    """A machine-readable warning/review issue emitted during extraction."""
+
+    model_config = StrictModel
+    warning_id: str
+    level: str = "warning"  # "info" | "warning" | "error"
+    code: str
+    message: str
+    entity_type: str | None = None
+    entity_id: str | None = None
+    evidence_text: str | None = None
+
+
 class PanelMetadata(BaseModel):
     """Per-panel diagnostic metadata (no business data here)."""
 
@@ -116,6 +299,9 @@ class PanelMetadata(BaseModel):
     geology_links: list[GeologyLinkRecord] = Field(default_factory=list)
     m3_diagnostic: dict[str, Any] = Field(default_factory=dict)
     extraction_source: str = ""
+    extraction_method: str = ""
+    needs_review: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
     reassigned_from_figure: str | None = None
     reassigned_reason: str | None = None
 
@@ -130,14 +316,29 @@ class PanelRecord(BaseModel):
     model_config = StrictModel
     paper_id: str
     figure_id: str
+    # Legacy/canonical panel id retained for backwards compatibility.
+    # New product-facing exports should also fill the split id fields
+    # below whenever their source is known.
     panel_id: str | None
+    caption_panel_id: str | None = None
+    printed_panel_id: str | None = None
+    pipeline_panel_index: int | None = None
+    canonical_panel_id: str | None = None
+    panel_id_source: str | None = None  # "caption" | "image_ocr" | "position" | "legacy" | ...
     species: str | None
+    taxon_id: str | None = None
+    sample_id: str | None = None
+    geology_context_id: str | None = None
     panel_path: str | None
+    figure_image_path: str | None = None
     bbox: list[int] | None = Field(default=None, min_length=4, max_length=4)
     confidence: float
     label_text: str | None = None
     caption_snippet: str | None = None
     ocr_text: str | None = None
+    extraction_method: str = ""
+    needs_review: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
     metadata: PanelMetadata = Field(default_factory=PanelMetadata)
     paper_metadata: PaperMetadataRecord | None = None
 
@@ -146,13 +347,23 @@ class RunOutput(BaseModel):
     """The top-level shape of an exported run.
 
     The provenance block is mandatory and is validated separately so a
-    run without provenance cannot be exported.
+    run without provenance cannot be exported. The panel list remains
+    the backwards-compatible core view; the additional entity lists are
+    optional product/data-package views built from the same extraction.
     """
 
     model_config = StrictModel
     schema_version: str = SCHEMA_VERSION
     provenance: ProvenanceRecord
+    papers: list[PaperRecord] = Field(default_factory=list)
+    figures: list[FigureRecord] = Field(default_factory=list)
     panels: list[PanelRecord] = Field(default_factory=list)
+    taxa: list[TaxonRecord] = Field(default_factory=list)
+    samples: list[SampleRecord] = Field(default_factory=list)
+    geology_contexts: list[GeologyContextRecord] = Field(default_factory=list)
+    localities: list[LocalityRecord] = Field(default_factory=list)
+    paleo_coordinates: list[PaleoCoordinateRecord] = Field(default_factory=list)
+    warnings: list[WarningRecord] = Field(default_factory=list)
 
 
 def emit_json_schema(target: Path) -> Path:

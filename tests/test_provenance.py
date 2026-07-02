@@ -11,7 +11,9 @@ from rlpe.provenance import (
     build_provenance,
     write_provenance_sidecar,
 )
+from rlpe.provenance import stamp
 from rlpe.provenance.stamp import _sha256_file
+from rlpe.schema_models import SCHEMA_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,10 +23,18 @@ class TestBuildProvenance:
         p = build_provenance()
         assert isinstance(p, Provenance)
 
-    def test_versions_are_strings(self):
+    def test_schema_version_single_source(self):
+        """Provenance schema_version must come from schema_models.SCHEMA_VERSION.
+
+        This guards the research-output contract: schema version is an
+        external data-contract version, not an independently-maintained
+        string in provenance/stamp.py. It must remain 1.0.0 until the
+        project formally publishes a new external contract.
+        """
+        assert SCHEMA_VERSION == "1.0.0"
+        assert stamp.SCHEMA_VERSION == SCHEMA_VERSION
         p = build_provenance()
-        assert isinstance(p.pipeline_version, str) and p.pipeline_version
-        assert isinstance(p.schema_version, str) and p.schema_version
+        assert p.schema_version == SCHEMA_VERSION
 
     def test_timestamp_is_iso_utc(self):
         p = build_provenance()

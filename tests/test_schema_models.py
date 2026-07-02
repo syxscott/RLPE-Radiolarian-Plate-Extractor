@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from rlpe.converters import (
+    figure_records_from_matches,
+    geology_contexts_from_matches,
+    locality_records_from_geology,
     panel_metadata_from_match,
     panel_record_from_match,
     paper_metadata_from_internal,
+    paper_records_from_matches,
     run_output_from_provenance,
+    sample_records_from_matches,
+    taxon_records_from_matches,
+    warnings_from_matches,
 )
 from rlpe.provenance.stamp import build_provenance
 from rlpe.schema_models import (
@@ -382,3 +390,177 @@ class TestConverters:
         # Re-validate the produced dict through Pydantic
         validated = validate_run_output(out)
         assert len(validated.panels) == 1
+
+
+class TestProductDataPackage:
+    """The first-stage product/data-package exports: papers, figures,
+    taxa, samples, geology contexts, localities, warnings.
+
+    These tests guard the contract of ``run_output_from_provenance`` so
+    that any extractions from internal pipeline dictionaries surface
+    into the published RunOutput without losing information.
+    """
+
+    def test_run_output_includes_all_entity_collections(self):
+        prov = ProvenanceRecord(**build_provenance().to_dict())
+        out = run_output_from_provenance(prov, [_make_match()])
+        # New collections default to empty list and are part of the
+        # published RunOutput. Validate through Pydantic to catch
+        # schema drift.
+        for key in (
+            "papers",
+            "figures",
+            "taxa",
+            "samples",
+            "geology_contexts",
+            "localities",
+            "paleo_coordinates",
+            "warnings",
+        ):
+            assert key in out, f"missing {key} in converter output"
+            assert isinstance(out[key], list)
+        validated = validate_run_output(out)
+        # Validate schema_version is exactly 1.0.0 — the product contract
+        # pinned by the user. Any drift here breaks downstream consumers.
+        assert validated.schema_version == "1.0.0"
+
+    def test_paper_records_deduped_by_paper_id(self):
+        m1 = _make_match()
+        m2 = replace(_make_match(), figure_id="fig_2")
+        papers = paper_records_from_matches([m1, m2])
+        assert len(papers) == 1
+        assert papers[0]["paper_id"] == "abc"
+        assert papers[0]["title"] == "Test"
+        assert "Author A" in papers[0]["authors"]
+
+    def test_figure_records_group_by_paper_and_figure(self):
+        m1 = _make_match()
+        m2 = replace(_make_match(), figure_id="fig_2")
+        figs = figure_records_from_matches([m1, m2])
+        assert len(figs) == 2
+        keys = sorted((f["paper_id"], f["figure_id"]) for f in figs)
+        assert keys == [("abc", "fig_1"), ("abc", "fig_2")]
+
+    def test_taxon_records_carry_genus_epithet_qualifier(self):
+        m = replace(_make_match(), species="Genus cf. species")
+        taxa = taxon_records_from_matches([m])
+        assert len(taxa) == 1
+        t = taxa[0]
+        assert t["genus"] == "Genus"
+        assert t["specific_epithet"] == "species"
+        assert t["qualifier"] == "cf."
+        assert t["verbatim_name"] == "Genus cf. species"
+
+    def test_geology_contexts_deduped_with_ma_top_base(self):
+        meta = dict(_make_match().metadata or {})
+        meta["geology_links"] = [
+            {
+                "age": "Late Jurassic",
+                "chronostratigraphy": "Kimmeridgian",
+                "chronostratigraphy_rank": "age",
+                "ma_top": 152.1,
+                "ma_base": 149.2,
+                "formation": "Fonzaso",
+                "locality": "Italy",
+                "evidence_text": "...",
+                "confidence": 0.7,
+            }
+        ]
+        m = replace(_make_match(), metadata=meta)
+        geos = geology_contexts_from_matches([m])
+        assert len(geos) == 1
+        assert geos[0]["ma_top"] == 152.1
+        assert geos[0]["ma_base"] == 149.2
+
+    def test_locality_records_deduped(self):
+        meta = dict(_make_match().metadata or {})
+        meta["geology_links"] = [
+            {"locality": "Italy", "latitude": 45.0, "longitude": 10.0},
+            {"locality": "Italy", "latitude": 45.0, "longitude": 10.0},
+        ]
+        m = replace(_make_match(), metadata=meta)
+        locs = locality_records_from_geology([m])
+        assert len(locs) == 1
+        assert locs[0]["modern_latitude"] == 45.0
+        assert locs[0]["modern_longitude"] == 10.0
+
+    def test_sample_records_extracted_from_caption(self):
+        m = MatchResult(
+            paper_id="p",
+            figure_id="f",
+            panel_id="1",
+            species="X",
+            panel_path=None,
+            bbox=None,
+            confidence=0.0,
+            caption_snippet="Sample PR-SB28 (latest Barremian). Figs 1-6 ... Sample PR-SB30. Fig 7 ...",
+        )
+        samples = sample_records_from_matches([m])
+        assert len(samples) == 2
+        assert {s["sample_id"] for s in samples} == {"PR-SB28", "PR-SB30"}
+
+    def test_warnings_emitted_for_missing_panel_image(self):
+        m = MatchResult(
+            paper_id="p",
+            figure_id="f",
+            panel_id="1",
+            species=None,  # missing species
+            panel_path=None,  # missing panel image
+            bbox=None,  # missing bbox
+            confidence=0.0,
+            metadata={"extraction_method": "llm_first"},
+        )
+        warns = warnings_from_matches([m])
+        codes = {w["code"] for w in warns}
+        assert "missing_species" in codes
+        assert "missing_panel_image" in codes
+        assert "missing_bbox" in codes
+        assert "llm_first_without_visual_evidence" in codes
+
+    def test_legacy_payload_without_new_fields_validates(self):
+        """A minimal RunOutput (no papers/figures/... keys) must still
+        validate against the v1.0.0 schema. This is the backwards-
+        compatibility guard for the published contract.
+        """
+        prov = ProvenanceRecord(**build_provenance().to_dict())
+        legacy = {
+            "schema_version": "1.0.0",
+            "provenance": prov.model_dump(),
+            "panels": [],
+        }
+        loaded = validate_run_output(legacy)
+        assert loaded.schema_version == "1.0.0"
+        assert loaded.papers == []
+        assert loaded.figures == []
+        assert loaded.panels == []
+
+    def test_extra_unknown_fields_still_rejected(self):
+        """The strict ``extra=forbid`` policy must continue to reject
+        unknown fields. Adding new optional fields must not weaken this
+        guard.
+        """
+        prov = ProvenanceRecord(**build_provenance().to_dict())
+        bad = {
+            "schema_version": "1.0.0",
+            "provenance": prov.model_dump(),
+            "panels": [],
+            "unknown_field": "should fail",
+        }
+        with pytest.raises(ValidationError):
+            validate_run_output(bad)
+
+    def test_schema_version_pinned_to_1_0_0(self):
+        """The external data-contract version is pinned by the user.
+
+        The product/data-package contract is published as ``1.0.0``
+        until the project formally opens a new external version. Any
+        drift here is a contract break and must fail this test.
+        """
+        assert SCHEMA_VERSION == "1.0.0"
+        prov = ProvenanceRecord(**build_provenance().to_dict())
+        ro = validate_run_output({
+            "schema_version": SCHEMA_VERSION,
+            "provenance": prov.model_dump(),
+            "panels": [],
+        })
+        assert ro.schema_version == "1.0.0"

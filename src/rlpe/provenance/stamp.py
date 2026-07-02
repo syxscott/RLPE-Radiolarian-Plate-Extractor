@@ -37,6 +37,8 @@ UTC = timezone.utc  # noqa: UP017
 from pathlib import Path
 from typing import Any
 
+from ..schema_models import SCHEMA_VERSION
+
 
 def _resolve_pipeline_version() -> str:
     """Read the rlpe package version from installed metadata, falling
@@ -76,7 +78,6 @@ def _resolve_pipeline_version() -> str:
 
 
 PIPELINE_VERSION = _resolve_pipeline_version()
-SCHEMA_VERSION = "1.0.0"
 
 
 @dataclass(slots=True)
