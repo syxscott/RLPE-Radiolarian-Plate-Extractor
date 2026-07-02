@@ -1900,7 +1900,13 @@ Rules:
                         # labels via positional fallback (N10-class drift).
                         # ``is_valid_panel_label`` rejects those.
                         if norm and is_valid_panel_label(norm):
+                            prev_caption_id = (
+                                panel.metadata.get("caption_panel_id") or panel.panel_id
+                            )
                             panel.panel_id = norm
+                            panel.metadata["caption_panel_id"] = prev_caption_id
+                            panel.metadata["printed_panel_id"] = norm
+                            panel.metadata["panel_id_source"] = "image_ocr"
                             panel.metadata["label_region_picked"] = best.text
             except Exception:
                 pass

@@ -379,7 +379,9 @@ def _panel_review_reasons(match: MatchResult) -> list[str]:
         reasons.append("missing_panel_image")
     if match.bbox is None:
         reasons.append("missing_bbox")
-    if not (meta.get("printed_panel_id") or meta.get("image_panel_id")):
+    printed_id = meta.get("printed_panel_id") or meta.get("image_panel_id")
+    panel_id_source = meta.get("panel_id_source") or ("image_ocr" if printed_id else "legacy")
+    if not printed_id and panel_id_source not in ("image_ocr", "image_panel_label"):
         reasons.append("missing_printed_panel_id")
     if meta.get("extraction_method") == "llm_first" and not match.panel_path:
         reasons.append("llm_first_without_visual_evidence")

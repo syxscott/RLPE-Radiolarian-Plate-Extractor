@@ -332,6 +332,36 @@ def is_valid_panel_label(label: str | None) -> bool:
     return True
 
 
+_PANEL_METADATA_KEYS = (
+    "printed_panel_id",
+    "image_panel_id",
+    "caption_panel_id",
+    "panel_id_source",
+    "label_region_ocr",
+    "label_region_picked",
+    "label_region_fallback",
+    "panel_ocr_text",
+    "panel_ocr_token_count",
+)
+
+
+def _panel_metadata(panel: PanelCandidate, **base_meta: Any) -> dict[str, Any]:
+    """Build MatchResult metadata from association metadata plus
+    selected panel-level OCR diagnostics.
+
+    ``pipeline.py`` attaches image-OCR evidence to ``PanelCandidate.metadata``
+    before calling ``match_panels``. ``MatchResult`` is a separate dataclass,
+    so those keys must be explicitly propagated here or exported
+    ``PanelRecord.printed_panel_id`` will stay null.
+    """
+    out = dict(base_meta)
+    pmeta = panel.metadata or {}
+    for key in _PANEL_METADATA_KEYS:
+        if key in pmeta and key not in out:
+            out[key] = pmeta[key]
+    return out
+
+
 def _label_in_pair_lookup(label: str | None, pair_lookup: dict[str, str]) -> str | None:
     """Try the label, then its leading-zero-stripped form, against
     ``pair_lookup``. Returns the matching key (the value is then
@@ -536,17 +566,18 @@ def match_panels(
                     caption_snippet=caption.caption[:240] if caption.caption else None,
                     ocr_text=None,
                     paper_metadata=paper_metadata,
-                    metadata={
-                        "panel_score": panel.score,
-                        "ocr_count": len(ocr_tokens),
-                        "taxon_count": len(taxon_entities),
-                        "figure_number": caption.figure_number,
-                        "page_index": caption.page_index,
-                        "matcher_used": False,
-                        "matcher_type": "skipped-placeholder-caption",
-                        "matcher_conf": 0.0,
-                        "caption_pairs_used": False,
-                    },
+                    metadata=_panel_metadata(
+                        panel,
+                        panel_score=panel.score,
+                        ocr_count=len(ocr_tokens),
+                        taxon_count=len(taxon_entities),
+                        figure_number=caption.figure_number,
+                        page_index=caption.page_index,
+                        matcher_used=False,
+                        matcher_type="skipped-placeholder-caption",
+                        matcher_conf=0.0,
+                        caption_pairs_used=False,
+                    ),
                 )
             )
         return matches
@@ -685,17 +716,18 @@ def match_panels(
                 caption_snippet=caption.caption[:240] if caption.caption else None,
                 ocr_text=ocr_text or None,
                 paper_metadata=paper_metadata,
-                metadata={
-                    "panel_score": panel.score,
-                    "ocr_count": len(ocr_tokens),
-                    "taxon_count": len(taxon_entities),
-                    "figure_number": caption.figure_number,
-                    "page_index": caption.page_index,
-                    "matcher_used": matcher_used,
-                    "matcher_type": "neural-graph" if matcher_used else "heuristic",
-                    "matcher_conf": neural_conf[idx] if idx < len(neural_conf) else 0.0,
-                    "caption_pairs_used": caption_pairs_used,
-                },
+                metadata=_panel_metadata(
+                    panel,
+                    panel_score=panel.score,
+                    ocr_count=len(ocr_tokens),
+                    taxon_count=len(taxon_entities),
+                    figure_number=caption.figure_number,
+                    page_index=caption.page_index,
+                    matcher_used=matcher_used,
+                    matcher_type="neural-graph" if matcher_used else "heuristic",
+                    matcher_conf=neural_conf[idx] if idx < len(neural_conf) else 0.0,
+                    caption_pairs_used=caption_pairs_used,
+                ),
             )
         )
 
