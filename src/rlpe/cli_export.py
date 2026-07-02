@@ -17,7 +17,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from rlpe.converters import panel_record_from_match  # noqa: E402
+from rlpe.converters import (  # noqa: E402
+    match_result_from_dict,
+    panel_record_from_match,
+)
 from rlpe.exporters import (  # noqa: E402
     AnalysisOptions,
     DwCAOptions,
@@ -58,43 +61,8 @@ def _run_output_from_jsonl(input_path: Path) -> RunOutput:
                     exc,
                 )
                 continue
-            # Convert dict to MatchResult for the converter.
-            # MatchResult has many fields; we just need the documented ones.
-            from rlpe.types import PaperMetadata as InternalPaperMetadata
-
-            pm = None
-            pm_raw = d.get("paper_metadata")
-            if isinstance(pm_raw, dict):
-                pm = InternalPaperMetadata(
-                    title=pm_raw.get("title"),
-                    authors=pm_raw.get("authors", []) or [],
-                    year=pm_raw.get("year"),
-                    journal=pm_raw.get("journal"),
-                    volume=pm_raw.get("volume"),
-                    issue=pm_raw.get("issue"),
-                    pages=pm_raw.get("pages"),
-                    doi=pm_raw.get("doi"),
-                    abstract=pm_raw.get("abstract"),
-                    keywords=pm_raw.get("keywords", []) or [],
-                    publisher=pm_raw.get("publisher"),
-                    page_count=pm_raw.get("page_count"),
-                    source=pm_raw.get("source", ""),
-                    confidence=pm_raw.get("confidence", 0.0),
-                )
-            m = MatchResult(
-                paper_id=d.get("paper_id", ""),
-                figure_id=d.get("figure_id", ""),
-                panel_id=d.get("panel_id"),
-                species=d.get("species"),
-                panel_path=d.get("panel_path"),
-                bbox=d.get("bbox"),
-                confidence=d.get("confidence", 0.0),
-                label_text=d.get("label_text"),
-                caption_snippet=d.get("caption_snippet"),
-                ocr_text=d.get("ocr_text"),
-                metadata=d.get("metadata", {}) or {},
-                paper_metadata=pm,
-            )
+            # Convert dict to MatchResult via the shared helper.
+            m = match_result_from_dict(d)
             matches.append(m)
     panels = [panel_record_from_match(m) for m in matches]
     prov = ProvenanceRecord(

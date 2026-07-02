@@ -27,12 +27,14 @@ from .association import (
     match_panels,
 )
 from .config import PipelineConfig
+from .converters import match_result_from_dict, run_output_from_provenance
 from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
 from .geology_extraction import build_knowledge_graph, link_species_to_geology
 from .grobid import GrobidClient, parse_paper_metadata_from_tei
 from .layout import choose_best_page, detect_figure_regions, extract_figure_number, render_pdf_pages
 from .m3_engine import CaptionPair, M3Engine, PanelBox, PanelMatch
 from .ocr import OCRBackend, normalize_ocr_tokens
+from .provenance.stamp import build_provenance
 from .range_chart_extractor import (
     RangeChartResult,
     build_geology_links_for_panels,
@@ -45,6 +47,7 @@ from .scale_bar import (
     extract_scale_from_ocr_text,
     merge_scale_info,
 )
+from .schema_models import ProvenanceRecord
 from .segmentation import PanelSegmenter, SegmentationConfig
 from .taxon import TaxonRecognizer
 from .text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
@@ -264,6 +267,21 @@ class RadiolarianPipeline:
 
         manifest_path = self.config.manifests_dir() / "matches.jsonl"
         write_jsonl(manifest_path, rows)
+        # Canonical data package (matches.jsonl is raw per-row; run_output.json
+        # is the validated, deduped, schema-shaped bundle that downstream
+        # consumers — web UI, CSV/DwC-A exporters, ML splits — read from).
+        # We swallow any error here so a broken ``run_output.json`` never
+        # invalidates the row-level ``matches.jsonl`` that other tooling
+        # already depends on.
+        if rows:
+            try:
+                match_results = [match_result_from_dict(d) for d in rows]
+                provenance_internal = build_provenance(self.config, pdf_files)
+                provenance_record = ProvenanceRecord(**provenance_internal.to_dict())
+                run_output_dict = run_output_from_provenance(provenance_record, match_results)
+                write_json(manifest_path.parent / "run_output.json", run_output_dict)
+            except Exception:
+                logger.exception("Failed to write run_output.json; matches.jsonl is unaffected")
         self._emit_progress(total, total, f"Done — {len(rows)} matches")
         return rows
 

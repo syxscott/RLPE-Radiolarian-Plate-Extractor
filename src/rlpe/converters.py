@@ -34,6 +34,54 @@ from .types import MatchResult
 from .types import PaperMetadata as InternalPaperMetadata
 
 
+def match_result_from_dict(d: dict[str, Any]) -> MatchResult:
+    """Reconstruct a :class:`MatchResult` dataclass from a dict row.
+
+    Used by the pipeline after a ``matches.jsonl`` round-trip and by
+    ``cli_export`` to feed rows into ``run_output_from_provenance``.
+    Unknown keys are dropped (MatchResult is a plain dataclass, not
+    pydantic) and ``None`` falls back for any field that the JSONL
+    did not populate.
+
+    ``paper_metadata`` is reconstructed only if the value is a
+    mapping; a non-mapping (e.g. ``None`` after a partial run) is
+    treated as missing.
+    """
+    pm = None
+    pm_raw = d.get("paper_metadata")
+    if isinstance(pm_raw, dict):
+        pm = InternalPaperMetadata(
+            title=pm_raw.get("title"),
+            authors=list(pm_raw.get("authors", []) or []),
+            year=pm_raw.get("year"),
+            journal=pm_raw.get("journal"),
+            volume=pm_raw.get("volume"),
+            issue=pm_raw.get("issue"),
+            pages=pm_raw.get("pages"),
+            doi=pm_raw.get("doi"),
+            abstract=pm_raw.get("abstract"),
+            keywords=list(pm_raw.get("keywords", []) or []),
+            publisher=pm_raw.get("publisher"),
+            page_count=pm_raw.get("page_count"),
+            source=pm_raw.get("source", ""),
+            confidence=pm_raw.get("confidence", 0.0),
+        )
+    return MatchResult(
+        paper_id=d.get("paper_id", ""),
+        figure_id=d.get("figure_id", ""),
+        panel_id=d.get("panel_id"),
+        species=d.get("species"),
+        panel_path=d.get("panel_path"),
+        bbox=d.get("bbox"),
+        confidence=d.get("confidence", 0.0),
+        label_text=d.get("label_text"),
+        caption_snippet=d.get("caption_snippet"),
+        ocr_text=d.get("ocr_text"),
+        metadata=d.get("metadata", {}) or {},
+        paper_metadata=pm,
+    )
+
+
 def _scale_bar_from_meta(meta: dict[str, Any]) -> ScaleBarRecord | None:
     sb = meta.get("scale_bar")
     if not isinstance(sb, dict):
