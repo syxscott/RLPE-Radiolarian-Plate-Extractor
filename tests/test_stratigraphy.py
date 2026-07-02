@@ -127,3 +127,46 @@ class TestICSChart:
             "Quaternary",
         ):
             assert must in names, f"Missing period {must}"
+
+
+class TestMaPropagation:
+    """Confirm numeric Ma bounds flow from the matched ICS row into
+    AgeClassification and onwards into the public GeologyRecord fields.
+
+    This is the deterministic Ma mapping Task 5 wires up; lithology /
+    member / group remain for the later MiniMax-assisted extractor.
+    """
+
+    def test_changhsingian_carries_numeric_ma(self):
+        c = classify_age_string("Changhsingian")
+        assert c.age == "Changhsingian"
+        assert c.ma_top is not None and c.ma_base is not None
+        # ICS values: Changhsingian top ≈ 251.902, base ≈ 254.14.
+        assert 251.0 < c.ma_top < 252.5
+        assert 253.5 < c.ma_base < 255.0
+        # ma_mid is the midpoint of top + base.
+        assert c.ma_mid is not None
+        assert abs(c.ma_mid - (c.ma_top + c.ma_base) / 2.0) < 1e-9
+
+    def test_period_carries_numeric_ma(self):
+        c = classify_age_string("Permian")
+        assert c.period == "Permian"
+        assert c.ma_top is not None and c.ma_base is not None
+        # ICS convention: ma_top is the younger boundary (smaller number),
+        # ma_base is the older boundary (larger number). For a period
+        # the interval is non-empty so the two differ.
+        assert c.ma_top < c.ma_base
+        assert c.ma_mid is not None
+        assert c.ma_mid == (c.ma_top + c.ma_base) / 2.0
+
+    def test_unknown_string_leaves_ma_none(self):
+        c = classify_age_string("definitely-not-a-period")
+        assert c.ma_top is None
+        assert c.ma_base is None
+        assert c.ma_mid is None
+
+    def test_to_dict_includes_ma_keys(self):
+        c = classify_age_string("Changhsingian")
+        d = c.to_dict()
+        for k in ("ma_top", "ma_base", "ma_mid"):
+            assert k in d

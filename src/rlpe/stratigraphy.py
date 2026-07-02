@@ -573,6 +573,14 @@ class AgeClassification:
     age: str | None = None  # e.g. "Changhsingian"  (most specific)
     rank: str | None = None  # "period" | "epoch" | "age"
     confidence: float = 0.0  # 0..1
+    # Numeric Ma bounds taken from the matched ICS row, when available.
+    # These were previously dropped on the floor by _build_classification
+    # so the exported GeologyLinkRecord.ma_top / ma_base / ma_mid were
+    # always None — the converter faithfully read them, but the
+    # producer never wrote them.
+    ma_top: float | None = None
+    ma_base: float | None = None
+    ma_mid: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -644,7 +652,29 @@ def _build_classification(
         age=age,
         rank=rank,
         confidence=confidence,
+        # Carry Ma values from the matched ICS row. ma_mid is the
+        # midpoint of the age range; useful for stratigraphic column
+        # plots and the Web UI geology panel.
+        ma_top=_opt_float(hit.get("ma_top")),
+        ma_base=_opt_float(hit.get("ma_base")),
+        ma_mid=_midpoint(_opt_float(hit.get("ma_top")), _opt_float(hit.get("ma_base"))),
     )
+
+
+def _opt_float(v: Any) -> float | None:
+    """Best-effort cast to float, returning None for missing / bad values."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _midpoint(a: float | None, b: float | None) -> float | None:
+    if a is None or b is None:
+        return None
+    return (a + b) / 2.0
 
 
 # ---------------------------------------------------------------------------

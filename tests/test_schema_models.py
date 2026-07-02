@@ -630,6 +630,41 @@ class TestProductDataPackage:
         assert geos[0]["ma_top"] == 152.1
         assert geos[0]["ma_base"] == 149.2
 
+    def test_deterministic_ma_propagates_from_stratigraphy_to_run_output(self):
+        """End-to-end: extract_geology_from_sections picks up Ma bounds
+        from the matched ICS row (via stratigraphy.classify_age_string),
+        and geology_contexts_from_matches surfaces them in the exported
+        GeologyContextRecord. Task 5 wires the previously-dropped Ma
+        values through the chain so the converter output is no longer
+        forced to None for these fields.
+        """
+        from rlpe.geology_extraction import extract_geology_from_sections
+
+        sections = [
+            {
+                "section_type": "geological_setting",
+                "title": "Section A",
+                "text": "The Changhsingian limestone is exposed at the type locality.",
+            }
+        ]
+        records = extract_geology_from_sections(sections)
+        assert records, "expected at least one GeologyRecord"
+        rec = records[0]
+        assert rec.chronostratigraphy == "Changhsingian"
+        assert rec.ma_top is not None
+        assert rec.ma_base is not None
+        assert rec.ma_mid is not None
+
+        # Build a MatchResult carrying the record's Ma values into
+        # geology_links, then verify the converter outputs them.
+        meta = {"geology_links": [rec.to_dict()]}
+        m = replace(_make_match(), metadata=meta)
+        geos = geology_contexts_from_matches([m])
+        assert len(geos) == 1
+        assert geos[0]["ma_top"] == rec.ma_top
+        assert geos[0]["ma_base"] == rec.ma_base
+        assert geos[0]["ma_mid"] == rec.ma_mid
+
     def test_locality_records_deduped(self):
         meta = dict(_make_match().metadata or {})
         meta["geology_links"] = [

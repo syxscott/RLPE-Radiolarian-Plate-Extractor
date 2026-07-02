@@ -36,6 +36,16 @@ class GeologyRecord:
     age: str | None = None  # period name (e.g. "Permian")
     chronostratigraphy: str | None = None  # most specific stage (e.g. "Changhsingian")
     chronostratigraphy_rank: str | None = None  # "period" | "epoch" | "age"
+    # Numeric Ma bounds (top = younger, base = older; ICS convention).
+    # Populated from AgeClassification.ma_top / ma_base / ma_mid which
+    # is itself derived from the matched ICS row. Until this commit
+    # these fields were always None because the producer chain dropped
+    # the Ma values; the converter faithfully read them, so wiring
+    # this up at the source end of the chain lights them up in the
+    # exported GeologyLinkRecord / GeologyContextRecord automatically.
+    ma_top: float | None = None
+    ma_base: float | None = None
+    ma_mid: float | None = None
     formation: str | None = None
     locality: str | None = None
     latitude: float | None = None
@@ -68,6 +78,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         # Stratigraphy enrichment — find stage names (Changhsingian, Wuchiapingian, …)
         chrono = None
         chrono_rank = None
+        ma_top = ma_base = ma_mid = None
         if find_ages_in_text is not None:
             try:
                 cls_list = find_ages_in_text(text)
@@ -81,6 +92,12 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 if best is not None:
                     chrono = best.age or best.period
                     chrono_rank = best.rank
+                    # Carry numeric Ma values from the matched ICS row.
+                    # These flow through to_dict() -> converters and
+                    # reach the published GeologyLinkRecord.ma_* fields.
+                    ma_top = best.ma_top
+                    ma_base = best.ma_base
+                    ma_mid = best.ma_mid
             except Exception:
                 pass
         # Coordinate parsing. ``_extract_first_coord`` already validates
@@ -102,6 +119,9 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 age=age or primary_age,
                 chronostratigraphy=chrono,
                 chronostratigraphy_rank=chrono_rank,
+                ma_top=ma_top,
+                ma_base=ma_base,
+                ma_mid=ma_mid,
                 formation=forms[0] if forms else None,
                 locality=locs[0] if locs else None,
                 latitude=lat,
@@ -118,6 +138,9 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 age=primary_age,
                 chronostratigraphy=chrono,
                 chronostratigraphy_rank=chrono_rank,
+                ma_top=ma_top,
+                ma_base=ma_base,
+                ma_mid=ma_mid,
                 formation=forms[0] if forms else None,
                 locality=locs[0] if locs else None,
                 latitude=lat,
