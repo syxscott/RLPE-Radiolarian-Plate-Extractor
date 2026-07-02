@@ -34,6 +34,22 @@ from rlpe.llm_backends import LlamaCppGemmaBackend, OllamaGemmaBackend, _validat
 from rlpe.types import PaperMetadata as InternalPaperMetadata
 from rlpe.utils import stable_id
 
+
+def _fastapi_or_skip():
+    return pytest.importorskip("fastapi")
+
+
+def _testclient_or_skip():
+    return pytest.importorskip("fastapi.testclient").TestClient
+
+
+def _api_app_or_skip():
+    _fastapi_or_skip()
+    from rlpe.api import app as api_app
+
+    return api_app
+
+
 # ---------------------------------------------------------------- io.load_jsonl
 
 
@@ -74,7 +90,7 @@ def test_choose_best_page_finds_by_text_mention():
 
 
 def test_joboptions_logs_unknown_fields(caplog):
-    from rlpe.api.app import JobOptions
+    JobOptions = _api_app_or_skip().JobOptions
 
     with caplog.at_level("WARNING", logger="rlpe.api"):
         opts = JobOptions(
@@ -91,7 +107,7 @@ def test_joboptions_logs_unknown_fields(caplog):
 
 
 def test_joboptions_accepts_known_fields():
-    from rlpe.api.app import JobOptions
+    JobOptions = _api_app_or_skip().JobOptions
 
     opts = JobOptions(
         use_gemma4=True,
@@ -106,7 +122,7 @@ def test_joboptions_accepts_known_fields():
 def test_review_correction_rejects_unknown_fields():
     from pydantic import ValidationError
 
-    from rlpe.api.app import ReviewCorrection
+    ReviewCorrection = _api_app_or_skip().ReviewCorrection
 
     with pytest.raises(ValidationError):
         ReviewCorrection(
@@ -127,7 +143,7 @@ def test_result_record_rejects_unknown_fields():
     constructing the model). This test verifies the IGNORE behaviour
     is in effect — a typo'd field must not surface in the model.
     """
-    from rlpe.api.app import ResultRecord
+    ResultRecord = _api_app_or_skip().ResultRecord
 
     r = ResultRecord(
         paper_id="p",
@@ -144,7 +160,7 @@ def test_result_record_rejects_unknown_fields():
 
 
 def test_result_record_accepts_panel_local_path_added_by_api_normalizer():
-    from rlpe.api.app import ResultRecord
+    ResultRecord = _api_app_or_skip().ResultRecord
 
     r = ResultRecord(
         job_id="j1",
@@ -158,7 +174,7 @@ def test_result_record_accepts_panel_local_path_added_by_api_normalizer():
 
 
 def test_get_results_handles_rows_with_panel_local_path():
-    from rlpe.api import app as api_app
+    api_app = _api_app_or_skip()
 
     job_id = "test-job-panel-local-path"
     with api_app.RESULT_LOCK:
@@ -189,10 +205,12 @@ def test_upload_pdf_defaults_to_joboptions_defaults_and_sanitizes_filename(tmp_p
     server-side OSError when saving."""
     import asyncio
 
-    from fastapi import HTTPException, UploadFile
+    fastapi = _fastapi_or_skip()
+    HTTPException = fastapi.HTTPException
+    UploadFile = fastapi.UploadFile
     from starlette.datastructures import Headers
 
-    from rlpe.api import app as api_app
+    api_app = _api_app_or_skip()
 
     monkeypatch.setattr(api_app, "UPLOAD_DIR", tmp_path)
 
@@ -539,9 +557,9 @@ def test_llm_status_reports_no_key_when_env_unset(monkeypatch):
     """
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
-    from fastapi.testclient import TestClient
+    TestClient = _testclient_or_skip()
 
-    from rlpe.api.app import app
+    app = _api_app_or_skip().app
 
     c = TestClient(app)
     r = c.get("/system/llm-status")
@@ -559,9 +577,9 @@ def test_llm_status_masks_key_preview_correctly(monkeypatch):
     in the preview field — never returned in the clear.
     """
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-or-v1-secretvalue123abc")
-    from fastapi.testclient import TestClient
+    TestClient = _testclient_or_skip()
 
-    from rlpe.api.app import app
+    app = _api_app_or_skip().app
 
     c = TestClient(app)
     r = c.get("/system/llm-status")
@@ -583,9 +601,9 @@ def test_test_llm_endpoint_returns_missing_key_error_when_no_key(monkeypatch):
     """
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
-    from fastapi.testclient import TestClient
+    TestClient = _testclient_or_skip()
 
-    from rlpe.api.app import app
+    app = _api_app_or_skip().app
 
     c = TestClient(app)
     r = c.post("/system/test-llm", json={})
@@ -603,9 +621,9 @@ def test_test_llm_endpoint_handles_invalid_body_gracefully(monkeypatch):
     """
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
-    from fastapi.testclient import TestClient
+    TestClient = _testclient_or_skip()
 
-    from rlpe.api.app import app
+    app = _api_app_or_skip().app
 
     c = TestClient(app)
     # Empty body
@@ -624,9 +642,9 @@ def test_test_llm_treats_non_json_reply_as_success(monkeypatch):
     worked. The endpoint must therefore special-case JSONParseError /
     ValueError (when raw_text is non-empty) as success.
     """
-    from fastapi.testclient import TestClient
+    TestClient = _testclient_or_skip()
 
-    from rlpe.api import app as api_app
+    api_app = _api_app_or_skip()
 
     # Patch MiniMaxM3Backend.infer_text to simulate the "OK reply +
     # JSONParseError" shape that triggered the bug in the field.
@@ -667,9 +685,9 @@ def test_llm_status_deduplicates_request_id_in_cost_aggregation(monkeypatch):
     ONCE and the call counter incremented ONCE. The previous code
     multiplied both by N, producing inflated 累计 数字.
     """
-    from fastapi.testclient import TestClient
+    TestClient = _testclient_or_skip()
 
-    from rlpe.api import app as api_app
+    api_app = _api_app_or_skip()
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
