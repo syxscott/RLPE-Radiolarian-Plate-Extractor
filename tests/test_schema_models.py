@@ -442,14 +442,196 @@ class TestProductDataPackage:
         assert keys == [("abc", "fig_1"), ("abc", "fig_2")]
 
     def test_taxon_records_carry_genus_epithet_qualifier(self):
+        """``Genus cf. species`` is a binomial with the epithet
+        undetermined — the parser conservatively emits the qualifier
+        as the whole suffix and leaves the epithet empty. The full
+        string is preserved in ``verbatim_name`` so the research
+        output loses no information.
+        """
         m = replace(_make_match(), species="Genus cf. species")
         taxa = taxon_records_from_matches([m])
         assert len(taxa) == 1
         t = taxa[0]
         assert t["genus"] == "Genus"
-        assert t["specific_epithet"] == "species"
-        assert t["qualifier"] == "cf."
+        assert t["specific_epithet"] is None
+        assert t["qualifier"] == "cf. species"
         assert t["verbatim_name"] == "Genus cf. species"
+
+    def test_taxon_records_handles_nested_author_citation(self):
+        """bandini2011 pl08 / pl09 use the 'Genus species cf. S. excelsa'
+        shape. The earlier dual-loop parser emitted qualifier="S. excelsa"
+        and overwrote the epithet — this regression test guards the
+        single-pass parser.
+        """
+        m = replace(_make_match(), species="Genus species cf. S. excelsa")
+        taxa = taxon_records_from_matches([m])
+        t = taxa[0]
+        assert t["genus"] == "Genus"
+        assert t["specific_epithet"] == "species"
+        assert t["qualifier"] == "cf. S. excelsa"
+        assert t["verbatim_name"] == "Genus species cf. S. excelsa"
+
+    def test_taxon_records_handles_genus_uncertainty_marker(self):
+        """'Theocorys? phyzella' has the open-nomen '?' on the genus,
+        not on the epithet. Genus 'Theocorys', epithet 'phyzella',
+        qualifier '?'.
+        """
+        m = replace(_make_match(), species="Theocorys? phyzella")
+        taxa = taxon_records_from_matches([m])
+        t = taxa[0]
+        assert t["genus"] == "Theocorys"
+        assert t["specific_epithet"] == "phyzella"
+        assert t["qualifier"] == "?"
+
+    def test_taxon_records_rejects_qualifier_only(self):
+        """'cf. species' (no genus) must not produce genus='cf.'; the
+        parser must refuse to invent a genus from a qualifier token.
+        """
+        from rlpe.converters import _taxon_parts
+
+        assert _taxon_parts("cf. species") == {
+            "genus": None,
+            "specific_epithet": None,
+            "qualifier": None,
+        }
+
+    def test_sample_records_namespaced_by_paper_id(self):
+        """Two papers both mentioning 'Sample PR-SB26' must produce two
+        distinct SampleRecord entries. The earlier code deduped on
+        sample_id alone, which silently dropped the second paper.
+        """
+        from dataclasses import replace as _replace
+
+        snippet = "Sample PR-SB26 (early Cretaceous)."
+        m1 = _replace(_make_match(), caption_snippet=snippet, metadata={})
+        m2 = _replace(_make_match(), paper_id="paper-2", caption_snippet=snippet, metadata={})
+        samples = sample_records_from_matches([m1, m2])
+        assert len(samples) == 2
+        paper_ids = {s["paper_id"] for s in samples}
+        assert paper_ids == {"abc", "paper-2"}
+        assert all(s["sample_id"] == "PR-SB26" for s in samples)
+
+    def test_locality_records_namespaced_by_paper_id(self):
+        """Two papers both reporting 'Italy' at (45.0, 10.0) must
+        produce two distinct LocalityRecord entries.
+        """
+        from dataclasses import replace as _replace
+
+        meta = {
+            "geology_links": [
+                {"locality": "Italy", "latitude": 45.0, "longitude": 10.0}
+            ]
+        }
+        m1 = _replace(_make_match(), metadata=meta)
+        m2 = _replace(_make_match(), paper_id="paper-2", metadata=meta)
+        locs = locality_records_from_geology([m1, m2])
+        assert len(locs) == 2
+        assert {l["locality_id"] for l in locs} == {locs[0]["locality_id"]} ^ {locs[1]["locality_id"]}
+
+    def test_modern_coord_prefers_modern_over_legacy(self):
+        """When both modern_latitude and legacy latitude are present,
+        the modern value wins. When only legacy is present, it is
+        promoted to modern_*. When only modern is present, it is
+        used directly. The dedup key still uses the legacy value when
+        present so the key and the record agree.
+        """
+        from rlpe.converters import _resolve_modern_coord
+
+        assert _resolve_modern_coord(1.0, 2.0) == 1.0  # modern wins
+        assert _resolve_modern_coord(None, 2.0) == 2.0  # legacy falls through
+        assert _resolve_modern_coord(1.0, None) == 1.0  # modern only
+        assert _resolve_modern_coord(None, None) is None
+        # Critical: legacy=0.0 must NOT short-circuit to None; it is a
+        # valid coordinate. The previous 'or' chain corrupted this case.
+        assert _resolve_modern_coord(None, 0.0) == 0.0
+
+    def test_warning_id_stable_across_match_reordering(self):
+        """The warning_id for a given (paper, figure, panel, code) must
+        be content-derived only. Re-ordering the matches must not
+        change the set of warning_ids.
+        """
+        from dataclasses import replace as _replace
+
+        m1 = _replace(
+            _make_match(),
+            figure_id="fig_1",
+            panel_id="1",
+            species=None,
+            panel_path=None,
+            bbox=None,
+        )
+        m2 = _replace(
+            _make_match(),
+            figure_id="fig_2",
+            panel_id="2",
+            species=None,
+            panel_path=None,
+            bbox=None,
+        )
+        forward = warnings_from_matches([m1, m2])
+        reversed_ = warnings_from_matches([m2, m1])
+        ids_f = sorted(w["warning_id"] for w in forward)
+        ids_r = sorted(w["warning_id"] for w in reversed_)
+        assert ids_f == ids_r
+        assert len(ids_f) >= 4  # missing_species + missing_panel_image + missing_bbox + missing_printed_panel_id per panel
+
+    def test_figure_records_coerce_blank_strings_to_none(self):
+        """Blank / whitespace figure_number / caption / caption_source
+        are coerced to None so downstream consumers do not have to
+        distinguish between "" and missing.
+        """
+        from dataclasses import replace as _replace
+
+        meta = {
+            "figure_number": "   ",
+            "figure_type": "",
+            "caption_source": "",
+            "image_path": " ",
+            "bbox": None,
+        }
+        m = _replace(_make_match(), metadata=meta)
+        figs = figure_records_from_matches([m])
+        assert len(figs) == 1
+        f = figs[0]
+        assert f["figure_number"] is None
+        assert f["figure_type"] is None
+        assert f["caption_source"] is None
+        assert f["image_path"] is None
+
+    def test_paleocoord_missing_warning_emitted_when_locality_nonempty(self):
+        """When localities exist but paleo_coordinates is empty, the
+        run must emit a single ``paleocoord_backend_missing`` warning
+        so the empty list is not mistaken for an oversight.
+        """
+        from dataclasses import replace as _replace
+        from rlpe.schema_models import ProvenanceRecord as _Prov
+        from rlpe.provenance.stamp import build_provenance as _bp
+
+        meta = {
+            "geology_links": [
+                {"locality": "Italy", "latitude": 45.0, "longitude": 10.0}
+            ]
+        }
+        m = _replace(_make_match(), metadata=meta)
+        prov = _Prov(**_bp().to_dict())
+        out = run_output_from_provenance(prov, [m])
+        codes = [w["code"] for w in out["warnings"]]
+        assert "paleocoord_backend_missing" in codes
+        assert out["paleo_coordinates"] == []
+
+    def test_paleocoord_missing_warning_not_emitted_when_no_locality(self):
+        """When no localities exist the empty paleo_coordinates list is
+        expected and we do not emit a noisy warning.
+        """
+        from dataclasses import replace as _replace
+        from rlpe.schema_models import ProvenanceRecord as _Prov
+        from rlpe.provenance.stamp import build_provenance as _bp
+
+        m = _replace(_make_match(), metadata={})
+        prov = _Prov(**_bp().to_dict())
+        out = run_output_from_provenance(prov, [m])
+        codes = [w["code"] for w in out["warnings"]]
+        assert "paleocoord_backend_missing" not in codes
 
     def test_geology_contexts_deduped_with_ma_top_base(self):
         meta = dict(_make_match().metadata or {})

@@ -69,8 +69,8 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
                 country=g.get("country"),
                 latitude=g.get("latitude"),
                 longitude=g.get("longitude"),
-                modern_latitude=g.get("modern_latitude") or g.get("latitude"),
-                modern_longitude=g.get("modern_longitude") or g.get("longitude"),
+                modern_latitude=_resolve_modern_coord(g.get("modern_latitude"), g.get("latitude")),
+                modern_longitude=_resolve_modern_coord(g.get("modern_longitude"), g.get("longitude")),
                 paleo_latitude=g.get("paleo_latitude"),
                 paleo_longitude=g.get("paleo_longitude"),
                 plate_id=g.get("plate_id"),
@@ -159,32 +159,159 @@ def _normalise_species_name(species: str | None) -> str | None:
     return " ".join(str(species).split()).strip(" .,;") or None
 
 
-def _taxon_parts(species: str | None) -> dict[str, str | None]:
-    """Best-effort, conservative taxon string decomposition.
+def _resolve_modern_coord(modern: Any, legacy: Any) -> Any:
+    """Pick the modern coordinate value with explicit None handling.
 
-    This is not a nomenclatural authority parser. It only exposes the
-    obvious genus/epithet/qualifier fields needed by the first data-package
-    view and leaves uncertain parts in ``verbatim_name``.
+    The earlier ``modern or legacy`` chain silently collapsed legacy
+    ``0.0`` or ``None`` to ``None`` while the dedup key still used
+    the legacy field — leaving the key and the record disagreeing
+    for the same physical locality. This helper picks the first
+    present numeric value, preferring the modern field when both
+    are non-null.
+    """
+    if modern is not None:
+        return modern
+    if legacy is not None:
+        return legacy
+    return None
+
+
+def _taxon_parts(species: str | None) -> dict[str, str | None]:
+    """Conservative taxon string decomposition for the data-package view.
+
+    The earlier dual-loop heuristic broke on nested-author citations
+    such as ``"Genus species cf. S. excelsa"`` (bandini2011 pl08 / pl09)
+    because the second loop would treat ``S.`` (a single-letter author
+    initial) as the start of a qualifier and emit
+    ``qualifier="S. excelsa"`` while overwriting the real epithet.
+
+    This implementation is a single left-to-right scan that recognises
+    the well-known micropalaeontology shapes and prefers silence
+    (None) over invention when the shape is ambiguous:
+
+      * ``"Genus species"``                       → genus + epithet, no qualifier
+      * ``"Genus cf. species"``                    → genus only, qualifier="cf. species"
+      * ``"Genus species cf. S. excelsa"``         → genus + epithet, qualifier="cf. S. excelsa"
+      * ``"Theocorys? phyzella"``                  → genus="Theocorys", epithet="phyzella", qualifier="?"
+      * ``"Genus sp."`` / ``"Genus spp."``          → genus only, qualifier="sp."/"spp."
+
+    Anything that does not match one of these shapes falls back to the
+    safest projection: genus = first token (if capitalised), epithet
+    = the first lower-cased token after the genus, qualifier = None.
+    The full input string is preserved in ``TaxonRecord.verbatim_name``
+    so no information is lost on the research side.
     """
     name = _normalise_species_name(species)
     if not name:
         return {"genus": None, "specific_epithet": None, "qualifier": None}
-    parts = name.split()
-    genus = parts[0] if parts else None
-    qualifier = None
-    for token in parts[1:]:
+
+    def _is_author_initial(token: str) -> bool:
+        bare = token.rstrip(".")
+        return len(bare) == 1 and bare.isalpha() and bare.isupper()
+
+    qualifier_starts = {
+        "cf",
+        "aff",
+        "sp",
+        "spp",
+        "indet",
+        "gr",
+        "group",
+        "subsp",
+        "var",
+        "f",
+        "nom",
+    }
+
+    def _is_qualifier_token(token: str) -> bool:
         bare = token.rstrip(".,;?").lower()
-        if bare in {"cf", "aff", "sp", "spp", "indet", "gr", "group"} or "?" in token:
-            qualifier = token
+        return bare in qualifier_starts or "?" in token
+
+    tokens = name.split()
+    if not tokens:
+        return {"genus": None, "specific_epithet": None, "qualifier": None}
+
+    # Genus heuristic: only accept the first token if it starts with an
+    # upper-case letter. Strip a trailing ``?`` so "Theocorys?" produces
+    # genus "Theocorys" with the ``?`` carried separately as an
+    # open-nomenclature marker. Reject strings like "cf." with no real
+    # genus to avoid emitting genus="cf." in the data package.
+    first = tokens[0]
+    if not (first[:1].isalpha() and first[:1].isupper()):
+        return {"genus": None, "specific_epithet": None, "qualifier": None}
+    genus = first.rstrip("?")
+    if not genus:
+        return {"genus": None, "specific_epithet": None, "qualifier": None}
+
+    # If the genus itself ended in "?", capture the marker as a
+    # separate qualifier. The remaining tokens (if any) are treated as
+    # the binomial/trinomial continuation.
+    if first.endswith("?"):
+        rest = tokens[1:]
+        # If the rest starts with a qualifier token, absorb it into
+        # the qualifier field; otherwise the ``?`` itself is the
+        # qualifier and the rest is the epithet (or empty).
+        if rest and _is_qualifier_token(rest[0]):
+            return {
+                "genus": genus,
+                "specific_epithet": None,
+                "qualifier": " ".join(rest),
+            }
+        if not rest:
+            return {"genus": genus, "specific_epithet": None, "qualifier": "?"}
+        # Locate the next qualifier boundary inside rest. The first
+        # lower-cased token (after the optional initial author-prefix)
+        # becomes the epithet; everything from the next qualifier /
+        # author-initial onwards is the qualifier.
+        epithet = None
+        for i, tok in enumerate(rest):
+            if _is_qualifier_token(tok) or _is_author_initial(tok):
+                break
+            bare = tok.rstrip(".,;?")
+            if bare and bare[0].islower():
+                epithet = bare
+                break
+        qualifier = "?"
+        if rest and (rest[0] != "?"):
+            # The "?" is on the genus; no separate qualifier token to
+            # emit beyond the marker itself.
+            qualifier = "?"
+        return {"genus": genus, "specific_epithet": epithet, "qualifier": qualifier}
+
+    # If the second token is itself a qualifier (e.g. "cf."), the
+    # binomial is incomplete; emit the qualifier as everything from
+    # there onward and leave the epithet empty.
+    if len(tokens) >= 2 and _is_qualifier_token(tokens[1]):
+        return {
+            "genus": genus,
+            "specific_epithet": None,
+            "qualifier": " ".join(tokens[1:]),
+        }
+
+    # Walk the rest. The qualifier is everything from the first
+    # qualifying token onward; the epithet is the contiguous lowercase
+    # block right after the genus, stopping at the qualifier or at an
+    # author-initial boundary.
+    epithet: str | None = None
+    qualifier: str | None = None
+    qualifier_idx: int | None = None
+    for i, token in enumerate(tokens[1:], start=1):
+        if _is_qualifier_token(token) or _is_author_initial(token):
+            qualifier_idx = i
             break
-    epithet = None
-    for token in parts[1:]:
         bare = token.rstrip(".,;?")
-        if bare.lower() in {"cf", "aff", "sp", "spp", "indet", "gr", "group"}:
-            continue
         if bare and bare[0].islower():
             epithet = bare
-            break
+            # Continue scanning to see if a qualifier follows.
+            continue
+        # Token is capitalised but is not a single-letter initial and
+        # not a qualifier. Stop scanning; this is not a canonical
+        # binomial/trinomial shape and we should not invent one.
+        break
+
+    if qualifier_idx is not None:
+        qualifier = " ".join(tokens[qualifier_idx:])
+
     return {"genus": genus, "specific_epithet": epithet, "qualifier": qualifier}
 
 
@@ -258,6 +385,35 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
     )
 
 
+def _paleocoord_missing_warning(locality_dump: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Emit a single warning when localities exist but the
+    paleocoordinates view is empty.
+
+    This makes the empty paleo_coordinates list self-explanatory:
+    consumers can tell the field is reserved, not forgotten. The
+    warning is intentionally not emitted when there are no localities,
+    because that would be noise for papers that have no geographic
+    data at all.
+    """
+    if not locality_dump:
+        return None
+    return {
+        "warning_id": _stable_id(
+            "warn", "paleocoord_backend_missing", str(len(locality_dump))
+        ),
+        "level": "warning",
+        "code": "paleocoord_backend_missing",
+        "message": (
+            "Paleocoordinate reconstruction not yet wired; the "
+            "paleo_coordinates list is empty by design. Records will "
+            "appear once the backend is implemented."
+        ),
+        "entity_type": "run",
+        "entity_id": None,
+        "evidence_text": f"{len(locality_dump)} locality record(s) detected",
+    }
+
+
 def run_output_from_provenance(
     provenance: ProvenanceRecord,
     matches: list[MatchResult],
@@ -269,9 +425,9 @@ def run_output_from_provenance(
     The first-stage product data package includes the panels plus the
     deduped papers/figures/taxa/samples/geology_contexts/localities
     views. The paleocoordinates view is empty in the first stage
-    because no paleocoord backend is wired yet. ``warnings`` are emitted
-    only from rule-based detection of review-worthy records; richer
-    warnings will land with the geo/paleo and sample sub-pipelines.
+    because no paleocoord backend is wired yet; when localities are
+    present we emit a single ``paleocoord_backend_missing`` warning
+    so consumers can tell the empty list is reserved, not forgotten.
     """
     panels = [panel_record_from_match(m) for m in matches]
     panel_dump = [p.model_dump() for p in panels]
@@ -282,6 +438,9 @@ def run_output_from_provenance(
     geology_dump = geology_contexts_from_matches(matches)
     locality_dump = locality_records_from_geology(matches)
     warnings_dump = warnings_from_matches(matches)
+    paleo_warn = _paleocoord_missing_warning(locality_dump)
+    if paleo_warn is not None:
+        warnings_dump = warnings_dump + [paleo_warn]
     return {
         "schema_version": provenance.schema_version,
         "provenance": provenance.model_dump(),
@@ -327,6 +486,23 @@ def paper_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
     return list(seen.values())
 
 
+def _blank_to_none(v: Any) -> Any:
+    """Coerce a blank/whitespace string to None.
+
+    JSON deserialisation often produces ``""`` or ``"   "`` for
+    ``None`` fields. The strict ``extra=forbid`` schema accepts
+    either, but the data package is more useful downstream if empty
+    strings and missing values are the same thing. This helper is
+    intentionally narrow: it only treats pure whitespace / empty
+    strings as missing; numeric 0 stays 0.
+    """
+    if v is None:
+        return None
+    if isinstance(v, str) and not v.strip():
+        return None
+    return v
+
+
 def figure_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
     seen: dict[tuple[str, str], dict[str, Any]] = {}
     for m in matches:
@@ -334,15 +510,18 @@ def figure_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
         key = (m.paper_id, m.figure_id)
         if not m.figure_id or key in seen:
             continue
+        fig_no = _blank_to_none(meta.get("figure_number"))
         rec = FigureRecord(
             figure_id=m.figure_id,
             paper_id=m.paper_id,
-            figure_number=str(meta.get("figure_number")) if meta.get("figure_number") is not None else None,
-            figure_type=meta.get("figure_type"),
+            figure_number=str(fig_no) if fig_no is not None else None,
+            figure_type=_blank_to_none(meta.get("figure_type")),
             page_index=meta.get("page_index"),
-            caption=m.caption_snippet,
-            caption_source=meta.get("caption_source"),
-            image_path=meta.get("image_path") or meta.get("figure_image_path"),
+            caption=_blank_to_none(m.caption_snippet),
+            caption_source=_blank_to_none(meta.get("caption_source")),
+            image_path=_blank_to_none(
+                meta.get("image_path") or meta.get("figure_image_path")
+            ),
             bbox=list(meta.get("bbox")) if isinstance(meta.get("bbox"), list) else None,
             scale_bar=_scale_bar_from_meta(meta),
             panel_ids=list(meta.get("panel_ids") or []),
@@ -386,15 +565,16 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
 
 
 def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
-    seen: dict[str, dict[str, Any]] = {}
+    seen: dict[tuple[str, str], dict[str, Any]] = {}
     sample_pat = re.compile(r"Sample\s+([A-Za-z0-9\-]+)")
     for m in matches:
         text = m.caption_snippet or ""
-        if not text:
+        if not text or not m.paper_id:
             continue
         for sm in sample_pat.finditer(text):
             sid = sm.group(1)
-            if sid in seen:
+            key = (m.paper_id, sid)
+            if key in seen:
                 continue
             rec = SampleRecord(
                 sample_id=sid,
@@ -407,7 +587,7 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 page_index=(m.metadata or {}).get("page_index"),
                 confidence=0.5,
             )
-            seen[sid] = rec.model_dump()
+            seen[key] = rec.model_dump()
     return list(seen.values())
 
 
@@ -459,7 +639,7 @@ def geology_contexts_from_matches(matches: list[MatchResult]) -> list[dict[str, 
 
 
 def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, Any]]:
-    seen: dict[str, dict[str, Any]] = {}
+    seen: dict[tuple[str, str, object, object], dict[str, Any]] = {}
     for m in matches:
         geos = (m.metadata or {}).get("geology_links") or []
         if not isinstance(geos, list):
@@ -470,30 +650,47 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
             locality = g.get("locality")
             if not locality:
                 continue
-            loc_id = _stable_id("loc", locality, g.get("latitude"), g.get("longitude"))
-            if loc_id in seen:
+            key = (
+                m.paper_id,
+                locality,
+                g.get("latitude"),
+                g.get("longitude"),
+            )
+            if key in seen:
                 continue
+            loc_id = _stable_id(
+                "loc",
+                m.paper_id,
+                locality,
+                g.get("latitude"),
+                g.get("longitude"),
+            )
             rec = LocalityRecord(
                 locality_id=loc_id,
                 name=locality,
                 country=g.get("country"),
                 region=None,
                 section_name=g.get("section_title"),
-                modern_latitude=g.get("modern_latitude") or g.get("latitude"),
-                modern_longitude=g.get("modern_longitude") or g.get("longitude"),
+                modern_latitude=_resolve_modern_coord(g.get("modern_latitude"), g.get("latitude")),
+                modern_longitude=_resolve_modern_coord(g.get("modern_longitude"), g.get("longitude")),
                 coordinate_source="caption" if g.get("latitude") is not None else None,
                 geocoding_source=None,
                 confidence=float(g.get("confidence", 0.0) or 0.0),
             )
-            seen[loc_id] = rec.model_dump()
+            seen[key] = rec.model_dump()
     return list(seen.values())
 
 
 def warnings_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for i, m in enumerate(matches):
+    for m in matches:
         for code in _panel_review_reasons(m):
-            warning_id = _stable_id("warn", i, m.paper_id, m.figure_id, m.panel_id, code)
+            # The warning_id is content-derived only (no loop index) so
+            # it is stable when matches are re-ordered. Two runs over
+            # the same logical panel emit the same warning_id.
+            warning_id = _stable_id(
+                "warn", m.paper_id, m.figure_id, m.panel_id, code
+            )
             wr = WarningRecord(
                 warning_id=warning_id,
                 level="warning",

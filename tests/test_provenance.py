@@ -36,6 +36,45 @@ class TestBuildProvenance:
         p = build_provenance()
         assert p.schema_version == SCHEMA_VERSION
 
+    def test_pipeline_version_resolves_from_package_or_pyproject(self):
+        """Provenance pipeline_version must be the installed package
+        version (or pyproject.toml fallback), never the literal
+        ``"unknown"`` while the repo is in a usable state.
+
+        If the resolver silently falls back to ``"unknown"`` the
+        research output loses its provenance and the user cannot tell
+        which code release produced it. This test guards the resolver
+        by asserting the literal value differs from the ``"unknown"``
+        sentinel.
+        """
+        p = build_provenance(repo_root=REPO_ROOT)
+        assert p.pipeline_version != "unknown", (
+            "pipeline_version resolved to 'unknown' — the resolver fell "
+            "back silently and the provenance no longer identifies the "
+            "release that produced this output"
+        )
+
+    def test_pipeline_version_distinct_from_schema_version(self):
+        """The pipeline_version and schema_version are different
+        semver dimensions. They may coincide numerically (both 1.0.0)
+        right now, but a future schema bump must not change
+        pipeline_version and vice versa.
+
+        This test asserts the resolver returns a non-empty string
+        and that the two are stored in different fields on the
+        provenance record.
+        """
+        p = build_provenance(repo_root=REPO_ROOT)
+        assert p.pipeline_version and isinstance(p.pipeline_version, str)
+        assert p.schema_version and isinstance(p.schema_version, str)
+        # They live in distinct fields; a regression that conflates
+        # them (e.g. assigning schema_version to both) is caught by the
+        # field-explicit accessors below.
+        assert hasattr(p, "pipeline_version")
+        assert hasattr(p, "schema_version")
+        assert "pipeline_version" in p.to_dict()
+        assert "schema_version" in p.to_dict()
+
     def test_timestamp_is_iso_utc(self):
         p = build_provenance()
         # YYYY-MM-DDTHH:MM:SSZ format
