@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
+
+try:
+    import torch
+except Exception:  # pragma: no cover - optional local Gemma dependency
+    torch = None  # type: ignore[assignment]
 from PIL import Image
 from tqdm import tqdm
 
@@ -57,9 +61,10 @@ class GemmaRuntime:
 def set_global_seed(seed: int = 42) -> None:
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    if torch is not None:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
 
 def load_gemma4_model(
@@ -76,6 +81,8 @@ def load_gemma4_model(
     except Exception as exc:
         raise RuntimeError(f"Transformers import failed: {exc}")
 
+    if torch is None:
+        raise RuntimeError("PyTorch is required for the transformers Gemma backend")
     dtype = torch.bfloat16 if bfloat16 else torch.float16
     quant_cfg = None
     if use_4bit:

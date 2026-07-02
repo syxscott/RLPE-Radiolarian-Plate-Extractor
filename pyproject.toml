@@ -47,6 +47,7 @@ extend-exclude = [
     "work",
     "data",
     "schemas",
+    "opendataloader-pdf",
     "scripts/build_gold_*.py",  # gold builders are one-off scripts; tolerate style drift
 ]
 
@@ -69,6 +70,7 @@ ignore = [
     "B007",  # unused-loop-control-variable (often intentional in tests)
     "F841",  # unused-variable (often debug residue; revisit per-file later)
     "B905",  # zip-without-explicit-strict (Python 3.10+ zip default; revisit)
+    "UP038",  # isinstance(X, (A, B)) -> isinstance(X, A | B); defer broad style churn
 ]
 
 [tool.ruff.lint.per-file-ignores]

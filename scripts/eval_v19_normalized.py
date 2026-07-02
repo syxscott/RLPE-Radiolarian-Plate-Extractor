@@ -31,7 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from rlpe.evaluation.gold import GoldPanel, load_gold  # noqa: E402
+from rlpe.evaluation.gold import load_gold  # noqa: E402
 from rlpe.evaluation.metrics import evaluate  # noqa: E402
 
 GOLD_DIR = REPO / "data" / "gold"

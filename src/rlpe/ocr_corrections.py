@@ -71,7 +71,6 @@ remains untouched so the research-grade F1 number stays honest.
 from __future__ import annotations
 
 import re
-from typing import Iterable
 
 # ---------------------------------------------------------------------------
 # Global substring corrections

@@ -120,7 +120,6 @@ def easyocr_panel_label(image_path: Path, reader=None) -> str | None:
 
     try:
         import cv2  # type: ignore[import-not-found]
-        import numpy as np  # type: ignore[import-not-found]
     except ImportError:
         return None
 
@@ -337,7 +336,7 @@ def main() -> int:
         print(f"  image-verified F1:     {agg['image_verified_panel_id_rate']:.4f}")
         print(f"  gap (pp):              {agg['gap_pp']:+.2f}")
     else:
-        print(f"  image-verified F1:     N/A (no panels OCR'd)")
+        print("  image-verified F1:     N/A (no panels OCR'd)")
     print()
     print("Per paper:")
     for pid, m in report["papers"].items():

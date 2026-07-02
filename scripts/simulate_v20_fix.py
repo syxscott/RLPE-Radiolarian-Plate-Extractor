@@ -20,7 +20,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from rlpe.evaluation.gold import load_gold  # noqa: E402
-from rlpe.evaluation.metrics import evaluate, _norm_species  # noqa: E402
+from rlpe.evaluation.metrics import evaluate  # noqa: E402
 from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 
 PREDS = REPO / "work" / "v19_run" / "output" / "manifests" / "matches.jsonl"
