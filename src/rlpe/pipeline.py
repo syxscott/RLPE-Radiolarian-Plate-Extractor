@@ -1486,6 +1486,16 @@ Rules:
                     "panel_count": len(panels_data),
                     "figure_number": caption.figure_number,
                     "page_index": caption.page_index,
+                    # Label provenance: the LLM inferred this label from
+                    # the caption + image jointly. The honest source is
+                    # "llm_first" (not "m3_vision" or "image_ocr") —
+                    # the visual-evidence path remains reserved for
+                    # true image-OCR / Stage-3 bbox+crop work. We do
+                    # NOT set printed_panel_id here; that field is a
+                    # claim of pixel-level evidence and would mislead
+                    # review tools if stamped on a caption-derived id.
+                    "caption_panel_id": panel_id,
+                    "panel_id_source": "llm_first",
                 },
             )
             out.append(m.to_dict())
@@ -1670,6 +1680,15 @@ Rules:
                                             if self.m3_engine is not None
                                             else "regex_caption_hybrid_added"
                                         ),
+                                        # This row was added because the
+                                        # LLM truncated its output but
+                                        # the caption parser found it.
+                                        # The label is fully caption-
+                                        # derived, so:
+                                        #   caption_panel_id == panel_id
+                                        #   panel_id_source == "caption"
+                                        "caption_panel_id": lbl,
+                                        "panel_id_source": "caption",
                                     },
                                 ).to_dict()
                             )

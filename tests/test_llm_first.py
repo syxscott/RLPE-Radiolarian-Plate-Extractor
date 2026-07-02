@@ -10,6 +10,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+# The pipeline module imports cv2 at module scope. Skip the test module
+# on minimal environments so the suite can still collect cleanly.
+pytest.importorskip("cv2")
+
 
 class TestLLMFirstExtract:
     """Tests for RadiolarianPipeline._llm_first_extract."""
@@ -168,3 +172,30 @@ class TestLLMFirstExtract:
         result = self._run_with_mock_backend(mock_backend)
         assert result is not None
         assert len(result) == 2
+
+    def test_sets_caption_panel_id_and_panel_id_source(self):
+        """LLM-first rows must stamp label provenance (caption_panel_id,
+        panel_id_source='llm_first') so downstream consumers can
+        distinguish caption-derived ids from true image-OCR / bbox
+        evidence. printed_panel_id is intentionally NOT set here —
+        the visual-evidence path is reserved for the classical OCR
+        and Stage-3 bbox/crop work.
+        """
+        mock_backend = MagicMock()
+        mock_backend.backend_name = "MiniMax"
+        mock_backend.infer_panel.return_value = {
+            "fallback_used": False,
+            "panels": [
+                {"label": "1", "species": "Actinomma leptodermum", "confidence": 0.95},
+                {"label": "2a", "species": "Actinomma holtedahli", "confidence": 0.88},
+            ],
+        }
+        result = self._run_with_mock_backend(mock_backend)
+        assert result is not None
+        assert len(result) == 2
+        for row, expected in zip(result, ("1", "2a"), strict=True):
+            assert row["metadata"]["caption_panel_id"] == expected
+            assert row["metadata"]["panel_id_source"] == "llm_first"
+            # printed_panel_id must NOT be set by the LLM-first path
+            # — that is reserved for true image-OCR / Stage-3 evidence.
+            assert "printed_panel_id" not in row["metadata"]
