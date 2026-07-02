@@ -316,7 +316,7 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="RLPE API - Radiolarian Plate Extractor",
-    version="1.0.0",
+    version="1.1.0",
     description="Web API for radiolarian figure extraction from PDF literature",
     lifespan=_lifespan,
 )
