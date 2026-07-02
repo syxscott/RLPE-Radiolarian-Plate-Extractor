@@ -211,6 +211,17 @@ class RadiolarianPipeline:
         if self._progress_cb is not None:
             self._progress_cb(current, total, message)
 
+    def _collect_llm_usage(self) -> dict[str, Any] | None:
+        """Thin wrapper around :func:`rlpe.llm_usage.collect_llm_usage`.
+
+        Kept as a method so test code can construct a pipeline via
+        ``__new__`` and inject a runtime attribute, without running the
+        full ``__init__`` chain.
+        """
+        from .llm_usage import collect_llm_usage
+
+        return collect_llm_usage(getattr(self, "gemma_runtime", None))
+
     def run(self) -> list[dict[str, Any]]:
         self.prepare_dirs()
         pdf_files = sorted(self.config.pdf_dir.glob("*.pdf"))
@@ -282,6 +293,21 @@ class RadiolarianPipeline:
                 write_json(manifest_path.parent / "run_output.json", run_output_dict)
             except Exception:
                 logger.exception("Failed to write run_output.json; matches.jsonl is unaffected")
+            # Run-level LLM usage sidecar. Independent of RunOutput schema
+            # so /system/llm-status and the audit trail can see the actual
+            # MiniMax call / token / cost totals even before the per-row
+            # propagation lands. Failures here must NEVER invalidate
+            # matches.jsonl / run_output.json.
+            try:
+                summary = self._collect_llm_usage()
+                if summary:
+                    write_json(
+                        manifest_path.parent / "llm_usage.json", summary
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to write llm_usage.json; matches.jsonl is unaffected"
+                )
         self._emit_progress(total, total, f"Done — {len(rows)} matches")
         return rows
 

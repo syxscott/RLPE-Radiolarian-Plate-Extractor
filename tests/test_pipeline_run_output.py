@@ -187,3 +187,5 @@ class TestPipelineRunOutput:
         assert recovered["species"] == "Species two"
         # run_output.json is allowed to be absent after a failure.
         assert not (manifest_dir / "run_output.json").exists()
+        # llm_usage sidecar is independently guarded; matches.jsonl is
+        # still safe even if both sidecar write paths fail.
