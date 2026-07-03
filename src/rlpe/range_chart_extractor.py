@@ -412,66 +412,67 @@ def extract_range_chart(
         "Extract the geological information as the strict JSON contract."
     )
 
+    resp = None
     try:
-        resp = requests.post(
-            f"{base_url.rstrip('/')}/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": model,
-                "max_tokens": 4000,
-                "system": _RANGE_CHART_SYSTEM_PROMPT,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": mime,
-                                    "data": img_b64,
-                                },
-                            },
-                            {"type": "text", "text": user_prompt},
-                        ],
-                    }
-                ],
-            },
-            timeout=timeout_sec,
-        )
-    except requests.RequestException as exc:
-        logger.warning("range_chart API call failed for %s/%s: %s", paper_id, figure_id, exc)
-        return result
-
-    # Always close the HTTP connection. ``requests`` will GC it, but
-    # for a long-running pipeline that processes many figures an
-    # explicit close is safer — leaked connections can exhaust the
-    # OS's per-process FD limit. Use try/finally so the close runs
-    # on ALL exit paths (status_code != 200, payload parse failure,
-    # success).
-    try:
-        if resp.status_code != 200:
-            logger.warning(
-                "range_chart API returned %d for %s/%s: %s",
-                resp.status_code,
-                paper_id,
-                figure_id,
-                resp.text[:200],
-            )
-            return result
+        # Audit H4: use ``with`` so the response is closed even if a
+        # non-RequestException (e.g. MemoryError, urllib3 internal
+        # error) escapes ``requests.post``. Pre-fix, ``resp`` could
+        # remain undefined when the post raised; the trailing
+        # ``finally`` block then raised NameError, both masking the
+        # real error and leaking the connection.
         try:
-            payload = resp.json()
-        except ValueError:
+            with requests.post(
+                f"{base_url.rstrip('/')}/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 4000,
+                    "system": _RANGE_CHART_SYSTEM_PROMPT,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime,
+                                        "data": img_b64,
+                                    },
+                                },
+                                {"type": "text", "text": user_prompt},
+                            ],
+                        }
+                    ],
+                },
+                timeout=timeout_sec,
+            ) as _resp:
+                resp = _resp
+                if resp.status_code != 200:
+                    logger.warning(
+                        "range_chart API returned %d for %s/%s: %s",
+                        resp.status_code,
+                        paper_id,
+                        figure_id,
+                        resp.text[:200],
+                    )
+                    return result
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    return result
+        except requests.RequestException as exc:
+            logger.warning("range_chart API call failed for %s/%s: %s", paper_id, figure_id, exc)
             return result
     finally:
-        try:
-            resp.close()
-        except Exception:
-            pass
+        # Belt-and-braces: ``with`` already closed, but if the
+        # assignment to ``resp`` itself failed before ``with`` entered,
+        # we still need to drop the attribute to allow GC.
+        resp = None
 
     raw_text = ""
     for c in payload.get("content", []):
