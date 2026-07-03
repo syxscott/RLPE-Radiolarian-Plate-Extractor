@@ -1040,6 +1040,16 @@ body {
     font-size: 0.78rem;
     font-weight: 400;
 }
+.modal-geo-ma {
+    margin-left: 0.35rem;
+    padding: 0.05rem 0.4rem;
+    background: var(--primary-soft);
+    color: var(--primary-dark);
+    border-radius: 3px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
 
 .modal-caption {
     margin-top: 0.25rem;

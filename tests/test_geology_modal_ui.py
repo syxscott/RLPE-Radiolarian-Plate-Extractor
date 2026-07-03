@@ -104,6 +104,21 @@ class TestGeologyModalCode:
         i = css.find(".modal-geo-conf {")
         assert i > 0, ".modal-geo-conf rule missing"
 
+    def test_css_modal_geo_ma_styled(self, css: str) -> None:
+        """The Ma badge class must be styled, otherwise it renders as
+        plain text indistinguishable from surrounding content."""
+        i = css.find(".modal-geo-ma {")
+        assert i > 0, ".modal-geo-ma rule missing"
+        end = css.find("}", i)
+        rule = css[i:end]
+        assert rule.count(chr(10)) >= 3, (
+            "modal-geo-ma rule must contain at least 3 declarations "
+            "(background + color + numeric formatting)"
+        )
+        assert "tabular-nums" in rule or "tabular" in rule, (
+            "Ma values should use tabular-nums for stable column width"
+        )
+
 
 class TestGeologyModalRender:
     """Simulate the openImageModal geology block in Python.
