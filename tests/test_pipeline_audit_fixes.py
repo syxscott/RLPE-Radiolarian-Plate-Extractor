@@ -114,8 +114,12 @@ class TestPipelineSourceAuditFixes:
         marker = "def _apply_geo_vision("
         i = text.find(marker)
         assert i > 0
-        # Take the next 2500 chars (function body is ~120 lines).
-        body = text[i : i + 2500]
+        # The function body is ~150 lines (Round 5 added a guard),
+        # so a 2500-char slice may miss the is_file() call.  Use
+        # the next top-level ``def `` as the end-marker.
+        next_def = text.find("\n    def ", i + 1)
+        assert next_def > 0
+        body = text[i:next_def]
         # The fix: ``Path(image_path).is_file()`` instead of ``.exists()``.
         assert "Path(image_path).is_file()" in body, (
             "_apply_geo_vision must use Path(image_path).is_file() "

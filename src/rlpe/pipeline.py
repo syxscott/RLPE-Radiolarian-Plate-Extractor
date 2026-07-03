@@ -1020,6 +1020,10 @@ class RadiolarianPipeline:
             # misclassified as plate/range_chart and silently lost
             # their specialized geological content.
             if fig_type in ("strat_column", "litholog_column", "paleogeographic_map"):
+                geo_links: list[dict[str, Any]] = []  # Audit Bug 1:
+                # initialize so _emit_progress below never hits
+                # UnboundLocalError when the image is missing or
+                # m3_engine is None.
                 geo_image_path = primary_path
                 if geo_image_path is None:
                     geo_image_path = self._find_orphan_image_for_range_chart(
@@ -1476,6 +1480,14 @@ class RadiolarianPipeline:
         )
         for r in results:
             md = r.get("metadata") or {}
+            # Audit Bug 4: Skip rows that Round 5's inline block
+            # already processed (they have geo_vision_used=True in
+            # metadata). Without this guard, enabling both
+            # use_geo_vision=True and Round 5's inline routing would
+            # call extract_geology TWICE for the same figure —
+            # wasting API calls and producing duplicate links.
+            if md.get("geo_vision_used"):
+                continue
             figure_type = md.get("figure_type")
             # Backfill figure_type from extraction_source where the older
             # stages didn't already tag it.

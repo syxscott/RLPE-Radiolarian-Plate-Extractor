@@ -102,7 +102,7 @@ def fake_backend():
                 "cost_cny": 0.004,
             },
             {
-                "match": lambda s: "litholog_geo" in s,
+                "match": lambda s: "litholog_column_geo" in s,
                 "raw_text": (
                     '{"geo":[{"age":null,"chronostratigraphy":null,'
                     '"chronostratigraphy_rank":null,"ma_top":null,"ma_base":null,'
@@ -145,13 +145,14 @@ class TestPromptRegistry:
     """Lock the figure-type -> system-prompt mapping."""
 
     def test_six_prompts_registered(self):
+        # Every key MUST match the f"{figure_type}_geo" contract.
         for key in (
             "plate_geo",
             "range_chart_geo",
             "map_geo",
             "strat_column_geo",
-            "litholog_geo",
-            "paleogeo_map_geo",
+            "litholog_column_geo",
+            "paleogeographic_map_geo",
         ):
             assert key in PROMPT_REGISTRY, f"missing prompt: {key}"
             assert isinstance(PROMPT_REGISTRY[key], str)

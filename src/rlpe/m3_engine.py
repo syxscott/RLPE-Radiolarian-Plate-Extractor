@@ -249,7 +249,7 @@ PROMPT_REGISTRY: dict[str, str] = {
         '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
         "Prioritize formation / member / group / lithology. Output JSON only."
     ),
-    "litholog_geo": (
+    "litholog_column_geo": (
         "You are a geology assistant reading a lithological log "
         "(litholog column). The figure is a vertical strip showing rock "
         "type patterns and brief annotations. Extract lithology, "
@@ -264,7 +264,7 @@ PROMPT_REGISTRY: dict[str, str] = {
         '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
         "Prioritize lithology + formation. Output JSON only."
     ),
-    "paleogeo_map_geo": (
+    "paleogeographic_map_geo": (
         "You are a geology assistant reading a paleogeographic map. The "
         "figure shows reconstructed continents at a specific age. Extract "
         "the reconstructed age (Ma), continent / plate names, paleo-"
