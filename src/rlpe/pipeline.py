@@ -1013,10 +1013,83 @@ class RadiolarianPipeline:
                     )
                 continue
 
-            # Map / location / paleogeographic figure: extract
-            # geographic context (location names, lat/lon) from the
-            # caption and produce a stub record. This ensures these
-            # figures aren't silently dropped by the pipeline.
+            # Stratigraphic column / litholog column / paleogeographic
+            # map: route to the proper multi-modal geology vision
+            # prompt instead of falling through to the plate
+            # segmentation path. Round 5 — previously these were
+            # misclassified as plate/range_chart and silently lost
+            # their specialized geological content.
+            if fig_type in ("strat_column", "litholog_column", "paleogeographic_map"):
+                geo_image_path = primary_path
+                if geo_image_path is None:
+                    geo_image_path = self._find_orphan_image_for_range_chart(
+                        figures, pair, od_result.json_data
+                    )
+                if geo_image_path is not None and self.m3_engine is not None:
+                    try:
+                        from PIL import Image as _PILImage
+
+                        with _PILImage.open(geo_image_path) as im:
+                            geo_image = im.convert("RGB")
+                        geo_links = self.m3_engine.extract_geology(
+                            image=geo_image,
+                            caption=pair.caption_text or "",
+                            figure_type=fig_type,
+                            paper_id=paper_id,
+                            figure_id=pair.figure_id,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "geo_vision %s failed for %s/%s: %s",
+                            fig_type,
+                            paper_id,
+                            pair.figure_id,
+                            exc,
+                        )
+                        geo_links = []
+                    if geo_links:
+                        # Wrap geology links into a stub record so the
+                        # downstream eval/export pipeline sees them.
+                        results.append(
+                            {
+                                "paper_id": paper_id,
+                                "figure_id": pair.figure_id,
+                                "panel_id": f"GEO_VISION_{fig_type.upper()}",
+                                "species": None,
+                                "panel_path": geo_image_path,
+                                "bbox": None,
+                                "confidence": 0.0,
+                                "label_text": None,
+                                "caption_snippet": (pair.caption_text or "")[:240],
+                                "ocr_text": None,
+                                "paper_metadata": None,
+                                "metadata": {
+                                    "figure_type": fig_type,
+                                    "extraction_source": "geo_vision",
+                                    "geology_links": geo_links,
+                                    "geo_vision_used": True,
+                                    "geo_vision_figure_type": fig_type,
+                                },
+                            }
+                        )
+                        logger.info(
+                            "%s %s: extracted %d geo links via vision",
+                            fig_type,
+                            pair.figure_id,
+                            len(geo_links),
+                        )
+                self._emit_progress(
+                    fig_idx,
+                    n_figs,
+                    f"[{fig_idx}/{n_figs}] {fig_type} → "
+                    f"{len(geo_links) if geo_links else 0} vision links",
+                )
+                continue
+
+            # Map / location figure: extract geographic context
+            # (location names, lat/lon) from the caption and produce
+            # a stub record. This ensures these figures aren't silently
+            # dropped by the pipeline.
             if fig_type == "map":
                 # Use the largest image on the same page (or
                 # primary_path if available).

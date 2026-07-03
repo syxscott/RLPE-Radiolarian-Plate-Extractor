@@ -285,9 +285,9 @@ SECTION_TYPE_BY_FIGURE: dict[str, str] = {
     "plate": "plate_caption",
     "range_chart": "range_chart",
     "map": "location_map",
-    "paleogeographic_map": "paleogeographic_map",
-    "stratigraphic_column": "stratigraphic_column",
+    "strat_column": "stratigraphic_column",
     "litholog_column": "litholog_column",
+    "paleogeographic_map": "paleogeographic_map",
 }
 
 

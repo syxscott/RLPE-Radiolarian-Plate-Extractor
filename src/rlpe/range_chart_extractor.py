@@ -61,6 +61,12 @@ logger = logging.getLogger(__name__)
 _FIGURE_TYPE_PROMPT_KEYWORDS = {
     # Map: keyword -> figure type. Checked in order; first hit wins.
     "plate": (
+        # NOTE: "plate" must be first so that "Plate N" captions
+        # match before any range_chart keyword (e.g. "distribution
+        # of radiolarians" in a plate caption). The word "plate"
+        # alone is specific enough because radiolarian papers
+        # consistently use "Plate N" for SEM figures.
+        "plate",
         "scanning electron micrograph",
         "sem images",
         "sem micrograph",
@@ -100,10 +106,13 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
         "biostratigraphic",
     ),
     "map": (
+        # NOTE: "paleogeographic map" is intentionally NOT here — it
+        # goes to the more specific "paleogeographic_map" type below.
+        # Geographic place names ("Range" in "Great Dividing Range")
+        # can over-match range-chart keywords, so we keep map
+        # detection conservative first.
         "location map",
         "geographic distribution",
-        "paleogeographic map",
-        "palaeogeographic",
         "geological map",
         "study area",
         "index map",
@@ -119,6 +128,28 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
         "outcrop location",
         "sample location",
     ),
+    # Stratigraphic column / litholog column — more specific than
+    # "range_chart" so we route them to the proper vision prompt.
+    "strat_column": (
+        "stratigraphic column",
+        "columnar section",
+        "measured section",
+        "generalized stratigraphy",
+        "stratigraphic log",
+    ),
+    "litholog_column": (
+        "litholog column",
+        "litholog log",
+        "lithology column",
+        "lithologic log",
+        "lithology log",
+    ),
+    "paleogeographic_map": (
+        "paleogeographic map",
+        "palaeogeographic",
+        "paleogeographic reconstruction",
+        "palaeogeographic map",
+    ),
     "photo": (
         "field photograph",
         "outcrop photograph",
@@ -130,7 +161,9 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
 def classify_figure_type(caption: str | None, image_path: str | None = None) -> str:
     """Heuristically classify a figure's type from its caption text.
 
-    Returns one of: ``plate``, ``range_chart``, ``map``, ``photo``, ``other``.
+    Returns one of: ``plate``, ``range_chart``, ``map``,
+    ``strat_column``, ``litholog_column``, ``paleogeographic_map``,
+    ``photo``, ``other``.
 
     The classifier is caption-only (no vision) and intentionally
     conservative — the default for any caption that doesn't clearly match
@@ -140,13 +173,22 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
     explicitly mentions distribution/range/biozone keywords, which is
     the safest gate: false positives are cheap (an extra API call), but
     false negatives silently lose the geological linkage.
+
+    Detection order matters:
+      1. plate (with range_chart override)
+      2. map (before range_chart to avoid place-name false positives)
+      3. strat_column / litholog_column / paleogeographic_map (more
+         specific than range_chart, so they take priority)
+      4. range_chart (catch-all for distribution/range/biozone)
+      5. photo
+      6. other (fallback → treated as plate downstream)
     """
     if not caption:
         return "other"
     low = caption.lower()
-    # Check plate first because plates often co-occur with range charts
-    # in a paper but the keyword "distribution of radiolarians" is what
-    # marks the range chart, not a plate caption that mentions
+    # 1. Check plate first because plates often co-occur with range
+    # charts in a paper but the keyword "distribution of radiolarians"
+    # is what marks the range chart, not a plate caption that mentions
     # "distribution" in passing.
     for kw in _FIGURE_TYPE_PROMPT_KEYWORDS["plate"]:
         if kw in low:
@@ -156,7 +198,14 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
                 if rc_kw in low:
                     return "range_chart"
             return "plate"
-    # Check map BEFORE range_chart because map captions frequently
+    # 2. Check the more specific paleogeographic_map BEFORE the
+    # generic map because "paleogeographic map of..." contains the
+    # substring "map of" which would otherwise match the map list.
+    # The longer, more specific keyword must win.
+    for kw in _FIGURE_TYPE_PROMPT_KEYWORDS["paleogeographic_map"]:
+        if kw in low:
+            return "paleogeographic_map"
+    # 3. Check map BEFORE range_chart because map captions frequently
     # contain words like "Range" as geographic place names ("Nadanhada
     # Range", "Great Dividing Range") that have nothing to do with
     # species stratigraphic ranges. A "map" keyword match is a much
@@ -164,12 +213,21 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
     for mk in _FIGURE_TYPE_PROMPT_KEYWORDS["map"]:
         if mk in low:
             return "map"
-    for ftype, keywords in _FIGURE_TYPE_PROMPT_KEYWORDS.items():
-        if ftype in ("plate", "map"):
-            continue
-        for kw in keywords:
+    # 4. Check the more specific column types BEFORE the generic
+    # range_chart catch-all so they route to the right vision prompt.
+    for specific in ("strat_column", "litholog_column"):
+        for kw in _FIGURE_TYPE_PROMPT_KEYWORDS[specific]:
             if kw in low:
-                return ftype
+                return specific
+    # 4. Generic range_chart catch-all.
+    for kw in _FIGURE_TYPE_PROMPT_KEYWORDS["range_chart"]:
+        if kw in low:
+            return "range_chart"
+    # 5. Photo.
+    for kw in _FIGURE_TYPE_PROMPT_KEYWORDS["photo"]:
+        if kw in low:
+            return "photo"
+    # 6. Fallback.
     return "other"
 
 

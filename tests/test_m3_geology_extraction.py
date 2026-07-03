@@ -168,7 +168,9 @@ class TestPromptRegistry:
         assert SECTION_TYPE_BY_FIGURE["range_chart"] == "range_chart"
         assert SECTION_TYPE_BY_FIGURE["map"] == "location_map"
         assert SECTION_TYPE_BY_FIGURE["paleogeographic_map"] == "paleogeographic_map"
-        assert SECTION_TYPE_BY_FIGURE["stratigraphic_column"] == "stratigraphic_column"
+        # "strat_column" is the classify_figure_type output key;
+        # it maps to the published "stratigraphic_column" section_type.
+        assert SECTION_TYPE_BY_FIGURE["strat_column"] == "stratigraphic_column"
         assert SECTION_TYPE_BY_FIGURE["litholog_column"] == "litholog_column"
 
 
