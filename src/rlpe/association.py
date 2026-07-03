@@ -312,11 +312,22 @@ def _normalize_panel_label(label: str | None) -> str | None:
 def is_valid_panel_label(label: str | None) -> bool:
     """Validate that a panel label is safe to emit as a new panel_id.
 
-    Rejects empty strings, non-string values, and labels that
-    are likely to be sub-panel decoration (e.g. "A", "B") that
-    would collide with figure-level panel counts. The pipeline
-    uses this gate in the LLM-first hybrid enrichment to avoid
-    inserting label-noise into the canonical panel list.
+    Rejects empty strings, non-string values, and strings whose shape
+    is NOT a plausible panel id. The pipeline uses this gate in the
+    LLM-first hybrid enrichment and the image-OCR override to avoid
+    inserting OCR noise (``ean`` / ``L`` / ``P1`` / ``foo`` / ``,1``)
+    or caption fragments (``Figure`` / ``Plate`` / ``251.90``) into
+    the canonical panel list, which would collide with real labels
+    via positional fallback (N10-class drift).
+
+    Accepted shapes (mirrors ``_extract_panel_labels_from_caption``
+    in ``local_pdf_parser.py`` so caption-derived and OCR-derived
+    labels share the same shape contract):
+
+      * single uppercase A–H  — figure-level decorative marker, e.g. "(A)"
+      * digit with optional trailing [a-z]  — e.g. "1", "2a", "12b"
+
+    A 16-char length cap remains as a backstop against caption fragments.
     """
     if not label:
         return False
@@ -329,7 +340,14 @@ def is_valid_panel_label(label: str | None) -> bool:
     # caption-text fragments, not panel ids.
     if len(s) > 16:
         return False
-    return True
+    # Shape gate: A-H marker OR digit(s) with optional single trailing
+    # lowercase letter. Anything else is OCR noise / caption fragment.
+    return bool(_PANEL_LABEL_SHAPE.match(s))
+
+
+# Compiled once at import time. Anchored fullmatch is enforced by
+# using ``re.match`` with explicit ^/$ in the pattern below.
+_PANEL_LABEL_SHAPE = re.compile(r"^(?:[A-H]|\d+[a-z]?)$")
 
 
 _PANEL_METADATA_KEYS = (
