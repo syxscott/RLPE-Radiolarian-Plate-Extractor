@@ -1027,14 +1027,17 @@ async function confirmDelete() {
         if (jobIds.length === 1) {
             const url = `${CONFIG.apiBaseUrl}/jobs/${encodeURIComponent(jobIds[0])}?delete_files=${deleteFiles}`;
             resp = await fetch(url, { method: 'DELETE' });
-            data = await resp.json();
+            // Read the body only after we know the status. A non-2xx
+            // response (e.g. from a proxy HTML error page) would crash
+            // resp.json() with an unhandled SyntaxError.
+            data = resp.ok ? await resp.json() : { detail: resp.statusText };
         } else {
             resp = await fetch(`${CONFIG.apiBaseUrl}/jobs/batch-delete`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ job_ids: jobIds, delete_files: deleteFiles }),
             });
-            data = await resp.json();
+            data = resp.ok ? await resp.json() : { detail: resp.statusText };
         }
 
         if (!resp.ok) {

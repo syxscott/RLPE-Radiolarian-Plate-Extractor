@@ -367,9 +367,18 @@ def run_smoke(
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="OA-corpus smoke driver for RadiolarianPipeline.")
+
+    def _existing_dir(p: str) -> Path:
+        path = Path(p)
+        if not path.exists():
+            parser.error(f"--corpus path does not exist: {p}")
+        if not path.is_dir():
+            parser.error(f"--corpus path is not a directory: {p}")
+        return path
+
     parser.add_argument(
         "--corpus",
-        type=Path,
+        type=_existing_dir,
         default=_REPO_ROOT / "放射虫论文_OA_download",
         help="Directory of PDF files to smoke-test.",
     )
