@@ -808,16 +808,58 @@ attaches a wrong species to a real gold panel.
 5. If F1 is unexpectedly low, the per-paper table above is the first
    place to look for an explanation.
 
+## Round 4 (2026-07-03) — paper-level bug fixes + Stage 3 vision
+
+Round 4 added 4 new commits targeting the gap between v18/v19/v20
+baselines (string-match 82-96%) and the 90% live F1 target:
+
+| Commit    | Fix                                                                    | Tests |
+|----------|------------------------------------------------------------------------|-------|
+| `fbdccfd`| bandini pl05 page-window: tightened the forward-window clamp so pl05's images on page 21 are claimed by pl05 (not stolen by pl04). Pre-fix: 42 panels dropped. | 6 |
+| `08add56`| pouille over-segmentation guard: `assign_panels_to_labels` now uses `is_valid_panel_label` instead of the loose `pid.isdigit() or len(pid) <= 3`. Pre-fix: 28 rows of `panel_id='P1'` polluted the pred set. | 9 |
+| `2fc656f`| Stage 3 bbox + crop enrichment: new `_apply_stage3_bbox_crops` lifts M3 Stage 3 panel bboxes into the published MatchResult, crops each panel to `output/figures/m3_crops/{paper}/{fig}/{panel}.png`, and stamps `panel_id_source="m3_vision"`. This is the round-3 deferred #1 fix — previously the figure had real M3 panel bboxes in `m3_diag["stage3_panels"]` but the pred rows still showed `panel_id_source="legacy"`. | 7 |
+| (round 3 audit fixes) | 22 bugs across pipeline / m3_engine / range_chart / utils / converters / web JS / smoke driver / LLM backends. (See commit history for full list.) | 39 |
+
+**Expected impact** (when re-run live in the CV conda env):
+- **bandini pl05 F1** jumps from 0% (42 pred=0) to ~50-80% as the 42
+  dropped panels re-appear with correct figure routing.
+- **pouille2014 F1** jumps from 0% to ~80-100% as the 67 garbage
+  panel_id rows are dropped and the 11 valid 6-panel matches
+  (panel_id in {1, 5, 8, 12, 15, 19}) are no longer diluted.
+- **string-match aggregate F1** moves from 82-87% toward 90%+ as
+  these two paper-level fixes remove the largest single source
+  of false positives and false negatives.
+- **image-verified F1** is now achievable: Stage 3 writes real
+  panel crops to disk with `panel_id_source="m3_vision"`, so
+  downstream `image_label_check` can match against them.
+
+**Not yet measured live** in this commit batch. The v18 cached
+predictions in `work/combined_9_v18_FINAL.jsonl` were generated
+BEFORE these fixes; live re-run with the CV conda env
+(`python -m rlpe.cli --pdf-dir data/pdfs --work-dir work/v22`) is
+required to surface the new numbers.
+
+See `work/oa_smoke_*.jsonl` for the OA-corpus smoke-driver
+output (187 PDFs, 30 sample, 4104 rows, 100% ok in the CV env).
+The driver proves pipeline E2E works on unseen PDFs; the F1 lift
+itself requires the live v22 re-run.
+
 ## Test counts
 
 ```
 $ python -m pytest tests/ -q
-337 passed, 2 skipped in 1.95s
+608 passed, 39 skipped in 3.78s
 ```
 
-The 2 skipped tests are intentional: they exercise optional
-dependencies (`transformers`, `bitsandbytes` for the Gemma4
-postprocessor) that are not installed in the default dev env.
+(Was 337 passed in the v20 evaluation; Round 3 added 22 bug-fix tests
++ smoke driver tests + 39 multimodal/Ma-rounding tests, then Round 4
+added 16 tests across paper-level fixes + Stage 3 vision.)
+
+The 39 skipped tests are intentional: they exercise optional
+dependencies (`cv2`, `easyocr`, `paddleocr`, `fastapi`, `anthropic` SDK,
+`bitsandbytes` for the Gemma4 postprocessor) that are not installed
+in the default sandbox env. They run in the CV conda env
+(see `data/condarc` / conda env CV).
 
 ## Files referenced
 

@@ -36,13 +36,6 @@ try:
 except Exception:
     HAS_CV2 = False
 
-requires_cv2 = pytest.mark.skipif(
-    not HAS_CV2, reason="PIL.Image import OK; cv2 only needed by live pipeline"
-)
-# We don't actually require cv2 for these tests — the helper uses
-# PIL.Image. Drop the skipif to keep the tests runnable in sandbox.
-requires_cv2 = lambda f: f  # no-op decorator
-
 
 def _png(path: Path, color=(255, 255, 255), size=(200, 200)) -> Path:
     """Write a solid-color PNG so PIL can open it for the crop test."""

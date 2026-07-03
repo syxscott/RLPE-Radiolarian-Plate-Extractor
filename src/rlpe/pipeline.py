@@ -1230,6 +1230,8 @@ class RadiolarianPipeline:
             if not plate_path:
                 continue
             try:
+                from PIL import Image as _PILImage
+
                 plate_p = Path(plate_path)
                 if not plate_p.is_file():
                     continue
