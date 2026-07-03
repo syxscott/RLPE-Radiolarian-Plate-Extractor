@@ -152,3 +152,67 @@ class TestCorpusPathValidation:
             )
         finally:
             sys.argv = old_argv
+
+
+class TestEventDelegationUsed:
+    """M8 + M9: the old code called addEventListener on freshly-
+    recreated button / img elements inside the results table tbody
+    and pagination container — duplicate listeners accumulated on every
+    render. The fix uses event delegation on stable parent elements.
+
+    We assert that the old buggy patterns are gone from app.js.
+    """
+
+    def test_no_addEventListener_in_renderResults_thumbnails(self, js: str) -> None:
+        # Locate renderResults body and assert no inner addEventListener
+        # calls. Delegation uses one outer listener wired once.
+        body = _function_body(js, "renderResults")
+        # Strip out the delegation block — it's a legitimate listener
+        # at the top of the function. Look for forbidden patterns:
+        # forEach(img => { img.addEventListener  OR
+        # forEach(btn => { btn.addEventListener
+        # within the renderResults body.
+        forbidden_forEach = "querySelectorAll('.thumbnail-img').forEach"
+        assert forbidden_forEach not in body, (
+            "renderResults must NOT use querySelectorAll('.thumbnail-img').forEach "
+            "to wire click handlers (audit M8). Use event delegation."
+        )
+        forbidden_corr = "querySelectorAll('[data-correct-index]').forEach"
+        assert forbidden_corr not in body, (
+            "renderResults must NOT use querySelectorAll('[data-correct-index]').forEach "
+            "to wire click handlers (audit M8). Use event delegation."
+        )
+
+    def test_no_addEventListener_in_renderResultsPagination_buttons(self, js: str) -> None:
+        # renderResultsPagination should NOT call addEventListener on
+        # the freshly-recreated button elements. The fix uses delegation
+        # via container.addEventListener (allowed), but never
+        # ``btn.addEventListener`` or ``ps.addEventListener`` directly.
+        body = _function_body(js, "renderResultsPagination")
+        # Drop block + line comments so we don't false-positive on
+        # docstrings that mention ``addEventListener`` as context.
+        code_only = "\n".join(
+            line for line in body.splitlines() if not line.strip().startswith(("//", "/*", "*"))
+        )
+        forbidden_direct = ["btn.addEventListener", "ps.addEventListener"]
+        for pat in forbidden_direct:
+            assert pat not in code_only, (
+                f"renderResultsPagination must NOT call {pat!r} directly "
+                f"(audit M9). Use delegation."
+            )
+
+    def test_tbody_has_delegation_guard(self, js: str) -> None:
+        # The fix uses an instance-property guard (__rlpeListenersWired)
+        # to wire the tbody listener exactly once.
+        body = _function_body(js, "renderResults")
+        assert "__rlpeListenersWired" in body, (
+            "renderResults must guard the tbody delegated listener with "
+            "__rlpeListenersWired (audit M8)"
+        )
+
+    def test_pagination_container_has_delegation_guard(self, js: str) -> None:
+        body = _function_body(js, "renderResultsPagination")
+        assert "__paginationWired" in body, (
+            "renderResultsPagination must guard the container delegated "
+            "listener with __paginationWired (audit M9)"
+        )

@@ -1548,37 +1548,47 @@ function renderResults() {
         </tr>`;
     }).join('');
 
-    // Wire up click handlers (avoids quote-escaping bugs from inline onclick)
-    tbody.querySelectorAll('.thumbnail-img').forEach(img => {
-        img.addEventListener('click', () => {
-            const idx = parseInt(img.getAttribute('data-record-index'), 10);
-            const record = __rlpeRecords[idx];
-            if (!record) return;
-            // Use record.species (RAW) as the modal title. Reading
-            // ``data-species`` via getAttribute would return the
-            // HTML-ESCAPED value (e.g. ``A &amp; B``), which then
-            // gets re-escaped in openImageModal and the user sees
-            // ``A &amp;amp; B`` in tooltips. The full record is
-            // available in __rlpeRecords, so just use it directly.
-            openImageModal(img.getAttribute('src'), record.species || '', record);
+    // Wire up click handlers via event delegation on tbody. The
+    // previous pattern used a fresh forEach + addEventListener for every
+    // render — which accumulated duplicate listeners on every page
+    // navigation, search input, and filter change (audit M8: memory
+    // leak + duplicate handler execution). Delegation uses ONE listener
+    // on tbody that lives for the document's lifetime.
+    if (!tbody.__rlpeListenersWired) {
+        tbody.addEventListener('click', (ev) => {
+            const img = ev.target.closest('.thumbnail-img');
+            if (img) {
+                const idx = parseInt(img.getAttribute('data-record-index'), 10);
+                const record = __rlpeRecords[idx];
+                if (record) {
+                    openImageModal(img.getAttribute('src'), record.species || '', record);
+                }
+                return;
+            }
+            const btn = ev.target.closest('[data-correct-index]');
+            if (btn) {
+                const idx = parseInt(btn.getAttribute('data-correct-index'), 10);
+                const r = __rlpeRecords[idx];
+                if (r) {
+                    openCorrectionModal(r.paper_id, r.figure_id, r.panel_path);
+                }
+                return;
+            }
         });
-        img.addEventListener('error', () => {
-            // Replace broken image with a plain "N/A" text. { once: true } ensures
-            // the fallback only fires once (avoids loops if the placeholder 404s).
-            const span = document.createElement('span');
-            span.className = 'text-muted';
-            span.textContent = 'N/A';
-            img.replaceWith(span);
-        }, { once: true });
-    });
-    tbody.querySelectorAll('[data-correct-index]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const idx = parseInt(btn.getAttribute('data-correct-index'), 10);
-            const r = __rlpeRecords[idx];
-            if (!r) return;
-            openCorrectionModal(r.paper_id, r.figure_id, r.panel_path);
-        });
-    });
+        // Image-error fallback (replace broken <img> with "N/A" text).
+        // Delegated on ``error`` events bubbling up from .thumbnail-img
+        // children. { once: true } via attribute so it doesn't loop.
+        tbody.addEventListener('error', (ev) => {
+            const img = ev.target.closest && ev.target.closest('.thumbnail-img');
+            if (img && img.parentNode) {
+                const span = document.createElement('span');
+                span.className = 'text-muted';
+                span.textContent = 'N/A';
+                img.replaceWith(span);
+            }
+        }, true);  // capture: error events don't bubble otherwise
+        tbody.__rlpeListenersWired = true;
+    }
 
     renderResultsPagination(total, resultsTableState.page, totalPages);
     const counts = {
@@ -1633,18 +1643,46 @@ function renderResultsPagination(total, page, totalPages) {
             <option value="50">50 / 页</option>
             <option value="100">100 / 页</option>
         </select>`;
-    document.getElementById('page-first')?.addEventListener('click', () => { resultsTableState.page = 1; renderResults(); });
-    document.getElementById('page-prev')?.addEventListener('click', () => { resultsTableState.page = Math.max(1, page - 1); renderResults(); });
-    document.getElementById('page-next')?.addEventListener('click', () => { resultsTableState.page = Math.min(totalPages, page + 1); renderResults(); });
-    document.getElementById('page-last')?.addEventListener('click', () => { resultsTableState.page = totalPages; renderResults(); });
-    const ps = document.getElementById('page-size-select');
-    if (ps) {
-        ps.value = String(resultsTableState.pageSize);
-        ps.addEventListener('change', (e) => {
-            resultsTableState.pageSize = parseInt(e.target.value, 10) || 25;
+    // Stash the current total BEFORE wiring the listener so the
+    // first click can already compute totalPages correctly. Re-stashed
+    // on every subsequent render so filter / search updates are seen.
+    container.__lastTotal = total;
+    // Audit M9: the old code called addEventListener on freshly-
+    // recreated button elements every render — duplicate listeners
+    // accumulated on each page navigation. The pagination container
+    // is stable across renders (only its innerHTML changes), so we
+    // use event delegation: one click handler on the container
+    // looks up the button id from the event target. Wired ONCE.
+    if (!container.__paginationWired) {
+        container.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('button[id^="page-"]');
+            if (!btn || btn.disabled) return;
+            const cur = resultsTableState.page;
+            // Re-derive totalPages from the latest __lastTotal so that
+            // filter changes that shrink the dataset don't allow
+            // navigation past the new last page.
+            const totalP = Math.max(1, Math.ceil(
+                (container.__lastTotal || 0) / resultsTableState.pageSize,
+            ));
+            if (btn.id === 'page-first') resultsTableState.page = 1;
+            else if (btn.id === 'page-prev') resultsTableState.page = Math.max(1, cur - 1);
+            else if (btn.id === 'page-next') resultsTableState.page = Math.min(totalP, cur + 1);
+            else if (btn.id === 'page-last') resultsTableState.page = totalP;
+            else return;
+            renderResults();
+        });
+        container.addEventListener('change', (ev) => {
+            const sel = ev.target.closest('#page-size-select');
+            if (!sel) return;
+            resultsTableState.pageSize = parseInt(sel.value, 10) || 25;
             resultsTableState.page = 1;
             renderResults();
         });
+        container.__paginationWired = true;
+    }
+    const ps = document.getElementById('page-size-select');
+    if (ps) {
+        ps.value = String(resultsTableState.pageSize);
     }
 }
 

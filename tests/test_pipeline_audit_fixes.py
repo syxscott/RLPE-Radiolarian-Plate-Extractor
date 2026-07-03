@@ -91,7 +91,7 @@ class TestLinkRangeChartGeologyNoneSections:
         # and ``for sec in None`` raises TypeError. The fix uses
         # ``rc_dict.get("sections") or []`` so None becomes [].
         out = []
-        for sec in (sections or []):
+        for sec in sections or []:
             out.append(sec)
         assert out == []
 
@@ -123,8 +123,7 @@ class TestPipelineSourceAuditFixes:
         )
         # And NOT the old buggy guard.
         assert "Path(image_path).exists()" not in body, (
-            "_apply_geo_vision still uses Path(image_path).exists(); "
-            "audit M4 requires is_file()"
+            "_apply_geo_vision still uses Path(image_path).exists(); audit M4 requires is_file()"
         )
 
     def test_link_range_chart_geology_filters_none_sections(self):
@@ -139,6 +138,5 @@ class TestPipelineSourceAuditFixes:
         # The fix: guard ``not isinstance(sec, dict)`` inside the
         # sections loop so [None] entries are skipped, not crashed on.
         assert "not isinstance(sec, dict)" in body, (
-            "_link_range_chart_geology must filter non-dict entries "
-            "(audit M5)"
+            "_link_range_chart_geology must filter non-dict entries (audit M5)"
         )
