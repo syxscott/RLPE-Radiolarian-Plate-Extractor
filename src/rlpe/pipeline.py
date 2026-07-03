@@ -1166,7 +1166,12 @@ class RadiolarianPipeline:
                 caption=rc_dict.get("caption", ""),
                 confidence=float(rc_dict.get("confidence", 0.0)),
             )
-            for sec in rc_dict.get("sections", []):
+            for sec in rc_dict.get("sections") or []:
+                # Audit M5: a hand-edited or malformed upstream JSON may
+                # have ``sections=[None, {...}, None]``. Guard each item
+                # so a None entry doesn't crash ``sec.get(...)`` below.
+                if not isinstance(sec, dict):
+                    continue
                 chart.sections.append(
                     RangeChartSection(
                         **{
@@ -1176,7 +1181,11 @@ class RadiolarianPipeline:
                         formations=list(sec.get("formations") or []),
                     )
                 )
-            for sr in rc_dict.get("species_ranges", []):
+            for sr in rc_dict.get("species_ranges") or []:
+                # Same M5 guard for species_ranges — a None item would
+                # raise ``sr.get(...)`` AttributeError.
+                if not isinstance(sr, dict):
+                    continue
                 chart.species_ranges.append(
                     SpeciesRange(
                         **{
@@ -1185,7 +1194,10 @@ class RadiolarianPipeline:
                         }
                     )
                 )
-            for bz in rc_dict.get("biozones", []):
+            for bz in rc_dict.get("biozones") or []:
+                # Same M5 guard for biozones.
+                if not isinstance(bz, dict):
+                    continue
                 chart.biozones.append(
                     BiozoneRecord(**{k: bz.get(k, "") for k in ("name", "age", "thickness_m")})
                 )
@@ -1264,7 +1276,12 @@ class RadiolarianPipeline:
                 or md.get("image_path")
                 or md.get("figure_image_path")
             )
-            if not image_path or not Path(image_path).exists():
+            if not image_path or not Path(image_path).is_file():
+                # Audit M4: ``Path.exists()`` returns True for directories
+                # too, which would crash ``PIL.Image.open()`` with
+                # IsADirectoryError. ``is_file()`` is the correct guard —
+                # it follows symlinks but rejects directories, FIFOs,
+                # and missing paths uniformly.
                 continue
             caption_text = md.get("caption_text") or md.get("caption") or ""
             try:
