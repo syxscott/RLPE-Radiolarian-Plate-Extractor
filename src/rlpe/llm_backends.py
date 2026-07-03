@@ -686,11 +686,19 @@ class MiniMaxM3Backend(BaseLLMBackend):
             )
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
+            # Audit M7: bump total_calls BEFORE the API call so a
+            # failed attempt (the final one in a retry-exhausted
+            # sequence) is still counted. If the call succeeds we
+            # immediately bump usage below; if it fails the counter
+            # still reflects the slot used. Decrementing on success
+            # would require another lock + read-modify-write and is
+            # more error-prone than the ``+1 at entry`` pattern.
+            with self._lock:
+                self.total_calls += 1
             try:
                 with self._sem:
                     resp = self._client.messages.create(**kwargs)
                 with self._lock:
-                    self.total_calls += 1
                     usage = getattr(resp, "usage", None)
                     if usage:
                         self.total_input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
@@ -740,7 +748,8 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     with self._lock:
                         self.total_errors += 1
                     raise
-        # Retry exhaustion
+        # Retry exhaustion. ``total_calls`` already reflects every
+        # attempt (bumped at entry above); just bump errors once.
         with self._lock:
             self.total_errors += 1
         if last_exc is not None:
@@ -976,9 +985,25 @@ def cli_fallback_prompt(error_info: dict[str, Any]) -> FallbackAction:
 
     Designed for terminal use; safe to call from background threads because
     the surrounding pipeline holds a lock around the Gemma call.
+
+    Audit L3: if stdin is NOT a TTY (e.g. running under the API server,
+    a CI job, or any background context), ``input()`` would block
+    forever waiting for input that never arrives. The pre-fix code
+    silently swallowed any exception from ``input()`` inside the
+    FallbackHandler and fell through to the default_action, which
+    meant a worker thread under the API server would just hang.
+    We now raise an explicit, actionable RuntimeError so the caller
+    can fall back to ``MiniMax_fallback_default`` instead.
     """
     import sys as _sys
 
+    if not _sys.stdin.isatty():
+        raise RuntimeError(
+            "MiniMax_interactive=True but stdin is not a TTY; "
+            "cannot prompt for fallback action in a non-interactive "
+            "context. Set MiniMax_fallback_default='rules' or 'gemma4' "
+            "instead, or unset MiniMax_interactive."
+        )
     _sys.stderr.write(
         "\n"
         "=" * 70 + "\n"

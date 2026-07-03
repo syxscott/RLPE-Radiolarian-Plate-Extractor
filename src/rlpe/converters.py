@@ -484,7 +484,7 @@ def _paleocoord_missing_warning(locality_dump: list[dict[str, Any]]) -> dict[str
 
 def run_output_from_provenance(
     provenance: ProvenanceRecord,
-    matches: list[MatchResult],
+    matches: list[MatchResult] | None,
 ) -> dict[str, Any]:
     """Build a JSON-serializable RunOutput dict from a provenance and a
     list of ``MatchResult`` instances. Use this before writing the
@@ -496,7 +496,17 @@ def run_output_from_provenance(
     because no paleocoord backend is wired yet; when localities are
     present we emit a single ``paleocoord_backend_missing`` warning
     so consumers can tell the empty list is reserved, not forgotten.
+
+    Audit L1: ``matches=None`` is now treated as an empty list. The
+    previous signature had no None guard, so a caller that passed
+    ``None`` (e.g. an early-exit pipeline branch with no matches yet)
+    raised ``TypeError: object of type 'NoneType' has no len()``
+    inside the ``*_records_from_matches`` helpers. An empty list
+    produces an empty RunOutput with the provenance still attached —
+    which is the correct degraded behavior.
     """
+    if matches is None:
+        matches = []
     panels = [panel_record_from_match(m) for m in matches]
     panel_dump = [p.model_dump() for p in panels]
     paper_dump = paper_records_from_matches(matches)
