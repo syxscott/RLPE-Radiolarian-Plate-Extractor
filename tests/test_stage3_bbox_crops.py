@@ -512,3 +512,77 @@ class TestStage3BboxCrops:
         assert md["panel_id_source"] == "m3_vision"
         assert md["m3_stage3_bbox"] == [10, 20, 80, 60]
         assert Path(md["m3_stage3_panel_path"]).is_file()
+
+
+class TestStage3BboxCropsSourceGuard:
+    """Static source guard for the Stage 3 fix in
+    ``src/rlpe/pipeline.py``.
+
+    The runtime tests above use an inline helper because the
+    full pipeline is not importable in the sandbox (no cv2).
+    That makes the inline-helper tests immune to source mutations
+    (they exercise a local copy of the logic, not the production
+    source). This guard reads the source file directly to lock the
+    critical contract strings (``panel_id_source = "m3_vision"``,
+    ``m3_stage3_panel_path``, etc.) so a silent revert of the
+    fix breaks the test.
+    """
+
+    def test_source_defines_apply_stage3_bbox_crops(self):
+        from pathlib import Path as _Path
+
+        path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
+        text = path.read_text(encoding="utf-8")
+        assert "def _apply_stage3_bbox_crops(" in text, (
+            "Stage 3 fix: src/rlpe/pipeline.py must define "
+            "_apply_stage3_bbox_crops. The fix is missing from source."
+        )
+
+    def test_source_sets_panel_id_source_m3_vision(self):
+        from pathlib import Path as _Path
+
+        path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
+        text = path.read_text(encoding="utf-8")
+        assert '"m3_vision"' in text, (
+            "Stage 3 fix: src/rlpe/pipeline.py must stamp "
+            "panel_id_source = 'm3_vision' on enriched rows. The "
+            "fix is missing from source."
+        )
+
+    def test_source_writes_crops_to_m3_crops_subdir(self):
+        from pathlib import Path as _Path
+
+        path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
+        text = path.read_text(encoding="utf-8")
+        # Production crops live under output/figures/m3_crops/{paper_id}/...
+        assert '"m3_crops"' in text, (
+            "Stage 3 fix: crops must be written under "
+            "output/figures/m3_crops/{paper_id}/ subdir. The fix "
+            "is missing or has changed the directory."
+        )
+
+    def test_stage3_called_from_process_one_pdf_od(self):
+        """The Stage 3 helper must be invoked from the per-PDF
+        loop, gated on the ``m3_stage3`` config flag. Without
+        this hook, the helper exists but is never called, so the
+        Round-3 deferred #1 fix would be silent."""
+        from pathlib import Path as _Path
+
+        path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
+        text = path.read_text(encoding="utf-8")
+        # Find the _process_one_pdf_od method body (use the next
+        # top-level def as the end-marker; the function is large
+        # ~17k chars so a 5000-char slice misses the call site).
+        marker = "def _process_one_pdf_od("
+        i = text.find(marker)
+        assert i > 0
+        # Find the next ``def `` after the marker at column 4.
+        next_def = text.find("\n    def ", i + 1)
+        assert next_def > 0
+        body = text[i:next_def]
+        assert "_apply_stage3_bbox_crops" in body, (
+            "Stage 3 fix: _process_one_pdf_od must call "
+            "_apply_stage3_bbox_crops. The helper exists but is "
+            "never invoked from the per-PDF loop — the fix is "
+            "dead code from the caller's perspective."
+        )
