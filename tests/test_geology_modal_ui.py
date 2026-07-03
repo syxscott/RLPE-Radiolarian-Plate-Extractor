@@ -150,9 +150,7 @@ class TestGeologyModalCode:
         assert "g.country" in body, "modal must render g.country field"
         # Coordinates land together as a single modal-geo-coord span
         # when both latitude and longitude are present.
-        assert "modal-geo-coord" in body, (
-            "modal must have a modal-geo-coord span for lat/lon"
-        )
+        assert "modal-geo-coord" in body, "modal must have a modal-geo-coord span for lat/lon"
         assert "g.latitude" in body and "g.longitude" in body
 
     def test_country_is_html_escaped(self, js: str) -> None:
