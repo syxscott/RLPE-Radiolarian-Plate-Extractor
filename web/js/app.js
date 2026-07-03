@@ -1844,7 +1844,13 @@ function openImageModal(src, title, record) {
                             g.member ? `<span>${escapeHtml(g.member)}</span>` : '',
                             g.group ? `<span>${escapeHtml(g.group)}</span>` : '',
                             g.biozone ? `<span>${escapeHtml(g.biozone)}</span>` : '',
-                            g.locality ? `<span>${escapeHtml(g.locality)}</span>` : ''
+                            g.locality ? `<span>${escapeHtml(g.locality)}</span>` : '',
+                            // country + coordinates land here when the
+                            // Round-3 multi-modal vision extractor
+                            // (M3Engine.extract_geology) populated them.
+                            g.country ? `<span>${escapeHtml(g.country)}</span>` : '',
+                            (g.latitude != null && g.longitude != null) ?
+                                `<span class="modal-geo-coord">${(+g.latitude).toFixed(3)}, ${(+g.longitude).toFixed(3)}</span>` : ''
                         ].filter(Boolean).join(' · ');
                         if (!head) return '';
                         const conf = (g.confidence != null) ?

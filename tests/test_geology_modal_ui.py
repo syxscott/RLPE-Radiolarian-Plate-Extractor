@@ -119,6 +119,53 @@ class TestGeologyModalCode:
             "Ma values should use tabular-nums for stable column width"
         )
 
+    def test_css_modal_geo_coord_styled(self, css: str) -> None:
+        """Coordinates should render in a monospace variant for stable
+        column alignment across panels (latitude / longitude strings
+        have varying digit counts)."""
+        i = css.find(".modal-geo-coord {")
+        assert i > 0, ".modal-geo-coord rule missing"
+        end = css.find("}", i)
+        rule = css[i:end]
+        assert rule.count(chr(10)) >= 3, (
+            "modal-geo-coord rule must contain at least 3 declarations "
+            "(margin + color + font-family / tabular-nums)"
+        )
+        assert "tabular-nums" in rule or "mono" in rule.lower(), (
+            "coordinates should use tabular-nums / monospace for stable alignment"
+        )
+
+    def test_country_field_rendered_in_modal(self, js: str) -> None:
+        """Round-3 Commit 3: country + coordinates must surface in the modal.
+
+        The new multi-modal geology vision extractor (M3Engine.extract_geology)
+        populates ``country`` and ``latitude``/``longitude``. The modal
+        must surface these so the operator can see WHERE a panel's
+        geological context was anchored (which matters more for map /
+        paleogeographic figures than for plates).
+        """
+        i = js.find("function openImageModal(")
+        j = js.find("// Attach close handlers", i)
+        body = js[i:j]
+        assert "g.country" in body, "modal must render g.country field"
+        # Coordinates land together as a single modal-geo-coord span
+        # when both latitude and longitude are present.
+        assert "modal-geo-coord" in body, (
+            "modal must have a modal-geo-coord span for lat/lon"
+        )
+        assert "g.latitude" in body and "g.longitude" in body
+
+    def test_country_is_html_escaped(self, js: str) -> None:
+        """Country values come from MiniMax-M3 vision and may contain
+        characters like ``<`` / ``>`` / ``&`` that must be HTML-escaped.
+        """
+        i = js.find("function openImageModal(")
+        j = js.find("// Attach close handlers", i)
+        body = js[i:j]
+        assert "escapeHtml(g.country)" in body, (
+            "country must be HTML-escaped to prevent XSS via vision output"
+        )
+
 
 class TestGeologyModalRender:
     """Simulate the openImageModal geology block in Python.
