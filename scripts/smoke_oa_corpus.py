@@ -169,7 +169,7 @@ def _sha256_short(path: Path, *, hex_chars: int = 16) -> str:
     return h.hexdigest()[:hex_chars]
 
 
-def _make_pipeline(work_dir: Path, *, with_mock_llm: bool):
+def _make_pipeline(work_dir: Path, pdf_dir: Path, *, with_mock_llm: bool):
     """Construct a RadiolarianPipeline.
 
     Kept narrow: the smoke driver never overrides M3 cost/retry; it
@@ -177,6 +177,11 @@ def _make_pipeline(work_dir: Path, *, with_mock_llm: bool):
     ``with_mock_llm=True`` patches ``gemma_runtime.backend`` to a
     FakeM3Backend so cost counters increment deterministically without
     any network I/O.
+
+    ``pdf_dir`` is the directory ``RadiolarianPipeline.run()`` globs for
+    ``*.pdf`` — must contain exactly one PDF for a single-paper run so
+    that ``matches.jsonl`` / ``run_output.json`` / ``llm_usage.json``
+    reflect only this paper.
     """
     try:
         from rlpe.config import PipelineConfig
@@ -204,7 +209,7 @@ def _make_pipeline(work_dir: Path, *, with_mock_llm: bool):
         extra["MiniMax_model"] = "MiniMax-M3-mock"
 
     cfg = PipelineConfig(
-        pdf_dir=work_dir,  # driver writes per-paper pdfs to a tempdir
+        pdf_dir=pdf_dir,
         work_dir=work_dir,
         ocr_backend="none",
         use_gpu=False,
@@ -229,7 +234,12 @@ def _run_one(
 ) -> SmokeRow:
     """Run the pipeline on a single PDF and capture the per-paper row."""
     # Each PDF gets its own sub-work-dir so matches.jsonl / run_output.json
-    # don't collide across papers.
+    # don't collide across papers. ``paper_pdf_dir`` is the dir the
+    # pipeline will glob for ``*.pdf``; we copy just this one PDF in so
+    # ``RadiolarianPipeline.run()`` (which iterates ``pdf_dir.glob``) picks
+    # it up. The single-PDF glob also makes ``run()`` write a
+    # ``run_output.json`` / ``llm_usage.json`` for THIS paper only, which
+    # is what we report in the smoke JSONL row.
     paper_work_dir = work_dir / pdf.stem
     paper_work_dir.mkdir(parents=True, exist_ok=True)
     paper_pdf_dir = paper_work_dir / "pdfs"
@@ -238,13 +248,16 @@ def _run_one(
     if not target_pdf.exists():
         target_pdf.write_bytes(pdf.read_bytes())
 
-    pipeline = _make_pipeline(paper_work_dir, with_mock_llm=with_mock_llm)
+    # Pipeline is constructed with paper_pdf_dir as its pdf_dir so the
+    # ``run()`` glob picks up exactly this one PDF; paper_work_dir is the
+    # pipeline's work_dir where manifests/figures/etc. land.
+    pipeline = _make_pipeline(paper_work_dir, paper_pdf_dir, with_mock_llm=with_mock_llm)
 
     t0 = time.monotonic()
     try:
-        # We can't easily monkeypatch pipeline.run's pdf_dir per call, so
-        # we just call _process_one_pdf directly with the single PDF.
-        result_rows = pipeline._process_one_pdf(target_pdf)
+        # ``run()`` writes matches.jsonl + run_output.json + llm_usage.json
+        # to paper_work_dir/output/manifests/. Returns the per-paper rows.
+        result_rows = pipeline.run()
     except Exception as exc:
         elapsed = time.monotonic() - t0
         logger.warning("Pipeline failed for %s: %s", pdf.name, exc)

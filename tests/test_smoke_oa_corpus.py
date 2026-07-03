@@ -218,7 +218,7 @@ class TestPipelineMissingCv2GivesClearError:
             from smoke_oa_corpus import _make_pipeline
 
             with pytest.raises(RuntimeError) as excinfo:
-                _make_pipeline(tmp_path, with_mock_llm=False)
+                _make_pipeline(tmp_path, tmp_path, with_mock_llm=False)
             msg = str(excinfo.value)
             assert "CV" in msg or "conda" in msg.lower(), (
                 f"error must mention the CV conda env, got: {msg!r}"
