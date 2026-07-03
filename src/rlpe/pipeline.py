@@ -1118,6 +1118,14 @@ class RadiolarianPipeline:
         # location names to range-chart section abbreviations so a
         # downstream consumer can pivot by either representation.
         results = self._cross_link_map_and_range_chart(results)
+        # Round-3 multi-modal geology vision: ask MiniMax-M3 to read
+        # the figure image + caption and emit structured geology fields
+        # (lithology, formation, member, group, country, biozone, Ma
+        # range, coordinates). Opt-in via ``use_geo_vision=True`` to
+        # avoid silent cost on existing users. We append to existing
+        # geology_links — no dedup (deferred to a future cleanup).
+        if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
+            results = self._apply_geo_vision(results, paper_id)
         return results
 
     def _link_range_chart_geology(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1201,6 +1209,93 @@ class RadiolarianPipeline:
                 if new_links:
                     md["geology_links"] = existing_links + new_links
                     existing_links = md["geology_links"]
+        return results
+
+    def _apply_geo_vision(
+        self,
+        results: list[dict[str, Any]],
+        paper_id: str,
+    ) -> list[dict[str, Any]]:
+        """Run MiniMax-M3 vision extraction on each result row.
+
+        ``M3Engine.extract_geology()`` reads a figure image + caption
+        and emits structured geology fields (lithology, formation,
+        member, group, country, biozone, Ma range, coordinates). We
+        append the returned records to ``metadata.geology_links`` so
+        downstream consumers (Web UI, DwC export) see them automatically.
+
+        Per-row figure-type routing is driven by metadata keys that
+        earlier stages already wrote:
+
+        * ``extraction_source == "range_chart"`` -> ``figure_type="range_chart"``
+        * ``extraction_source == "map_context"`` -> ``figure_type="map"``
+        * ``figure_type`` itself when already classified by OpenDataLoader
+
+        Rows without a figure image are skipped silently — vision on a
+        missing image is pure cost. Rows for which the user's
+        ``geo_vision_figure_types`` allowlist excludes the figure type
+        are also skipped.
+
+        Cost is aggregated by the existing ``MiniMaxM3Backend.cost_summary()``
+        path, so the run-level ``llm_usage.json`` sidecar will reflect
+        the additional spend automatically.
+        """
+        allowed: list[str] = list(
+            self.config.extra.get("geo_vision_figure_types", [])
+            or ["range_chart", "stratigraphic_column", "litholog_column", "paleogeographic_map"]
+        )
+        for r in results:
+            md = r.get("metadata") or {}
+            figure_type = md.get("figure_type")
+            # Backfill figure_type from extraction_source where the older
+            # stages didn't already tag it.
+            if not figure_type:
+                src = md.get("extraction_source")
+                if src == "range_chart":
+                    figure_type = "range_chart"
+                elif src == "map_context":
+                    figure_type = "map"
+            if not figure_type or figure_type not in allowed:
+                continue
+
+            image_path = (
+                r.get("panel_path")
+                or md.get("primary_image")
+                or md.get("image_path")
+                or md.get("figure_image_path")
+            )
+            if not image_path or not Path(image_path).exists():
+                continue
+            caption_text = md.get("caption_text") or md.get("caption") or ""
+            try:
+                from PIL import Image as _PILImage
+
+                with _PILImage.open(image_path) as im:
+                    panel_image = im.convert("RGB")
+                geo_links = self.m3_engine.extract_geology(
+                    image=panel_image,
+                    caption=caption_text,
+                    figure_type=figure_type,
+                    paper_id=paper_id,
+                    figure_id=r.get("figure_id") or md.get("figure_id") or "",
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "geo_vision failed for paper=%s figure=%s: %s",
+                    paper_id,
+                    r.get("figure_id") or "?",
+                    exc,
+                )
+                continue
+            if not geo_links:
+                continue
+            existing = list(md.get("geology_links") or [])
+            md["geology_links"] = existing + geo_links
+            # Tag the source so review tools can distinguish vision
+            # links from text-derived ones.
+            md["geo_vision_used"] = True
+            md["geo_vision_figure_type"] = figure_type
+            r["metadata"] = md
         return results
 
     # -----------------------------------------------------------------------

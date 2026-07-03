@@ -168,6 +168,129 @@ def _telemetry_subset(raw: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Multi-modal geology extraction
+# ---------------------------------------------------------------------------
+#
+# ``extract_geology()`` below sends a figure image + caption to the
+# MiniMax-M3 backend and asks for structured geology fields (lithology,
+# formation, member, group, country, biozone, Ma range, coordinates).
+# One system prompt per figure_type keeps each prompt ~150 tokens and
+# focused on what to look for. The JSON contract is identical across
+# all six prompts so downstream callers can treat the output uniformly.
+#
+# Range-chart vision extraction is NOT routed through ``extract_geology``;
+# ``range_chart_extractor.extract_range_chart()`` keeps its richer per-
+# species-range / section / biozone JSON shape (committed earlier in
+# 720df73). This module deliberately complements, not replaces, that
+# path — different figure types have different data shapes and forcing
+# them into a single schema would lose information.
+
+PROMPT_REGISTRY: dict[str, str] = {
+    "plate_geo": (
+        "You are a geology assistant. Given a SEM plate image of "
+        "radiolarians and its caption, extract any geological context "
+        "visible in the caption (formation, member, group, lithology, "
+        "locality, country). Return strict JSON only:\n\n"
+        '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
+        '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
+        '"ma_base": float|null, "ma_mid": float|null, '
+        '"formation": str|null, "member": str|null, "group": str|null, '
+        '"lithology": str|null, "locality": str|null, "country": str|null, '
+        '"latitude": float|null, "longitude": float|null, '
+        '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
+        "Use only information visible in the caption. Output JSON only."
+    ),
+    "range_chart_geo": (
+        "You are a geology assistant reading a stratigraphic range chart "
+        "or species-distribution diagram. The chart shows species ranges "
+        "across measured sections on a vertical axis (top = young, base = "
+        "old). Read the age axis carefully and emit numeric Ma bounds "
+        "(ma_top = younger boundary, ma_base = older boundary, ma_mid = "
+        "(top+base)/2). Also emit biozone names, formation, member, group, "
+        "lithology, locality, country when visible. Return strict JSON only:\n\n"
+        '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
+        '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
+        '"ma_base": float|null, "ma_mid": float|null, '
+        '"formation": str|null, "member": str|null, "group": str|null, '
+        '"lithology": str|null, "locality": str|null, "country": str|null, '
+        '"latitude": float|null, "longitude": float|null, '
+        '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
+        "If the age axis is unreadable, set ma_top/ma_base/ma_mid to null. "
+        "Do NOT guess. Output JSON only."
+    ),
+    "map_geo": (
+        "You are a geology assistant reading a geographic / location map. "
+        "Extract every place name, country, latitude, longitude, and any "
+        "geological context visible (formation, lithology, locality). "
+        "Return strict JSON only:\n\n"
+        '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
+        '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
+        '"ma_base": float|null, "ma_mid": float|null, '
+        '"formation": str|null, "member": str|null, "group": str|null, '
+        '"lithology": str|null, "locality": str|null, "country": str|null, '
+        '"latitude": float|null, "longitude": float|null, '
+        '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
+        "Prioritize country and locality fields; only fill others if the "
+        "map legend / labels show them. Output JSON only."
+    ),
+    "strat_column_geo": (
+        "You are a geology assistant reading a stratigraphic column "
+        "(columnar section, measured section). The figure shows layered "
+        "rock units on a vertical axis. Read formation / member / group "
+        "names, lithology, age, and any Ma range printed on the axis. "
+        "Return strict JSON only:\n\n"
+        '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
+        '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
+        '"ma_base": float|null, "ma_mid": float|null, '
+        '"formation": str|null, "member": str|null, "group": str|null, '
+        '"lithology": str|null, "locality": str|null, "country": str|null, '
+        '"latitude": float|null, "longitude": float|null, '
+        '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
+        "Prioritize formation / member / group / lithology. Output JSON only."
+    ),
+    "litholog_geo": (
+        "You are a geology assistant reading a lithological log "
+        "(litholog column). The figure is a vertical strip showing rock "
+        "type patterns and brief annotations. Extract lithology, "
+        "formation, member, age, and Ma range if visible. Return strict "
+        "JSON only:\n\n"
+        '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
+        '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
+        '"ma_base": float|null, "ma_mid": float|null, '
+        '"formation": str|null, "member": str|null, "group": str|null, '
+        '"lithology": str|null, "locality": str|null, "country": str|null, '
+        '"latitude": float|null, "longitude": float|null, '
+        '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
+        "Prioritize lithology + formation. Output JSON only."
+    ),
+    "paleogeo_map_geo": (
+        "You are a geology assistant reading a paleogeographic map. The "
+        "figure shows reconstructed continents at a specific age. Extract "
+        "the reconstructed age (Ma), continent / plate names, paleo-"
+        "latitude / paleo-longitude, modern equivalents, and any "
+        "geological context (formation, lithology). Return strict JSON:\n\n"
+        '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
+        '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
+        '"ma_base": float|null, "ma_mid": float|null, '
+        '"formation": str|null, "member": str|null, "group": str|null, '
+        '"lithology": str|null, "locality": str|null, "country": str|null, '
+        '"latitude": float|null, "longitude": float|null, '
+        '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
+        "Prioritize age + country + locality. Output JSON only."
+    ),
+}
+
+SECTION_TYPE_BY_FIGURE: dict[str, str] = {
+    "plate": "plate_caption",
+    "range_chart": "range_chart",
+    "map": "location_map",
+    "paleogeographic_map": "paleogeographic_map",
+    "stratigraphic_column": "stratigraphic_column",
+    "litholog_column": "litholog_column",
+}
+
+
 # Regex-based caption parser. Handles the convention used in most OA
 # radiolarian papers, where each clause is "figs X-Y. Species Name" or
 # "fig N. Species Name", separated by periods, semicolons, or newlines.
@@ -1848,6 +1971,95 @@ class M3Engine:
             if (res2.get("raw_text") or "").strip():
                 res = res2
         return res
+
+    # ------------------------------------------------------------- stage 6 (geo)
+
+    def extract_geology(
+        self,
+        image: Image.Image,
+        caption: str,
+        figure_type: str,
+        paper_id: str,
+        figure_id: str,
+    ) -> list[dict[str, Any]]:
+        """Run multi-modal MiniMax-M3 vision extraction on a figure image.
+
+        Returns a list of dicts shaped like ``GeologyLinkRecord`` so the
+        caller can append them straight into ``panel.metadata.geology_links``.
+        Skipped silently when ``figure_type`` has no prompt registered or
+        the image is too small to be meaningful.
+
+        Parameters
+        ----------
+        image : PIL.Image.Image
+            Figure image (RGB or convertible).
+        caption : str
+            Figure caption text. Always included in the prompt.
+        figure_type : str
+            One of ``plate``, ``range_chart``, ``map``, ``paleogeographic_map``,
+            ``stratigraphic_column``, ``litholog_column``. ``extract_geology``
+            uses ``SECTION_TYPE_BY_FIGURE`` to fill the ``section_type`` field.
+        paper_id, figure_id : str
+            Provenance IDs; stamped into ``evidence_text`` so downstream
+            audit can trace each link back to its source.
+
+        Notes
+        -----
+        Range-chart vision extraction is intentionally NOT routed through
+        this method (see ``range_chart_extractor.extract_range_chart()``)
+        because the range-chart schema carries richer per-species / per-
+        section information than this generic schema.
+        """
+        prompt_key = f"{figure_type}_geo"
+        if prompt_key not in PROMPT_REGISTRY:
+            return []
+        # Skip tiny images — MiniMax-M3 vision on a 16×16 thumbnail is
+        # pure noise and burns cost without producing real signal.
+        try:
+            if image.width < 32 or image.height < 32:
+                return []
+        except Exception:
+            return []
+
+        system_prompt = PROMPT_REGISTRY[prompt_key]
+        user_prompt = (
+            f"Paper: {paper_id}\nFigure: {figure_id}\n\n"
+            f"Caption:\n{caption or '(no caption)'}\n\n"
+            "Return strict JSON only, no markdown fences."
+        )
+
+        res = self._infer_vision(system_prompt, user_prompt, image)
+        if res.get("fallback_used"):
+            return []
+        raw_text = res.get("raw_text") or ""
+        parsed = _safe_json_loads(raw_text)
+        if not isinstance(parsed, dict):
+            logger.warning(
+                "extract_geology: backend returned non-dict JSON for %s/%s",
+                paper_id,
+                figure_id,
+            )
+            return []
+        geo_list = parsed.get("geo")
+        if not isinstance(geo_list, list):
+            return []
+
+        section_type = SECTION_TYPE_BY_FIGURE.get(figure_type, "figure_caption")
+        out: list[dict[str, Any]] = []
+        for item in geo_list:
+            if not isinstance(item, dict):
+                continue
+            item = dict(item)
+            item.setdefault("section_type", section_type)
+            # Stamp provenance into evidence_text for audit. Only override
+            # if not already set by the model.
+            if not item.get("evidence_text"):
+                item["evidence_text"] = (
+                    f"geo_vision[{figure_type}]: paper={paper_id} "
+                    f"figure={figure_id} conf={item.get('confidence')}"
+                )
+            out.append(item)
+        return out
 
     def _maybe_dump_diagnostic(
         self, image: Image.Image, system_prompt: str, user_prompt: str, result: dict[str, Any]
