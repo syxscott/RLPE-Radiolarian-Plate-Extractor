@@ -65,6 +65,8 @@ _KNOWN_EXTRA_KEYS = {
     "m3_retry_without_thinking",
     "m3_temperature",
     "m3_thinking_budget",
+    # LLM-first extraction (opt-in; default True when Gemma runtime is set)
+    "use_llm_first",
     # Multi-modal geology vision (Commit 2 / Round 3)
     "use_geo_vision",
     "geo_vision_figure_types",

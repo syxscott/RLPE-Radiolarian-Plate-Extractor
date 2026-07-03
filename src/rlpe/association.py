@@ -347,7 +347,14 @@ def is_valid_panel_label(label: str | None) -> bool:
 
 # Compiled once at import time. Anchored fullmatch is enforced by
 # using ``re.match`` with explicit ^/$ in the pattern below.
-_PANEL_LABEL_SHAPE = re.compile(r"^(?:[A-H]|\d+[a-z]?)$")
+# Audit Bug 2: reject leading zeros (e.g. "007", "04") so the
+# function's contract is self-consistent even when called on a
+# label that has NOT been pre-normalized. ``[1-9]\d*`` matches
+# "1", "12", "123" but not "0", "00", "007". The single "0"
+# case is handled by the digit+letter optional: panel_id="0"
+# is normalized to "0" by _normalize_panel_label and is a
+# legitimate panel index in some papers, so we accept it here.
+_PANEL_LABEL_SHAPE = re.compile(r"^(?:[A-H]|[1-9]\d*[a-z]?|0)$")
 
 
 _PANEL_METADATA_KEYS = (

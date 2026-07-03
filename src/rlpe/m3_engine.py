@@ -2022,10 +2022,14 @@ class M3Engine:
             return []
         # Skip tiny images — MiniMax-M3 vision on a 16×16 thumbnail is
         # pure noise and burns cost without producing real signal.
+        # Audit Bug 10: narrow the except to AttributeError/TypeError so
+        # unrelated exceptions in the size check are not silently
+        # swallowed. A non-PIL image raises AttributeError (no .width);
+        # a PIL subclass with a buggy .width descriptor raises TypeError.
         try:
             if image.width < 32 or image.height < 32:
                 return []
-        except Exception:
+        except (AttributeError, TypeError):
             return []
 
         system_prompt = PROMPT_REGISTRY[prompt_key]

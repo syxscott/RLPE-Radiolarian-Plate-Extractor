@@ -848,7 +848,7 @@ itself requires the live v22 re-run.
 
 ```
 $ python -m pytest tests/ -q
-608 passed, 39 skipped in 3.78s
+613 passed, 39 skipped in 3.89s
 ```
 
 (Was 337 passed in the v20 evaluation; Round 3 added 22 bug-fix tests
