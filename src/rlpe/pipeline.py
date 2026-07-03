@@ -1126,6 +1126,242 @@ class RadiolarianPipeline:
         # geology_links — no dedup (deferred to a future cleanup).
         if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
             results = self._apply_geo_vision(results, paper_id)
+        # Round-4 P2-5: Stage 3 bbox + crop enrichment. When M3 Stage 3
+        # produced ``m3_panels`` with bbox+visible_label for this figure
+        # (gated on ``m3_stage3`` opt-in + Stage 3 enabled), crop each
+        # panel's image region to disk and stamp the resulting crop path
+        # + ``panel_id_source="m3_vision"`` on each result row. This is
+        # the round-3 deferred #1 fix: previously the figure had real
+        # M3 panel bboxes in ``m3_diag["stage3_panels"]`` but the pred
+        # rows still showed ``panel_id_source="legacy"`` because the
+        # crop / source rewrite was never persisted. The fix lifts
+        # the diag stage3 info into the published panel_id_source.
+        if self.config.extra.get("m3_stage3", False) and self.m3_engine is not None:
+            results = self._apply_stage3_bbox_crops(results, paper_id)
+        return results
+
+    def _apply_stage3_bbox_crops(
+        self,
+        results: list[dict[str, Any]],
+        paper_id: str,
+    ) -> list[dict[str, Any]]:
+        """Round-4 P2-5: enrich each result row with M3 Stage 3 bbox + crop.
+
+        For each result row whose ``figure_id`` matches a figure whose
+        ``m3_diag["stage3_panels"]`` is non-empty, crop each panel's
+        image region to ``output/panels/{paper_id}/{figure_id}/``,
+        stamp the resulting crop path on the row's
+        ``metadata.m3_stage3_panel_path`` and ``panel_path`` (only
+        when the existing ``panel_path`` is None — we never overwrite
+        a richer classical CV path), and bump the ``panel_id_source``
+        tag to ``"m3_vision"`` so the web UI can show a "vision
+        verified" badge.
+
+        This is purely additive: rows that don't match a Stage 3
+        figure are passed through unchanged. Bbox / panel_id
+        rewrites only happen for rows where M3 already pinned a
+        ``visible_label`` that matches the row's panel_id; otherwise
+        we leave the row alone (the panel_id came from a different
+        source we trust more).
+
+        Parameters
+        ----------
+        results : list[dict[str, Any]]
+            Output rows from the per-figure loop.
+        paper_id : str
+            Stable paper id; used to namespace the crop directory.
+        """
+        crops_dir = self.config.figures_dir() / "m3_crops" / paper_id
+        crops_dir.mkdir(parents=True, exist_ok=True)
+
+        # Index figures that have stage3 panels by figure_id.
+        figure_to_panels: dict[str, list[dict[str, Any]]] = {}
+        for r in results:
+            md = r.get("metadata") or {}
+            stage3 = (md.get("m3_diagnostic") or {}).get("stage3_panels") or []
+            if stage3:
+                figure_to_panels[r.get("figure_id")] = stage3
+
+        if not figure_to_panels:
+            return results
+
+        for r in results:
+            fig_id = r.get("figure_id")
+            panels = figure_to_panels.get(fig_id)
+            if not panels:
+                continue
+            md = r.setdefault("metadata", {})
+            # The current row's panel_id must match one of the stage3
+            # boxes for us to consider rewriting. Stage 3 boxes have
+            # ``panel_id`` like "P1", "P2", … or the visible_label
+            # the model inferred (e.g. "A").
+            row_pid = r.get("panel_id") or ""
+            row_pid_norm = _normalize_panel_label(row_pid) if row_pid else ""
+            matched = next(
+                (
+                    p
+                    for p in panels
+                    if (
+                        p.get("panel_id") == row_pid
+                        or p.get("panel_id") == row_pid_norm
+                        or p.get("visible_label") == row_pid
+                        or p.get("visible_label") == row_pid_norm
+                    )
+                ),
+                None,
+            )
+            if matched is None:
+                continue
+            bbox = matched.get("bbox")
+            if not bbox or len(bbox) != 4:
+                continue
+            # The plate image is the row's panel_path or its
+            # figure_image_path; we need the plate-level image (not a
+            # panel crop) to slice from. The classical CV stage
+            # stores the plate on ``metadata.figure_image_path`` /
+            # ``metadata.primary_image`` when running with the
+            # OpenDataLoader path.
+            plate_path = (
+                r.get("panel_path")
+                or md.get("figure_image_path")
+                or md.get("primary_image")
+                or md.get("image_path")
+            )
+            if not plate_path:
+                continue
+            try:
+                plate_p = Path(plate_path)
+                if not plate_p.is_file():
+                    continue
+                with _PILImage.open(plate_p) as im:
+                    px_w, px_h = im.size
+                    x, y, w, h = (int(v) for v in bbox)
+                    x = max(0, min(x, px_w - 1))
+                    y = max(0, min(y, px_h - 1))
+                    w = max(1, min(w, px_w - x))
+                    h = max(1, min(h, px_h - y))
+                    crop = im.crop((x, y, x + w, y + h))
+                    crop_filename = f"{row_pid or 'panel'}.png"
+                    crop_path = crops_dir / fig_id / crop_filename
+                    crop_path.parent.mkdir(parents=True, exist_ok=True)
+                    crop.save(crop_path, "PNG")
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "Stage 3 crop failed for %s/%s: %s",
+                    paper_id,
+                    fig_id,
+                    exc,
+                )
+                continue
+
+            # Persist the bbox + crop path + source tag.
+            md["m3_stage3_bbox"] = list(bbox)
+            md["m3_stage3_visible_label"] = matched.get("visible_label")
+            md["m3_stage3_panel_path"] = str(crop_path)
+            # Only override panel_path when nothing better exists.
+            if not r.get("panel_path"):
+                r["panel_path"] = str(crop_path)
+                md["panel_path_source"] = "m3_stage3_crop"
+            # Bump panel_id_source so the downstream consumer can tell
+            # this row was verified by Stage 3 vision (vs caption or
+            # image OCR). The previous round left every row at
+            # "legacy" because the diag info wasn't lifted.
+            md["panel_id_source"] = "m3_vision"
+            md["stage3_confidence"] = matched.get("confidence")
+            r["metadata"] = md
+        return results
+
+    def _apply_geo_vision(
+        self,
+        results: list[dict[str, Any]],
+        paper_id: str,
+    ) -> list[dict[str, Any]]:
+        """Run MiniMax-M3 vision extraction on each result row.
+
+        ``M3Engine.extract_geology()`` reads a figure image + caption
+        and emits structured geology fields (lithology, formation,
+        member, group, country, biozone, Ma range, coordinates). We
+        append the returned records to ``metadata.geology_links`` so
+        downstream consumers (Web UI, DwC export) see them
+        automatically.
+
+        Per-row figure-type routing is driven by metadata keys that
+        earlier stages already wrote:
+
+        * ``extraction_source == "range_chart"`` -> ``figure_type="range_chart"``
+        * ``extraction_source == "map_context"`` -> ``figure_type="map"``
+        * ``figure_type`` itself when already classified by OpenDataLoader
+
+        Rows without a figure image are skipped silently — vision on
+        a missing image is pure cost. Rows for which the user's
+        ``geo_vision_figure_types`` allowlist excludes the figure type
+        are also skipped.
+
+        Cost is aggregated by the existing ``MiniMaxM3Backend.cost_summary()``
+        path, so the run-level ``llm_usage.json`` sidecar will reflect
+        the additional spend automatically.
+        """
+        allowed: list[str] = list(
+            self.config.extra.get("geo_vision_figure_types", [])
+            or ["range_chart", "stratigraphic_column", "litholog_column", "paleogeographic_map"]
+        )
+        for r in results:
+            md = r.get("metadata") or {}
+            figure_type = md.get("figure_type")
+            # Backfill figure_type from extraction_source where the older
+            # stages didn't already tag it.
+            if not figure_type:
+                src = md.get("extraction_source")
+                if src == "range_chart":
+                    figure_type = "range_chart"
+                elif src == "map_context":
+                    figure_type = "map"
+            if not figure_type or figure_type not in allowed:
+                continue
+
+            image_path = (
+                r.get("panel_path")
+                or md.get("primary_image")
+                or md.get("image_path")
+                or md.get("figure_image_path")
+            )
+            if not image_path or not Path(image_path).is_file():
+                # Audit M4: ``Path.exists()`` returns True for directories
+                # too, which would crash ``PIL.Image.open()`` with
+                # IsADirectoryError. ``is_file()`` is the correct guard —
+                # it follows symlinks but rejects directories, FIFOs,
+                # and missing paths uniformly.
+                continue
+            caption_text = md.get("caption_text") or md.get("caption") or ""
+            try:
+                from PIL import Image as _PILImage
+
+                with _PILImage.open(image_path) as im:
+                    panel_image = im.convert("RGB")
+                geo_links = self.m3_engine.extract_geology(
+                    image=panel_image,
+                    caption=caption_text,
+                    figure_type=figure_type,
+                    paper_id=paper_id,
+                    figure_id=r.get("figure_id") or md.get("figure_id") or "",
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "geo_vision failed for paper=%s figure=%s: %s",
+                    paper_id,
+                    r.get("figure_id") or "?",
+                    exc,
+                )
+                continue
+            if not geo_links:
+                continue
+            existing = list(md.get("geology_links") or [])
+            md["geology_links"] = existing + geo_links
+            # Tag the source so review tools can distinguish vision
+            # links from text-derived ones.
+            md["geo_vision_used"] = True
+            md["geo_vision_figure_type"] = figure_type
+            r["metadata"] = md
         return results
 
     def _link_range_chart_geology(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
