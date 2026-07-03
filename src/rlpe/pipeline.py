@@ -125,16 +125,51 @@ class RadiolarianPipeline:
         return self._od_extractor
 
     def _try_init_gemma(self) -> None:
-        if not self.config.extra.get("use_gemma4", False):
+        # Two distinct initialization paths:
+        #   1. Local Gemma4 / llama.cpp / Ollama — requires use_gemma4=True
+        #      or an explicit model_path (legacy behavior).
+        #   2. MiniMax cloud backend — requires ONLY a MiniMax API key;
+        #      does NOT need use_gemma4=True.  The previous version
+        #      incorrectly required use_gemma4=True for ALL backends,
+        #      which meant MiniMax (the default cloud path) silently
+        #      produced zero LLM calls unless the user also passed
+        #      --use-gemma4.
+        minimax_backends = {"minimax", "minimax-m3", "minimax_api"}
+        backend_name = str(self.config.extra.get("llm_backend") or "").lower() or "transformers"
+        has_minimax_key = bool(
+            self.config.extra.get("MiniMax_api_key")
+            or os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("MINIMAX_API_KEY")
+        )
+        # MiniMax path: either explicit backend name, OR no local model
+        # path but a MiniMax API key present (the common "just give me
+        # a key and hit the cloud" flow).
+        has_local_model = bool(
+            self.config.extra.get("gemma_model_path")
+            or self.config.extra.get("ollama_model")
+            or self.config.extra.get("llama_model")
+        )
+        use_minimax = (
+            backend_name in minimax_backends
+            or (has_minimax_key and not has_local_model)
+        )
+        if not use_minimax and not self.config.extra.get("use_gemma4", False):
             return
         model_path = self.config.extra.get("gemma_model_path") or self.config.extra.get(
             "ollama_model"
         )
-        backend_name = str(self.config.extra.get("llm_backend", "transformers")).lower()
-        minimax_backends = {"minimax", "minimax-m3", "minimax_api"}
-        if not model_path and backend_name not in (minimax_backends | {"ollama"}):
+        if not use_minimax and not model_path and backend_name not in {"ollama"}:
             return
         try:
+            # If we detected MiniMax heuristically (API key present, no
+            # local model), make sure the builder sees backend=minimax.
+            # Otherwise build_gemma_backend_from_config defaults to
+            # "transformers", which triggers load_gemma4_model →
+            # BitsAndBytes import → crash in envs without the
+            # transformers stack.
+            if use_minimax and backend_name not in minimax_backends:
+                self.config.extra["llm_backend"] = "minimax"
+                backend_name = "minimax"  # sync local for FallbackHandler gate below
             self.gemma_runtime = build_gemma_backend_from_config(self.config.extra)
             # If MiniMax backend, attach a FallbackHandler. The handler is
             # invoked ONLY from ``_apply_gemma_with_fallback``; we intentionally
@@ -2549,8 +2584,25 @@ Rules:
         # If caption parsing found nothing AND the user opted to skip, fall through
         if not caption_pairs and self.m3_engine.config.get("m3_skip_match_on_empty_caption", True):
             return matches
-        new_matches = []
+        # Deduplicate matches by (panel_id, bbox-tuple) before calling
+        # M3 stage 4. The pre-fix code called M3 once per match row,
+        # but a Stage-3 over-segmentation that produced N copies of
+        # the same physical panel (e.g. 4 detections of the same
+        # crop region) would all share panel_id="1" and a similar
+        # bbox, wasting API calls. We keep the first occurrence
+        # (which has the highest panel_score from the classical
+        # detector) and skip the rest.
+        seen_panel_keys: set[tuple[str | None, tuple[int, ...] | None]] = set()
+        deduped_matches: list = []
         for m in matches:
+            bbox_tuple = tuple(m.bbox) if m.bbox is not None else None
+            key = (m.panel_id, bbox_tuple)
+            if key in seen_panel_keys:
+                continue
+            seen_panel_keys.add(key)
+            deduped_matches.append(m)
+        new_matches = []
+        for m in deduped_matches:
             try:
                 if not m.panel_path or not Path(m.panel_path).exists():
                     new_matches.append(m)
