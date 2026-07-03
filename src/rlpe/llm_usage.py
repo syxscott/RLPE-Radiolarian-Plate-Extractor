@@ -60,7 +60,13 @@ def collect_llm_usage(runtime: Any) -> dict[str, Any] | None:
         if preferred in summary or alt in summary:
             continue
         val = getattr(backend, attr, None)
-        if isinstance(val, (int, float)):
+        # Require strictly positive counters: a fresh backend that has
+        # not been called yet still has ``total_calls=0`` etc. (init
+        # values), and writing those into the sidecar pollutes
+        # ``output/manifests/llm_usage.json`` with a misleading zero
+        # record. Bug fix: only surface counters when at least one call
+        # actually ran.
+        if isinstance(val, (int, float)) and val > 0:
             summary[alt] = int(val)
     # Surface the sidecar only when at least one real usage signal is
     # present, so rules-only / local-only runs do not pollute the

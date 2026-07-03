@@ -140,3 +140,22 @@ def test_total_cost_cny_alone_is_sufficient_signal():
     out = collect_llm_usage(runtime)
     assert out is not None
     assert out["total_cost_cny"] == 0.001
+
+
+def test_returns_none_when_all_counters_are_zero():
+    """A fresh backend that has not been called must NOT emit a sidecar.
+
+    Reproduces the case where every counter attribute exists (because the
+    backend constructor initialises them to 0) but no API call has run
+    yet. Before the fix this returned ``{total_calls: 0, ...}`` and the
+    pipeline wrote a misleading zero-sidecar into output/manifests/.
+    """
+    backend = _Backend(
+        total_calls=0,
+        total_errors=0,
+        total_input_tokens=0,
+        total_output_tokens=0,
+    )
+    # _Backend with no cost_summary_payload, no method overridden.
+    runtime = _Runtime(backend)
+    assert collect_llm_usage(runtime) is None
