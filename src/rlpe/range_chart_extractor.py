@@ -284,7 +284,17 @@ def _extract_balanced_json_object(text: str) -> str | None:
 
 def _safe_json_loads(text: str) -> dict[str, Any]:
     """Lenient JSON object extraction. Same contract as ``m3_engine._safe_json_loads``
-    but exposed locally to keep this module self-contained."""
+    but exposed locally to keep this module self-contained.
+
+    Audit M3: M3 occasionally emits trailing fences / extra prose that
+    breaks the strict ``json.loads`` first pass. The fallback
+    ``_extract_balanced_json_object`` already handles the common case
+    (it scans for the first ``{`` and matches the closing ``}`` while
+    tracking brace depth + JSON string state). We rely on that
+    fallback for trailing-junk handling instead of stripping fences
+    aggressively (which would risk eating ``\\````` inside JSON string
+    literals).
+    """
     if not text:
         raise ValueError("empty text")
     text = text.strip()

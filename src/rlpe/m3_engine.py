@@ -1952,21 +1952,28 @@ class M3Engine:
             and getattr(self.backend, "enable_thinking", False)
         ):
             logger.info("M3 returned empty text; retrying with thinking disabled")
+            # Audit M6: hold the lock only long enough to flip
+            # enable_thinking, NOT for the entire backend call. The
+            # previous code held the lock for the duration of
+            # ``infer_panel()``, which could deadlock if the backend
+            # re-entered ``_infer_vision`` (e.g. a custom backend
+            # subclass that calls M3 again inside its handler).
             with self._thinking_retry_lock:
                 saved = self.backend.enable_thinking
-                try:
-                    self.backend.enable_thinking = False
-                    res2 = self.backend.infer_panel(
-                        panel_image=image,
-                        caption_text="",
-                        ocr_labels=[],
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                    )
-                except Exception as exc:
-                    logger.warning("M3 retry without thinking failed: %s", exc)
-                    res2 = res
-                finally:
+                self.backend.enable_thinking = False
+            try:
+                res2 = self.backend.infer_panel(
+                    panel_image=image,
+                    caption_text="",
+                    ocr_labels=[],
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+            except Exception as exc:
+                logger.warning("M3 retry without thinking failed: %s", exc)
+                res2 = res
+            finally:
+                with self._thinking_retry_lock:
                     self.backend.enable_thinking = saved
             if (res2.get("raw_text") or "").strip():
                 res = res2

@@ -442,7 +442,7 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
         geology_context_id=geology_context_id,
         panel_path=match.panel_path,
         figure_image_path=meta.get("figure_image_path") or meta.get("image_path"),
-        bbox=list(match.bbox) if match.bbox is not None else None,
+        bbox=(list(match.bbox) if match.bbox is not None and len(match.bbox) == 4 else None),
         confidence=float(match.confidence),
         label_text=match.label_text,
         caption_snippet=match.caption_snippet,
