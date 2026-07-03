@@ -1559,13 +1559,25 @@ def _build_figures_from_plate_captions(
     claimed_image_ids: set[int] = set()
     for idx, cap in enumerate(plate_captions):
         page_lo = cap["page_number"]
+        # Default forward window is page_lo..page_lo+2 (covers the
+        # caption-below-figure and figure-on-next-page layouts).
         page_hi = page_lo + 2
         if idx + 1 < n:
             next_cap_page = plate_captions[idx + 1]["page_number"]
-            # Only clamp if the next caption is at least 1 page beyond
-            # ``page_lo``; otherwise both plates are tightly packed and we
-            # need the forward window to be respected for both.
-            if next_cap_page > page_lo + 1:
+            # Only clamp the forward window when the next caption is
+            # at least 2 pages beyond page_lo. When the captions are
+            # tightly packed (e.g. pl04 caption p17, pl05 caption
+            # p20, pl06 caption p24 — gap of 3+ pages each), the
+            # clamp would shrink pl04 to p17..p19 and steal pl05's
+            # p19/p20 images. The pre-fix code clamped in this
+            # case too, but ``page_hi = max(page_hi, page_lo)`` then
+            # re-opened it to a single page — which silently dropped
+            # any forward images. The fix: when the captions are at
+            # least 1 page apart, clamp to ``next_cap_page - 1`` so
+            # the next plate's caption page itself is excluded. When
+            # tighter, keep the full window so forward images are
+            # still claimable.
+            if next_cap_page >= page_lo + 2:
                 page_hi = min(page_hi, next_cap_page - 1)
         page_hi = max(page_hi, page_lo)  # never invert
 
