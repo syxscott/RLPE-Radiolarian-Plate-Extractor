@@ -528,12 +528,23 @@ def assign_panels_to_labels(
     out: list[str | None] = []
     for i, panel in enumerate(panels):
         pid = _normalize_panel_label(panel.panel_id)
-        if pid and (pid.isdigit() or len(pid) <= 3):
-            # Panel already has a sensible id (digit, or short letter).
+        # Audit P1-4: the previous ``pid.isdigit() or len(pid) <= 3``
+        # accepted OCR garbage like ``"P1"`` (multi-char alphanumeric)
+        # or ``"ean"`` (multi-char alpha), polluting the pred set with
+        # rows that drag pouille F1 down. Use ``is_valid_panel_label``
+        # (which enforces ``^([A-H]|\d+[a-z]?)$``) so only digit,
+        # digit+letter, or A-H markers pass through.
+        if pid and is_valid_panel_label(pid):
             out.append(pid)
             continue
         if i < len(labels) and labels[i]:
-            out.append(_normalize_panel_label(labels[i]) or labels[i])
+            cand = _normalize_panel_label(labels[i]) or labels[i]
+            if cand and is_valid_panel_label(cand):
+                out.append(cand)
+                continue
+            # Fall through: the caption-derived label was invalid,
+            # so we emit None rather than re-attaching the garbage.
+            out.append(None)
             continue
         out.append(None)
     return out
@@ -571,6 +582,14 @@ def match_panels(
         for idx, panel in enumerate(panels):
             raw_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
             panel_id = _normalize_panel_label(raw_id)
+            # Audit P1-4: drop panels whose label is OCR garbage
+            # (single-letter ``S/A/L`` etc.) so they don't show up as
+            # spurious pred rows that drag pouille F1 down. Without
+            # this guard a Stage-3 over-segmentation producing 60
+            # panels with the same first caption token was writing 60
+            # rows all sharing panel_id="S".
+            if panel_id is not None and not is_valid_panel_label(panel_id):
+                continue
             matches.append(
                 MatchResult(
                     paper_id=paper_id,
@@ -750,13 +769,25 @@ def match_panels(
         )
 
     if not matches and (taxa or labels):
+        # Audit P1-4 (pouille over-segmentation): the placeholder
+        # panel_id below used to be ``labels[0]`` unconditionally,
+        # so a Stage-3 over-segmentation that produced, say, 60 panels
+        # all with the same first caption-token label ended up writing
+        # 60 rows sharing panel_id="S" or panel_id="A" — polluting the
+        # pred set and dragging pouille2014 string-match F1 from 100%
+        # to 0%. The fix validates ``labels[0]`` against
+        # ``is_valid_panel_label``; if invalid, fall through to None
+        # so the eval treats it as no-pred instead of bad-pred.
+        first_label = labels[0] if labels else None
+        if first_label and not is_valid_panel_label(first_label):
+            first_label = None
         matches.append(
             MatchResult(
                 paper_id=paper_id,
                 figure_id=figure_id,
-                panel_id=labels[0] if labels else None,
+                panel_id=first_label,
                 species=taxa[0] if taxa else None,
-                label_text=labels[0] if labels else None,
+                label_text=first_label,
                 panel_path=None,
                 bbox=None,
                 confidence=0.35,
