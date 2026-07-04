@@ -149,10 +149,7 @@ class RadiolarianPipeline:
             or self.config.extra.get("ollama_model")
             or self.config.extra.get("llama_model")
         )
-        use_minimax = (
-            backend_name in minimax_backends
-            or (has_minimax_key and not has_local_model)
-        )
+        use_minimax = backend_name in minimax_backends or (has_minimax_key and not has_local_model)
         if not use_minimax and not self.config.extra.get("use_gemma4", False):
             return
         model_path = self.config.extra.get("gemma_model_path") or self.config.extra.get(
@@ -839,11 +836,37 @@ class RadiolarianPipeline:
         od_result = self.od_extractor.extract(pdf_path, self.config.resolved_output_dir())
 
         if not od_result.success:
+            error = od_result.error or "unknown error"
             logger.warning(
                 "OpenDataLoader failed (%s); falling back to GROBID+layout",
-                od_result.error or "unknown error",
+                error,
             )
-            return self._process_one_pdf_grobid(paper_id, pdf_path)
+            fallback = self._process_one_pdf_grobid(paper_id, pdf_path)
+            # Audit P1-5: append an ingestion-failed warning stub so
+            # the failure is visible in run_output.warnings instead of
+            # being silently dropped. Without this, a corrupt PDF (or
+            # a stale OD subprocess) produces 0 rows AND 0 warnings,
+            # leaving the user with no diagnostic signal.
+            return fallback + [
+                {
+                    "paper_id": paper_id,
+                    "figure_id": "_ingestion_od_failed",
+                    "panel_id": None,
+                    "species": None,
+                    "panel_path": None,
+                    "bbox": None,
+                    "confidence": 0.0,
+                    "label_text": None,
+                    "caption_snippet": pdf_path.name,
+                    "ocr_text": None,
+                    "paper_metadata": None,
+                    "metadata": {
+                        "extraction_source": "od_failed",
+                        "ingestion_error": error,
+                        "ingestion_warning": True,
+                    },
+                }
+            ]
 
         figures = od_result.figures
         # OD's caption-image pairing is fragile and the Java subprocess
@@ -1587,6 +1610,9 @@ class RadiolarianPipeline:
     def _process_one_pdf_grobid(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         grobid_result = self.grobid.process_pdf(pdf_path, self.config.resolved_output_dir())
 
+        if not grobid_result.success:
+            error = grobid_result.error or "GROBID returned no result"
+            logger.warning("GROBID failed (%s); figures will be empty", error)
         tei_captions = grobid_result.captions if grobid_result.success else []
         # Extract paper-level metadata (DOI, abstract, authors, journal, year, ...)
         # from the GROBID TEI. Falls back to an empty record on failure.
@@ -1702,6 +1728,29 @@ class RadiolarianPipeline:
             results = self._apply_geo_vision(results, paper_id)
         if self.config.extra.get("m3_stage3", False) and self.m3_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
+        # Audit P1-5: append an ingestion-failed warning stub when
+        # GROBID failed so the failure is visible in run_output.warnings.
+        if not grobid_result.success and not results:
+            results.append(
+                {
+                    "paper_id": paper_id,
+                    "figure_id": "_ingestion_grobid_failed",
+                    "panel_id": None,
+                    "species": None,
+                    "panel_path": None,
+                    "bbox": None,
+                    "confidence": 0.0,
+                    "label_text": None,
+                    "caption_snippet": pdf_path.name,
+                    "ocr_text": None,
+                    "paper_metadata": None,
+                    "metadata": {
+                        "extraction_source": "grobid_failed",
+                        "ingestion_error": error,
+                        "ingestion_warning": True,
+                    },
+                }
+            )
         return results
 
     # ---- LLM-first extraction (new architecture) --------------------------------
