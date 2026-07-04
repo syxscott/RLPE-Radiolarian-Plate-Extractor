@@ -65,6 +65,9 @@ _KNOWN_EXTRA_KEYS = {
     "m3_retry_without_thinking",
     "m3_temperature",
     "m3_thinking_budget",
+    # Round 6 + Round 7 multi-modal vision toggles
+    "use_m3_stage3",
+    "m3_multi_plate_enrich",
     # LLM-first extraction (opt-in; default True when Gemma runtime is set)
     "use_llm_first",
     # Multi-modal geology vision (Commit 2 / Round 3)
