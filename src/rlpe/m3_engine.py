@@ -279,6 +279,44 @@ PROMPT_REGISTRY: dict[str, str] = {
         '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
         "Prioritize age + country + locality. Output JSON only."
     ),
+    # Multi-plate enrichment prompt (Round 7). Fires when the
+    # OpenDataLoader caption-image pairing missed a plate (e.g. Bandini
+    # 2011 Plate 7-9 were dropped) and we need M3 to look at the plate
+    # image + page-level context to recover the panel_id → species list.
+    # The output shape is intentionally identical to a multi-panel LLM-
+    # first extraction so the caller can reuse ``infer_panel`` results
+    # uniformly (panel_id, species, confidence per panel).
+    "multi_plate_enrich": (
+        "You are an expert paleontologist specializing in radiolarian "
+        "microfossils.\n\n"
+        "You will see an image of ONE radiolarian plate (a figure from a "
+        "scientific publication that shows multiple specimen panels arranged "
+        "in a grid), together with caption text from the surrounding page(s) "
+        "(including captions of OTHER plates on the same or adjacent pages).\n\n"
+        "Your task: identify EVERY distinct specimen panel in this plate "
+        "image and determine the panel label (as printed: '1', 'A', '14b', "
+        "'Fig. 3') and the Latin binomial species name.\n\n"
+        "Return ONLY valid JSON (no markdown fences). The JSON must be an "
+        "object with a single key 'panels' whose value is an array of "
+        "objects, each with:\n"
+        "  - 'label': the panel label as printed (string)\n"
+        "  - 'species': Latin binomial (string) or null if unknown\n"
+        "  - 'confidence': 0.0-1.0\n\n"
+        "Rules:\n"
+        "  - Use the caption text FIRST to determine species for each label\n"
+        "  - Expand ranges like '1-4. Species' to {label: 1, species}, "
+        "{label: 2, species}, ...\n"
+        "  - IGNORE caption text for OTHER plates; only use the caption that "
+        "matches THIS plate image (its Plate number prefix)\n"
+        "  - If the caption does NOT mention a panel, try morphology; set "
+        "confidence 0.3-0.5\n"
+        "  - Include ALL visible panels, even partially visible ones\n"
+        "  - Do NOT include non-specimen elements (scale bars, maps, "
+        "diagrams)\n"
+        "  - NEVER invent species names that don't exist in radiolarian "
+        "taxonomy\n"
+        "  - If you cannot identify ANY panels, return {'panels': []}"
+    ),
 }
 
 SECTION_TYPE_BY_FIGURE: dict[str, str] = {
@@ -2070,6 +2108,97 @@ class M3Engine:
                     f"figure={figure_id} conf={item.get('confidence')}"
                 )
             out.append(item)
+        return out
+
+    def enrich_plate_panels(
+        self,
+        image: Image.Image,
+        *,
+        page_caption: str,
+        paper_id: str,
+        figure_id: str,
+        expected_plate_label: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Round 7 multi-plate enrichment: ask MiniMax-M3 to extract the full
+        panel list from a plate image + page-level caption context.
+
+        Used as a SECOND PASS when the first-pass extraction (OD caption-
+        image pairing + LLM-first per-figure) produced fewer panels than
+        the caption parser claims exist. Common failure mode: OpenDataLoader
+        dropped the caption for some plates (e.g. Bandini 2011 Plate 7-9
+        sit on pages with multiple figures and OD's pairing logic misses
+        them). In that case ``enrich_plate_panels`` is called with the
+        page-level caption (which includes captions for ALL plates on the
+        page) and the model is told to only emit panels for the matching
+        plate (``expected_plate_label`` like "Plate 7").
+
+        Returns a list of dicts shaped like:
+          ``{"label": "1", "species": "...", "confidence": 0.9, ...}``
+        or ``[]`` when the model returns nothing usable (fallback_used,
+        tiny image, malformed JSON, etc.).
+
+        Cost: one M3 vision call (~¥0.01-0.02 per plate). Callers should
+        gate this on observed panel-count loss to avoid wasted spend.
+        """
+        try:
+            if image.width < 32 or image.height < 32:
+                return []
+        except (AttributeError, TypeError):
+            return []
+
+        system_prompt = PROMPT_REGISTRY["multi_plate_enrich"]
+        constraint = (
+            f" This image is plate '{expected_plate_label}'."
+            if expected_plate_label
+            else ""
+        )
+        user_prompt = (
+            f"Paper: {paper_id}\n"
+            f"Figure: {figure_id}{constraint}\n\n"
+            f"Caption text from page(s):\n{page_caption or '(no caption)'}\n\n"
+            "Identify all specimen panels in the plate image. Return JSON."
+        )
+
+        res = self._infer_vision(system_prompt, user_prompt, image)
+        if res.get("fallback_used") or res.get("error"):
+            logger.debug(
+                "enrich_plate_panels %s/%s: M3 returned fallback/error",
+                paper_id,
+                figure_id,
+            )
+            return []
+
+        # Parse JSON response. M3 sometimes wraps in ```json fences;
+        # _safe_json_loads handles that, and we accept either {"panels": [...]}
+        # at top level (model contract) or a bare list (lenient fallback).
+        raw = res.get("raw_text") or ""
+        parsed = _safe_json_loads(raw)
+        panels_data: list[Any] = []
+        if isinstance(parsed, dict) and isinstance(parsed.get("panels"), list):
+            panels_data = list(parsed.get("panels") or [])
+        elif isinstance(parsed, list):
+            panels_data = list(parsed)
+        if not panels_data:
+            return []
+
+        out: list[dict[str, Any]] = []
+        for p in panels_data:
+            if not isinstance(p, dict):
+                continue
+            label = str(p.get("label", "")).strip()
+            species = p.get("species")
+            conf = p.get("confidence")
+            try:
+                conf_f = float(conf) if conf is not None else 0.7
+            except (TypeError, ValueError):
+                conf_f = 0.7
+            if not label:
+                continue
+            out.append({
+                "label": label,
+                "species": species if species else None,
+                "confidence": conf_f,
+            })
         return out
 
     def _maybe_dump_diagnostic(

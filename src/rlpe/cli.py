@@ -168,6 +168,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable M3 Stage 3 panel bbox detection + crop enrichment. "
         "Off by default; requires MiniMax API access.",
     )
+    p.add_argument(
+        "--m3-multi-plate-enrich",
+        action="store_true",
+        help="Round 7 second-pass M3 multi-plate enrichment. Fires when "
+        "OD dropped a plate's caption-image pairing (e.g. Bandini 2011 "
+        "Plate 7-9): asks M3 to extract the panel list from the plate "
+        "image + page-level caption. Off by default (avoids M3 API cost).",
+    )
     # ---- OpenDataLoader PDF parser (replaces GROBID) -----------------------
     p.add_argument(
         "--use-opendataloader",
@@ -330,6 +338,7 @@ def main() -> int:
             "use_geology_llm": args.use_geology_llm,
             "use_geo_vision": args.use_geo_vision,
             "use_m3_stage3": args.use_m3_stage3,
+            "m3_multi_plate_enrich": args.m3_multi_plate_enrich,
             "geo_vision_figure_types": (
                 [t.strip() for t in args.geo_vision_figure_types.split(",") if t.strip()]
                 if args.geo_vision_figure_types

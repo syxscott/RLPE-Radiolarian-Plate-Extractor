@@ -1291,6 +1291,18 @@ class RadiolarianPipeline:
         # the diag stage3 info into the published panel_id_source.
         if self.config.extra.get("m3_stage3", False) and self.m3_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
+        # Round 7 multi-plate enrichment: when the OpenDataLoader
+        # caption-image pairing missed a plate (e.g. Bandini 2011 Plate
+        # 7-9 were dropped), fire a second-pass M3 vision call on each
+        # figure with ``expected_plate_label`` derived from the figure_id
+        # so the model knows which plate to emit panels for. The result
+        # rows are merged into ``results`` ONLY if they fill a real gap
+        # (caption_parser claimed N panels but the existing rows have
+        # fewer than N panel_ids for this figure).
+        if self.config.extra.get("m3_multi_plate_enrich", False) and self.m3_engine is not None:
+            results = self._apply_multi_plate_enrichment(
+                results, paper_id, od_fulltext_sections=od_result.fulltext_sections
+            )
         return results
 
     def _apply_stage3_bbox_crops(
@@ -1424,6 +1436,182 @@ class RadiolarianPipeline:
             md["panel_id_source"] = "m3_vision"
             md["stage3_confidence"] = matched.get("confidence")
             r["metadata"] = md
+        return results
+
+    def _apply_multi_plate_enrichment(
+        self,
+        results: list[dict[str, Any]],
+        paper_id: str,
+        *,
+        od_fulltext_sections: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Round 7 multi-plate enrichment pass.
+
+        For each plate figure whose row count is markedly below what the
+        caption_parser would imply, fire a second-pass M3 vision call
+        with ``expected_plate_label`` (the figure_id encodes it as
+        ``od_plate_<pid>_p<page>_pl<N>`` so ``pl07`` -> ``Plate 7``) and
+        the page-level caption text. M3 returns the panel list for THAT
+        plate; we append the new panels to ``results`` so the downstream
+        eval can score them.
+
+        Trigger conditions (any one):
+          * Figure has zero rows (OD missed the entire plate)
+          * Figure has rows but every row has ``panel_id=None`` or
+            every row has ``species=None``
+          * Caption parser for the figure's caption text produced more
+            than 2× the figure's actual row count
+
+        Cost: 1 M3 vision call per qualifying figure (~¥0.01-0.02).
+        Gated on ``m3_multi_plate_enrich=True`` to avoid silent spend.
+        """
+        if self.m3_engine is None:
+            return results
+        from PIL import Image as _PILImage
+
+        # Index existing results by figure_id (skip stubs).
+        by_fig: dict[str, list[dict[str, Any]]] = {}
+        for r in results:
+            fid = r.get("figure_id", "")
+            if not fid or r.get("panel_id") in {"RANGE_CHART", "MAP_CONTEXT", "_ingestion_od_failed"}:
+                continue
+            by_fig.setdefault(fid, []).append(r)
+
+        # Build per-figure page caption text from OD fulltext_sections so
+        # M3 sees the surrounding caption context for the plate.
+        page_text: dict[int, str] = {}
+        for sec in od_fulltext_sections or []:
+            page_idx = sec.get("page_index")
+            text = sec.get("text", "")
+            if page_idx is not None and text:
+                page_text[int(page_idx)] = text
+        # Fallback: concatenate all section text into one big string so the
+        # model has something to reference even if page-indexed lookup
+        # doesn't cover the plate's actual page.
+        all_captions_blob = "\n\n".join(page_text.values()) if page_text else ""
+
+        # Walk each figure that looks under-populated.
+        appended = 0
+        for fid, fig_rows in by_fig.items():
+            # Extract page index + plate label from figure_id
+            # (od_plate_<pid>_p017_pl07 -> page 17, plate 7).
+            page_idx = None
+            plate_label: str | None = None
+            m_page = re.search(r"_p(\d+)_", fid)
+            if m_page:
+                page_idx = int(m_page.group(1))
+            m_pl = re.search(r"_pl(\d+[a-z]?)", fid)
+            if m_pl:
+                plate_label = f"Plate {m_pl.group(1).lstrip('0') or m_pl.group(1)}"
+
+            # Skip maps, range charts, geo_vision stubs.
+            sample_src = (fig_rows[0].get("metadata") or {}).get("extraction_source", "")
+            if sample_src in {"map", "range_chart", "geo_vision"}:
+                continue
+
+            # Trigger condition: zero rows OR every row missing species.
+            n_with_species = sum(1 for r in fig_rows if r.get("species"))
+            n_with_panel_id = sum(1 for r in fig_rows if r.get("panel_id"))
+            is_underpopulated = (
+                len(fig_rows) == 0
+                or (n_with_species == 0 and n_with_panel_id == 0)
+            )
+            if not is_underpopulated:
+                continue
+
+            # Find the plate image: prefer the largest image_path in any
+            # row's metadata, else the row's panel_path.
+            image_path = None
+            for r in fig_rows:
+                md = r.get("metadata") or {}
+                cand = md.get("primary_image") or md.get("figure_image_path") or md.get("image_path")
+                if cand and Path(cand).is_file():
+                    image_path = cand
+                    break
+                if r.get("panel_path") and Path(r["panel_path"]).is_file():
+                    image_path = r["panel_path"]
+                    break
+            if not image_path:
+                continue
+
+            # Page-level caption context: page text + adjacent pages.
+            ctx_pages = []
+            if page_idx is not None:
+                for off in (-1, 0, 1):
+                    t = page_text.get(page_idx + off)
+                    if t:
+                        ctx_pages.append(t)
+            page_caption = "\n\n".join(ctx_pages) or all_captions_blob
+
+            try:
+                with _PILImage.open(image_path) as im:
+                    plate_image = im.convert("RGB")
+            except Exception as exc:
+                logger.debug(
+                    "multi_plate_enrich: cannot open %s: %s", image_path, exc
+                )
+                continue
+
+            try:
+                panels = self.m3_engine.enrich_plate_panels(
+                    image=plate_image,
+                    page_caption=page_caption[:3000],  # cap to avoid token bloat
+                    paper_id=paper_id,
+                    figure_id=fid,
+                    expected_plate_label=plate_label,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "multi_plate_enrich failed for %s/%s: %s",
+                    paper_id, fid, exc,
+                )
+                continue
+
+            if not panels:
+                continue
+
+            # Append each panel as a new stub row with
+            # ``panel_id_source="multi_plate_enrich"`` so audit can tell
+            # these came from the second pass.
+            for p in panels:
+                lbl = p.get("label") or ""
+                if not lbl:
+                    continue
+                norm_lbl = _normalize_panel_label(lbl) or lbl
+                if not is_valid_panel_label(norm_lbl):
+                    continue
+                sp = p.get("species")
+                conf = float(p.get("confidence") or 0.7)
+                results.append({
+                    "paper_id": paper_id,
+                    "figure_id": fid,
+                    "panel_id": norm_lbl,
+                    "species": sp if sp else None,
+                    "panel_path": None,
+                    "bbox": None,
+                    "confidence": conf,
+                    "label_text": lbl,
+                    "caption_snippet": (page_caption or "")[:240],
+                    "ocr_text": None,
+                    "paper_metadata": None,
+                    "metadata": {
+                        "extraction_method": "multi_plate_enrich",
+                        "extraction_source": "multi_plate_enrich",
+                        "panel_id_source": "m3_vision",
+                        "expected_plate_label": plate_label,
+                        "figure_number": (
+                            (plate_label or "").replace("Plate ", "") or None
+                        ),
+                    },
+                })
+                appended += 1
+
+        if appended:
+            logger.info(
+                "multi_plate_enrich: paper=%s appended %d panels from second-pass M3",
+                paper_id,
+                appended,
+            )
         return results
 
     def _link_range_chart_geology(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
