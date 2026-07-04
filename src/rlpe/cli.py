@@ -147,6 +147,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="What data is sent to the LLM backend",
     )
     p.add_argument("--use-geology-llm", action="store_true")
+    p.add_argument(
+        "--use-geo-vision",
+        action="store_true",
+        help="Enable multi-modal MiniMax-M3 vision extraction of "
+        "geology fields (lithology, formation, country, Ma, biozone) "
+        "from stratigraphic column / litholog / paleogeographic-map "
+        "/ range-chart figures. Off by default (avoids M3 API cost).",
+    )
+    p.add_argument(
+        "--geo-vision-figure-types",
+        default=None,
+        help="Comma-separated figure-type allowlist for geo-vision. "
+        "Default: strat_column,litholog_column,paleogeographic_map,range_chart. "
+        "Use e.g. 'range_chart' alone to focus on species distribution.",
+    )
+    p.add_argument(
+        "--use-m3-stage3",
+        action="store_true",
+        help="Enable M3 Stage 3 panel bbox detection + crop enrichment. "
+        "Off by default; requires MiniMax API access.",
+    )
     # ---- OpenDataLoader PDF parser (replaces GROBID) -----------------------
     p.add_argument(
         "--use-opendataloader",
@@ -307,6 +328,13 @@ def main() -> int:
             "MiniMax_interactive": args.MiniMax_interactive,
             "data_outbound_policy": args.data_outbound_policy,
             "use_geology_llm": args.use_geology_llm,
+            "use_geo_vision": args.use_geo_vision,
+            "use_m3_stage3": args.use_m3_stage3,
+            "geo_vision_figure_types": (
+                [t.strip() for t in args.geo_vision_figure_types.split(",") if t.strip()]
+                if args.geo_vision_figure_types
+                else None
+            ),
             "use_opendataloader": args.use_opendataloader,
             "use_paleodb": args.use_paleodb,
             "paleodb_max_occurrences": args.paleodb_max_occurrences,

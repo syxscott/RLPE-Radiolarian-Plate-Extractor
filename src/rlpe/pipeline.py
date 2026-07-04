@@ -1152,6 +1152,24 @@ class RadiolarianPipeline:
             # (location names, lat/lon) from the caption and produce
             # a stub record. This ensures these figures aren't silently
             # dropped by the pipeline.
+            if fig_type == "other":
+                # Round-6 fix: skip classical CV segmentation for
+                # non-specimen figure types (micro-CT, XCT, tomographic,
+                # cross-section, location maps, paleogeographic maps).
+                # These figures are not radiolarian plates — running
+                # the classical segmenter on them produces thousands of
+                # spurious panel rows with no species (audit trace:
+                # Xiao_2017 micro-CT paper produced 1216 rows, all
+                # conf=0.01, before this fix). If use_geo_vision is
+                # enabled the geo-vision stub above already emitted a
+                # warning; otherwise we just skip the figure entirely
+                # with a debug log.
+                logger.debug(
+                    "fig %s: type='other' (micro-CT/cross-section/etc); "
+                    "skipping classical segmentation",
+                    pair.figure_id,
+                )
+                continue
             if fig_type == "map":
                 # Use the largest image on the same page (or
                 # primary_path if available).
