@@ -128,41 +128,6 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
         "outcrop location",
         "sample location",
     ),
-    # Micro-CT / X-ray tomographic images — these are radiolarian
-    # figures but NOT classical SEM plate. A dedicated M3 vision path
-    # would extract the same fields as a plate but the classical CV
-    # fallback would over-segment the rendered volumes into many
-    # tiles, none of which match caption labels. Flag as "other" so
-    # the pipeline doesn't try classical panel segmentation; the
-    # user is expected to enable use_geo_vision / use_m3_stage3 to
-    # extract anything useful. The previous version of this function
-    # mis-classified these as "plate" because the keyword list
-    # didn't include "micro-ct" / "xct" / "tomographic" / "μ-ct".
-    "other": (
-        "micro-ct",
-        "micro ct",
-        "μ-ct",
-        "μct",
-        "xct",
-        "x-ray computed tomography",
-        "x-ray microtomography",
-        "synchrotron",
-        "tomographic",
-        "tomography",
-        "volume rendering",
-        "3d reconstruction",
-    ),
-    # Cross-section / thin-section images — radiolarian-bearing
-    # but not a "plate" of specimens. Classify as "other" so the
-    # pipeline doesn't waste CV segmentation on a thin-section.
-    "cross_section": (
-        "thin section",
-        "cross section",
-        "cross-section",
-        "photomicrograph",
-        "plane-polarized",
-        "plane polarized",
-    ),
     # Stratigraphic column / litholog column — more specific than
     # "range_chart" so we route them to the proper vision prompt.
     "strat_column": (
@@ -189,7 +154,6 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
         "field photograph",
         "outcrop photograph",
         "field photo",
-        "outcrop photo",
     ),
 }
 
@@ -211,12 +175,6 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
     false negatives silently lose the geological linkage.
 
     Detection order matters:
-      0. micro-CT / XCT / tomographic / cross-section — these are
-         radiolarian figures but NOT classical plate. Mark as
-         "other" so the classical CV path skips them (otherwise it
-         over-segments rendered volumes into hundreds of useless
-         panels). The user is expected to enable use_geo_vision to
-         extract anything useful.
       1. plate (with range_chart override)
       2. map (before range_chart to avoid place-name false positives)
       3. strat_column / litholog_column / paleogeographic_map (more
@@ -228,20 +186,6 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
     if not caption:
         return "other"
     low = caption.lower()
-    # 0. Check micro-CT / tomographic FIRST. A paper with "Micro-CT
-    # images of ..." would otherwise match the plate keyword list
-    # and waste classical CV segmentation on 3D-volume renders,
-    # producing thousands of useless panel rows with no species.
-    # We classify as "other" so the pipeline can either skip
-    # entirely or use use_geo_vision to extract a single
-    # representative image. This is a high-impact change for
-    # papers like Xiao_2017 (Micro-XCT) that previously produced
-    # ~1200 spurious rows.
-    for kw in _FIGURE_TYPE_PROMPT_KEYWORDS["other"] + _FIGURE_TYPE_PROMPT_KEYWORDS.get(
-        "cross_section", []
-    ):
-        if kw in low:
-            return "other"
     # 1. Check plate first because plates often co-occur with range
     # charts in a paper but the keyword "distribution of radiolarians"
     # is what marks the range chart, not a plate caption that mentions
