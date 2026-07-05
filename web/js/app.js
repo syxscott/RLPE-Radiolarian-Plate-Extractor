@@ -511,7 +511,22 @@ let _consecutivePollFailures = 0;
 const _MAX_POLL_FAILURES = 5;          // give up the toast after this many
 const _MAX_POLL_BACKOFF_SEC = 30;
 
+// In-flight guard: setInterval fires loadJobs() every CONFIG.refreshInterval
+// seconds but the request itself can take longer (slow API + many jobs).
+// Without this guard, an in-flight loadJobs() that hasn't returned yet
+// will be overlapped by a second invocation from the next interval tick,
+// leading to race conditions on jobsData (Object.assign + delete interleaving)
+// and duplicated renderJobsList() calls that flicker the UI.
+let _loadJobsInFlight = false;
+
 async function loadJobs() {
+    if (_loadJobsInFlight) {
+        // Skip this tick; the next one will retry. Returning silently is
+        // safer than await'ing the in-flight promise (which would still
+        // permit the overlap on the *next* tick).
+        return;
+    }
+    _loadJobsInFlight = true;
     try {
         const response = await fetch(`${CONFIG.apiBaseUrl}/jobs`);
         if (!response.ok) {
@@ -589,6 +604,8 @@ async function loadJobs() {
         }
     } catch (error) {
         _onPollFailure(error.message || String(error));
+    } finally {
+        _loadJobsInFlight = false;
     }
 }
 
@@ -1933,9 +1950,17 @@ function openCorrectionModal(paperId, figureId, panelPath) {
         return;
     }
     const modal = document.getElementById('correction-modal');
-    document.getElementById('corrected-species').dataset.paperId = paperId;
-    document.getElementById('corrected-species').dataset.figureId = figureId;
-    document.getElementById('corrected-species').dataset.panelPath = panelPath || '';
+    // Reset the form before re-opening so values from a previous
+    // session (corrected_species, reviewer name, notes) don't bleed
+    // into the new correction. Without this, opening the modal on
+    // record B after submitting on record A would pre-fill B with
+    // A's text and submit a wrong review row.
+    const form = document.getElementById('correction-form');
+    if (form) form.reset();
+    const speciesInput = document.getElementById('corrected-species');
+    speciesInput.dataset.paperId = paperId;
+    speciesInput.dataset.figureId = figureId;
+    speciesInput.dataset.panelPath = panelPath || '';
     modal.classList.remove('hidden');
 }
 
@@ -1999,14 +2024,28 @@ document.getElementById('correction-form')?.addEventListener('submit', async (e)
 // ==================== Settings ==================== //
 document.getElementById('save-settings-btn')?.addEventListener('click', () => {
     const apiUrl = document.getElementById('api-base-url').value;
-    const refreshInterval = document.getElementById('refresh-interval').value;
-    
+    const refreshRaw = document.getElementById('refresh-interval').value;
+    // Validate refresh interval before saving — an empty / non-numeric /
+    // out-of-range value would otherwise bake NaN into CONFIG and break
+    // setInterval (NaN ms = "fire as fast as possible", or never).
+    const refreshSec = parseInt(refreshRaw, 10);
+    if (isNaN(refreshSec) || refreshSec < 1 || refreshSec > 600) {
+        showNotification(`刷新间隔必须是 1..600 的整数，当前值: "${refreshRaw}"`, 'error');
+        return;
+    }
+
     localStorage.setItem('apiBaseUrl', apiUrl);
-    localStorage.setItem('refreshInterval', refreshInterval);
-    
+    localStorage.setItem('refreshInterval', String(refreshSec));
+
     CONFIG.apiBaseUrl = apiUrl;
-    CONFIG.refreshInterval = parseInt(refreshInterval, 10);
-    
+    CONFIG.refreshInterval = refreshSec;
+    // Restart the polling loop at the new interval. Without this, a
+    // user changing the value from 3 → 30 would still see poll ticks
+    // every 3s (the original setInterval keeps running).
+    if (refreshIntervalId) {
+        startJobPolling();
+    }
+
     showNotification('设置已保存');
 });
 
