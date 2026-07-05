@@ -384,7 +384,13 @@ def _normalize_caption_text(text: str) -> str:
 # "Fig. 6 Praewilliriedellum sp." (genus + sp.), and
 # "Figures 1–2 Species" (plural form, Bandini 2006).
 _CAPTION_CLAUSE_RE = re.compile(
-    r"(?:[Ff]ig(?:s|ure|ures)?\.?)\s*"
+    # Optional "Fig." / "Figures" / "Figure" prefix OR a numbered
+    # bare list like "1. Amphisphaera ..." (Hollis 2006 Paleocene-
+    # Eocene radiolarian captions use the numbered-list form without
+    # a "Fig." anchor). The alternative form is gated on the next
+    # char being an uppercase letter (genus name) so prose like
+    # "1. Introduction" doesn't match.
+    r"(?:(?:[Ff]ig(?:s|ure|ures)?\.?)\s*|\d+\.\s+(?=[A-Z]))"
     r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"  # label list
     r"\s*[\.:]?\s*"
     r"([A-Z][a-zA-Z-]+"  # Genus (capitalized)

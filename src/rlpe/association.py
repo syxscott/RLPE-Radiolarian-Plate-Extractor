@@ -340,8 +340,13 @@ def is_valid_panel_label(label: str | None) -> bool:
     # caption-text fragments, not panel ids.
     if len(s) > 16:
         return False
-    # Shape gate: A-H marker OR digit(s) with optional single trailing
+    # Shape gate: A-H marker OR 1-3 digits with optional single trailing
     # lowercase letter. Anything else is OCR noise / caption fragment.
+    # Capped at 3 digits because real plates don't carry > 50 panels
+    # and OCR often mistakes scale-bar numbers like "100 µm", "200 µm"
+    # for panel ids if the " µm" suffix is dropped by the OCR engine
+    # (Feng_2006 audit: scale-bar text "100" → 5-digit panel_id "86500"
+    # leaked through when the digit pattern had no length cap).
     return bool(_PANEL_LABEL_SHAPE.match(s))
 
 
@@ -354,7 +359,7 @@ def is_valid_panel_label(label: str | None) -> bool:
 # case is handled by the digit+letter optional: panel_id="0"
 # is normalized to "0" by _normalize_panel_label and is a
 # legitimate panel index in some papers, so we accept it here.
-_PANEL_LABEL_SHAPE = re.compile(r"^(?:[A-H]|[1-9]\d*[a-z]?|0)$")
+_PANEL_LABEL_SHAPE = re.compile(r"^(?:[A-H]|[1-9]\d{0,2}[a-z]?|0)$")
 
 
 _PANEL_METADATA_KEYS = (
