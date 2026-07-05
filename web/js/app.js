@@ -1,7 +1,21 @@
 // ==================== Configuration ==================== //
+// Defensive number parser: localStorage values can be corrupted by
+// DevTools edits, browser extensions, or partial JSON round-trips
+// (e.g. ``"abc"`` or ``"3.5px"``). The naive ``parseInt(v, 10)``
+// silently returns NaN for non-numeric input, and downstream
+// ``setInterval(fn, NaN * 1000)`` is a no-op in every browser —
+// the polling loop would just stop, the user gets no jobs
+// updates, and the bug is invisible (no error message, just stale
+// UI). Round 10 fix: gate every parseInt on ``Number.isFinite`` and
+// fall back to the supplied default.
+function _safeParseInt(value, fallback) {
+    if (value == null || value === '') return fallback;
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) ? n : fallback;
+}
 const CONFIG = {
     apiBaseUrl: localStorage.getItem('apiBaseUrl') || 'http://localhost:8000',
-    refreshInterval: parseInt(localStorage.getItem('refreshInterval') || '3', 10),
+    refreshInterval: _safeParseInt(localStorage.getItem('refreshInterval'), 3),
 };
 
 let uploadedFiles = [];
@@ -9,6 +23,16 @@ let jobsData = {};
 let resultsData = [];
 let refreshIntervalId = null;
 let _notificationTimer = null;
+// Auto-tab-switch timer for "job just completed" notifications. The
+// loadJobs() poll sets this to a setTimeout id 1200ms after a job
+// transitions to ``done``; the timer fires and switches the active
+// tab to ``results``. Round 10 fix: store the id so manual tab
+// switches (user clicks a tab during the 1200ms grace period) can
+// cancel the timer and prevent the user's intent from being
+// silently overridden. Pre-fix, switching to "settings" to check
+// the API key while a job was finishing would yank the user back to
+// "results" when the timer fired.
+let _autoSwitchTimer = null;
 // Per-page stash of full record objects. Indexed by `data-record-index`
 // on each <img> / <button> in the rendered results table. Reset at the
 // top of every renderResults() call to avoid stale references across
@@ -111,7 +135,16 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
         // Add active class to clicked tab
         tabBtn.classList.add('active');
-        document.getElementById(`${tabName}-tab`).classList.add('active');
+        document.getElementById(`${tabName}-tab`)?.classList.add('active');
+
+        // Cancel any pending auto-switch (a "job just completed" timer
+        // scheduled by loadJobs). The user has explicitly chosen a tab;
+        // we should respect that instead of yanking them away 1.2s later.
+        // Round 10 fix for FM2 / FH2.
+        if (_autoSwitchTimer !== null) {
+            clearTimeout(_autoSwitchTimer);
+            _autoSwitchTimer = null;
+        }
 
         // Load tab-specific data
         if (tabName === 'jobs') {
@@ -126,7 +159,17 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 const uploadArea = document.getElementById('upload-area');
 const pdfInput = document.getElementById('pdf-input');
 
-uploadArea.addEventListener('click', () => pdfInput.click());
+// Round 10 (FM3): reset the file input before opening the picker so
+// re-selecting the same file (e.g. after "清空列表") actually fires
+// the ``change`` event. Browsers do not re-fire ``change`` when the
+// user picks the same FileList as before — pre-fix, a workflow like
+// "upload A.pdf → clear → re-upload A.pdf" silently did nothing.
+function openFilePicker() {
+    pdfInput.value = '';
+    pdfInput.click();
+}
+
+uploadArea.addEventListener('click', openFilePicker);
 
 // Keyboard accessibility: the upload area is a div (not a button), so
 // without this handler, Tab skips it and pressing Enter / Space does
@@ -135,7 +178,7 @@ uploadArea.addEventListener('click', () => pdfInput.click());
 uploadArea.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        pdfInput.click();
+        openFilePicker();
     }
 });
 
@@ -343,15 +386,15 @@ document.getElementById('process-btn').addEventListener('click', async () => {
 
 // ==================== Config Toggles ==================== //
 function _syncLLMBackendVisibility() {
-    const backend = document.getElementById('llm-backend').value;
+    const backend = document.getElementById('llm-backend')?.value;
     const localConfig = document.getElementById('llm-local-config');
     const MiniMaxConfig = document.getElementById('MiniMax-config');
     if (backend === 'MiniMax') {
-        localConfig.classList.add('hidden');
-        MiniMaxConfig.classList.remove('hidden');
+        localConfig?.classList.add('hidden');
+        MiniMaxConfig?.classList.remove('hidden');
     } else {
-        localConfig.classList.remove('hidden');
-        MiniMaxConfig.classList.add('hidden');
+        localConfig?.classList.remove('hidden');
+        MiniMaxConfig?.classList.add('hidden');
     }
 }
 
@@ -378,10 +421,10 @@ document.getElementById('use-paleodb').addEventListener('change', (e) => {
 });
 
 function _buildPaleodbOptions() {
-    const enabled = document.getElementById('use-paleodb').checked;
+    const enabled = document.getElementById('use-paleodb')?.checked ?? false;
     if (!enabled) return null;
     const opts = { use_paleodb: true };
-    const maxRaw = document.getElementById('paleodb-max-occurrences').value.trim();
+    const maxRaw = document.getElementById('paleodb-max-occurrences')?.value?.trim() ?? '';
     const maxOcc = parseInt(maxRaw, 10);
     if (maxRaw === '' || isNaN(maxOcc) || maxOcc < 1) {
         throw new Error(`PBDB 最大出现记录数必须是 ≥1 的整数，当前值: "${maxRaw}"`);
@@ -390,9 +433,9 @@ function _buildPaleodbOptions() {
         throw new Error(`PBDB 最大出现记录数不能超过 500，当前值: ${maxOcc}`);
     }
     opts.paleodb_max_occurrences = maxOcc;
-    const endpoint = document.getElementById('paleodb-endpoint').value.trim();
+    const endpoint = document.getElementById('paleodb-endpoint')?.value?.trim() ?? '';
     if (endpoint) opts.paleodb_endpoint = endpoint;
-    opts.paleodb_offline = document.getElementById('paleodb-offline').checked;
+    opts.paleodb_offline = document.getElementById('paleodb-offline')?.checked ?? false;
     return opts;
 }
 
@@ -439,14 +482,14 @@ function _buildCorePipelineOptions() {
 
 // ==================== Build LLM options from form ==================== //
 function _buildLLMOptions() {
-    const useGemma = document.getElementById('use-gemma4').checked;
+    const useGemma = document.getElementById('use-gemma4')?.checked ?? false;
     if (!useGemma) return null;
 
-    const backend = document.getElementById('llm-backend').value;
+    const backend = document.getElementById('llm-backend')?.value ?? 'MiniMax';
 
     // Validate conf threshold up-front so the user gets immediate feedback
     // instead of a server round-trip.
-    const confRaw = document.getElementById('gemma-conf-threshold').value.trim();
+    const confRaw = document.getElementById('gemma-conf-threshold')?.value?.trim() ?? '';
     const confThreshold = parseFloat(confRaw);
     if (confRaw === '' || isNaN(confThreshold) || confThreshold < 0 || confThreshold > 1) {
         throw new Error(`LLM 置信度阈值必须在 [0, 1]，当前值: "${confRaw}"`);
@@ -460,16 +503,16 @@ function _buildLLMOptions() {
 
     if (backend === 'MiniMax') {
         // MiniMax M3 API path
-        const apiKey = document.getElementById('MiniMax-api-key').value.trim();
+        const apiKey = document.getElementById('MiniMax-api-key')?.value?.trim() ?? '';
         if (apiKey) options.MiniMax_api_key = apiKey;
-        const endpoint = document.getElementById('MiniMax-endpoint').value.trim();
+        const endpoint = document.getElementById('MiniMax-endpoint')?.value?.trim() ?? '';
         if (endpoint) options.MiniMax_endpoint = endpoint;
-        const model = document.getElementById('MiniMax-model').value.trim();
+        const model = document.getElementById('MiniMax-model')?.value?.trim() ?? '';
         if (model) options.MiniMax_model = model;
-        options.MiniMax_enable_thinking = document.getElementById('MiniMax-enable-thinking').checked;
+        options.MiniMax_enable_thinking = document.getElementById('MiniMax-enable-thinking')?.checked ?? false;
 
         // Validate thinking budget up-front
-        const thinkingRaw = document.getElementById('MiniMax-thinking-budget').value.trim();
+        const thinkingRaw = document.getElementById('MiniMax-thinking-budget')?.value?.trim() ?? '';
         const thinkingBudget = parseInt(thinkingRaw, 10);
         if (thinkingRaw === '' || isNaN(thinkingBudget) || thinkingBudget < 0) {
             throw new Error(`思考 Token 预算必须是非负整数，当前值: "${thinkingRaw}"`);
@@ -483,12 +526,12 @@ function _buildLLMOptions() {
         }
         options.MiniMax_thinking_budget_tokens = thinkingBudget;
 
-        options.MiniMax_fallback_default = document.getElementById('MiniMax-fallback-default').value;
+        options.MiniMax_fallback_default = document.getElementById('MiniMax-fallback-default')?.value ?? 'rules';
         // Web mode always uses non-interactive popup (block on event.wait)
         options.MiniMax_interactive = false;
     } else {
         // Local backend path
-        const host = document.getElementById('llm-host').value.trim();
+        const host = document.getElementById('llm-host')?.value?.trim() ?? '';
         if (host) {
             if (backend === 'llamacpp') {
                 options.llama_host = host;
@@ -596,8 +639,15 @@ async function loadJobs() {
                 const names = justCompleted.map(j => j.filename || j.job_id.substring(0, 8)).join(', ');
                 showNotification(`✅ 处理完成：${names}，正在跳转到结果…`, 'success');
                 // Brief delay so the user sees the "done" status before
-                // the tab switch.
-                setTimeout(() => {
+                // the tab switch. Round 10 (FM2 / FH2): store the timer
+                // id so a manual tab click during the 1200ms grace
+                // period can cancel the auto-switch and respect the
+                // user's intent.
+                if (_autoSwitchTimer !== null) {
+                    clearTimeout(_autoSwitchTimer);
+                }
+                _autoSwitchTimer = setTimeout(() => {
+                    _autoSwitchTimer = null;
                     document.querySelector('[data-tab="results"]')?.click();
                 }, 1200);
             }
@@ -1127,20 +1177,14 @@ async function confirmDelete() {
 }
 
 function showToast(message, type = 'info') {
-    // Minimal toast — uses a div if available, otherwise alert fallback.
-    const existing = document.getElementById('rlpe-toast');
-    if (existing) existing.remove();
-    const el = document.createElement('div');
-    el.id = 'rlpe-toast';
-    el.textContent = message;
-    el.style.cssText = `
-        position: fixed; bottom: 24px; right: 24px; z-index: 2000;
-        padding: 12px 20px; border-radius: 8px; color: white; font-size: 14px;
-        background: ${type === 'success' ? '#28a745' : type === 'error' ? '#dc3545' : '#333'};
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2); animation: slideUp 0.3s ease;
-    `;
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 3500);
+    // Round 10 (FH3): route through showNotification so we have a single
+    // toast pipeline. The previous implementation created a NEW <div>
+    // for every call with its own setTimeout, leading to DOM leaks
+    // (5 deletes = 5 stale toast elements if they fire close together)
+    // and an inconsistent z-index (2000 here vs. CSS-defaulted for
+    // #notification). showNotification reuses the #notification element
+    // and cancels any pending hide-timer from a previous toast.
+    showNotification(message, type);
 }
 
 function escapeHtml(s) {
@@ -1309,7 +1353,7 @@ async function viewJobResults(jobId) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
     targetBtn.classList.add('active');
-    document.getElementById('results-tab').classList.add('active');
+    document.getElementById('results-tab')?.classList.add('active');
 
     const filter = document.getElementById('result-filter');
     if (!filter) return;
@@ -1630,13 +1674,23 @@ function renderResultsStatusFilterCounts(counts) {
     container.innerHTML = buttons.map(([k, label, n]) =>
         `<button type="button" role="tab" class="status-filter-btn ${k === cur ? 'active' : ''}" data-status="${escapeHtml(k)}" aria-selected="${k === cur ? 'true' : 'false'}">${label} <span class="status-filter-count">${n}</span></button>`
     ).join('');
-    container.querySelectorAll('.status-filter-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            resultsTableState.statusFilter = btn.getAttribute('data-status');
+    // Round 10 (FM4): the previous code attached a fresh click listener
+    // to every button on every render — duplicate handlers accumulated
+    // with each search/filter/page change. Use ONE delegated listener
+    // (matching the same pattern in renderResultsPagination below) so
+    // the listener is wired exactly once for the container's lifetime.
+    if (!container.__rlpeFilterWired) {
+        container.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('.status-filter-btn');
+            if (!btn) return;
+            const next = btn.getAttribute('data-status');
+            if (!next || next === resultsTableState.statusFilter) return;
+            resultsTableState.statusFilter = next;
             resultsTableState.page = 1;
             renderResults();
         });
-    });
+        container.__rlpeFilterWired = true;
+    }
 }
 
 function renderResultsPagination(total, page, totalPages) {
@@ -1939,6 +1993,21 @@ document.querySelectorAll('.modal-close').forEach(btn => {
     });
 });
 
+// Round 10 (FM1): Escape key closes any open modal. WCAG 2.1 SC 2.1.1
+// requires a keyboard-only way to dismiss modal dialogs; pre-fix the
+// user could only click the × button, the overlay background, or the
+// footer Cancel button. The MiniMax fallback modal deliberately does
+// NOT close on Escape or overlay click (line ~864) — that's a "force a
+// choice" UX — so we exclude it by id check below.
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const NON_DISMISSABLE = new Set(['MiniMax-fallback-modal']);
+    document.querySelectorAll('.modal:not(.hidden)').forEach(modal => {
+        if (NON_DISMISSABLE.has(modal.id)) return;
+        modal.classList.add('hidden');
+    });
+});
+
 // ==================== Correction Modal ==================== //
 function openCorrectionModal(paperId, figureId, panelPath) {
     // Defensive: if the record was missing paperId / figureId (e.g. an
@@ -1965,7 +2034,7 @@ function openCorrectionModal(paperId, figureId, panelPath) {
 }
 
 function closeCorrectionModal() {
-    document.getElementById('correction-modal').classList.add('hidden');
+    document.getElementById('correction-modal')?.classList.add('hidden');
 }
 
 // Close correction modal via close button or cancel button (both are

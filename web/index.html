@@ -323,11 +323,11 @@
                             <option value="failed">失败</option>
                             <option value="cancelled">已取消</option>
                         </select>
-                        <button id="refresh-jobs-btn" class="btn btn-small">
+                        <button id="refresh-jobs-btn" class="btn btn-small" aria-label="刷新任务列表">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
     刷新
 </button>
-                        <button id="delete-selected-btn" class="btn btn-small btn-danger" disabled>
+                        <button id="delete-selected-btn" class="btn btn-small btn-danger" disabled aria-label="删除选中的任务">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
     删除选中 <span id="delete-selected-count">(0)</span>
 </button>
@@ -375,24 +375,25 @@
                         <select id="result-filter">
                             <option value="">全部论文</option>
                         </select>
-                        <button id="export-btn" class="btn btn-small">
+                        <button id="export-btn" class="btn btn-small" aria-label="导出当前筛选结果为 CSV">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     导出
 </button>
                     </div>
                     <div id="result-status-filters" class="status-filter-row" role="tablist" aria-label="按 OCR 来源过滤"></div>
                     <div id="results-table-wrapper" class="table-wrapper">
-                        <table id="results-table" class="results-table">
+                        <table id="results-table" class="results-table" aria-label="图版与标签匹配结果">
+                            <caption class="visually-hidden">图版与标签匹配结果</caption>
                             <thead>
                                 <tr>
-                                    <th data-sort-key="paper_id">论文 ID</th>
-                                    <th data-sort-key="figure_id">图版 ID</th>
-                                    <th data-sort-key="panel_id">子图标签</th>
-                                    <th>标签来源</th>
-                                    <th data-sort-key="species">拉丁学名</th>
-                                    <th data-sort-key="confidence">置信度</th>
-                                    <th>缩略图</th>
-                                    <th>操作</th>
+                                    <th data-sort-key="paper_id" scope="col">论文 ID</th>
+                                    <th data-sort-key="figure_id" scope="col">图版 ID</th>
+                                    <th data-sort-key="panel_id" scope="col">子图标签</th>
+                                    <th scope="col">标签来源</th>
+                                    <th data-sort-key="species" scope="col">拉丁学名</th>
+                                    <th data-sort-key="confidence" scope="col">置信度</th>
+                                    <th scope="col">缩略图</th>
+                                    <th scope="col">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="results-tbody">
@@ -448,8 +449,9 @@
         </main>
 
         <!-- Modal for Image Viewer -->
-        <div id="image-modal" class="modal hidden">
+        <div id="image-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="image-modal-title">
             <div class="modal-content">
+                <h2 id="image-modal-title" class="visually-hidden">面板图像详情</h2>
                 <button class="modal-close" aria-label="关闭">&times;</button>
                 <img id="modal-image" src="" alt="Panel Image">
                 <div class="modal-info" id="modal-info"></div>
@@ -457,7 +459,7 @@
         </div>
 
         <!-- Modal for Job Details -->
-        <div id="job-details-modal" class="modal hidden">
+        <div id="job-details-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="job-details-title">
             <div class="modal-content job-details-modal">
                 <button class="modal-close" aria-label="关闭">&times;</button>
                 <h2 id="job-details-title">任务详情</h2>
@@ -471,10 +473,10 @@
         </div>
 
         <!-- Modal for Review & Correction -->
-        <div id="correction-modal" class="modal hidden">
+        <div id="correction-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="correction-modal-title">
             <div class="modal-content correction-form">
                 <button class="modal-close">&times;</button>
-                <h2>标注纠正</h2>
+                <h2 id="correction-modal-title">标注纠正</h2>
                 <form id="correction-form">
                     <div class="form-group">
                         <label>物种名（拉丁学名）</label>
