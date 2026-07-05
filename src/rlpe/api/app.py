@@ -146,7 +146,11 @@ class JobOptions(BaseModel):
     MiniMax_timeout_sec: int | None = None
     MiniMax_max_retries: int | None = None
     MiniMax_fallback_default: str = "rules"  # gemma4 | rules | stop | retry
-    data_outbound_policy: str = "api_full"  # api_full | api_redacted | local_only
+    data_outbound_policy: str = "api_redacted"  # api_full | api_redacted | local_only
+    # Default to api_redacted (caption text + plate region; sensitive
+    # fields stripped before sending) so the web UI does not
+    # silently send the full PDF text to the LLM backend. Operators
+    # who want the previous behaviour can set api_full explicitly.
     # ---- PDF figure extractor (GROBID vs OpenDataLoader) ----
     # Default to OpenDataLoader: it runs in-process and doesn't need a
     # separate GROBID server. Override to False to use GROBID explicitly.
@@ -435,27 +439,42 @@ def root():
 def web_css(file_path: str):
     if WEB_DIR is None:
         raise HTTPException(status_code=404, detail="Web assets not found")
-    # Belt-and-braces traversal check: reject literal "..", "\\", and
-    # absolute-path payloads BEFORE doing any filesystem resolution.
-    # The ``relative_to`` check below handles most cases, but on
-    # Windows a normalized resolve may still escape the root in
-    # subtle ways (e.g. junctions / case-folding); rejecting the
-    # obvious payload up front is cheap and makes the security
-    # posture obvious from a quick read of the function.
+    # Path-traversal defense (audit): reject literal "..", "\\", and
+    # absolute-path payloads BEFORE any filesystem resolution so the
+    # safe-input contract is obvious from a quick read of the
+    # function.
     if (
         ".." in file_path.split("/")
         or ".." in file_path.split("\\")
         or file_path.startswith(("/", "\\"))
     ):
         raise HTTPException(status_code=400, detail="Invalid asset path")
-    target = (WEB_DIR / "css" / file_path).resolve()
     css_root = (WEB_DIR / "css").resolve()
+    target = (css_root / file_path).resolve()
+    # ``strict=True`` makes relative_to raise ValueError when target is
+    # outside css_root (the default behavior). The previous version
+    # only raised when the result needed normalization, so a symlink
+    # under css_root/ pointing OUTSIDE the root would silently pass
+    # the check and serve an arbitrary file. Resolving both paths
+    # BEFORE the relative_to check further reduces the
+    # symlink-bypass surface.
     try:
-        target.relative_to(css_root)
+        target.relative_to(css_root, strict=True)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid asset path")
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Asset not found")
+    # Refuse symlinks whose target resolves outside css_root.
+    # ``resolve()`` already follows symlinks; if ``target`` was a
+    # symlink pointing outside the root, the relative_to check above
+    # would have raised (since ``target`` was already resolved), but
+    # belt-and-braces guards against any future relaxation.
+    if target.is_symlink():
+        real = target.resolve(strict=True)
+        try:
+            real.relative_to(css_root, strict=True)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid asset path")
     return FileResponse(target)
 
 
@@ -469,14 +488,20 @@ def web_js(file_path: str):
         or file_path.startswith(("/", "\\"))
     ):
         raise HTTPException(status_code=400, detail="Invalid asset path")
-    target = (WEB_DIR / "js" / file_path).resolve()
     js_root = (WEB_DIR / "js").resolve()
+    target = (js_root / file_path).resolve()
     try:
-        target.relative_to(js_root)
+        target.relative_to(js_root, strict=True)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid asset path")
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Asset not found")
+    if target.is_symlink():
+        real = target.resolve(strict=True)
+        try:
+            real.relative_to(js_root, strict=True)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid asset path")
     return FileResponse(target)
 
 
@@ -592,8 +617,9 @@ def list_jobs() -> list[JobStatus]:
 
 @app.get("/jobs/{job_id}/files/{file_path:path}")
 def job_file(job_id: str, file_path: str):
-    # Reject literal traversal payloads BEFORE filesystem resolution.
-    # See ``/css/{file_path:path}`` for the rationale.
+    # Path-traversal defense (audit): reject literal traversal payloads
+    # BEFORE filesystem resolution so the safe-input contract is
+    # obvious from a quick read of the function.
     if (
         ".." in file_path.split("/")
         or ".." in file_path.split("\\")
@@ -610,12 +636,23 @@ def job_file(job_id: str, file_path: str):
     if not job_root.exists():
         raise HTTPException(status_code=404, detail="Job not found")
     target = (job_root / file_path).resolve()
+    # ``strict=True`` makes relative_to raise ValueError when target is
+    # outside job_root. Without strict=True, a symlink inside the
+    # job's working directory pointing OUTSIDE would silently pass
+    # the check and let the API serve an arbitrary host file.
     try:
-        target.relative_to(job_root)
+        target.relative_to(job_root, strict=True)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid file path")
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+    # Belt-and-braces symlink guard.
+    if target.is_symlink():
+        real = target.resolve(strict=True)
+        try:
+            real.relative_to(job_root, strict=True)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid file path")
     return FileResponse(target)
 
 

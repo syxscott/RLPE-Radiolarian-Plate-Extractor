@@ -12,6 +12,22 @@ logger = logging.getLogger(__name__)
 
 def save_config(config: PipelineConfig, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Redact secrets before persisting. The previous version wrote the
+    # full ``extra`` dict (which contains ``MiniMax_api_key`` if the
+    # user supplied one inline) to disk, which meant the API key
+    # silently leaked into any backup / sync / file-sharing path that
+    # picked up the config JSON. Strip the recognised secret fields
+    # so a saved config can be committed to source control or shared
+    # without exposing credentials.
+    secret_keys = {
+        "MiniMax_api_key",
+        "ANTHROPIC_API_KEY",
+        "MiniMax_API_KEY",
+        "_MiniMax_external_handler",  # injected by web/API layer, may carry tokens
+    }
+    sanitized_extra = {
+        k: ("***REDACTED***" if k in secret_keys else v) for k, v in (config.extra or {}).items()
+    }
     payload = {
         "pdf_dir": str(config.pdf_dir),
         "work_dir": str(config.work_dir),
@@ -25,7 +41,7 @@ def save_config(config: PipelineConfig, path: Path) -> None:
         "num_workers": config.num_workers,
         "render_dpi": config.render_dpi,
         "save_intermediate": config.save_intermediate,
-        "extra": config.extra,
+        "extra": sanitized_extra,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

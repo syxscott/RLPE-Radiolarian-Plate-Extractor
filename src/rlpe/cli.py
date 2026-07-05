@@ -142,9 +142,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--data-outbound-policy",
         type=str,
-        default="api_full",
+        default="api_redacted",
         choices=["api_full", "api_redacted", "local_only"],
-        help="What data is sent to the LLM backend",
+        help="What data is sent to the LLM backend. Defaults to "
+        "api_redacted (caption text + plate region; sensitive fields "
+        "like raw PDF bytes are stripped before sending). Override "
+        "with api_full to send the full PDF text, or local_only to "
+        "skip remote LLM calls entirely.",
     )
     p.add_argument("--use-geology-llm", action="store_true")
     p.add_argument(
