@@ -2089,7 +2089,9 @@ class M3Engine:
             # the same as fallback_used.
             logger.warning(
                 "extract_geology: failed to parse JSON for %s/%s: %s",
-                paper_id, figure_id, exc,
+                paper_id,
+                figure_id,
+                exc,
             )
             return []
         if not isinstance(parsed, dict):
@@ -2158,9 +2160,7 @@ class M3Engine:
 
         system_prompt = PROMPT_REGISTRY["multi_plate_enrich"]
         constraint = (
-            f" This image is plate '{expected_plate_label}'."
-            if expected_plate_label
-            else ""
+            f" This image is plate '{expected_plate_label}'." if expected_plate_label else ""
         )
         user_prompt = (
             f"Paper: {paper_id}\n"
@@ -2204,11 +2204,13 @@ class M3Engine:
                 conf_f = 0.7
             if not label:
                 continue
-            out.append({
-                "label": label,
-                "species": species if species else None,
-                "confidence": conf_f,
-            })
+            out.append(
+                {
+                    "label": label,
+                    "species": species if species else None,
+                    "confidence": conf_f,
+                }
+            )
         return out
 
     def _maybe_dump_diagnostic(

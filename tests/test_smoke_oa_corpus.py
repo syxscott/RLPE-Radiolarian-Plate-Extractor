@@ -16,8 +16,6 @@ from pathlib import Path
 
 import pytest
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -38,6 +36,7 @@ def _cv2_importable() -> bool:
     """
     try:
         import cv2  # noqa: F401
+
         return True
     except ImportError:
         return False

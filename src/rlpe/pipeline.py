@@ -1476,7 +1476,11 @@ class RadiolarianPipeline:
         by_fig: dict[str, list[dict[str, Any]]] = {}
         for r in results:
             fid = r.get("figure_id", "")
-            if not fid or r.get("panel_id") in {"RANGE_CHART", "MAP_CONTEXT", "_ingestion_od_failed"}:
+            if not fid or r.get("panel_id") in {
+                "RANGE_CHART",
+                "MAP_CONTEXT",
+                "_ingestion_od_failed",
+            }:
                 continue
             by_fig.setdefault(fid, []).append(r)
 
@@ -1519,9 +1523,7 @@ class RadiolarianPipeline:
                     # no rows. This is the Bandini 2011 pl05/08/09 case.
                     od_imgs = getattr(od_fig, "image_paths", None) or []
                     primary_img = od_imgs[0] if od_imgs else None
-                    candidates.append(
-                        (od_fid, [], od_caption, primary_img)
-                    )
+                    candidates.append((od_fid, [], od_caption, primary_img))
                     seen_candidate_fids.add(od_fid)
                 else:
                     # (2) Figure has rows but they all lack species + panel_id
@@ -1529,9 +1531,7 @@ class RadiolarianPipeline:
                     n_with_species = sum(1 for r in fig_rows if r.get("species"))
                     n_with_panel_id = sum(1 for r in fig_rows if r.get("panel_id"))
                     if n_with_species == 0 and n_with_panel_id == 0:
-                        candidates.append(
-                            (od_fid, fig_rows, od_caption, None)
-                        )
+                        candidates.append((od_fid, fig_rows, od_caption, None))
                         seen_candidate_fids.add(od_fid)
 
         appended = 0
@@ -1572,7 +1572,11 @@ class RadiolarianPipeline:
             if not image_path:
                 for r in fig_rows:
                     md = r.get("metadata") or {}
-                    cand = md.get("primary_image") or md.get("figure_image_path") or md.get("image_path")
+                    cand = (
+                        md.get("primary_image")
+                        or md.get("figure_image_path")
+                        or md.get("image_path")
+                    )
                     if cand and Path(cand).is_file():
                         image_path = cand
                         break
@@ -1599,7 +1603,8 @@ class RadiolarianPipeline:
             if not image_path or not Path(image_path).is_file():
                 logger.debug(
                     "multi_plate_enrich: no image for %s (page %s); skipping",
-                    fid, page_idx,
+                    fid,
+                    page_idx,
                 )
                 continue
 
@@ -1621,9 +1626,7 @@ class RadiolarianPipeline:
                 with _PILImage.open(image_path) as im:
                     plate_image = im.convert("RGB")
             except Exception as exc:
-                logger.debug(
-                    "multi_plate_enrich: cannot open %s: %s", image_path, exc
-                )
+                logger.debug("multi_plate_enrich: cannot open %s: %s", image_path, exc)
                 continue
 
             try:
@@ -1637,7 +1640,9 @@ class RadiolarianPipeline:
             except Exception as exc:
                 logger.warning(
                     "multi_plate_enrich failed for %s/%s: %s",
-                    paper_id, fid, exc,
+                    paper_id,
+                    fid,
+                    exc,
                 )
                 continue
 
@@ -1659,28 +1664,28 @@ class RadiolarianPipeline:
                     conf = float(p.get("confidence") or 0.7)
                 except (TypeError, ValueError):
                     conf = 0.7
-                results.append({
-                    "paper_id": paper_id,
-                    "figure_id": fid,
-                    "panel_id": norm_lbl,
-                    "species": sp if sp else None,
-                    "panel_path": None,
-                    "bbox": None,
-                    "confidence": conf,
-                    "label_text": lbl,
-                    "caption_snippet": (od_caption or page_caption or "")[:240],
-                    "ocr_text": None,
-                    "paper_metadata": None,
-                    "metadata": {
-                        "extraction_method": "multi_plate_enrich",
-                        "extraction_source": "multi_plate_enrich",
-                        "panel_id_source": "m3_vision",
-                        "expected_plate_label": plate_label,
-                        "figure_number": (
-                            (plate_label or "").replace("Plate ", "") or None
-                        ),
-                    },
-                })
+                results.append(
+                    {
+                        "paper_id": paper_id,
+                        "figure_id": fid,
+                        "panel_id": norm_lbl,
+                        "species": sp if sp else None,
+                        "panel_path": None,
+                        "bbox": None,
+                        "confidence": conf,
+                        "label_text": lbl,
+                        "caption_snippet": (od_caption or page_caption or "")[:240],
+                        "ocr_text": None,
+                        "paper_metadata": None,
+                        "metadata": {
+                            "extraction_method": "multi_plate_enrich",
+                            "extraction_source": "multi_plate_enrich",
+                            "panel_id_source": "m3_vision",
+                            "expected_plate_label": plate_label,
+                            "figure_number": ((plate_label or "").replace("Plate ", "") or None),
+                        },
+                    }
+                )
                 appended += 1
 
         if appended:

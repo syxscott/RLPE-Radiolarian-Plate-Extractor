@@ -7,6 +7,7 @@ per-paper precision / recall / F1 plus a micro F1 aggregate.
 Usage:
     PYTHONPATH=src python scripts/eval_all_gold.py
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,10 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(_SRC))
 
 # Reuse the lenient species normalize + per-fig F1.
-from eval_round6_gold import eval_per_paper, normalize_species  # type: ignore[import-not-found]  # noqa: E402
+from eval_round6_gold import (  # type: ignore[import-not-found]  # noqa: E402
+    eval_per_paper,
+    normalize_species,
+)
 
 # Project root for resolving relative paths.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -30,16 +34,16 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 # paper_id is also in matches.jsonl but reading from gold JSONL is simpler.
 # The substring is matched against any path component.
 LIVE_RUN_DIRS = [
-    ("Bandini_2006",       None),  # bandini2006 has no gold JSONL
-    ("Beccaro_2006",       "data/gold/beccaro2006.jsonl"),
-    ("Boughdiri_2007",     "data/gold/boughdiri2007.jsonl"),
-    ("Danelian_2006",      "data/gold/danelian2006.jsonl"),
-    ("Pouille_2014",       "data/gold/pouille2014.jsonl"),
-    ("bandini2011",        "data/gold/bandini2011.jsonl"),
-    ("baumgartner2008",    "data/gold/baumgartner2008.jsonl"),
-    ("Feng_2007",          "data/gold/feng2007.jsonl"),
-    ("Hollis_2006",        "data/gold/hollis2006.jsonl"),
-    ("Bragin_2025",        "data/gold/bragin2025.jsonl"),
+    ("Bandini_2006", None),  # bandini2006 has no gold JSONL
+    ("Beccaro_2006", "data/gold/beccaro2006.jsonl"),
+    ("Boughdiri_2007", "data/gold/boughdiri2007.jsonl"),
+    ("Danelian_2006", "data/gold/danelian2006.jsonl"),
+    ("Pouille_2014", "data/gold/pouille2014.jsonl"),
+    ("bandini2011", "data/gold/bandini2011.jsonl"),
+    ("baumgartner2008", "data/gold/baumgartner2008.jsonl"),
+    ("Feng_2007", "data/gold/feng2007.jsonl"),
+    ("Hollis_2006", "data/gold/hollis2006.jsonl"),
+    ("Bragin_2025", "data/gold/bragin2025.jsonl"),
 ]
 
 WORK_BASE = _REPO_ROOT / "work"
@@ -119,10 +123,15 @@ def find_live_dir(prefix: str) -> Path | None:
             if not (in_path or in_pdfs):
                 continue
             is_round6 = top.name.startswith("oa_smoke_round6")
-            version_score = (1 if "_v3" in top.name else
-                             2 if "_v2" in top.name else
-                             3 if "_v1" in top.name else
-                             4)  # default (no version suffix)
+            version_score = (
+                1
+                if "_v3" in top.name
+                else 2
+                if "_v2" in top.name
+                else 3
+                if "_v1" in top.name
+                else 4
+            )  # default (no version suffix)
             # Heavily penalize oa_smoke_v2/v3 (older driver) so round6
             # always wins ties.
             round6_score = 0 if is_round6 else 1000
@@ -153,29 +162,28 @@ def main() -> int:
         # share a single gold file due to live-run paper_id drift).
         match_paper_id = matches[0].get("paper_id") if matches else None
         gold_filtered = {
-            fid: pairs
-            for fid, pairs in gold.items()
-            if not match_paper_id or match_paper_id in fid
+            fid: pairs for fid, pairs in gold.items() if not match_paper_id or match_paper_id in fid
         }
         if not gold_filtered:
             print(
-                f"⚠️  {prefix}: live paper_id={match_paper_id} matches "
-                f"no gold figure_ids; skipping"
+                f"⚠️  {prefix}: live paper_id={match_paper_id} matches no gold figure_ids; skipping"
             )
             continue
         result = eval_per_paper(matches, gold_filtered)
         m = result["micro"]
-        summary_rows.append({
-            "paper": prefix,
-            "rows": len(matches),
-            "gold_pairs": sum(len(s) for s in gold_filtered.values()),
-            "tp": m["tp"],
-            "fp": m["fp"],
-            "fn": m["fn"],
-            "P": m["p"],
-            "R": m["r"],
-            "F1": m["f1"],
-        })
+        summary_rows.append(
+            {
+                "paper": prefix,
+                "rows": len(matches),
+                "gold_pairs": sum(len(s) for s in gold_filtered.values()),
+                "tp": m["tp"],
+                "fp": m["fp"],
+                "fn": m["fn"],
+                "P": m["p"],
+                "R": m["r"],
+                "F1": m["f1"],
+            }
+        )
 
     if not summary_rows:
         print("No papers evaluated.")
@@ -183,7 +191,9 @@ def main() -> int:
 
     # Print table
     print()
-    print(f"{'Paper':<22} {'rows':>5} {'gold':>5} {'tp':>4} {'fp':>4} {'fn':>4} {'P':>6} {'R':>6} {'F1':>6}")
+    print(
+        f"{'Paper':<22} {'rows':>5} {'gold':>5} {'tp':>4} {'fp':>4} {'fn':>4} {'P':>6} {'R':>6} {'F1':>6}"
+    )
     print("-" * 80)
     total_tp = total_fp = total_fn = 0
     for r in summary_rows:

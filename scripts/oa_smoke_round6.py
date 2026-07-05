@@ -22,6 +22,7 @@ Run inside the CV conda env:
         --work-dir work/oa_smoke_round6 \\
         --limit 6
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,14 +30,11 @@ import hashlib
 import json
 import logging
 import os
-import random
 import subprocess
 import sys
 import time
-from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CV_PY = "/home/user/anaconda3/envs/CV/bin/python"

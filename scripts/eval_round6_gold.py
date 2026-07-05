@@ -10,6 +10,7 @@ Usage:
         --gold data/gold/bandini2011.jsonl \\
         --paper-id 4f1bf415485765b8
 """
+
 from __future__ import annotations
 
 import argparse
@@ -116,16 +117,33 @@ def eval_per_paper(matches: list[dict[str, Any]], gold: dict[str, set[str]]) -> 
         prec = tp / (tp + fp) if (tp + fp) else 0.0
         rec = tp / (tp + fn) if (tp + fn) else 0.0
         f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
-        per_fig[fid] = {"tp": tp, "fp": fp, "fn": fn, "p": prec, "r": rec, "f1": f1,
-                        "gold_n": len(gold_pairs), "pred_n": len(pred_pairs)}
+        per_fig[fid] = {
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "p": prec,
+            "r": rec,
+            "f1": f1,
+            "gold_n": len(gold_pairs),
+            "pred_n": len(pred_pairs),
+        }
         total_tp += tp
         total_fp += fp
         total_fn += fn
     micro_p = total_tp / (total_tp + total_fp) if (total_tp + total_fp) else 0.0
     micro_r = total_tp / (total_tp + total_fn) if (total_tp + total_fn) else 0.0
     micro_f1 = 2 * micro_p * micro_r / (micro_p + micro_r) if (micro_p + micro_r) else 0.0
-    return {"per_figure": per_fig, "micro": {"p": micro_p, "r": micro_r, "f1": micro_f1,
-                                              "tp": total_tp, "fp": total_fp, "fn": total_fn}}
+    return {
+        "per_figure": per_fig,
+        "micro": {
+            "p": micro_p,
+            "r": micro_r,
+            "f1": micro_f1,
+            "tp": total_tp,
+            "fp": total_fp,
+            "fn": total_fn,
+        },
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,18 +170,23 @@ def main(argv: list[str] | None = None) -> int:
     result = eval_per_paper(matches, gold)
     if args.summary_only:
         m = result["micro"]
-        print(f"micro P={m['p']:.3f} R={m['r']:.3f} F1={m['f1']:.3f} "
-              f"(tp={m['tp']} fp={m['fp']} fn={m['fn']})")
+        print(
+            f"micro P={m['p']:.3f} R={m['r']:.3f} F1={m['f1']:.3f} "
+            f"(tp={m['tp']} fp={m['fp']} fn={m['fn']})"
+        )
     else:
         print(f"=== Per-figure breakdown (paper_id={args.paper_id}) ===")
         for fid, m in sorted(result["per_figure"].items()):
-            print(f"  {fid[-25:]:25} F1={m['f1']:.3f} P={m['p']:.3f} R={m['r']:.3f} "
-                  f"gold={m['gold_n']:>3} pred={m['pred_n']:>3} tp={m['tp']}")
+            print(
+                f"  {fid[-25:]:25} F1={m['f1']:.3f} P={m['p']:.3f} R={m['r']:.3f} "
+                f"gold={m['gold_n']:>3} pred={m['pred_n']:>3} tp={m['tp']}"
+            )
         m = result["micro"]
         print()
-        print(f"=== Micro ===")
-        print(f"P={m['p']:.3f} R={m['r']:.3f} F1={m['f1']:.3f} "
-              f"tp={m['tp']} fp={m['fp']} fn={m['fn']}")
+        print("=== Micro ===")
+        print(
+            f"P={m['p']:.3f} R={m['r']:.3f} F1={m['f1']:.3f} tp={m['tp']} fp={m['fp']} fn={m['fn']}"
+        )
     return 0
 
 
