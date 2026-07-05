@@ -837,6 +837,10 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         "figs 1-3. Entactinia itsukichiensis: ..."
         "fig 1, 4. Trilonche crassispinosa (Sashida & Tonishi): ..."
         "figs 5-8. Provisocyntra densa Feng n. sp.: ..."
+        "1. Amphisphaera coronata EHRENBERG gr. ..."  (Hollis 2006
+         numbered-list form without a "Fig." prefix — added in Round 8
+         with the (?=[A-Z]) lookahead gate so prose like
+         "1. Introduction" doesn't match as a panel label)
     """
     if not caption_text:
         return []
