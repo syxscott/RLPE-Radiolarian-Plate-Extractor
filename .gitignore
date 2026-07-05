@@ -29,6 +29,15 @@ service_work/
 /work/
 output/
 
+# User-downloaded test corpora (large; kept on disk for offline runs
+# but never committed). The "放射虫论文_OA_download" folder holds the
+# 187-paper / 820 MB radiolarian corpus downloaded by the user; we
+# reference it from scripts/ but never want git to track it.
+放射虫论文_OA_download/
+test_oa_*/
+test_papers*/
+test_robust/
+
 # Exception: committed baseline prediction files used by the eval-smoke
 # CI job. These live in work/ for runtime convenience but are committed
 # as small (4 MB) snapshots so the CI can re-run the eval without
