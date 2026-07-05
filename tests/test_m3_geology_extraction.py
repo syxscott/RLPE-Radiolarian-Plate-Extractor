@@ -63,7 +63,12 @@ def fake_backend():
     return FakeM3Backend(
         canned_responses=[
             {
-                "match": lambda s: "range_chart_geo" in s,
+                # Match by the literal prose in the system prompt, NOT the
+                # key name (the key is "range_chart_geo" but the prompt
+                # text describes "a stratigraphic range chart"). Otherwise
+                # the match function falls through to the last canned
+                # response and returns the wrong geology record.
+                "match": lambda s: "stratigraphic range chart" in s,
                 "raw_text": (
                     '{"geo":[{"age":"Late Permian","chronostratigraphy":"Changhsingian",'
                     '"chronostratigraphy_rank":"age","ma_top":251.9,"ma_base":254.14,'
@@ -83,7 +88,7 @@ def fake_backend():
                 "cost_cny": 0.005,
             },
             {
-                "match": lambda s: "map_geo" in s,
+                "match": lambda s: "geographic / location map" in s,
                 "raw_text": (
                     '{"geo":[{"age":null,"chronostratigraphy":null,'
                     '"chronostratigraphy_rank":null,"ma_top":null,"ma_base":null,'
@@ -102,7 +107,7 @@ def fake_backend():
                 "cost_cny": 0.004,
             },
             {
-                "match": lambda s: "litholog_column_geo" in s,
+                "match": lambda s: "lithological log" in s,
                 "raw_text": (
                     '{"geo":[{"age":null,"chronostratigraphy":null,'
                     '"chronostratigraphy_rank":null,"ma_top":null,"ma_base":null,'
@@ -159,7 +164,15 @@ class TestPromptRegistry:
             assert len(PROMPT_REGISTRY[key]) > 50, "each prompt should be substantive (>50 chars)"
 
     def test_each_prompt_returns_json_shape(self):
+        # Geology-vision prompts use a "geo" JSON key. The Round 7
+        # multi_plate_enrich prompt uses "panels" (different schema for
+        # multi-panel extraction) so we only enforce the geo shape on
+        # prompts whose key ends in "_geo".
         for key, prompt in PROMPT_REGISTRY.items():
+            if not key.endswith("_geo"):
+                # Non-geo prompts (e.g. multi_plate_enrich) have their
+                # own JSON contract; skip the geo-shape assertions.
+                continue
             assert "geo" in prompt, f"{key} prompt missing JSON 'geo' key"
             assert "age" in prompt
             assert "formation" in prompt
@@ -336,7 +349,7 @@ class TestExtractGeology:
         backend = FakeM3Backend(
             canned_responses=[
                 {
-                    "match": lambda s: "range_chart_geo" in s,
+                    "match": lambda s: "stratigraphic range chart" in s,
                     "raw_text": "this is not json at all",
                     "fallback_used": False,
                 }

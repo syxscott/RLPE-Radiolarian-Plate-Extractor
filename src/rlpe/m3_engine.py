@@ -2081,7 +2081,17 @@ class M3Engine:
         if res.get("fallback_used"):
             return []
         raw_text = res.get("raw_text") or ""
-        parsed = _safe_json_loads(raw_text)
+        try:
+            parsed = _safe_json_loads(raw_text)
+        except ValueError as exc:
+            # Malformed JSON (truncated, no balanced braces) — log and
+            # return [] rather than propagating. The caller treats this
+            # the same as fallback_used.
+            logger.warning(
+                "extract_geology: failed to parse JSON for %s/%s: %s",
+                paper_id, figure_id, exc,
+            )
+            return []
         if not isinstance(parsed, dict):
             logger.warning(
                 "extract_geology: backend returned non-dict JSON for %s/%s",
