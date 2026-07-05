@@ -5,6 +5,7 @@ from .image_label_check import ImageLabelStats, run_image_label_check
 from .metrics import (
     EvaluationReport,
     PaperMetrics,
+    compare_before_after,
     evaluate,
     evaluate_run,
     load_predictions_jsonl,
@@ -21,6 +22,7 @@ __all__ = [
     "PaperMetrics",
     "evaluate",
     "evaluate_run",
+    "compare_before_after",
     "load_predictions_jsonl",
     "write_json_report",
     "write_markdown_report",

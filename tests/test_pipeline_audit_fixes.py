@@ -53,6 +53,54 @@ class TestApplyGeoVisionDirectoryPath:
         assert dir_path.is_file() is False
 
 
+# --------------------------------------------------------------------------- M1 (Round 9)
+
+
+class TestApplyGeoVisionMapFigureTypeBackfill:
+    """Round 9 Bug-M1: ``_apply_geo_vision`` previously only matched
+    ``extraction_source == "map_context"`` to backfill ``figure_type``.
+    The map figure path actually writes
+    ``extraction_source == "map_caption_heuristic"`` (set by
+    ``_process_map``), so the backfill never fired and geo vision silently
+    skipped every map figure.
+
+    We replicate the backfill logic in isolation — the contract is the
+    ``elif src in ("map_caption_heuristic", "map_context")`` membership
+    test in the production source.
+    """
+
+    @staticmethod
+    def _backfill_figure_type(md: dict) -> str | None:
+        """Mirror the production backfill logic."""
+        figure_type = md.get("figure_type")
+        if not figure_type:
+            src = md.get("extraction_source")
+            if src == "range_chart":
+                figure_type = "range_chart"
+            elif src in ("map_caption_heuristic", "map_context"):
+                figure_type = "map"
+        return figure_type
+
+    def test_map_caption_heuristic_backfills_to_map(self):
+        """The real-world case: ``_process_map`` writes this value."""
+        assert self._backfill_figure_type({"extraction_source": "map_caption_heuristic"}) == "map"
+
+    def test_map_context_still_works_legacy_compat(self):
+        """Any caller that hand-stamped metadata with the old value still works."""
+        assert self._backfill_figure_type({"extraction_source": "map_context"}) == "map"
+
+    def test_explicit_figure_type_wins_over_extraction_source(self):
+        """If ``figure_type`` is already set on the row, backfill is a no-op."""
+        assert self._backfill_figure_type(
+            {"figure_type": "strat_column", "extraction_source": "map_caption_heuristic"}
+        ) == "strat_column"
+
+    def test_unknown_extraction_source_does_not_backfill(self):
+        """Rows without a recognised extraction_source keep figure_type=None."""
+        assert self._backfill_figure_type({"extraction_source": "plate"}) is None
+        assert self._backfill_figure_type({}) is None
+
+
 # --------------------------------------------------------------------------- M5
 
 

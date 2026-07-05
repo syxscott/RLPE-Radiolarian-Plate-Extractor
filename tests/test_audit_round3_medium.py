@@ -151,41 +151,52 @@ class TestSafeJsonLoadsFallbackForTrailingJunk:
 
 
 class TestThinkingRetryLockScope:
-    """M6: _infer_vision() must NOT hold _thinking_retry_lock for the
-    duration of ``backend.infer_panel()`` — the lock should only
-    bracket the enable_thinking read+write. Otherwise a custom
-    backend that re-enters M3 (e.g. via callbacks) would deadlock
-    against the lock the retry path is still holding.
+    """M6 / Round 9 (Bug-M3): the lock scope around the thinking-retry
+    path in ``_infer_vision``.
+
+    Round 6 audit M6 originally asserted the lock was RELEASED before
+    ``backend.infer_panel()`` was called, to avoid deadlock with backends
+    that re-enter M3. Round 9 found that pattern introduced a race
+    window: another thread could flip ``enable_thinking`` between the
+    save/flip and the call, and the first thread's restore would
+    overwrite the other thread's setup, corrupting the final state.
+
+    Post-fix: the lock is held throughout the save → flip → call →
+    restore sequence, and the lock is an RLock (reentrant) so a
+    backend that re-enters ``_infer_vision`` doesn't deadlock. The
+    tests below assert the new correct shape.
     """
 
-    def test_lock_released_before_infer_panel_call(self):
-        """Audit M6: the ``with self._thinking_retry_lock:`` block in
-        the retry path must close BEFORE backend.infer_panel is called.
+    def test_lock_held_throughout_save_flip_call_restore(self):
+        """Round 9 (Bug-M3): the ``with self._thinking_retry_lock:``
+        block must wrap the entire save → flip → call → restore
+        sequence so the whole retry is atomic from the perspective
+        of other workers.
 
-        Old buggy code looked like::
+        Pre-fix shape (round 6, broken)::
 
             with self._thinking_retry_lock:
                 saved = ...
-                ...
-                res2 = self.backend.infer_panel(...)   # <-- lock held here
-                ...
-                enable_thinking = saved               # <-- only restored after
-
-        The fix closes the lock BEFORE the infer_panel call (and
-        re-acquires it briefly in the outer finally to restore state)::
-            with self._thinking_retry_lock:
-                saved = ...
-                enable_thinking = False            # <-- lock closed here
+                enable_thinking = False
             try:
                 res2 = self.backend.infer_panel(...)
             finally:
                 with self._thinking_retry_lock:
                     enable_thinking = saved
 
-        We assert this by checking that after the FIRST
-        ``with self._thinking_retry_lock:`` block, the line
-        ``try:`` appears BEFORE the next ``self.backend.infer_panel(`` —
-        i.e. the lock is not held across the infer_panel call.
+        Post-fix shape::
+
+            with self._thinking_retry_lock:
+                saved = ...
+                enable_thinking = False
+                try:
+                    res2 = self.backend.infer_panel(...)
+                finally:
+                    enable_thinking = saved
+
+        We assert this by checking that ``self.backend.infer_panel(``
+        lives INSIDE the ``with self._thinking_retry_lock:`` block
+        (i.e. the lock is not closed before the call).
         """
         from pathlib import Path as _Path
 
@@ -199,45 +210,45 @@ class TestThinkingRetryLockScope:
         j = body.find(retry_marker)
         assert j > 0
         retry_block = body[j : j + 2000]
-        # Find the first ``with self._thinking_retry_lock:``.
         lock_open = retry_block.find("with self._thinking_retry_lock:")
         assert lock_open >= 0
-        # Find the next ``try:`` AFTER lock_open (the lock-stored body
-        # ends, the infer_panel call lives in a new try block outside
-        # the lock).
-        try_pos = retry_block.find("\n            try:", lock_open)
-        assert try_pos >= 0, (
-            "retry block must end the lock scope and open a new 'try:' "
-            "before backend.infer_panel (audit M6)"
+        # The infer_panel call MUST be inside the lock block. The
+        # previous "lock released before infer_panel" pattern closed
+        # the with-block before the call — verify we don't have that.
+        infer_pos = retry_block.find("self.backend.infer_panel(", lock_open)
+        assert infer_pos > lock_open, (
+            "infer_panel must appear AFTER the lock-open line"
         )
-        # And ``self.backend.infer_panel(`` must be after the try_pos.
-        infer_pos = retry_block.find("self.backend.infer_panel(", try_pos)
-        assert infer_pos > try_pos, (
-            "backend.infer_panel must be inside the outer 'try:' block (audit M6)"
+        # And there must NOT be a closing of the with-block before
+        # infer_panel. The simplest assertion: there is no second
+        # ``with self._thinking_retry_lock:`` before infer_panel.
+        second_lock = retry_block.find(
+            "with self._thinking_retry_lock:", lock_open + 1
+        )
+        assert second_lock < 0 or second_lock > infer_pos, (
+            "Round 9 fix: lock must be a single 'with' block wrapping "
+            "save/flip/call/restore, not two separate blocks"
         )
 
-    def test_enable_thinking_restored_in_outer_finally(self):
-        """The enable_thinking restore must happen even when
-        infer_panel raises, in an outer finally block that re-acquires
-        the lock briefly.
-        """
+    def test_lock_is_reentrant(self):
+        """The lock MUST be an RLock so a backend that re-enters
+        ``_infer_vision`` (custom subclass calling M3 inside its
+        handler) doesn't deadlock."""
         from pathlib import Path as _Path
 
         path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "m3_engine.py"
         text = path.read_text(encoding="utf-8")
-        marker = "def _infer_vision("
-        i = text.find(marker)
-        body = text[i : i + 4000]
-        retry_marker = "retrying with thinking disabled"
-        j = body.find(retry_marker)
-        retry_block = body[j : j + 2000]
-        # The outer ``finally`` block must restore enable_thinking.
-        assert "finally:" in retry_block
-        # And the restore inside finally must be wrapped in the lock
-        # so concurrent readers see a consistent state.
-        finally_pos = retry_block.find("finally:")
-        post_finally = retry_block[finally_pos:]
-        assert (
-            "with self._thinking_retry_lock:" in post_finally
-            and "self.backend.enable_thinking = saved" in post_finally
+        # The lock is constructed as either ``RLock()`` or
+        # ``threading.RLock()``. We accept both spellings.
+        assert "RLock" in text, (
+            "Round 9 fix: _thinking_retry_lock must be RLock for "
+            "reentrancy; replace ``Lock()`` with ``RLock()`` in m3_engine.py"
+        )
+        # And specifically the field type, not just any RLock import.
+        init_marker = "self._thinking_retry_lock = "
+        i = text.find(init_marker)
+        assert i > 0
+        snippet = text[i : i + 40]
+        assert "RLock" in snippet, (
+            f"_thinking_retry_lock must be assigned from RLock(), got: {snippet!r}"
         )

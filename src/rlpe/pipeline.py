@@ -697,12 +697,15 @@ class RadiolarianPipeline:
                         referenced.add(_os.path.basename(p))
                 # Walk the raw JSON for all image elements
                 kids = od_raw.get("kids") or []
-                images_dir = None
                 # images_dir is constructed by the OD extractor under
                 # <output_dir>/od_output/<paper_id>/<pdf_stem>_images.
                 # Derive it from the figures' image paths because this
                 # helper is nested inside run-level logic and does not
-                # own a self/config reference.
+                # own a self/config reference. Round 9 (L3): previously
+                # this block ran TWICE (lines 706-709 and 735-738) with
+                # identical content; the second run silently overwrote
+                # the first. Compute once and reuse.
+                images_dir = None
                 if figures and figures[0].image_paths:
                     sample = figures[0].image_paths[0]
                     # <work>/od_output/<paper_id>/<pdf_stem>_images/imageFileN.png
@@ -728,14 +731,7 @@ class RadiolarianPipeline:
                         p = int(el.get("page number", 0))
                         if p > 0:
                             od_image_pages.append(p)
-                # images_dir is constructed by the OD extractor under
-                # <output_dir>/od_output/<paper_id>/<pdf_stem>_images/.
-                # We don't know paper_id from the target pair here, so
-                # derive it from the figures' image paths.
-                if figures and figures[0].image_paths:
-                    sample = figures[0].image_paths[0]
-                    # <work>/od_output/<paper_id>/<pdf_stem>_images/imageFileN.png
-                    images_dir = _os.path.dirname(sample)
+                if images_dir:
                     png_files = sorted(
                         f
                         for f in _os.listdir(images_dir)
@@ -1144,7 +1140,7 @@ class RadiolarianPipeline:
                     fig_idx,
                     n_figs,
                     f"[{fig_idx}/{n_figs}] {fig_type} → "
-                    f"{len(geo_links) if geo_links else 0} vision links",
+                    f"{len(geo_links)} vision links",
                 )
                 continue
 
@@ -1837,11 +1833,19 @@ class RadiolarianPipeline:
             figure_type = md.get("figure_type")
             # Backfill figure_type from extraction_source where the older
             # stages didn't already tag it.
+            # Round 9 (Bug-M1): the map figure path actually writes
+            # ``extraction_source="map_caption_heuristic"`` (set by
+            # ``_process_map`` at line ~1186), not the literal "map_context"
+            # the old code expected. Without matching the real value,
+            # ``figure_type`` never gets the "map" backfill and geo
+            # vision silently skips every map figure. Also accept the
+            # legacy "map_context" string for backwards compatibility
+            # (any caller that hand-stamped metadata with the old value).
             if not figure_type:
                 src = md.get("extraction_source")
                 if src == "range_chart":
                     figure_type = "range_chart"
-                elif src == "map_context":
+                elif src in ("map_caption_heuristic", "map_context"):
                     figure_type = "map"
             if not figure_type or figure_type not in allowed:
                 continue

@@ -444,3 +444,98 @@ def evaluate_run(predictions_path: Path, gold_dir: Path) -> EvaluationReport:
     for gold_path in sorted(gold_dir.glob("*.jsonl")):
         all_gold.extend(load_gold(gold_path))
     return evaluate(preds, all_gold)
+
+
+def compare_before_after(
+    before_rows: list[dict[str, Any]],
+    after_rows: list[dict[str, Any]],
+    gold_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compare baseline (e.g. classical rules) and enhanced (e.g. LLM-first)
+    predictions against gold labels.
+
+    Reports panel match accuracy before/after, the delta, and the mean
+    Gemma/LLM confidence in the "after" set.
+
+    Round 9 (Bug-M2): the merge key is ``(paper_id, figure_id, panel_id)``,
+    NOT ``(paper_id, figure_id, panel_path)``. The legacy implementation
+    used ``panel_path`` and silently dropped every row where one side
+    had ``panel_path=None`` (the common LLM-first case where the panel
+    image isn't cropped yet — see ``pipeline.py:_llm_first_extract``).
+    Dropping those rows means ``n_samples=0`` and ``match_improvement=0.0``
+    regardless of actual performance — a silent regression that
+    invalidated every LLM vs rules comparison.
+
+    Note: panel_id can be None (e.g. placeholder rows). We exclude those
+    from the merge so the count is "rows where both sides agree on a
+    concrete panel", which is the meaningful comparison unit.
+    """
+    import pandas as pd
+
+    df_b = pd.DataFrame(before_rows).copy()
+    df_a = pd.DataFrame(after_rows).copy()
+    df_g = pd.DataFrame(gold_rows).copy()
+
+    # Flatten ``metadata.gemma_confidence`` (and a couple other common
+    # metadata fields) into top-level columns so the merge+aggregation
+    # code can read them directly. Without this, ``gemma_confidence``
+    # would be buried in a ``metadata`` dict column and the agg below
+    # would silently fall back to 0.0.
+    for df in (df_b, df_a):
+        if "metadata" in df.columns:
+            md = df["metadata"].apply(lambda x: x if isinstance(x, dict) else {})
+            df["gemma_confidence"] = md.apply(lambda x: x.get("gemma_confidence"))
+
+    # Round 9 fix: key on (paper_id, figure_id, panel_id) — panel_id is the
+    # logical identity of a panel, panel_path is a downstream artefact that
+    # the LLM-first path leaves as None.
+    key_cols = ["paper_id", "figure_id", "panel_id"]
+    for col in key_cols:
+        if col not in df_b:
+            df_b[col] = None
+        if col not in df_a:
+            df_a[col] = None
+        if col not in df_g:
+            df_g[col] = None
+
+    if "species" not in df_g:
+        df_g["species"] = None
+
+    # Drop rows with no panel_id from BOTH sides — they're placeholders
+    # and would silently inflate the merge denominator with junk.
+    df_b = df_b[df_b["panel_id"].notna()]
+    df_a = df_a[df_a["panel_id"].notna()]
+
+    merged = df_b.merge(df_a, on=key_cols, suffixes=("_before", "_after"))
+    merged = merged.merge(df_g[key_cols + ["species"]], on=key_cols, how="left")
+    merged = merged.rename(columns={"species": "gold_species"})
+
+    # Note: ``panel_id`` is part of the merge key, so it appears ONCE in
+    # the merged DataFrame (no _before/_after suffix). The species
+    # columns DO get suffixes because they aren't in the merge key.
+    if len(merged) > 0:
+        merged["correct_before"] = (merged["species_before"] == merged["gold_species"])
+        merged["correct_after"] = (merged["species_after"] == merged["gold_species"])
+
+    before_acc = float(merged["correct_before"].mean()) if len(merged) and "correct_before" in merged.columns else 0.0
+    after_acc = float(merged["correct_after"].mean()) if len(merged) and "correct_after" in merged.columns else 0.0
+
+    # gemma_confidence is flattened from metadata above (only on the
+    # after-side), so it doesn't get a _after suffix — pandas only
+    # suffixes overlapping non-key columns. Fall back to the suffixed
+    # name if a caller pre-flattened and renamed explicitly.
+    if "gemma_confidence_after" in merged.columns:
+        gemma_col = "gemma_confidence_after"
+    elif "gemma_confidence" in merged.columns:
+        gemma_col = "gemma_confidence"
+    else:
+        gemma_col = None
+    gemma_mean = float(merged[gemma_col].fillna(0).mean()) if gemma_col else 0.0
+
+    return {
+        "n_samples": int(len(merged)),
+        "match_acc_before": round(before_acc, 4),
+        "match_acc_after": round(after_acc, 4),
+        "match_improvement": round(after_acc - before_acc, 4),
+        "gemma_confidence_mean": round(gemma_mean, 4),
+    }

@@ -93,6 +93,29 @@ def test_coerce_bbox_invalid():
     assert _coerce_bbox(None, 100, 100) is None
 
 
+def test_coerce_bbox_normalized_small_image():
+    """Regression (Round 9): normalized bbox on a thumbnail-sized image
+    must still take the normalized path. Pre-fix, the heuristic also
+    required ``img_w > 100 or img_h > 100`` which silently routed
+    small-image normalized bboxes through the pixel path, producing
+    a useless ``(0, 0, 1, 1)`` box that broke Stage 3 / multi-plate
+    enrichment crops for thumbnail figures.
+    """
+    # 80x80 image, normalized bbox [0.1, 0.1, 0.5, 0.5]
+    x, y, w, h = _coerce_bbox([0.1, 0.1, 0.5, 0.5], 80, 80)
+    assert (x, y) == (8, 8)
+    assert w >= 35  # ~ 0.5 * 80 = 40
+    assert h >= 35
+    # Boundary: exactly 100x100 (the old off-by-one) — also normalized.
+    x, y, w, h = _coerce_bbox([0.1, 0.1, 0.5, 0.5], 100, 100)
+    assert (x, y) == (10, 10)
+    assert w >= 45
+    # 1x1 edge: normalized still works
+    x, y, w, h = _coerce_bbox([0.5, 0.5, 0.5, 0.5], 32, 32)
+    assert (x, y) == (16, 16)
+    assert w >= 14
+
+
 def test_engine_constructs_with_minimal_config():
     """Engine should not call backend on construction; only on demand."""
 

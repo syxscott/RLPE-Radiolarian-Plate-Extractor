@@ -11,6 +11,7 @@ from rlpe.evaluation import (
     EvaluationReport,
     GoldPanel,
     PaperMetrics,
+    compare_before_after,
     evaluate,
     evaluate_run,
     load_predictions_jsonl,
@@ -475,3 +476,103 @@ class TestSpeciesNormAsymmetric:
     def test_handles_none_and_empty(self):
         assert _norm_species(None) == ""
         assert _norm_species("") == ""
+
+
+# ---------------------------------------------------------------------------
+# Round 9: compare_before_after merge-key fix
+# ---------------------------------------------------------------------------
+
+
+class TestCompareBeforeAfterRound9:
+    """Round 9 (Bug-M2): ``compare_before_after`` previously merged on
+    ``(paper_id, figure_id, panel_path)``. The LLM-first path leaves
+    ``panel_path=None`` while the classical rules path writes a real
+    path, so the merge silently dropped every row and returned
+    ``n_samples=0, match_improvement=0.0`` regardless of actual
+    performance. Post-fix the merge key is ``(paper_id, figure_id,
+    panel_id)`` and ``n_samples`` reflects the real comparison size.
+    """
+
+    def test_llm_first_with_none_panel_path_drops_no_rows(self):
+        """The regression case: before (classical) has panel_path set,
+        after (LLM-first) has panel_path=None. Pre-fix this dropped
+        the row and returned n_samples=0; post-fix the merge succeeds
+        because the key is panel_id, not panel_path."""
+        before = [
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
+             "species": "A", "panel_path": "/work/p1/fig1_panel_01.png"},
+        ]
+        after = [
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
+             "species": "A", "panel_path": None},
+        ]
+        gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}]
+        result = compare_before_after(before, after, gold)
+        assert result["n_samples"] == 1, (
+            "LLM-first vs rules comparison must not silently drop rows"
+        )
+        assert result["match_acc_before"] == 1.0
+        assert result["match_acc_after"] == 1.0
+        assert result["match_improvement"] == 0.0
+
+    def test_match_improvement_detects_llm_fix(self):
+        """The motivating use case: rules miss panel 1's species, LLM
+        catches it. Pre-fix n_samples=0 → improvement=0. Post-fix
+        n_samples=1 → improvement reflects the actual delta."""
+        before = [
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
+             "species": "wrong_species", "panel_path": "x.png"},
+        ]
+        after = [
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
+             "species": "right_species", "panel_path": None},
+        ]
+        gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
+                 "species": "right_species"}]
+        result = compare_before_after(before, after, gold)
+        assert result["n_samples"] == 1
+        assert result["match_acc_before"] == 0.0
+        assert result["match_acc_after"] == 1.0
+        assert result["match_improvement"] == 1.0
+
+    def test_placeholder_rows_excluded_from_merge(self):
+        """Rows with panel_id=None (the placeholder-caption skip path)
+        must NOT participate in the merge — they're junk and would
+        inflate the denominator with non-panel rows."""
+        before = [
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": None,
+             "species": None, "panel_path": None},  # placeholder
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
+             "species": "A", "panel_path": "x.png"},
+        ]
+        after = [
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
+             "species": "A", "panel_path": None},
+        ]
+        gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}]
+        result = compare_before_after(before, after, gold)
+        # Only the panel_id="1" row participates (1 from each side).
+        assert result["n_samples"] == 1
+
+    def test_gemma_confidence_mean_reported(self):
+        """The gemma_confidence_mean field must surface when the
+        after-side rows carry metadata.gemma_confidence. Pre-fix the
+        merge dropped too many rows to surface anything meaningful."""
+        before = [
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
+             "species": "A", "panel_path": "x.png"},
+        ]
+        after = [
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
+             "species": "A", "panel_path": None,
+             "metadata": {"gemma_confidence": 0.85}},
+        ]
+        gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}]
+        result = compare_before_after(before, after, gold)
+        assert result["gemma_confidence_mean"] == 0.85
+
+    def test_empty_inputs_return_zero_dict(self):
+        """Both sides empty → no rows merged → no crash, sensible defaults."""
+        result = compare_before_after([], [], [])
+        assert result["n_samples"] == 0
+        assert result["match_improvement"] == 0.0

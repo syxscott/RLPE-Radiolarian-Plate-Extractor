@@ -376,6 +376,12 @@ class OpenDataLoaderExtractor:
             if cap:
                 # Match by the first 60 chars (caption previews may
                 # differ in trailing whitespace/punctuation).
+                # Round 9 (L4): previously the check used
+                # ``text[:60] in ec or ec in text[:60]`` which over-
+                # matches — "Fig. 1" is a prefix of "Fig. 10 ..." and
+                # gets spuriously flagged as already represented. We
+                # now require the 60-char prefix to be IDENTICAL (after
+                # stripping) to suppress duplicate emission.
                 existing_caption_snippets.add(cap[:60])
 
         # 3) Build a page -> images index for the same-page lookup.
@@ -391,9 +397,12 @@ class OpenDataLoaderExtractor:
             text = (cap.get("content") or "").strip()
             if not text:
                 continue
-            # Skip if already represented (substring check on the
-            # preview handles whitespace mismatches).
-            if any(text[:60] in ec or ec in text[:60] for ec in existing_caption_snippets):
+            # Skip if already represented (exact 60-char prefix match
+            # after stripping handles whitespace mismatches without
+            # the false-positive prefix-match of the previous
+            # ``text[:60] in ec or ec in text[:60]`` bidirectional
+            # substring check — see Round 9 fix L4).
+            if text[:60] in existing_caption_snippets:
                 continue
             page = int(cap.get("page number", 0))
             # Image-selection strategy:
@@ -709,8 +718,25 @@ def _rescue_missing_images(
     # appendix-style layout this function was added to support.
     rescued_used_keys: set[tuple[int, int]] = set()
 
+    # Round 9 (Bug-H3): collect the basenames of every image_path
+    # already attached to a pair (plate figures, prior rescues, anything).
+    # Without this, the orphan pool below included plate-pair images and
+    # a caption-only rescue would happily steal them — causing the same
+    # physical image to be attached to two different figures downstream.
+    claimed_basenames: set[str] = set()
+    for p in pairs:
+        for ip in p.image_paths or []:
+            try:
+                claimed_basenames.add(Path(ip).name)
+            except (OSError, ValueError):
+                # Defensive: a malformed path string should not crash
+                # the whole rescue; just skip it.
+                pass
+
     # Collect every image element in the document, then drop the
-    # already-paired ones.
+    # already-paired ones (by file basename — the (page, id) approach
+    # would also work but doesn't survive a re-read of the JSON where
+    # ids can collide across pages in pathological cases).
     orphan_imgs: list[dict[str, Any]] = []
     for el in _iter_all_elements(kids):
         if el.get("type") != "image":
@@ -719,10 +745,17 @@ def _rescue_missing_images(
         img_id = int(el.get("id", -1) or -1)
         if (page, img_id) in rescued_used_keys:
             continue
-        # Also skip images that were already claimed by a plate figure
-        # via the linked-content-id path. We approximate "claimed" by
-        # skipping images whose (page, id) is referenced by any
-        # existing pair's image_paths basename.
+        # Skip images already attached to a pair. We approximate by
+        # basename — for OD exports this is "imageFileN.png" so the
+        # match is deterministic. A more sophisticated check would
+        # resolve the image to its filesystem path first, but that
+        # requires the same lookup logic as ``_resolve_image_paths``
+        # and would be O(N*M); basename match is O(N+M) and correct
+        # for OD's naming convention.
+        src = el.get("source") or ""
+        basename = Path(src).name if src else f"imageFile{img_id}.png"
+        if basename and basename in claimed_basenames:
+            continue
         orphan_imgs.append(el)
 
     if not orphan_imgs:
@@ -1801,23 +1834,44 @@ def _find_nearest_caption(
     all_captions: list[dict[str, Any]],
     page: int,
 ) -> str | None:
-    """Find the caption closest (vertically) to the plate on the same page."""
+    """Find the caption closest (vertically) to the plate on the same page.
+
+    Ties are broken by the caption's spatial-info availability: a caption
+    with a real ``bounding box`` wins over one without (the no-bbox case
+    is the common OpenDataLoader quirk where OD parses the caption text
+    but didn't expose its layout coords). Pre-fix, all no-bbox captions
+    tied at ``dist = plate_bottom - 0 = plate_bottom`` and the winner was
+    whichever appeared first in ``all_captions`` — essentially random,
+    often the wrong figure's caption.
+    """
     if not plate_images:
         return None
     plate_bottom = min(_bbox_bottom(img) for img in plate_images)
-    plate_top = max(_bbox_top(img) for img in plate_images)
 
-    best: tuple[float, str | None] = (float("inf"), None)
+    best_dist = float("inf")
+    best_has_bbox = False
+    best_text: str | None = None
     for cap in all_captions:
         if cap.get("page number") != page:
             continue
         cap_bottom = _bbox_bottom(cap)
+        cap_has_bbox = bool(cap.get("bounding box"))
         # Prefer captions just below the plate
-        if cap_bottom <= plate_bottom:
-            dist = plate_bottom - cap_bottom
-            if dist < best[0]:
-                best = (dist, cap.get("content"))
-    return best[1]
+        if cap_bottom > plate_bottom:
+            continue
+        dist = plate_bottom - cap_bottom
+        # Tighten the tie-break: lower distance wins; if equal, the caption
+        # with a bounding box wins; if still tied, first-encountered wins.
+        # We model "first-encountered wins" by leaving best_* unchanged
+        # when the new candidate is strictly worse on (dist, has_bbox).
+        is_better = dist < best_dist or (
+            dist == best_dist and cap_has_bbox and not best_has_bbox
+        )
+        if is_better:
+            best_dist = dist
+            best_has_bbox = cap_has_bbox
+            best_text = cap.get("content")
+    return best_text
 
 
 def _bbox_bottom(el: dict[str, Any]) -> float:

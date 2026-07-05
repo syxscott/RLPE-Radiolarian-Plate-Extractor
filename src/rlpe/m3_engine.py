@@ -28,7 +28,7 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
-from threading import Lock
+from threading import RLock
 from typing import Any
 
 from PIL import Image
@@ -1461,10 +1461,19 @@ class M3Engine:
         # restores it afterwards. When multiple pipeline workers call
         # M3 concurrently, one thread's toggle can race another's
         # save/restore, leaving ``enable_thinking`` in the wrong state
-        # for the first thread's original call. The lock serializes the
-        # toggle+retry+restore sequence so each thread sees a consistent
-        # backend state.
-        self._thinking_retry_lock = Lock()
+        # for the first thread's original call.
+        #
+        # Round 9 (Bug-M3): use ``RLock`` (reentrant) instead of ``Lock``
+        # so the save→flip→call→restore sequence can be held inside a
+        # single critical section. The previous code released the lock
+        # around ``infer_panel()`` (claiming a deadlock risk with
+        # backends that re-enter _infer_vision), but that opened a
+        # race window: another thread could flip ``enable_thinking``
+        # in between, and the first thread's restore would overwrite
+        # the other thread's setup. RLock sidesteps the deadlock
+        # concern entirely (re-entry by the same thread is fine) and
+        # the entire retry+call+restore now happens atomically.
+        self._thinking_retry_lock = RLock()
 
     # ------------------------------------------------------------------ stage 1
     def parse_caption(self, caption_text: str) -> list[CaptionPair]:
@@ -2000,28 +2009,29 @@ class M3Engine:
             and getattr(self.backend, "enable_thinking", False)
         ):
             logger.info("M3 returned empty text; retrying with thinking disabled")
-            # Audit M6: hold the lock only long enough to flip
-            # enable_thinking, NOT for the entire backend call. The
-            # previous code held the lock for the duration of
-            # ``infer_panel()``, which could deadlock if the backend
-            # re-entered ``_infer_vision`` (e.g. a custom backend
-            # subclass that calls M3 again inside its handler).
+            # Round 9 (Bug-M3): hold the RLock for the entire
+            # save → flip → call → restore sequence. RLock is reentrant
+            # so a backend that re-enters ``_infer_vision`` (e.g. a
+            # custom subclass that calls M3 again inside its handler)
+            # won't deadlock — the same thread can re-acquire the
+            # lock cleanly. The whole retry is now atomic from the
+            # perspective of other workers: no other thread can flip
+            # ``enable_thinking`` in between our save and restore.
             with self._thinking_retry_lock:
                 saved = self.backend.enable_thinking
                 self.backend.enable_thinking = False
-            try:
-                res2 = self.backend.infer_panel(
-                    panel_image=image,
-                    caption_text="",
-                    ocr_labels=[],
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                )
-            except Exception as exc:
-                logger.warning("M3 retry without thinking failed: %s", exc)
-                res2 = res
-            finally:
-                with self._thinking_retry_lock:
+                try:
+                    res2 = self.backend.infer_panel(
+                        panel_image=image,
+                        caption_text="",
+                        ocr_labels=[],
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                    )
+                except Exception as exc:
+                    logger.warning("M3 retry without thinking failed: %s", exc)
+                    res2 = res
+                finally:
                     self.backend.enable_thinking = saved
             if (res2.get("raw_text") or "").strip():
                 res = res2
@@ -2289,15 +2299,25 @@ def _safe_int(v: Any) -> int | None:
 
 
 def _coerce_bbox(v: Any, img_w: int, img_h: int) -> tuple[int, int, int, int] | None:
-    """Coerce M3 bbox output (often normalized 0-1) to absolute pixel coords."""
+    """Coerce M3 bbox output (often normalized 0-1) to absolute pixel coords.
+
+    Detection rule: ``max(nums) <= 1.01`` (1.0 + 0.01 float tolerance) means
+    normalized, regardless of image size. The previous code additionally
+    required ``img_w > 100 or img_h > 100`` — when M3 returned normalized
+    coordinates for a thumbnail-sized figure (e.g. a 80x80 plate image),
+    the size guard silently routed the bbox through the pixel path, which
+    truncated the four values to ``(0, 0, 1, 1)`` and broke Stage 3 /
+    multi-plate enrichment crops. Real pixel values ≤ 1 are exceedingly
+    rare in any meaningful figure (a 1x1 bbox is useless to the
+    segmenter), so the 1.01 tolerance alone is sufficient to disambiguate.
+    """
     if not isinstance(v, (list, tuple)) or len(v) != 4:
         return None
     try:
         nums = [float(x) for x in v]
     except Exception:
         return None
-    # Detect normalization: all in [0, 1] and image larger.
-    if max(nums) <= 1.01 and (img_w > 100 or img_h > 100):
+    if max(nums) <= 1.01:
         x, y, w, h = nums
         return (
             max(0, int(x * img_w)),
