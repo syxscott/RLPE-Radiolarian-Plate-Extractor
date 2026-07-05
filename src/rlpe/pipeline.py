@@ -1301,7 +1301,10 @@ class RadiolarianPipeline:
         # fewer than N panel_ids for this figure).
         if self.config.extra.get("m3_multi_plate_enrich", False) and self.m3_engine is not None:
             results = self._apply_multi_plate_enrichment(
-                results, paper_id, od_fulltext_sections=od_result.fulltext_sections
+                results,
+                paper_id,
+                od_fulltext_sections=od_result.fulltext_sections,
+                od_figures=figures,
             )
         return results
 
@@ -1444,23 +1447,23 @@ class RadiolarianPipeline:
         paper_id: str,
         *,
         od_fulltext_sections: list[dict[str, Any]] | None = None,
+        od_figures: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Round 7 multi-plate enrichment pass.
 
-        For each plate figure whose row count is markedly below what the
-        caption_parser would imply, fire a second-pass M3 vision call
-        with ``expected_plate_label`` (the figure_id encodes it as
-        ``od_plate_<pid>_p<page>_pl<N>`` so ``pl07`` -> ``Plate 7``) and
-        the page-level caption text. M3 returns the panel list for THAT
-        plate; we append the new panels to ``results`` so the downstream
-        eval can score them.
+        For each OD figure that is either (a) MISSING from ``results``
+        entirely (the loop crashed or skipped it before any row was
+        emitted) or (b) present but under-populated (zero rows with
+        both species and panel_id), fire a second-pass M3 vision call
+        asking for the full panel list. The new panels are appended to
+        ``results`` so downstream eval can score them.
 
         Trigger conditions (any one):
-          * Figure has zero rows (OD missed the entire plate)
-          * Figure has rows but every row has ``panel_id=None`` or
-            every row has ``species=None``
-          * Caption parser for the figure's caption text produced more
-            than 2× the figure's actual row count
+          * OD returned a figure whose ``figure_id`` does NOT appear in
+            any result row (the loop crashed or skipped it).
+          * Figure has zero rows.
+          * Figure has rows but every row has ``panel_id=None`` AND
+            ``species=None``.
 
         Cost: 1 M3 vision call per qualifying figure (~¥0.01-0.02).
         Gated on ``m3_multi_plate_enrich=True`` to avoid silent spend.
@@ -1490,9 +1493,49 @@ class RadiolarianPipeline:
         # doesn't cover the plate's actual page.
         all_captions_blob = "\n\n".join(page_text.values()) if page_text else ""
 
-        # Walk each figure that looks under-populated.
+        # Collect candidate figures to enrich:
+        #   1. OD figures whose figure_id has NO results rows at all
+        #      (the loop crashed or skipped the figure).
+        #   2. OD figures whose results rows have zero species + panel_id.
+        candidates: list[tuple[str, list[dict[str, Any]], str, str | None]] = []
+        # Track candidate figure_ids so we don't double-process the same
+        # one across paths 1 and 2.
+        seen_candidate_fids: set[str] = set()
+        if od_figures:
+            for od_fig in od_figures:
+                od_fid = getattr(od_fig, "figure_id", "") or ""
+                if not od_fid:
+                    continue
+                # Skip stubs / non-plate figures.
+                src = (getattr(od_fig, "metadata", {}) or {}).get("extraction_source", "")
+                od_caption = getattr(od_fig, "caption_text", "") or ""
+                if not od_caption:
+                    # No caption → can't meaningfully enrich
+                    continue
+                if od_fid in seen_candidate_fids:
+                    continue
+                if od_fid not in by_fig:
+                    # (1) OD returned this figure but the loop produced
+                    # no rows. This is the Bandini 2011 pl05/08/09 case.
+                    od_imgs = getattr(od_fig, "image_paths", None) or []
+                    primary_img = od_imgs[0] if od_imgs else None
+                    candidates.append(
+                        (od_fid, [], od_caption, primary_img)
+                    )
+                    seen_candidate_fids.add(od_fid)
+                else:
+                    # (2) Figure has rows but they all lack species + panel_id
+                    fig_rows = by_fig[od_fid]
+                    n_with_species = sum(1 for r in fig_rows if r.get("species"))
+                    n_with_panel_id = sum(1 for r in fig_rows if r.get("panel_id"))
+                    if n_with_species == 0 and n_with_panel_id == 0:
+                        candidates.append(
+                            (od_fid, fig_rows, od_caption, None)
+                        )
+                        seen_candidate_fids.add(od_fid)
+
         appended = 0
-        for fid, fig_rows in by_fig.items():
+        for fid, fig_rows, od_caption, primary_image_path in candidates:
             # Extract page index + plate label from figure_id
             # (od_plate_<pid>_p017_pl07 -> page 17, plate 7).
             page_idx = None
@@ -1504,44 +1547,75 @@ class RadiolarianPipeline:
             if m_pl:
                 plate_label = f"Plate {m_pl.group(1).lstrip('0') or m_pl.group(1)}"
 
-            # Skip maps, range charts, geo_vision stubs.
-            sample_src = (fig_rows[0].get("metadata") or {}).get("extraction_source", "")
+            # Skip map / range_chart / geo_vision stubs by extraction_source
+            # (already filtered for stubs by panel_id, but range_chart /
+            # map figures can still have non-empty captions and bypass the
+            # earlier stub filter). Re-check here for safety.
+            sample_src = ""
+            if fig_rows:
+                sample_src = (fig_rows[0].get("metadata") or {}).get("extraction_source", "")
             if sample_src in {"map", "range_chart", "geo_vision"}:
                 continue
-
-            # Trigger condition: zero rows OR every row missing species.
-            n_with_species = sum(1 for r in fig_rows if r.get("species"))
-            n_with_panel_id = sum(1 for r in fig_rows if r.get("panel_id"))
-            is_underpopulated = (
-                len(fig_rows) == 0
-                or (n_with_species == 0 and n_with_panel_id == 0)
-            )
-            if not is_underpopulated:
+            # Also skip by figure_id keyword: 'od_fig_' (non-plate) figures
+            # carry GeoMap/range-chart content even when caption is set.
+            if "_fig_" in fid and "_pl" not in fid:
                 continue
 
-            # Find the plate image: prefer the largest image_path in any
-            # row's metadata, else the row's panel_path.
-            image_path = None
-            for r in fig_rows:
-                md = r.get("metadata") or {}
-                cand = md.get("primary_image") or md.get("figure_image_path") or md.get("image_path")
-                if cand and Path(cand).is_file():
-                    image_path = cand
-                    break
-                if r.get("panel_path") and Path(r["panel_path"]).is_file():
-                    image_path = r["panel_path"]
-                    break
+            # Find the plate image. Priority:
+            #   1. ``primary_image_path`` from the OD FigureCaptionPair
+            #      (this is what OD paired the caption with — the actual
+            #      plate region).
+            #   2. metadata.primary_image / figure_image_path from any
+            #      existing row.
+            #   3. The row's panel_path (a panel crop, not the full plate).
+            image_path = primary_image_path
             if not image_path:
+                for r in fig_rows:
+                    md = r.get("metadata") or {}
+                    cand = md.get("primary_image") or md.get("figure_image_path") or md.get("image_path")
+                    if cand and Path(cand).is_file():
+                        image_path = cand
+                        break
+                    if r.get("panel_path") and Path(r["panel_path"]).is_file():
+                        image_path = r["panel_path"]
+                        break
+            if not image_path or not Path(image_path).is_file():
+                # Last-resort: look in the OD images_dir for any image
+                # on the same page as the figure (covers the case where
+                # the OD pair lost the image_path but the file still
+                # exists in the workdir). Match by including page number
+                # in the filename pattern so we don't pick up images from
+                # unrelated pages.
+                if page_idx is not None:
+                    img_dir = self.config.figures_dir() / paper_id
+                    if img_dir.is_dir():
+                        page_str = f"{page_idx:03d}"  # zero-pad like 'p017'
+                        for ext in (".png", ".jpg", ".jpeg"):
+                            for cand in sorted(img_dir.glob(f"*p{page_str}*{ext}")):
+                                image_path = str(cand)
+                                break
+                            if image_path:
+                                break
+            if not image_path or not Path(image_path).is_file():
+                logger.debug(
+                    "multi_plate_enrich: no image for %s (page %s); skipping",
+                    fid, page_idx,
+                )
                 continue
 
-            # Page-level caption context: page text + adjacent pages.
-            ctx_pages = []
+            # Page-level caption context: OD-caption (always present for
+            # candidates) + page_text from fulltext_sections if available.
+            ctx_parts: list[str] = []
+            if od_caption:
+                ctx_parts.append(od_caption)
             if page_idx is not None:
                 for off in (-1, 0, 1):
                     t = page_text.get(page_idx + off)
-                    if t:
-                        ctx_pages.append(t)
-            page_caption = "\n\n".join(ctx_pages) or all_captions_blob
+                    if t and t not in ctx_parts:
+                        ctx_parts.append(t)
+            if not ctx_parts:
+                ctx_parts.append(all_captions_blob)
+            page_caption = "\n\n".join(p for p in ctx_parts if p)
 
             try:
                 with _PILImage.open(image_path) as im:
@@ -1581,7 +1655,10 @@ class RadiolarianPipeline:
                 if not is_valid_panel_label(norm_lbl):
                     continue
                 sp = p.get("species")
-                conf = float(p.get("confidence") or 0.7)
+                try:
+                    conf = float(p.get("confidence") or 0.7)
+                except (TypeError, ValueError):
+                    conf = 0.7
                 results.append({
                     "paper_id": paper_id,
                     "figure_id": fid,
@@ -1591,7 +1668,7 @@ class RadiolarianPipeline:
                     "bbox": None,
                     "confidence": conf,
                     "label_text": lbl,
-                    "caption_snippet": (page_caption or "")[:240],
+                    "caption_snippet": (od_caption or page_caption or "")[:240],
                     "ocr_text": None,
                     "paper_metadata": None,
                     "metadata": {

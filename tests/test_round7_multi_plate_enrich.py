@@ -169,3 +169,54 @@ class TestPipelineEnrichmentGate:
         assert '"map"' in body
         assert '"range_chart"' in body
         assert '"geo_vision"' in body
+
+    def test_accepts_od_figures_param(self):
+        """The enrichment pass must accept ``od_figures`` so it can rescue
+        figures the per-figure loop dropped entirely (Bug #1 fix)."""
+        text = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py").read_text(
+            encoding="utf-8"
+        )
+        idx = text.find("def _apply_multi_plate_enrichment")
+        assert idx > 0
+        # Scan forward for the next def or top-level keyword to find the
+        # full signature (which spans multiple lines because of *, separators).
+        end = idx
+        depth = 0
+        for i in range(idx, min(idx + 1500, len(text))):
+            ch = text[i]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        sig = text[idx:end]
+        assert "od_figures" in sig, (
+            f"_apply_multi_plate_enrichment must accept od_figures kwarg so it "
+            f"can recover figures missing from results entirely (Bandini pl05/08/09). "
+            f"Got signature: {sig!r}"
+        )
+
+    def test_trigger_includes_od_figure_with_no_results(self):
+        """When an OD figure has NO matching results row (because the per-
+        figure loop crashed or skipped), enrichment must still fire for
+        that figure (the original Bandini 2011 pl05/pl08/pl09 case)."""
+        text = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py").read_text(
+            encoding="utf-8"
+        )
+        idx = text.find("def _apply_multi_plate_enrichment")
+        assert idx > 0
+        next_def = text.find("\n    def ", idx + 1)
+        body = text[idx:next_def if next_def > 0 else idx + 8000]
+        # The body must have BOTH conditions:
+        #   1. OD figure with no results rows (the by_fig miss path)
+        #   2. OD figure with rows but all-empty species + panel_id
+        assert "if od_fid not in by_fig" in body, (
+            "_apply_multi_plate_enrichment must check od_figures for "
+            "figure_ids missing from results (the Bandini pl05/08/09 case)"
+        )
+        assert "n_with_species == 0 and n_with_panel_id == 0" in body, (
+            "_apply_multi_plate_enrichment must still handle the "
+            "rows-but-all-empty case for backward compat"
+        )
