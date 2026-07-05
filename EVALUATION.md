@@ -29,6 +29,17 @@ bugs that were uncovered while building this report.
   - v18: 96.08% (bandini gold restored to v15 paper)
   - v19 live: 83.70% string-match, 23.53% image-verified beccaro
   - **v20 simulated: 82.18% string-match (bandini pl09 0%→94.4%)**
+- **Round 6 (2026-07-04, live MiniMax API)**: 5 OA papers re-run with
+  real MiniMax-M3 API, species rate 92.5% aggregate
+  (Beccaro/Boughdiri 100%, Danelian 95.3%, Pouille 90.6%, Bandini 85.9%);
+  total cost ¥1.81 (¥0.008/row).
+- **Round 7 (2026-07-05, M3 multi-plate enrichment)**: 7 paper
+  aggregate F1 = **0.544** (621 rows, lenient species normalize);
+  per-paper F1: Feng_2007 0.795, Boughdiri 0.735, Beccaro 0.615,
+  Danelian 0.548, baumgartner2008 0.471, bandini2011 0.453,
+  Pouille 0.273. bandini pl05 recovered from 0% to 54.8% F1 via
+  the second-pass `multi_plate_enrich` path. Hollis/Bragin not
+  re-run in Round 7.
 - **Scientific-grade (SOTA) target ≥ 90% STRING-MATCH F1 reached on
   the cached v18 corpus, but NOT on live v20 re-runs** — the remaining
   gap is dominated by (a) bandini pl05 routing bug (pre-existing, 42

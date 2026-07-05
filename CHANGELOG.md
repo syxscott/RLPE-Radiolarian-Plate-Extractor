@@ -5,6 +5,70 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 10] - 2026-07-05 — Round 6/7 live API + multi-plate enrichment + 781 tests
+
+Round 6 (5-OA-paper smoke driver) and Round 7 (M3 multi-plate
+enrichment) merged. Real MiniMax-M3 API re-runs on 7 of the 9 gold
+papers with lenient species normalize + per-figure F1 reporting.
+Full test suite now at 781 passed, 0 failed, 22 skipped (up from
+473 in v1.0).
+
+### Added
+- **`scripts/oa_smoke_round6.py`** (commit 7d9a0dd): hand-picked 6-PDF
+  smoke driver that runs RadiolarianPipeline with real MiniMax-M3 API
+  on each PDF and captures per-paper metrics (row_count, species rate,
+  M3 call count, image_ocr panel_id count, geology_links coverage,
+  total cost). Stage 4/5 disabled by default.
+- **`scripts/eval_round6_gold.py`** (commit edf14df): lenient species
+  normalize (handles `?` / author citations / `sensu Year` / `sp.` ↔ `sp`)
+  + per-figure F1 reporting against gold JSONL.
+- **`scripts/eval_all_gold.py`** (commit 9c6679e): aggregate eval across
+  every `work/oa_smoke_*/matches.jsonl`, matching each against its
+  corresponding gold JSONL. Handles both Round 6 driver output layouts.
+- **Round 6 CLI flags**: `--use-geo-vision`, `--geo-vision-figure-types`,
+  `--use-m3-stage3` (all routed to PipelineConfig.extra + added to
+  `_KNOWN_EXTRA_KEYS`).
+- **Round 7 CLI flag**: `--m3-multi-plate-enrich` (store_true, default off).
+- **`M3Engine.enrich_plate_panels()`** (commit 4146cb3): second-pass
+  MiniMax vision call that asks the model for the full panel list of a
+  plate image + page-level caption context. Handles fallback_used,
+  malformed JSON, and tiny images.
+- **`RadiolarianPipeline._apply_multi_plate_enrichment()`** (commit 4146cb3):
+  second-pass enrichment hook at the bottom of `_process_one_pdf_od`.
+  Fires on figures that are (a) missing from results entirely (Bug #1
+  fix: compares against OD's full figure list) or (b) under-populated.
+
+### Fixed
+- **Bug #1 (CRITICAL, commit 2a5402a)**: the original
+  `_apply_multi_plate_enrichment` trigger only fired for figures
+  PRESENT in results with zero rows or all-empty species+panel_id. It
+  was unreachable for figures the per-figure loop crashed or skipped
+  entirely (e.g. Bandini 2011 Plate 5 — MiniMax returns
+  `input_new_sensitive` 500 errors on Bandini's SEM images, which halts
+  the loop before later plates get processed). The fix adds `od_figures`
+  to the enrichment signature and a new trigger `if od_fid not in by_fig`
+  that fires for OD figures whose results rows are missing.
+- **Bug #2 (commit 2a5402a)**: image_path glob fallback used
+  `img_dir.glob('*{ext}')` which matches images on ALL pages, not the
+  current plate's page. Replaced with `f'*p{page_idx:03d}*{ext}'`.
+- **6 pre-existing test failures** (commit a6f04fb):
+  - `tests/__init__.py` missing → added empty marker file
+  - conftest.py didn't add `tests/` to sys.path → fixed
+  - `test_each_prompt_returns_json_shape` over-matched Round 7's
+    multi_plate_enrich prompt → added `endswith("_geo")` filter
+  - `extract_geology` propagated `_safe_json_loads` ValueError →
+    added try/except
+  - fake_backend canned-response match functions used prompt KEY names
+    (e.g. "range_chart_geo" in s) which never appear in prompt TEXT →
+    changed to prose substrings
+  - `test_clear_error_when_cv2_missing` is unreachable in CV env →
+    added `@pytest.mark.skipif(_cv2_importable())`
+
+### Performance / Cost
+- Round 6 (5 OA papers, real MiniMax-M3): ¥1.81 total / ¥0.008 per row.
+- Round 7 (7 gold papers): Baumgartner F1 0.267 → **0.471 (+77%)**,
+  Bandini F1 0.365 → **0.453 (+28%)**, pl05 0% → 54.8% recovered.
+
 ## [Unreleased 8] - 2026-06-10 -- geology links visible in the panel-detail modal
 
 The panel-detail modal (`web/js/app.js::openImageModal`) now renders the
