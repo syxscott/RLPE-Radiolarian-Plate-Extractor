@@ -584,7 +584,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
     model: str = "MiniMax-M3"
     max_output_tokens: int = 2048
     thinking_budget_tokens: int = 1024
-    enable_thinking: bool = True
+    enable_thinking: bool = False  # default OFF to avoid surprise API cost; opt-in via CLI/UI
     timeout_sec: int = 120
     temperature: float = 0.1
     top_p: float = 0.9
@@ -614,7 +614,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
     #                     is the correct setting for offline / air-gapped
     #                     deployments (M3 weights not yet open-sourced,
     #                     privacy-sensitive papers).
-    data_outbound_policy: str = "api_full"
+    data_outbound_policy: str = "api_redacted"  # safer default than api_full
 
     def __post_init__(self) -> None:
         # ``local_only`` does not need an API key: the backend will refuse

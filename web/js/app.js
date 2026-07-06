@@ -521,7 +521,13 @@ function _buildLLMOptions() {
     const useGemma = document.getElementById('use-gemma4')?.checked ?? false;
     if (!useGemma) return null;
 
-    const backend = document.getElementById('llm-backend')?.value ?? 'MiniMax';
+    // Round 16 audit: previous fallback hardcoded 'MiniMax', silently
+    // routing every request to the cloud vendor when the dropdown was
+    // missing. Now read the persisted choice (or fall back to a
+    // vendor-neutral local default).
+    const backend = document.getElementById('llm-backend')?.value
+        || _safeStorageGet(LLM_BACKEND_KEY)
+        || 'llamacpp';
 
     // Validate conf threshold up-front so the user gets immediate feedback
     // instead of a server round-trip.
@@ -2288,6 +2294,7 @@ function initOnboardingBanner() {
 // localStorage so the user's preferred view is remembered.
 // ====================================================================
 const VIEW_PREF_KEY = 'rlpe.configView';
+const LLM_BACKEND_KEY = 'rlpe.llmBackend';
 
 function initViewToggle() {
     const buttons = document.querySelectorAll('.view-toggle-btn');
@@ -2323,17 +2330,29 @@ function initLLMBackendSync() {
     const basic = document.getElementById('llm-backend-basic');
     const advanced = document.getElementById('llm-backend');
     if (!basic || !advanced) return;
+    // Round 16 audit: persist the user's LLM backend choice across
+    // page reloads so the default doesn't silently revert to a
+    // vendor-specific value every visit. Stored under
+    // LLM_BACKEND_KEY so a privacy-conscious user can clear it via
+    // DevTools / site data.
+    const saved = _safeStorageGet(LLM_BACKEND_KEY);
+    if (saved && [basic.value, advanced.value].includes(saved)) {
+        basic.value = saved;
+        advanced.value = saved;
+    }
     // basic → advanced
     basic.addEventListener('change', () => {
         advanced.value = basic.value;
+        _safeStorageSet(LLM_BACKEND_KEY, basic.value);
         _syncLLMBackendVisibility();
     });
     // advanced → basic
     advanced.addEventListener('change', () => {
         basic.value = advanced.value;
+        _safeStorageSet(LLM_BACKEND_KEY, advanced.value);
     });
-    // initial: copy basic's value (which is `MiniMax` by default) into
-    // advanced, then trigger the visibility sync.
+    // initial: copy basic's value into advanced, then trigger the
+    // visibility sync.
     advanced.value = basic.value;
     _syncLLMBackendVisibility();
 }
@@ -2377,7 +2396,7 @@ async function refreshLLMStatus() {
         // resolved values) plus the deprecated ``default_endpoint`` /
         // ``default_model`` aliases. Prefer the new names if present.
         const endpoint = data.active_endpoint || data.default_endpoint || '—';
-        const model = data.active_model || data.default_model || 'MiniMax-M3';
+        const model = data.active_model || data.default_model || '';
         const totalCost = Number(data.total_cost_cny) || 0;
         const totalCalls = Number(data.total_calls) || 0;
         const approxPerCall = Number(data.approx_cny_per_call) || 0;
@@ -2460,7 +2479,7 @@ async function testLLMConnection() {
             // Build the success message piece by piece so missing
             // optional fields (cost_cny, note) don't produce dangling
             // delimiters or unbalanced brackets.
-            const parts = [`${data.latency_ms}ms`, data.model || 'MiniMax-M3'];
+            const parts = [`${data.latency_ms}ms`, data.model || ''];
             if (data.cost_cny != null) {
                 parts.push(`¥${data.cost_cny}`);
             }
@@ -2552,7 +2571,7 @@ async function refreshMiniMaxUsage() {
         const totalCost = Number(data.total_cost_cny) || 0;
         const totalCalls = Number(data.total_calls) || 0;
         const approxPerCall = Number(data.approx_cny_per_call) || 0;
-        const model = data.active_model || data.default_model || 'MiniMax-M3';
+        const model = data.active_model || data.default_model || '';
         panel.innerHTML = `
             <div class="minimax-usage-item">
                 <span class="minimax-usage-label">累计调用次数</span>

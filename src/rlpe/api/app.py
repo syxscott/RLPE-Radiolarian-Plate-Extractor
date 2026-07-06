@@ -139,7 +139,7 @@ class JobOptions(BaseModel):
     MiniMax_api_key: str | None = None
     MiniMax_endpoint: str | None = None
     MiniMax_model: str | None = None
-    MiniMax_enable_thinking: bool = True
+    MiniMax_enable_thinking: bool = False  # default OFF to avoid surprise API cost
     MiniMax_thinking_budget_tokens: int = 1024
     MiniMax_max_output_tokens: int | None = None
     MiniMax_max_concurrent: int | None = None

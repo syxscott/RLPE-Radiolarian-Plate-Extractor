@@ -52,19 +52,17 @@
                     <button class="onboarding-close" id="onboarding-close-btn" aria-label="关闭引导">&times;</button>
                     <h3>👋 欢迎使用 RLPE</h3>
                     <p class="onboarding-subtitle">
-                        系统已为您预设最佳配置（MiniMax M3 云端 API），<strong>3 步即可完成第一次提取</strong>：
+                        系统已为您配置本地 LLM 引擎（llama.cpp），<strong>3 步即可完成第一次提取</strong>。
+                        如需使用云端 LLM，请在「设置 → LLM 引擎」中切换：
                     </p>
                     <ol class="onboarding-steps">
-                        <li><strong>① 检查 API Key</strong> — 下方"LLM 服务状态"会显示 Key 是否已配置</li>
+                        <li><strong>① 检查 LLM 状态</strong> — 下方"LLM 服务状态"会显示当前后端是否就绪</li>
                         <li><strong>② 拖入 PDF 文件</strong> — 支持单文件或批量</li>
                         <li><strong>③ 点击"开始处理"</strong> — 等待 30 秒到几分钟即可看到结果</li>
                     </ol>
                     <p class="onboarding-hint">
-                        💡 没有 API Key？
-                        <a href="https://platform.minimaxi.com/user-center/payment/token-plan" target="_blank" rel="noopener">
-                            点这里申请 MiniMax Token Plan
-                        </a>
-                        （申请后将 Key 写入项目根目录的 <code>.env</code> 文件，重启服务即可生效）
+                        💡 本地 LLM 需要自部署模型（llama.cpp / Ollama / Transformers）。
+                        云端 API（MiniMax M3）需用户自行申请 Key，无任何供应商绑定。
                     </p>
                 </div>
 
@@ -74,7 +72,7 @@
                         <h2>
                             <span class="llm-status-icon" id="llm-status-icon">⏳</span>
                             LLM 服务状态
-                            <span class="badge badge-recommended">默认 MiniMax M3</span>
+                            <span class="badge badge-info" id="llm-status-backend-label">未选择</span>
                         </h2>
                         <button id="llm-test-btn" class="btn btn-small" type="button">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
@@ -133,10 +131,10 @@
                                 <span class="tooltip-icon" data-tooltip="MiniMax M3 是云端多模态 LLM，无需本地 GPU。其他选项需要自行部署本地模型。">?</span>
                             </label>
                             <select id="llm-backend-basic" class="config-row-input">
-                                <option value="MiniMax" selected>🌟 MiniMax M3（云端，推荐）</option>
-                                <option value="llamacpp">llama.cpp（本地，需自部署）</option>
+                                <option value="llamacpp" selected>llama.cpp（本地，需自部署）</option>
                                 <option value="ollama">Ollama（本地，需自部署）</option>
                                 <option value="transformers">Transformers（本地 GPU）</option>
+                                <option value="MiniMax">MiniMax M3（云端 API）</option>
                             </select>
                         </div>
 
@@ -192,10 +190,10 @@
                             <div class="config-group">
                                 <label for="llm-backend">LLM 后端（与基础视图同步）</label>
                                 <select id="llm-backend">
-                                    <option value="MiniMax" selected>🌟 MiniMax M3（云端 API，推荐）</option>
-                                    <option value="llamacpp">llama.cpp 服务</option>
-                                    <option value="ollama">Ollama</option>
-                                    <option value="transformers">Transformers (本地 GPU)</option>
+                                    <option value="llamacpp" selected>llama.cpp 服务（本地）</option>
+                                    <option value="ollama">Ollama（本地）</option>
+                                    <option value="transformers">Transformers（本地 GPU）</option>
+                                    <option value="MiniMax">MiniMax M3（云端 API）</option>
                                 </select>
                             </div>
 
@@ -232,9 +230,9 @@
                                 </div>
                                 <div class="config-group">
                                     <label class="checkbox-label">
-                                        <input type="checkbox" id="MiniMax-enable-thinking" checked>
-                                        启用扩展思考（extended thinking）
-                                        <span class="tooltip-icon" data-tooltip="开启后 LLM 会在内部多走一轮推理，提高准确率但增加成本。">?</span>
+                                        <input type="checkbox" id="MiniMax-enable-thinking">
+                                        启用扩展思考（extended thinking，会增加 token 消耗）
+                                        <span class="tooltip-icon" data-tooltip="开启后 LLM 会在内部多走一轮推理，提高准确率但增加成本。默认关闭以减少 API 费用。">?</span>
                                     </label>
                                 </div>
                                 <div class="config-group">

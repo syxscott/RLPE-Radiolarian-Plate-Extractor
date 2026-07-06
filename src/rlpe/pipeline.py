@@ -91,8 +91,9 @@ class RadiolarianPipeline:
         self._od_lock = threading.Lock()
         self.gemma_runtime = None
         # M3Engine: 5-stage semantic engine. Initialized only when M3 backend
-        # is available AND the user opts in via ``m3_enhanced_mode`` (default ON
-        # when M3 backend is selected).
+        # is available AND the user explicitly opts in via
+        # ``m3_enhanced_mode = True`` (Round 16 audit: was asymmetric — ON
+        # by default for MiniMax, opt-in for others; now opt-in for all).
         self.m3_engine: M3Engine | None = None
         self._gemma_lock = threading.Lock()
         # NOTE: no shared _ocr_lock here. PaddleOCR (the default backend) is
@@ -137,10 +138,25 @@ class RadiolarianPipeline:
         minimax_backends = {"minimax", "minimax-m3", "minimax_api"}
         backend_name = str(self.config.extra.get("llm_backend") or "").lower() or "transformers"
         has_minimax_key = bool(
-            self.config.extra.get("MiniMax_api_key")
-            or os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("MINIMAX_API_KEY")
+            self.config.extra.get("MiniMax_api_key") or os.environ.get("MINIMAX_API_KEY")
         )
+        # Round 16 audit: ANTHROPIC_API_KEY used to be a fallback
+        # source. That silently routed Claude Code users to MiniMax
+        # with no warning. Removed from the chain — a user who only
+        # has ANTHROPIC_API_KEY must set MINIMAX_API_KEY or
+        # MiniMax_api_key explicitly. If they do, log a notice so
+        # the source is observable.
+        if (
+            not has_minimax_key
+            and os.environ.get("ANTHROPIC_API_KEY")
+            and not self.config.extra.get("MiniMax_api_key")
+            and not os.environ.get("MINIMAX_API_KEY")
+        ):
+            logger.info(
+                "ANTHROPIC_API_KEY is set but not consumed by MiniMax "
+                "path (vendor-specific key required); set MiniMax_api_key "
+                "or MINIMAX_API_KEY explicitly to enable MiniMax."
+            )
         # MiniMax path: either explicit backend name, OR no local model
         # path but a MiniMax API key present (the common "just give me
         # a key and hit the cloud" flow).
@@ -197,13 +213,14 @@ class RadiolarianPipeline:
             logger.warning("Gemma4 backend init failed: %s", exc)
             return
 
-        # Build the M3 semantic engine (5-stage). ON by default when M3 is the
-        # active backend and ``m3_enhanced_mode`` is not explicitly disabled.
-        # For other backends, opt-in via ``m3_enhanced_mode = True``.
+        # Build the M3 semantic engine (5-stage). Round 16 audit: was
+        # asymmetric — auto-enabled for MiniMax backend, opt-in for
+        # others. Made symmetric: opt-in for ALL backends via
+        # ``m3_enhanced_mode = True`` so no vendor gets a privileged
+        # default. Users who previously relied on the MiniMax auto-
+        # enable must set m3_enhanced_mode=True in their config.
         if self.gemma_runtime is not None:
-            want_m3 = self.config.extra.get("m3_enhanced_mode")
-            if want_m3 is None:
-                want_m3 = backend_name in minimax_backends
+            want_m3 = self.config.extra.get("m3_enhanced_mode", False)
             if want_m3:
                 m3_cfg = {k: v for k, v in self.config.extra.items() if k.startswith("m3_")}
                 # If user didn't set stage toggles, enable all 5 by default.
