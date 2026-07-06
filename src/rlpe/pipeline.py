@@ -2050,6 +2050,7 @@ class RadiolarianPipeline:
         return self._finalize_rows(results)
 
     # ----- Round 11 post-processing -------------------------------------------------
+    # ----- Round 12 post-processing -------------------------------------------------
     # Stub panel_ids that are NOT real panels — they're container rows
     # carrying paper-level context (location coordinates for maps,
     # stratigraphic ranges for range charts, ingestion errors). They
@@ -2059,6 +2060,80 @@ class RadiolarianPipeline:
     _STUB_PANEL_IDS = frozenset(
         {"MAP_CONTEXT", "RANGE_CHART", "_ingestion_od_failed", "_ingestion_grobid_failed"}
     )
+
+    @staticmethod
+    def _filter_classical_hallucinations(
+        matches: list,
+        caption,
+        paper_id: str,
+        figure_id: str,
+    ) -> list:
+        """Round 12 (Bug 7): drop classical-path rows whose panel_id
+        is not in the caption-derived pair set.
+
+        The classical branch emits one row per segmented panel. When
+        the segmenter over-segments a plate (e.g. Pouille 2014 pl02
+        has 19 panel regions but the caption only mentions 9 species)
+        and OCR mis-reads the printed labels, the resulting rows
+        include phantom panel_ids like ``10a``/``10b``/``11b``/``11c``
+        that the caption never lists. Pre-fix these rows leaked into
+        ``matches.jsonl`` and inflated the row count from the actual
+        ~6 visible panels to 11+.
+
+        Strategy: re-use the same caption-derived pair_lookup used
+        by the LLM-first branch (round 11 Bug 2 fix) and the
+        ``_label_in_caption`` predicate. Tolerant of OCR variants
+        (1 vs 1a vs 01) so legitimate sub-ids (5b, 6b, 10a) survive.
+
+        Edge case: the classical branch is taken when M3 stage 1
+        failed (so ``m3_caption_pairs`` is empty). In that case we
+        call ``_regex_parse_caption`` directly on the caption text to
+        recover the caption-derived labels. If both sources are empty
+        (no caption text at all), we skip the filter — without a
+        caption we have no ground truth to compare against.
+        """
+        import re as _re_hallu2
+
+        # Build caption-derived label set. Try M3 stage 1 first
+        # (already computed in this call), fall back to regex.
+        pair_lookup: dict[str, str] = {}
+        # Caller passes m3_caption_pairs via closure; if empty, regex
+        # parser is the second source.
+        from .m3_engine import _regex_parse_caption as _regex2
+
+        try:
+            for cp in _regex2(caption.caption or ""):
+                for lbl in cp.labels or []:
+                    pair_lookup.setdefault(lbl.strip(), cp.species)
+        except Exception:
+            pass
+
+        if not pair_lookup:
+            return matches  # No caption to filter against — keep all.
+
+        caption_labels: set[str] = set()
+        for lbl in pair_lookup.keys():
+            n = _normalize_panel_label(lbl) or lbl
+            caption_labels.add(n.strip().lower())
+
+        def _label_in_caption2(n: str) -> bool:
+            nn = (n or "").strip().lower()
+            if not nn:
+                return False
+            if nn in caption_labels:
+                return True
+            m = _re_hallu2.match(r"^(\d+)", nn)
+            if m and m.group(1) in caption_labels:
+                return True
+            m = _re_hallu2.match(r"^([A-H])", nn)
+            if m and m.group(1).lower() in caption_labels:
+                return True
+            return False
+
+        return [
+            m for m in matches
+            if _label_in_caption2(getattr(m, "panel_id", None) or "")
+        ]
 
     def _finalize_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Round 11 post-processing for one paper's emitted rows.
@@ -2871,6 +2946,26 @@ Rules:
             paper_metadata=paper_metadata,
             caption_pairs=m3_caption_pairs,
         )
+
+        # Round 12 (Bug 7 fix): classical-path over-emission filter.
+        # The segmenter over-segments plates and OCR mis-reads some crop
+        # labels, so the classical branch can emit rows whose panel_id
+        # is NOT mentioned in the caption. Live smoke on Pouille 2014
+        # pl02 found 4 phantom rows (pid=10a/10b/11b/11c) that the
+        # caption-derived pair_lookup rejects. Apply the same
+        # hallucination filter used for the LLM-first branch (above).
+        if matches and (m3_caption_pairs or caption.caption):
+            pre = len(matches)
+            matches = self._filter_classical_hallucinations(
+                matches, caption, paper_id, figure_id,
+            )
+            dropped = pre - len(matches)
+            if dropped:
+                logger.info(
+                    "Classical hallucination filter %s/%s: dropped %d/%d "
+                    "rows whose panel_id is not in the caption",
+                    paper_id, figure_id, dropped, pre,
+                )
 
         # ---- M3 Stage 4 (per-panel matching) with stage 1 caption context ----
         if self.m3_engine is not None and self.m3_engine._stage_enabled(4):
