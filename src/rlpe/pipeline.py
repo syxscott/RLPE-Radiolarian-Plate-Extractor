@@ -1302,7 +1302,9 @@ class RadiolarianPipeline:
                 od_fulltext_sections=od_result.fulltext_sections,
                 od_figures=figures,
             )
-        return results
+        # Round 11: dedup + drop stub rows + drop empty/invalid rows.
+        # See ``_finalize_rows`` for the bug fixes this addresses.
+        return self._finalize_rows(results)
 
     def _apply_stage3_bbox_crops(
         self,
@@ -2043,7 +2045,136 @@ class RadiolarianPipeline:
                     },
                 }
             )
-        return results
+        # Round 11: post-process pipeline output (dedup + stub-row filter).
+        # See ``_finalize_rows`` docstring for what each rule does.
+        return self._finalize_rows(results)
+
+    # ----- Round 11 post-processing -------------------------------------------------
+    # Stub panel_ids that are NOT real panels — they're container rows
+    # carrying paper-level context (location coordinates for maps,
+    # stratigraphic ranges for range charts, ingestion errors). They
+    # have done their job by the time we reach the end of
+    # ``_process_one_pdf`` (cross-link / range-chart linking pass has
+    # already copied their content to other rows), so we strip them.
+    _STUB_PANEL_IDS = frozenset(
+        {"MAP_CONTEXT", "RANGE_CHART", "_ingestion_od_failed", "_ingestion_grobid_failed"}
+    )
+
+    def _finalize_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Round 11 post-processing for one paper's emitted rows.
+
+        Three bug fixes in one pass:
+
+          Bug 1 (panel_id dup with different panel_path): the
+            segmenter over-segments real panels and OCR mis-reads
+            their labels, so multiple distinct crops end up with the
+            same (figure_id, panel_id). Consumers aggregating on
+            ``(figure_id, panel_id)`` see them as one panel but our
+            rows.jsonl emits N copies. Fix: dedup by (figure_id,
+            panel_id) keeping the highest-confidence row. Ties broken
+            by panel_score, then row index.
+
+          Bug 3 (MAP_CONTEXT / RANGE_CHART / _ingestion_*): these
+            are stub rows from ``_process_map`` / ``_process_range_chart``
+            / ingestion-failure paths. Their metadata has been copied
+            into the real panel rows by the cross-link pass, so the
+            stubs themselves can be safely dropped from ``results``
+            without losing information. Without this, eval sees them
+            as fake panels with ``species=None``.
+
+          Bug 4 (empty species, no panel_path): when LLM-first path
+            returns a row with ``species=None`` AND no ``panel_path``
+            (caption-parser-only row that didn't get a match), the row
+            carries no signal. Drop it.
+
+          Bug 6 (invalid panel_id format): the parser occasionally
+            emits multi-label strings like ``"10, 11"``. The round-9
+            panel_id shape regex requires 1-3 digits + optional
+            trailing letter — anything that fails the regex is
+            almost certainly a parser artifact. Drop these rows.
+
+        Order matters: dedup first (so a duplicate is treated as a
+        single row), then drop stubs/invalids.
+        """
+        import re as _re_stub
+        SHAPE = _re_stub.compile(r"^(?:[A-H]|[1-9]\d{0,2}[a-z]?|0)$")
+
+        # Phase 1: dedup by (figure_id, panel_id) keeping best row.
+        # Skip stub panel_ids — they should be unique (one per figure)
+        # but they shouldn't shadow real panel rows. We dedup them
+        # separately.
+        real_rows: list[dict[str, Any]] = []
+        stub_rows: list[dict[str, Any]] = []
+        for r in rows:
+            if r.get("panel_id") in self._STUB_PANEL_IDS:
+                stub_rows.append(r)
+            else:
+                real_rows.append(r)
+
+        best_by_key: dict[tuple[str, str | None], dict[str, Any]] = {}
+        for r in real_rows:
+            key = (r.get("figure_id", ""), r.get("panel_id"))
+            cur = best_by_key.get(key)
+            if cur is None:
+                best_by_key[key] = r
+                continue
+            # Higher confidence wins; ties broken by panel_score
+            # (classical detector score), then by first-seen (lower idx).
+            r_conf = float(r.get("confidence") or 0.0)
+            c_conf = float(cur.get("confidence") or 0.0)
+            if r_conf > c_conf:
+                best_by_key[key] = r
+            elif r_conf == c_conf:
+                r_score = float((r.get("metadata") or {}).get("panel_score") or 0.0)
+                c_score = float((cur.get("metadata") or {}).get("panel_score") or 0.0)
+                if r_score > c_score:
+                    best_by_key[key] = r
+
+        deduped = list(best_by_key.values())
+
+        # Phase 2: drop empty-signal rows and invalid panel_ids.
+        kept: list[dict[str, Any]] = []
+        for r in deduped:
+            pid = r.get("panel_id")
+            # Skip rows where panel_id is None / empty / invalid format.
+            if not pid or not isinstance(pid, str) or not SHAPE.fullmatch(pid.strip()):
+                logger.debug(
+                    "Drop row with invalid panel_id=%r (fig=%s)",
+                    pid, r.get("figure_id"),
+                )
+                continue
+            # Skip rows with no signal: no species AND no panel_path.
+            # (Stub rows already filtered in Phase 1; this catches
+            # LLM-first rows where M3 said "not a radiolarian" and
+            # the caption-parser couldn't fill in a species either.)
+            if not r.get("species") and not r.get("panel_path"):
+                logger.debug(
+                    "Drop empty row (no species, no panel_path): fig=%s pid=%s",
+                    r.get("figure_id"), pid,
+                )
+                continue
+            kept.append(r)
+
+        dropped_real = len(real_rows) - len(kept)
+        if dropped_real:
+            logger.info(
+                "Finalize rows: dropped %d invalid/empty/duplicate rows; kept %d",
+                dropped_real, len(kept),
+            )
+
+        # Phase 3: stubs. Cross-link / range-chart linking pass has
+        # already merged stub content (location names, range info)
+        # into real rows' metadata.matched_location / geology_links.
+        # The stub row itself has no species, no real panel_id, and
+        # would pollute eval as a fake panel — drop it entirely.
+        dropped_stubs = len(stub_rows)
+        if dropped_stubs:
+            logger.debug(
+                "Finalize rows: dropped %d stub rows (MAP_CONTEXT / "
+                "RANGE_CHART / _ingestion_*)", dropped_stubs,
+            )
+
+        return kept
 
     # ---- LLM-first extraction (new architecture) --------------------------------
     # When an LLM backend is available, try to extract ALL panel→species mappings
@@ -2426,6 +2557,52 @@ Rules:
                                 filled,
                                 added,
                             )
+                # Round 11 (Bug 2 fix): filter M3-returned panels whose
+                # label doesn't appear in the caption-derived pair set.
+                # M3 frequently invents panel_ids for plates whose
+                # caption enumerates fewer panels than the segmenter
+                # finds — e.g. Pouille 2014 has 19 visible panel
+                # regions but the caption only lists 6 species, so M3
+                # invents pid=2,4,7,9,10,11,13,14b out of thin air.
+                # The hybrid path above fills species from the caption
+                # but the panel_id itself stays hallucinated; this filter
+                # drops M3 rows whose labels are NOT mentioned in
+                # the caption. Tolerant of OCR variants (1 vs 1a vs 01)
+                # via numeric/letter prefix match.
+                if llm_results and pair_lookup:
+                    import re as _re_hallu
+
+                    caption_labels: set[str] = set()
+                    for lbl in pair_lookup.keys():
+                        n = _normalize_panel_label(lbl) or lbl
+                        caption_labels.add(n.strip().lower())
+
+                    def _label_in_caption(n: str) -> bool:
+                        nn = (n or "").strip().lower()
+                        if not nn:
+                            return False
+                        if nn in caption_labels:
+                            return True
+                        m = _re_hallu.match(r"^(\d+)", nn)
+                        if m and m.group(1) in caption_labels:
+                            return True
+                        m = _re_hallu.match(r"^([A-H])", nn)
+                        if m and m.group(1).lower() in caption_labels:
+                            return True
+                        return False
+
+                    pre_filter = len(llm_results)
+                    llm_results = [
+                        r for r in llm_results
+                        if _label_in_caption(r.get("panel_id") or "")
+                    ]
+                    dropped = pre_filter - len(llm_results)
+                    if dropped:
+                        logger.info(
+                            "Hallucination filter %s/%s: dropped %d/%d "
+                            "panels whose labels are not in the caption set",
+                            paper_id, figure_id, dropped, pre_filter,
+                        )
                 # Enrich LLM-first results with scale_bar + geology_links.
                 # Without this, the LLM-first path skips the metadata
                 # enrichment that the classical path applies at the end of
