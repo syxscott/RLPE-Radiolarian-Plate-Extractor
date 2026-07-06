@@ -76,7 +76,11 @@ def test_make_error_result_redacts():
         def __str__(self) -> str:
             return "API key not valid: sk-ant-api03-" + "a" * 48 + " (request-id: abc)"
 
-    backend = MiniMaxM3Backend(api_key="placeholder")
+    # ``local_only`` policy bypasses anthropic SDK init entirely — the
+    # test only exercises ``_make_error_result`` (pure string
+    # manipulation), so the SDK is irrelevant. This lets the test run
+    # in air-gapped / CI environments that don't install anthropic.
+    backend = MiniMaxM3Backend(api_key="placeholder", data_outbound_policy="local_only")
     res = backend._make_error_result(FakeAuthError())
     assert "sk-ant-" not in res["error"], f"API key leaked in error: {res['error']!r}"
     assert "sk-ant-" not in res["reasoning"], f"API key leaked in reasoning: {res['reasoning']!r}"

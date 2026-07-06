@@ -66,12 +66,32 @@ class TestP1PouilleReplayedOnV18Cached:
     The fix rejects: panel_ids that are pure-digits >= 1, pure
     A-H markers, or digit+letter combinations. It keeps digits
     (e.g. '1', '5', '12') and accepts A-H (e.g. 'A', 'B').
+
+    Skips when ``work/combined_9_v18_FINAL.jsonl`` is absent. The
+    cached corpus is gitignored (4 MB and regenerated each pipeline
+    run); CI clones without it. The skip is per-test so a single
+    missing corpus doesn't fail the whole replay class.
     """
 
     @pytest.fixture
     def cached_pouille(self):
+        if not V18_CACHED.exists():
+            pytest.skip(
+                f"v18 cached corpus not found at {V18_CACHED}. "
+                f"Run the pipeline once and force-add "
+                f"`work/combined_9_v18_FINAL.jsonl`, or this replay "
+                f"test will skip."
+            )
         rows = _load_jsonl(V18_CACHED)
-        return [r for r in rows if r.get("paper_id") == "2225994d55021328"]
+        pouille = [r for r in rows if r.get("paper_id") == "2225994d55021328"]
+        if not pouille:
+            pytest.skip(
+                "v18 cached corpus exists but contains no pouille "
+                "rows (paper_id=2225994d55021328). The cached "
+                "corpus may have been regenerated with a different "
+                "paper_id."
+            )
+        return pouille
 
     @pytest.fixture
     def gold_pouille(self):
