@@ -102,7 +102,18 @@ class TaxonRecognizer:
             try:
                 with self._predict_lock:
                     result = engine.predict(text)
+                # Guard: TaxoNERD sometimes returns a string / None / an
+                # object whose elements aren't dicts (model-mismatch error
+                # path, off-spec version). The previous version assumed
+                # ``item.get(...)`` always worked and silently swallowed
+                # the AttributeError — that masked model-mismatch bugs
+                # and produced empty entity lists. Skip non-dict items
+                # explicitly so the loop survives a bad element shape.
+                if not isinstance(result, (list, tuple)):
+                    result = []
                 for item in result:
+                    if not isinstance(item, dict):
+                        continue
                     entities.append(
                         TaxonEntity(
                             text=item.get("text", ""),

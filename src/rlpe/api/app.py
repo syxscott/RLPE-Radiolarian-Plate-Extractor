@@ -1202,7 +1202,14 @@ def test_llm(req: TestLLMRequest | None = None) -> dict[str, Any]:
             "error_type": result.get("error_type") or "Unknown",
             "latency_ms": latency_ms,
         }
-    usage = result.get("usage") or {}
+    # ``result.get("usage") or {}`` was wrong: when the API returns
+    # ``usage = {"input_tokens": 0, "output_tokens": 0}`` (a valid
+    # zero-token response) the ``or {}`` treats the dict as falsy and
+    # replaces it with {}, which then crashes the .get("input_tokens")
+    # call below when the dict literal is in fact correct. Use an
+    # explicit type check instead.
+    usage_raw = result.get("usage")
+    usage = usage_raw if isinstance(usage_raw, dict) else {}
     return {
         "ok": True,
         "latency_ms": latency_ms,
@@ -1568,9 +1575,25 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                     # way, the worker is no longer blocked).
                     if job_id not in FALLBACK_PENDING:
                         return handler.default_action
-                decision = (
-                    FALLBACK_PENDING.pop(job_id, {}).get("decision") or handler.default_action
-                )
+                # Race fix: ``FALLBACK_PENDING.pop(job_id, {})`` was
+                # dropping the user's decision when ``post_MiniMax_fallback``
+                # had already popped the entry on another thread (the
+                # ``/MiniMax-fallback`` handler pops, then this block also
+                # pops, and the second pop returns ``{}`` which silently
+                # overrides the real decision with ``default_action``).
+                # Read the decision WITHOUT popping; the cleanup is
+                # idempotent. If the entry was already removed, ``.get``
+                # returns ``{}`` and the ``or`` falls back to the default
+                # action — but only when no real decision was posted, which
+                # is the correct behaviour.
+                entry = FALLBACK_PENDING.get(job_id) or {}
+                decision = entry.get("decision") or handler.default_action
+                # Cleanup is best-effort; ignore KeyError if another
+                # thread already removed the entry.
+                try:
+                    del FALLBACK_PENDING[job_id]
+                except KeyError:
+                    pass
                 return decision
 
             handler.on_error = _web_fallback_popup

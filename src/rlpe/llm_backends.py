@@ -20,6 +20,49 @@ logger = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 _JSON_ARR_RE = re.compile(r"\[.*?\]", re.DOTALL)
 
+# Match Anthropic / MiniMax / OpenAI style API keys (sk-ant-..., sk-...,
+# plus generic 40+ char sk- prefixes). Anthropic's actual key shape is
+# ``sk-ant-api03-<48 alnum>``; MiniMax / OpenAI use ``sk-<30+ alnum>`` or
+# ``sk-proj-<...>``. We use a conservative pattern that:
+#   - requires a non-key character (or start) immediately before ``sk-``,
+#   - requires the key body to be at least 16 alnum characters long,
+#   - allows hyphens in the key body but treats any run of
+#     ``-ascii_lower`` as a potential suffix (so a stray ``-suffix`` is
+#     not consumed as part of the key).
+_API_KEY_PATTERNS = (
+    # Generic ``sk-<16+ chars>``: stops at any non-alnum, non-underscore,
+    # non-trailing-hyphen boundary.
+    re.compile(r"(?<![A-Za-z0-9_])sk-(?=[A-Za-z0-9]{16})[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+){0,3}"),
+    re.compile(
+        r"(?<![A-Za-z0-9_])sk-ant-api03-[A-Za-z0-9]{20,}"
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9_])sk-ant-(?!api03-)[A-Za-z0-9]{16,}"
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9_])sk-proj-[A-Za-z0-9]{16,}"
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9_])sk-cp-[A-Za-z0-9]{16,}"
+    ),
+)
+
+
+def _redact_api_keys(text: str) -> str:
+    """Replace any API-key-looking substrings with ``[REDACTED]``.
+
+    The Anthropic SDK embeds the offending key in its 401/403 messages
+    and that string flows into ``str(exc)`` and ultimately into
+    ``match.metadata["gemma_error"]``. Without this redaction, the user's
+    raw key would land in ``matches.jsonl`` and the Web UI. We never want
+    secrets in the manifest even if the SDK leaks them.
+    """
+    if not text:
+        return text
+    for pat in _API_KEY_PATTERNS:
+        text = pat.sub("[REDACTED]", text)
+    return text
+
 
 # ----------------------------------------------------------------------
 # SSRF guard for user-supplied LLM hosts
@@ -813,13 +856,20 @@ class MiniMaxM3Backend(BaseLLMBackend):
         return parsed
 
     def _make_error_result(self, exc: Exception) -> dict[str, Any]:
+        # Security: ``str(exc)`` from the Anthropic SDK can include the
+        # raw API key in the body of 401/403 messages (e.g. "API key not
+        # valid: sk-ant-...redacted"). We strip common key prefixes before
+        # the message lands in ``match.metadata["gemma_error"]`` and gets
+        # written to matches.jsonl where the user can inspect it.
+        raw_exc = str(exc)
+        safe_exc = _redact_api_keys(raw_exc)
         return {
             "label": None,
             "species": None,
             "confidence": 0.0,
-            "reasoning": f"MiniMax API error: {type(exc).__name__}: {exc}",
+            "reasoning": f"MiniMax API error: {type(exc).__name__}: {safe_exc}",
             "fallback_used": True,
-            "error": str(exc),
+            "error": safe_exc,
             "error_type": type(exc).__name__,
         }
 
@@ -1082,9 +1132,14 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
     #   * local_only              -> key is optional; the backend will
     #                                short-circuit every outbound call
     policy = str(extra.get("data_outbound_policy", "api_full"))
+    # NOTE: ANTHROPIC_API_KEY is intentionally NOT in this fallback chain
+    # — it's the key for the real Anthropic API, not for MiniMax. On a
+    # host that has both, falling back to ANTHROPIC_API_KEY would silently
+    # send the wrong key to MiniMax and surface as a confusing 401. MiniMax
+    # supports the Anthropic wire protocol but uses its own keyspace; we
+    # only accept its own env vars.
     api_key = (
         extra.get("MiniMax_api_key")
-        or os.environ.get("ANTHROPIC_API_KEY")
         or os.environ.get("MiniMax_API_KEY")
         or os.environ.get("MINIMAX_API_KEY")
     )
@@ -1112,12 +1167,58 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
         base_url=base_url,
         model=model,
         data_outbound_policy=policy,
-        max_output_tokens=int(extra.get("MiniMax_max_output_tokens", 2048)),
-        thinking_budget_tokens=int(extra.get("MiniMax_thinking_budget_tokens", 1024)),
-        enable_thinking=bool(extra.get("MiniMax_enable_thinking", True)),
-        timeout_sec=int(extra.get("MiniMax_timeout_sec", 120)),
-        temperature=float(extra.get("gemma_temperature", 0.1)),
-        top_p=float(extra.get("gemma_top_p", 0.9)),
-        max_retries=int(extra.get("MiniMax_max_retries", 3)),
-        max_concurrent=int(extra.get("MiniMax_max_concurrent", 8)),
+        max_output_tokens=_coerce_int(
+            extra.get("MiniMax_max_output_tokens"), default=2048, name="MiniMax_max_output_tokens"
+        ),
+        thinking_budget_tokens=_coerce_int(
+            extra.get("MiniMax_thinking_budget_tokens"), default=1024, name="MiniMax_thinking_budget_tokens"
+        ),
+        enable_thinking=_coerce_bool(extra.get("MiniMax_enable_thinking"), default=True),
+        timeout_sec=_coerce_int(
+            extra.get("MiniMax_timeout_sec"), default=120, name="MiniMax_timeout_sec"
+        ),
+        temperature=_coerce_float(
+            extra.get("gemma_temperature"), default=0.1, name="gemma_temperature"
+        ),
+        top_p=_coerce_float(extra.get("gemma_top_p"), default=0.9, name="gemma_top_p"),
+        max_retries=_coerce_int(
+            extra.get("MiniMax_max_retries"), default=3, name="MiniMax_max_retries"
+        ),
+        max_concurrent=_coerce_int(
+            extra.get("MiniMax_max_concurrent"), default=8, name="MiniMax_max_concurrent"
+        ),
     )
+
+
+def _coerce_int(value: Any, *, default: int, name: str) -> int:
+    """Coerce ``value`` to int with a safe fallback. A non-numeric string
+    or None falls back to ``default`` and logs at DEBUG (not WARNING — these
+    are common config typos, not operator errors).
+    """
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.debug("MiniMax config: %s=%r is not an int; using default %d", name, value, default)
+        return default
+
+
+def _coerce_float(value: Any, *, default: float, name: str) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.debug("MiniMax config: %s=%r is not a float; using default %f", name, value, default)
+        return default
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "on")
+    return bool(value)

@@ -13,9 +13,25 @@ function _safeParseInt(value, fallback) {
     const n = parseInt(value, 10);
     return Number.isFinite(n) ? n : fallback;
 }
+
+// Round 13: wrap every localStorage call so quota errors / Safari
+// private-mode throws don't bubble up and break the surrounding click
+// handler. ``getItem`` returning null when access is denied is
+// indistinguishable from "key not set", so callers should treat both
+// as the default — which is what ``||`` already gives us for
+// ``apiBaseUrl``. The wrapper keeps the same shape but never throws.
+function _safeStorageGet(key) {
+    try { return localStorage.getItem(key); } catch (_) { return null; }
+}
+function _safeStorageSet(key, value) {
+    try { localStorage.setItem(key, value); return true; } catch (_) { return false; }
+}
+function _safeStorageRemove(key) {
+    try { localStorage.removeItem(key); return true; } catch (_) { return false; }
+}
 const CONFIG = {
-    apiBaseUrl: localStorage.getItem('apiBaseUrl') || 'http://localhost:8000',
-    refreshInterval: _safeParseInt(localStorage.getItem('refreshInterval'), 3),
+    apiBaseUrl: _safeStorageGet('apiBaseUrl') || 'http://localhost:8000',
+    refreshInterval: _safeParseInt(_safeStorageGet('refreshInterval'), 3),
 };
 
 let uploadedFiles = [];
@@ -204,12 +220,16 @@ pdfInput.addEventListener('change', (e) => {
 });
 
 function addFiles(files) {
-    const pdfFiles = files.filter(f => f.type === 'application/pdf' || f.name.endsWith('.pdf'));
+    // Case-insensitive .pdf extension: macOS / iOS Finder and many
+    // academic-paper repos serve files with upper-case `.PDF` (especially
+    // when the original was scanned/OCR'd). The previous
+    // ``f.name.endsWith('.pdf')`` silently dropped them.
+    const pdfFiles = files.filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
     if (pdfFiles.length === 0) {
         showNotification('请选择 PDF 文件', 'error');
         return;
     }
-    
+
     uploadedFiles.push(...pdfFiles);
     renderFileList();
     document.getElementById('process-btn').disabled = uploadedFiles.length === 0;
@@ -365,8 +385,24 @@ document.getElementById('process-btn').addEventListener('click', async () => {
         uploadedFiles = [];
         renderFileList();
 
-        // Switch to jobs tab
-        document.querySelector('[data-tab="jobs"]').click();
+        // Switch to jobs tab. Use ?. so a missing button (e.g. markup
+        // refactor during deploy) doesn't throw and bypass the
+        // startJobPolling() call below. Without the guard, a TypeError
+        // here would land in the outer catch and uploadedFiles would not
+        // be cleared (handled below the click), confusing the user.
+        const jobsTab = document.querySelector('[data-tab="jobs"]');
+        if (jobsTab) {
+            jobsTab.click();
+        } else {
+            // Fall back to a direct tab-pane show so the user still sees
+            // the new jobs in the list.
+            const jobsPane = document.getElementById('jobs-tab');
+            if (jobsPane) {
+                document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+                document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+                jobsPane.classList.remove('hidden');
+            }
+        }
 
         // Start polling
         startJobPolling();
@@ -2103,8 +2139,9 @@ document.getElementById('save-settings-btn')?.addEventListener('click', () => {
         return;
     }
 
-    localStorage.setItem('apiBaseUrl', apiUrl);
-    localStorage.setItem('refreshInterval', String(refreshSec));
+    // Quota / private-mode safe — see _safeStorageSet.
+    _safeStorageSet('apiBaseUrl', apiUrl);
+    _safeStorageSet('refreshInterval', String(refreshSec));
 
     CONFIG.apiBaseUrl = apiUrl;
     CONFIG.refreshInterval = refreshSec;
@@ -2229,16 +2266,16 @@ const ONBOARDING_DISMISSED_KEY = 'rlpe.onboardingDismissed';
 function initOnboardingBanner() {
     const banner = document.getElementById('onboarding-banner');
     if (!banner) return;
-    const dismissed = localStorage.getItem(ONBOARDING_DISMISSED_KEY) === '1';
+    const dismissed = _safeStorageGet(ONBOARDING_DISMISSED_KEY) === '1';
     if (!dismissed) {
         banner.classList.remove('hidden');
     }
     document.getElementById('onboarding-close-btn')?.addEventListener('click', () => {
         banner.classList.add('hidden');
-        localStorage.setItem(ONBOARDING_DISMISSED_KEY, '1');
+        _safeStorageSet(ONBOARDING_DISMISSED_KEY, '1');
     });
     document.getElementById('show-onboarding-btn')?.addEventListener('click', () => {
-        localStorage.removeItem(ONBOARDING_DISMISSED_KEY);
+        _safeStorageRemove(ONBOARDING_DISMISSED_KEY);
         banner.classList.remove('hidden');
         // Switch to the upload tab so the banner is visible.
         document.querySelector('[data-tab="upload"]')?.click();
@@ -2255,13 +2292,13 @@ const VIEW_PREF_KEY = 'rlpe.configView';
 function initViewToggle() {
     const buttons = document.querySelectorAll('.view-toggle-btn');
     if (!buttons.length) return;
-    const savedView = localStorage.getItem(VIEW_PREF_KEY) || 'basic';
+    const savedView = _safeStorageGet(VIEW_PREF_KEY) || 'basic';
     applyConfigView(savedView);
     buttons.forEach(btn => {
         btn.addEventListener('click', () => {
             const view = btn.dataset.view;
             applyConfigView(view);
-            localStorage.setItem(VIEW_PREF_KEY, view);
+            _safeStorageSet(VIEW_PREF_KEY, view);
         });
     });
 }

@@ -19,6 +19,7 @@ import csv
 import io
 import zipfile
 from dataclasses import dataclass
+from html import escape as _xml_escape
 from pathlib import Path
 
 from ..schema_models import PanelRecord, RunOutput
@@ -118,22 +119,29 @@ def _build_meta_xml(opts: DwCAOptions) -> str:
 
 
 def _build_eml_xml(run: RunOutput) -> str:
-    """Build a minimal EML describing the dataset as a whole."""
+    """Build a minimal EML describing the dataset as a whole.
+
+    All paper-controlled fields (title, authors) are XML-escaped via
+    :func:`html.escape`. Without this, a paper title containing ``&``,
+    ``<``, ``>``, or ``]]>`` would produce malformed XML; a paper with a
+    maliciously-crafted title could inject arbitrary XML (XSS in
+    downstream consumers like GBIF that render the EML in a browser).
+    """
     prov = run.provenance
     papers = {p.paper_id: p.paper_metadata for p in run.panels if p.paper_metadata}
     title_parts = []
     for pm in papers.values():
         if pm and pm.title:
-            title_parts.append(f"{pm.title}")
+            title_parts.append(_xml_escape(pm.title))
     dataset_title = (
-        f"RLPE {prov.pipeline_version} extraction of "
+        f"RLPE {_xml_escape(prov.pipeline_version or '')} extraction of "
         f"{len(papers)} paper(s), {len(run.panels)} panel(s)"
     )
     abstract = (
         "Automatically extracted radiolarian specimen records from "
         "published literature. Provenance: pipeline "
-        f"{prov.pipeline_version} (commit {prov.git_commit}), "
-        f"schema {prov.schema_version}, run at {prov.timestamp_utc}."
+        f"{_xml_escape(prov.pipeline_version or '')} (commit {_xml_escape(prov.git_commit or '')}), "
+        f"schema {_xml_escape(prov.schema_version or '')}, run at {_xml_escape(prov.timestamp_utc or '')}."
     )
     creators_xml = ""
     for pm in papers.values():
@@ -141,7 +149,7 @@ def _build_eml_xml(run: RunOutput) -> str:
             continue
         for author in pm.authors:
             creators_xml += (
-                f"    <creator><individualName><surName>{author}</surName>"
+                f"    <creator><individualName><surName>{_xml_escape(author)}</surName>"
                 f"</individualName></creator>\n"
             )
     return (
@@ -152,7 +160,7 @@ def _build_eml_xml(run: RunOutput) -> str:
         "  <dataset>\n"
         f"    <title>{dataset_title}</title>\n"
         f"    <abstract><para>{abstract}</para></abstract>\n"
-        "    <pubDate>" + prov.timestamp_utc[:10] + "</pubDate>\n"
+        "    <pubDate>" + (prov.timestamp_utc or "")[:10] + "</pubDate>\n"
         "    <language>eng</language>\n"
         f"    <creatorList>\n{creators_xml}    </creatorList>\n"
         "  </dataset>\n"

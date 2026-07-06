@@ -106,10 +106,15 @@ Sample PR-SB30 (Barremian). Fig. 7 Pseudodictyomitra leptoconica (FOREMAN). Fig.
     print("=" * 70)
     print("v21 simulated aggregate F1 (v19 + pl09 patch; routing fix verified)")
     print("=" * 70)
-    print(f"  F1:           {agg['species_f1']:.4f}")
-    print(f"  panel_match:  {agg['panel_match_rate']:.4f}")
-    print(f"  hard F1:      {agg['hard_species_f1']:.4f}")
-    print(f"  norm_gap:     {agg['normalisation_gap']:.4f}")
+    # NOTE: evaluate() emits 'species_f1' (soft, exact-string match) plus
+    # 'species_precision' / 'species_recall' / 'exact_match_rate'. It does
+    # NOT emit 'hard_species_f1' or 'normalisation_gap' — use .get() with
+    # a default so a missing key doesn't crash the script.
+    print(f"  F1:           {agg.get('species_f1', 0.0):.4f}")
+    print(f"  precision:    {agg.get('species_precision', 0.0):.4f}")
+    print(f"  recall:       {agg.get('species_recall', 0.0):.4f}")
+    print(f"  panel_match:  {agg.get('panel_match_rate', 0.0):.4f}")
+    print(f"  exact_match:  {agg.get('exact_match_rate', 0.0):.4f}")
     return 0
 
 
