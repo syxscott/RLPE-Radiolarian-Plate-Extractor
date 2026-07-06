@@ -156,7 +156,19 @@ class NeuralGraphMatcher:
         self.is_trained = False
         if checkpoint_path:
             try:
-                ckpt = torch.load(checkpoint_path, map_location=self.device)
+                # Round 15 audit: weights_only=True blocks arbitrary code
+                # execution via pickle deserialization (PyTorch 2.6+).
+                # Fallback to legacy behaviour for old checkpoints that
+                # contain pickled objects (e.g. optimiser state).
+                try:
+                    ckpt = torch.load(
+                        checkpoint_path,
+                        map_location=self.device,
+                        weights_only=True,
+                    )
+                except TypeError:
+                    # Older PyTorch (<1.13) doesn't accept weights_only.
+                    ckpt = torch.load(checkpoint_path, map_location=self.device)
                 state = ckpt.get("state_dict", ckpt)
                 self.model.load_state_dict(state, strict=False)
                 self.is_trained = True

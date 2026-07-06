@@ -2863,7 +2863,13 @@ Rules:
                 self.config.panels_dir() / paper_id / (figure_id or f"fig_{figure_index}")
             )
             panel_path = panel_dir / f"panel_{panel_index:02d}.png"
-            cv2.imwrite(str(panel_path), crop)
+            # Round 15 audit: cv2.imwrite returns False on failure
+            # (disk full, invalid path, encoding error) but the previous
+            # code stored image_path anyway — leaving the panel referenced
+            # in results with no actual crop file on disk.
+            if not cv2.imwrite(str(panel_path), crop):
+                logger.warning("cv2.imwrite failed for %s; skipping panel", panel_path)
+                continue
             panel.image_path = str(panel_path)
             panel.region_id = region.region_id
             panel.source_page = region.page_index
@@ -3453,8 +3459,14 @@ Rules:
             # Bug #7 fix: cache the local Gemma4 runtime after the first
             # successful build so subsequent fallbacks don't reload a multi-GB
             # model each time.
+            # Round 15 audit: previous unguarded lazy-init could let two
+            # concurrent MiniMax-fallback workers both see ``None``, both
+            # build the multi-GB Gemma4 model, and OOM the box. Double-
+            # checked locking under self._gemma_lock.
             if self._fallback_gemma_runtime is None:
-                self._fallback_gemma_runtime = self._build_local_gemma_fallback()
+                with self._gemma_lock:
+                    if self._fallback_gemma_runtime is None:
+                        self._fallback_gemma_runtime = self._build_local_gemma_fallback()
             if self._fallback_gemma_runtime is None:
                 logger.warning("Local Gemma4 fallback unavailable; keeping rule results.")
                 for m in result:

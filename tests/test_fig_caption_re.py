@@ -118,8 +118,10 @@ def test_plate_caption_regex_matches_roman_numerals():
     and the pipeline fell into the page-render fallback with
     placeholders — giving boughdiri 0% species F1 in earlier evals.
 
-    After the fix the regex also matches Roman numerals I..XII and the
-    helper maps them back to 1..12.
+    After the fix the regex also matches Roman numerals I..XIV and
+    the helper maps them back to 1..14 (Round 15 audit extended
+    the dict from XII to XIV — previously XIII/XIV silently
+    returned 0 and dropped the caption).
     """
     from rlpe.opendataloader_extractor import (
         _PLATE_CAPTION_RE,
@@ -157,16 +159,16 @@ def test_plate_caption_regex_matches_roman_numerals():
     assert _PLATE_CAPTION_RE.match("Explanation of Plate VI") is not None
 
     # Roman XIII..XX are NOT supported (no radiolarian paper in the
-    # gold set has more than 12 plates). If one ever shows up, the
-    # helper returns 0 and the caption is dropped — that is the
-    # documented behaviour and is better than a partial-digit match
-    # that could collide with an Arabic plate number.
+    # Round 15 audit: _ROMAN_TO_INT was extended from XII to XIV, so
+    # plates 13/14 are now recognised. Papers with >14 plates still
+    # fall through (regex caps at XIV — adding XV/XVI would need a
+    # new dict entry).
     m_xiii = _PLATE_CAPTION_RE.match("Plate XIII")
-    # The regex may or may not match; if it does, the helper returns
-    # 0 (no entry in _ROMAN_TO_INT) so the caption is harmlessly
-    # filtered out downstream.
     if m_xiii is not None:
-        assert _plate_number_from_match(m_xiii) == 0
+        assert _plate_number_from_match(m_xiii) == 13
+    m_xiv = _PLATE_CAPTION_RE.match("Plate XIV")
+    if m_xiv is not None:
+        assert _plate_number_from_match(m_xiv) == 14
 
 
 def test_boughdiri2007_finds_plate_i_caption():

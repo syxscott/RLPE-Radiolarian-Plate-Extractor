@@ -47,6 +47,8 @@
         },
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -198,6 +200,8 @@
         },
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -386,6 +390,8 @@
         },
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -440,6 +446,8 @@
         "latitude": {
           "anyOf": [
             {
+              "maximum": 90.0,
+              "minimum": -90.0,
               "type": "number"
             },
             {
@@ -476,6 +484,8 @@
         "longitude": {
           "anyOf": [
             {
+              "maximum": 180.0,
+              "minimum": -180.0,
               "type": "number"
             },
             {
@@ -536,6 +546,8 @@
         "modern_latitude": {
           "anyOf": [
             {
+              "maximum": 90.0,
+              "minimum": -90.0,
               "type": "number"
             },
             {
@@ -548,6 +560,8 @@
         "modern_longitude": {
           "anyOf": [
             {
+              "maximum": 180.0,
+              "minimum": -180.0,
               "type": "number"
             },
             {
@@ -560,6 +574,8 @@
         "paleo_latitude": {
           "anyOf": [
             {
+              "maximum": 90.0,
+              "minimum": -90.0,
               "type": "number"
             },
             {
@@ -572,6 +588,8 @@
         "paleo_longitude": {
           "anyOf": [
             {
+              "maximum": 180.0,
+              "minimum": -180.0,
               "type": "number"
             },
             {
@@ -663,6 +681,8 @@
       "properties": {
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -709,6 +729,8 @@
         "modern_latitude": {
           "anyOf": [
             {
+              "maximum": 90.0,
+              "minimum": -90.0,
               "type": "number"
             },
             {
@@ -721,6 +743,8 @@
         "modern_longitude": {
           "anyOf": [
             {
+              "maximum": 180.0,
+              "minimum": -180.0,
               "type": "number"
             },
             {
@@ -791,6 +815,8 @@
         },
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -821,6 +847,8 @@
         "modern_latitude": {
           "anyOf": [
             {
+              "maximum": 90.0,
+              "minimum": -90.0,
               "type": "number"
             },
             {
@@ -833,6 +861,8 @@
         "modern_longitude": {
           "anyOf": [
             {
+              "maximum": 180.0,
+              "minimum": -180.0,
               "type": "number"
             },
             {
@@ -1334,6 +1364,8 @@
         },
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -1486,6 +1518,8 @@
         },
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -1719,6 +1753,8 @@
         },
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -1804,6 +1840,8 @@
       "properties": {
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -1901,6 +1939,8 @@
         },
         "confidence": {
           "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },

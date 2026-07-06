@@ -106,13 +106,17 @@ def match_panel(gold: GoldPanel, pred_paper_id: str, pred_panel_id: str | None) 
         gold "12" + pred "12a"). Pure-numeric extensions like "5"/"10"
         are distinct panels and must not match. Numeric-prefix-then-letter
         ("A" + "A1") is also rejected because "1" is numeric suffix.
+      - Round 15 audit: Unicode is normalized to ASCII before
+        comparison so a gold "Aethium" and pred "Æthium" match. Real
+        radiolarian names have diacritics that survive OCR in some
+        engines and get stripped in others.
     """
     if gold.paper_id != pred_paper_id:
         return False
     if not gold.panel_id or not pred_panel_id:
         return False
-    g = gold.panel_id.strip()
-    p = pred_panel_id.strip()
+    g = _normalize_panel_id(gold.panel_id)
+    p = _normalize_panel_id(pred_panel_id)
     if not g or not p:
         return False
     if g == p:
@@ -120,3 +124,12 @@ def match_panel(gold: GoldPanel, pred_paper_id: str, pred_panel_id: str | None) 
     if len(g) < len(p):
         return _extension_is_alpha(g, p)
     return _extension_is_alpha(p, g)
+
+
+def _normalize_panel_id(s: str) -> str:
+    """Normalise a panel_id for comparison: strip whitespace and
+    fold Unicode diacritics to ASCII so 'Æthium' == 'Aethium'."""
+    import unicodedata
+
+    stripped = s.strip()
+    return unicodedata.normalize("NFKD", stripped).encode("ascii", "ignore").decode("ascii")

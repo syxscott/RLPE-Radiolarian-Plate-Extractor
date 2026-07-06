@@ -80,7 +80,10 @@ def parse_coordinate(text: str) -> Coordinate | None:
             lon_m = int(m.group("lon_m"))
             lon_s = float(m.group("lon_s"))
             lon = lon_d + lon_m / 60.0 + lon_s / 3600.0
-            if m.group("lon_h") and m.group("lon_h").upper() in ("W", "S"):
+            # Longitude hemisphere is W only — S/E/N are latitude
+            # markers. A previous version accepted ('W', 'S') here,
+            # which double-negated OCR-noisy inputs like '110°S'.
+            if m.group("lon_h") and m.group("lon_h").upper() == "W":
                 lon = -lon
             if _valid(lat, lon):
                 return Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
@@ -103,7 +106,10 @@ def parse_coordinate(text: str) -> Coordinate | None:
             lon = float(m.group("lon"))
             if m.group("lat_h") and m.group("lat_h").upper() in ("S", "W"):
                 lat = -lat
-            if m.group("lon_h") and m.group("lon_h").upper() in ("W", "S"):
+            # Longitude hemisphere is W only — S/E/N are latitude
+            # markers. A previous version accepted ('W', 'S') here,
+            # which double-negated OCR-noisy inputs like '110°S'.
+            if m.group("lon_h") and m.group("lon_h").upper() == "W":
                 lon = -lon
             if _valid(lat, lon):
                 return Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
@@ -136,7 +142,10 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
             )
             if m.group("lat_h") and m.group("lat_h").upper() in ("S", "W"):
                 lat = -lat
-            if m.group("lon_h") and m.group("lon_h").upper() in ("W", "S"):
+            # Longitude hemisphere is W only — S/E/N are latitude
+            # markers. A previous version accepted ('W', 'S') here,
+            # which double-negated OCR-noisy inputs like '110°S'.
+            if m.group("lon_h") and m.group("lon_h").upper() == "W":
                 lon = -lon
             if _valid(lat, lon):
                 out.append(
@@ -150,7 +159,10 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
             lon = float(m.group("lon"))
             if m.group("lat_h") and m.group("lat_h").upper() in ("S", "W"):
                 lat = -lat
-            if m.group("lon_h") and m.group("lon_h").upper() in ("W", "S"):
+            # Longitude hemisphere is W only — S/E/N are latitude
+            # markers. A previous version accepted ('W', 'S') here,
+            # which double-negated OCR-noisy inputs like '110°S'.
+            if m.group("lon_h") and m.group("lon_h").upper() == "W":
                 lon = -lon
             if _valid(lat, lon):
                 out.append(

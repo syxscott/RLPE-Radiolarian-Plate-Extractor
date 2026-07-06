@@ -44,7 +44,7 @@ class ScaleBarRecord(BaseModel):
     source: str | None = None  # "caption" | "ocr" | "image"
     pixel_length: float | None = None
     um_per_px: float | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class GeologyLinkRecord(BaseModel):
@@ -66,12 +66,12 @@ class GeologyLinkRecord(BaseModel):
     lithology: str | None = None
     locality: str | None = None
     country: str | None = None
-    latitude: float | None = None
-    longitude: float | None = None
-    modern_latitude: float | None = None
-    modern_longitude: float | None = None
-    paleo_latitude: float | None = None
-    paleo_longitude: float | None = None
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
+    modern_latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    modern_longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
+    paleo_latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    paleo_longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     plate_id: str | None = None
     reconstruction_model: str | None = None
     reconstruction_age_ma: float | None = None
@@ -79,7 +79,7 @@ class GeologyLinkRecord(BaseModel):
     section_type: str | None = None
     section_title: str | None = None
     evidence_text: str | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     biozone: str | None = None  # optional biozone name (e.g. "N. optima Zone")
 
 
@@ -100,7 +100,7 @@ class PaperMetadataRecord(BaseModel):
     publisher: str | None = None
     page_count: int | None = None
     source: str = ""  # "grobid" | "opendataloader" | "none"
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class ProvenanceRecord(BaseModel):
@@ -143,7 +143,7 @@ class PaperRecord(BaseModel):
     source_pdf: str | None = None
     pdf_sha256: str | None = None
     source: str = ""
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class ReviewFlagRecord(BaseModel):
@@ -172,7 +172,7 @@ class FigureRecord(BaseModel):
     bbox: list[int] | None = Field(default=None, min_length=4, max_length=4)
     scale_bar: ScaleBarRecord | None = None
     panel_ids: list[str] = Field(default_factory=list)
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     needs_review: bool = False
     review_reasons: list[str] = Field(default_factory=list)
 
@@ -193,7 +193,7 @@ class TaxonRecord(BaseModel):
     order: str | None = None
     class_name: str | None = None
     source: str | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     needs_review: bool = False
     review_reasons: list[str] = Field(default_factory=list)
 
@@ -210,7 +210,7 @@ class SampleRecord(BaseModel):
     geology_context_id: str | None = None
     evidence_text: str | None = None
     page_index: int | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class GeologyContextRecord(BaseModel):
@@ -232,7 +232,7 @@ class GeologyContextRecord(BaseModel):
     biozone: str | None = None
     locality_id: str | None = None
     evidence_text: str | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class LocalityRecord(BaseModel):
@@ -244,11 +244,11 @@ class LocalityRecord(BaseModel):
     country: str | None = None
     region: str | None = None
     section_name: str | None = None
-    modern_latitude: float | None = None
-    modern_longitude: float | None = None
+    modern_latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    modern_longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     coordinate_source: str | None = None
     geocoding_source: str | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class PaleoCoordinateRecord(BaseModel):
@@ -257,15 +257,15 @@ class PaleoCoordinateRecord(BaseModel):
     model_config = StrictModel
     paleo_coordinate_id: str
     locality_id: str | None = None
-    modern_latitude: float | None = None
-    modern_longitude: float | None = None
+    modern_latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    modern_longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     reconstruction_age_ma: float | None = None
     paleo_latitude: float | None = None
     paleo_longitude: float | None = None
     plate_id: str | None = None
     reconstruction_model: str | None = None
     method: str | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     backend_status: str | None = None
 
 

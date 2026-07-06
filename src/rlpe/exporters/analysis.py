@@ -29,6 +29,26 @@ from typing import Any
 
 from ..schema_models import PanelRecord, RunOutput
 
+# Round 15 audit: formula-injection sanitiser (CWE-1236).
+_CSV_DANGER_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitise_csv_cell(value: Any) -> Any:
+    """Prefix a leading ``=``/``+``/``-``/``@``/TAB with a single quote
+    so Excel/LibreOffice don't treat the cell as a formula.
+
+    Numeric values pass through unchanged (they can't be formulas).
+    None becomes the empty string.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (int, float, bool)):
+        return value
+    s = str(value)
+    if s and s[0] in _CSV_DANGER_PREFIXES:
+        return "'" + s
+    return s
+
 
 @dataclass(slots=True)
 class AnalysisOptions:
@@ -128,7 +148,12 @@ def write_csv(
         )
         w.writeheader()
         for r in rows:
-            w.writerow(r)
+            # Round 15 audit: sanitise CSV cells against formula
+            # injection (CWE-1236). Excel/LibreOffice treat a cell
+            # starting with =, +, -, @, or tab as a formula; a paper
+            # title like ``=cmd|'/c calc'!A1`` would execute on open.
+            # Prefixing with a single quote neutralises the formula.
+            w.writerow({k: _sanitise_csv_cell(v) for k, v in r.items()})
     return len(rows)
 
 
