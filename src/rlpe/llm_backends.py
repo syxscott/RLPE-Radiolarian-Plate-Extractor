@@ -33,18 +33,10 @@ _API_KEY_PATTERNS = (
     # Generic ``sk-<16+ chars>``: stops at any non-alnum, non-underscore,
     # non-trailing-hyphen boundary.
     re.compile(r"(?<![A-Za-z0-9_])sk-(?=[A-Za-z0-9]{16})[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+){0,3}"),
-    re.compile(
-        r"(?<![A-Za-z0-9_])sk-ant-api03-[A-Za-z0-9]{20,}"
-    ),
-    re.compile(
-        r"(?<![A-Za-z0-9_])sk-ant-(?!api03-)[A-Za-z0-9]{16,}"
-    ),
-    re.compile(
-        r"(?<![A-Za-z0-9_])sk-proj-[A-Za-z0-9]{16,}"
-    ),
-    re.compile(
-        r"(?<![A-Za-z0-9_])sk-cp-[A-Za-z0-9]{16,}"
-    ),
+    re.compile(r"(?<![A-Za-z0-9_])sk-ant-api03-[A-Za-z0-9]{20,}"),
+    re.compile(r"(?<![A-Za-z0-9_])sk-ant-(?!api03-)[A-Za-z0-9]{16,}"),
+    re.compile(r"(?<![A-Za-z0-9_])sk-proj-[A-Za-z0-9]{16,}"),
+    re.compile(r"(?<![A-Za-z0-9_])sk-cp-[A-Za-z0-9]{16,}"),
 )
 
 
@@ -1171,7 +1163,9 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
             extra.get("MiniMax_max_output_tokens"), default=2048, name="MiniMax_max_output_tokens"
         ),
         thinking_budget_tokens=_coerce_int(
-            extra.get("MiniMax_thinking_budget_tokens"), default=1024, name="MiniMax_thinking_budget_tokens"
+            extra.get("MiniMax_thinking_budget_tokens"),
+            default=1024,
+            name="MiniMax_thinking_budget_tokens",
         ),
         enable_thinking=_coerce_bool(extra.get("MiniMax_enable_thinking"), default=True),
         timeout_sec=_coerce_int(

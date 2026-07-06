@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 # in cv2-less environments.
 try:
     from rlpe.pipeline import RadiolarianPipeline
+
     _HAS_CV2 = True
 except Exception:
     _HAS_CV2 = False
@@ -64,12 +65,9 @@ def test_hallucination_filter_present():
     pl_idx = region.find("pair_lookup: dict[str, str] = {}")
     hf_idx = region.find("Hallucination filter")
     assert pl_idx > 0 and hf_idx > 0, (
-        "Both pair_lookup assignment and hallucination filter must be "
-        "inside _process_region"
+        "Both pair_lookup assignment and hallucination filter must be inside _process_region"
     )
-    assert pl_idx < hf_idx, (
-        "pair_lookup must be assigned BEFORE the hallucination filter runs"
-    )
+    assert pl_idx < hf_idx, "pair_lookup must be assigned BEFORE the hallucination filter runs"
 
 
 # ---------------------------------------------------------------------------
@@ -85,9 +83,7 @@ def test_finalize_rows_helper_exists():
         "_finalize_rows helper missing — needed for Round 11 dedup + filter"
     )
     # Stub panel_ids set
-    assert "_STUB_PANEL_IDS = frozenset(" in src_text, (
-        "_STUB_PANEL_IDS constant missing"
-    )
+    assert "_STUB_PANEL_IDS = frozenset(" in src_text, "_STUB_PANEL_IDS constant missing"
     assert '"MAP_CONTEXT"' in src_text
     assert '"RANGE_CHART"' in src_text
     # Wired into both _process_one_pdf_od and _process_one_pdf_grobid
@@ -107,22 +103,26 @@ def test_finalize_rows_dedups_by_figure_panel_id():
     p = RadiolarianPipeline.__new__(RadiolarianPipeline)
     rows = [
         {
-            "paper_id": "p1", "figure_id": "f1", "panel_id": "1",
-            "species": "A", "panel_path": "/a.png",
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "1",
+            "species": "A",
+            "panel_path": "/a.png",
             "confidence": 0.5,
             "metadata": {"panel_score": 0.4},
         },
         {
-            "paper_id": "p1", "figure_id": "f1", "panel_id": "1",
-            "species": "A", "panel_path": "/b.png",
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "1",
+            "species": "A",
+            "panel_path": "/b.png",
             "confidence": 0.9,  # ← higher
             "metadata": {"panel_score": 0.7},
         },
     ]
     out = p._finalize_rows(rows)
-    assert len(out) == 1, (
-        f"Expected dedup to one row, got {len(out)}: {out}"
-    )
+    assert len(out) == 1, f"Expected dedup to one row, got {len(out)}: {out}"
     assert out[0]["panel_path"] == "/b.png", (
         f"Expected higher-confidence row to win, got {out[0]['panel_path']}"
     )
@@ -136,14 +136,20 @@ def test_finalize_rows_dedups_tiebreak_by_panel_score():
     p = RadiolarianPipeline.__new__(RadiolarianPipeline)
     rows = [
         {
-            "paper_id": "p1", "figure_id": "f1", "panel_id": "2",
-            "species": "X", "panel_path": "/low.png",
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "2",
+            "species": "X",
+            "panel_path": "/low.png",
             "confidence": 0.5,
             "metadata": {"panel_score": 0.3},
         },
         {
-            "paper_id": "p1", "figure_id": "f1", "panel_id": "2",
-            "species": "X", "panel_path": "/high.png",
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "2",
+            "species": "X",
+            "panel_path": "/high.png",
             "confidence": 0.5,
             "metadata": {"panel_score": 0.9},
         },
@@ -160,12 +166,24 @@ def test_finalize_rows_keeps_distinct_panel_ids():
         pytest.skip("cv2 not available")
     p = RadiolarianPipeline.__new__(RadiolarianPipeline)
     rows = [
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "1",
-         "species": "A", "panel_path": "/a.png", "confidence": 0.9,
-         "metadata": {"panel_score": 0.5}},
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "2",
-         "species": "B", "panel_path": "/b.png", "confidence": 0.9,
-         "metadata": {"panel_score": 0.5}},
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "1",
+            "species": "A",
+            "panel_path": "/a.png",
+            "confidence": 0.9,
+            "metadata": {"panel_score": 0.5},
+        },
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "2",
+            "species": "B",
+            "panel_path": "/b.png",
+            "confidence": 0.9,
+            "metadata": {"panel_score": 0.5},
+        },
     ]
     out = p._finalize_rows(rows)
     assert len(out) == 2
@@ -179,12 +197,24 @@ def test_finalize_rows_drops_map_context_stub():
         pytest.skip("cv2 not available")
     p = RadiolarianPipeline.__new__(RadiolarianPipeline)
     rows = [
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "MAP_CONTEXT",
-         "species": None, "panel_path": "/map.png", "confidence": 0.0,
-         "metadata": {"extraction_method": "map_caption_heuristic"}},
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "1",
-         "species": "A", "panel_path": "/a.png", "confidence": 0.9,
-         "metadata": {}},
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "MAP_CONTEXT",
+            "species": None,
+            "panel_path": "/map.png",
+            "confidence": 0.0,
+            "metadata": {"extraction_method": "map_caption_heuristic"},
+        },
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "1",
+            "species": "A",
+            "panel_path": "/a.png",
+            "confidence": 0.9,
+            "metadata": {},
+        },
     ]
     out = p._finalize_rows(rows)
     assert len(out) == 1
@@ -198,12 +228,24 @@ def test_finalize_rows_drops_range_chart_stub():
         pytest.skip("cv2 not available")
     p = RadiolarianPipeline.__new__(RadiolarianPipeline)
     rows = [
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "RANGE_CHART",
-         "species": None, "panel_path": None, "confidence": 0.0,
-         "metadata": {"extraction_method": "range_chart_vision"}},
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "1",
-         "species": "A", "panel_path": "/a.png", "confidence": 0.9,
-         "metadata": {}},
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "RANGE_CHART",
+            "species": None,
+            "panel_path": None,
+            "confidence": 0.0,
+            "metadata": {"extraction_method": "range_chart_vision"},
+        },
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "1",
+            "species": "A",
+            "panel_path": "/a.png",
+            "confidence": 0.9,
+            "metadata": {},
+        },
     ]
     out = p._finalize_rows(rows)
     assert len(out) == 1
@@ -219,12 +261,24 @@ def test_finalize_rows_drops_empty_signal_row():
         pytest.skip("cv2 not available")
     p = RadiolarianPipeline.__new__(RadiolarianPipeline)
     rows = [
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "5",
-         "species": None, "panel_path": None, "confidence": 0.0,
-         "metadata": {}},
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "1",
-         "species": "A", "panel_path": "/a.png", "confidence": 0.9,
-         "metadata": {}},
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "5",
+            "species": None,
+            "panel_path": None,
+            "confidence": 0.0,
+            "metadata": {},
+        },
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "1",
+            "species": "A",
+            "panel_path": "/a.png",
+            "confidence": 0.9,
+            "metadata": {},
+        },
     ]
     out = p._finalize_rows(rows)
     assert len(out) == 1
@@ -238,18 +292,42 @@ def test_finalize_rows_drops_invalid_panel_id_format():
         pytest.skip("cv2 not available")
     p = RadiolarianPipeline.__new__(RadiolarianPipeline)
     rows = [
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "10, 11",
-         "species": "A", "panel_path": "/a.png", "confidence": 0.9,
-         "metadata": {}},
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "",
-         "species": "A", "panel_path": "/b.png", "confidence": 0.9,
-         "metadata": {}},
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": None,
-         "species": "A", "panel_path": "/c.png", "confidence": 0.9,
-         "metadata": {}},
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "1",
-         "species": "A", "panel_path": "/d.png", "confidence": 0.9,
-         "metadata": {}},
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "10, 11",
+            "species": "A",
+            "panel_path": "/a.png",
+            "confidence": 0.9,
+            "metadata": {},
+        },
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "",
+            "species": "A",
+            "panel_path": "/b.png",
+            "confidence": 0.9,
+            "metadata": {},
+        },
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": None,
+            "species": "A",
+            "panel_path": "/c.png",
+            "confidence": 0.9,
+            "metadata": {},
+        },
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "1",
+            "species": "A",
+            "panel_path": "/d.png",
+            "confidence": 0.9,
+            "metadata": {},
+        },
     ]
     out = p._finalize_rows(rows)
     assert len(out) == 1
@@ -265,9 +343,15 @@ def test_finalize_rows_keeps_real_panel_with_no_species_but_has_path():
         pytest.skip("cv2 not available")
     p = RadiolarianPipeline.__new__(RadiolarianPipeline)
     rows = [
-        {"paper_id": "p1", "figure_id": "f1", "panel_id": "3",
-         "species": None, "panel_path": "/real.png", "confidence": 0.6,
-         "metadata": {}},
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": "3",
+            "species": None,
+            "panel_path": "/real.png",
+            "confidence": 0.6,
+            "metadata": {},
+        },
     ]
     out = p._finalize_rows(rows)
     assert len(out) == 1

@@ -66,14 +66,14 @@ def baseline_f1() -> None:
     print(f"  panel match rate : {agg['panel_match_rate']:.4f}")
     print(f"  exact match rate : {agg['exact_match_rate']:.4f}")
     # per-paper top movers
-    by_paper = sorted(
-        report.papers.values(), key=lambda m: m.species_f1, reverse=True
-    )
+    by_paper = sorted(report.papers.values(), key=lambda m: m.species_f1, reverse=True)
     print("\n  per-paper F1:")
     for m in by_paper:
-        print(f"    {m.paper_id:>20s}  F1={m.species_f1:.3f}  "
-              f"P={m.species_precision:.2f}  R={m.species_recall:.2f}  "
-              f"n_gold={m.n_gold}")
+        print(
+            f"    {m.paper_id:>20s}  F1={m.species_f1:.3f}  "
+            f"P={m.species_precision:.2f}  R={m.species_recall:.2f}  "
+            f"n_gold={m.n_gold}"
+        )
 
 
 def regex_on_real_captions() -> None:
@@ -84,29 +84,39 @@ def regex_on_real_captions() -> None:
     print("=" * 72)
 
     fixtures = [
-        ("Hollis 2006 (numbered-list, Round 8 fix)",
-         "1. Amphisphaera coronata EHRENBERG gr. coronata\n"
-         "2. Amphisphaera coronata gr. A\n"
-         "3. Haliomma gr. b\n"
-         "4. Corythomelissa sp. A. B-F36/0"),
-        ("Baumgartner 2008 (semicolon-separated, '1, 2- Genus; 3- ...')",
-         "1, 2- Williriedellum marcucciae; 3- Williriedellum sp. S; "
-         "4- Stichomitra (?) sp.; 5- Zhamoidellum sp. 2; "
-         "6- Spumellaria gen. et sp. indet. A"),
-        ("Danelian 2006 (parenthesised '(N) Species' + '1) Species')",
-         "Plate I. (1) Praeparvicingula blackhorsensis; "
-         "(2‒3) family Parvicingulidae: (1) Pessagnocapsa sp., "
-         "(2) Mirifusus dianae; "
-         "2-3) Archaeodictyomitra apiarium (RÜST), Mg-2"),
-        ("Pouille 2014 (species-first 'Species (Pl. N, figs M)')",
-         "Plate 1. (Reconstructed from systematic descriptions)\n"
-         "Syntagentactinia biocculosa (Pl. 1, figs 5)\n"
-         "Syntagentactinia? angulata n. sp. (Pl. 1, figs 12–14b)\n"
-         "Archaeosemantis sp. (Pl. 1, figs 1)"),
-        ("Bandini 2006 (mixed Fig. + figures 12-14b)",
-         "Fig. 1 Archaeodictyomitra montisserei (SQUINABOL) Pl. 8; "
-         "figs 2-3 Crolanium sp.; "
-         "figs 12-14b Ferresium (?) sp. cf. S. excelsa"),
+        (
+            "Hollis 2006 (numbered-list, Round 8 fix)",
+            "1. Amphisphaera coronata EHRENBERG gr. coronata\n"
+            "2. Amphisphaera coronata gr. A\n"
+            "3. Haliomma gr. b\n"
+            "4. Corythomelissa sp. A. B-F36/0",
+        ),
+        (
+            "Baumgartner 2008 (semicolon-separated, '1, 2- Genus; 3- ...')",
+            "1, 2- Williriedellum marcucciae; 3- Williriedellum sp. S; "
+            "4- Stichomitra (?) sp.; 5- Zhamoidellum sp. 2; "
+            "6- Spumellaria gen. et sp. indet. A",
+        ),
+        (
+            "Danelian 2006 (parenthesised '(N) Species' + '1) Species')",
+            "Plate I. (1) Praeparvicingula blackhorsensis; "
+            "(2‒3) family Parvicingulidae: (1) Pessagnocapsa sp., "
+            "(2) Mirifusus dianae; "
+            "2-3) Archaeodictyomitra apiarium (RÜST), Mg-2",
+        ),
+        (
+            "Pouille 2014 (species-first 'Species (Pl. N, figs M)')",
+            "Plate 1. (Reconstructed from systematic descriptions)\n"
+            "Syntagentactinia biocculosa (Pl. 1, figs 5)\n"
+            "Syntagentactinia? angulata n. sp. (Pl. 1, figs 12–14b)\n"
+            "Archaeosemantis sp. (Pl. 1, figs 1)",
+        ),
+        (
+            "Bandini 2006 (mixed Fig. + figures 12-14b)",
+            "Fig. 1 Archaeodictyomitra montisserei (SQUINABOL) Pl. 8; "
+            "figs 2-3 Crolanium sp.; "
+            "figs 12-14b Ferresium (?) sp. cf. S. excelsa",
+        ),
     ]
     for label, caption in fixtures:
         pairs = _regex_parse_caption(caption)
@@ -130,9 +140,14 @@ def compare_before_after_demo() -> None:
     b = _load_jsonl(_REPO_ROOT / "work" / "combined_9_v18_fixed_FINAL.jsonl")
     # Build a tiny synthetic gold slice from (b)
     gold_rows = [
-        {"paper_id": r["paper_id"], "figure_id": r["figure_id"],
-         "panel_id": r["panel_id"], "species": r["species"]}
-        for r in b[:50] if r.get("species")
+        {
+            "paper_id": r["paper_id"],
+            "figure_id": r["figure_id"],
+            "panel_id": r["panel_id"],
+            "species": r["species"],
+        }
+        for r in b[:50]
+        if r.get("species")
     ]
     out = compare_before_after(a[:100], b[:100], gold_rows)
     print(f"  n_samples        : {out['n_samples']}")
@@ -153,7 +168,8 @@ def safe_parse_int_node() -> None:
     print("=" * 72)
     out = subprocess.run(
         [
-            "node", "-e",
+            "node",
+            "-e",
             # Mirrors web/js/app.js
             "function _safeParseInt(v, fb) { if (v == null || v === '') return fb; "
             "const n = parseInt(v, 10); return Number.isFinite(n) ? n : fb; } "
@@ -168,7 +184,9 @@ def safe_parse_int_node() -> None:
             "const ms = parseInt(bad, 10) * 1000; "
             "console.log('setInterval(fn, ' + ms + ') → silently never fires');",
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     for line in out.stdout.strip().splitlines():
         print(f"  {line}")

@@ -34,8 +34,9 @@ def test_save_intermediate_default_is_false():
     eval script reads those files; the canonical output is the
     per-row ``manifests/matches.jsonl`` + ``run_output.json``.
     """
-    from rlpe.config import PipelineConfig
     import inspect
+
+    from rlpe.config import PipelineConfig
 
     # Inspect the dataclass field's default directly. The previous
     # test constructed ``PipelineConfig()`` but the constructor now

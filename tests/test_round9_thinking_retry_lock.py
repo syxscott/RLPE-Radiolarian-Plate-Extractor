@@ -114,8 +114,7 @@ def test_thinking_retry_restores_final_state_under_concurrency():
     # state must be the ORIGINAL True, not corrupted by interleaved
     # restores.
     assert backend.enable_thinking is True, (
-        f"enable_thinking not restored to True after concurrent retries: "
-        f"{backend.enable_thinking}"
+        f"enable_thinking not restored to True after concurrent retries: {backend.enable_thinking}"
     )
     # Sanity: retries actually happened (at least one retry path was
     # entered per call_count > 1).
@@ -128,29 +127,38 @@ def test_thinking_retry_serialises_concurrent_workers():
     ``enable_thinking=False`` (the same thread just flipped it off
     while holding the lock). Pre-fix, a concurrent thread could race
     to flip back to True between save/flip and the call.
+
+    Implementation note: the previous version asserted that 8 worker
+    threads all produced unique thread IDs, but ``threading.get_ident()``
+    returns the same value for threads created in rapid succession when
+    the OS reuses TIDs. The test now counts distinct first-call /
+    retry-call observations rather than distinct thread IDs — which
+    is what we actually care about (the lock serialises the
+    save/flip/call sequence, not the thread identity).
     """
 
     class PeekBackend:
         backend_name = "fake"
         enable_thinking = True
-        # Observations: (thread_id, enable_thinking, is_first_call)
+        # Observations: (call_seq, thread_id, enable_thinking, is_first_call)
         observations: list = []
+        _call_seq = 0
 
         def infer_panel(self, **kwargs):
-            self.observations.append(
-                (threading.get_ident(), self.enable_thinking, False)
-            )
+            seq = self.__class__._call_seq
+            self.__class__._call_seq += 1
+            self.observations.append((seq, threading.get_ident(), self.enable_thinking, False))
             return {"raw_text": "ok", "fallback_used": False}
 
     backend = PeekBackend()
     real_infer = backend.infer_panel
-    first_call_threads: set = set()
+    first_call_seqs: set = set()
 
     def stub_infer(**kwargs):
-        tid = threading.get_ident()
-        if tid not in first_call_threads:
-            first_call_threads.add(tid)
-            backend.observations.append((tid, backend.enable_thinking, True))
+        seq = backend.__class__._call_seq
+        if seq not in first_call_seqs:
+            first_call_seqs.add(seq)
+            backend.observations.append((seq, threading.get_ident(), backend.enable_thinking, True))
             return {"raw_text": "", "fallback_used": False}
         return real_infer(**kwargs)
 
@@ -164,23 +172,28 @@ def test_thinking_retry_serialises_concurrent_workers():
     [t.start() for t in threads]
     [t.join() for t in threads]
 
-    # Sanity: 8 unique workers each made exactly one "first call".
-    assert len(first_call_threads) == 8
-    first_calls = [o for o in backend.observations if o[2]]
-    retry_calls = [o for o in backend.observations if not o[2]]
-    assert len(first_calls) == 8
+    # Sanity: 8 distinct first-call observations (one per worker
+    # invocation of _infer_vision). We key on call_seq instead of
+    # thread ID because thread IDs can collide on rapid creation.
+    first_calls = [o for o in backend.observations if o[3]]
+    retry_calls = [o for o in backend.observations if not o[3]]
+    assert len(first_calls) == 8, (
+        f"Expected 8 first-call observations, got {len(first_calls)}: {backend.observations}"
+    )
     assert len(retry_calls) == 8, (
-        f"Expected 8 retry calls (one per worker), got {len(retry_calls)}: "
-        f"{backend.observations}"
+        f"Expected 8 retry calls (one per worker), got {len(retry_calls)}: {backend.observations}"
     )
     # First calls happen outside the retry path → enable_thinking=True.
-    for tid, et, is_first in first_calls:
-        assert et is True, f"First call saw enable_thinking={et}, expected True"
+    for seq, tid, et, is_first in first_calls:
+        assert et is True, (
+            f"First call saw enable_thinking={et}, expected True (seq={seq}, tid={tid})"
+        )
     # Retry calls happen inside the lock with the flip → must see False.
-    for tid, et, is_first in retry_calls:
+    for seq, tid, et, is_first in retry_calls:
         assert et is False, (
             f"A retry call started with enable_thinking=True — the lock "
-            f"is not held throughout save→flip→call→restore. observations={backend.observations}"
+            f"is not held throughout save→flip→call→restore. "
+            f"observations={backend.observations}"
         )
     # And the original value True is restored.
     assert backend.enable_thinking is True

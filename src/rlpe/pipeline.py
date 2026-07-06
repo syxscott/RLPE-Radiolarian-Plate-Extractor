@@ -1139,8 +1139,7 @@ class RadiolarianPipeline:
                 self._emit_progress(
                     fig_idx,
                     n_figs,
-                    f"[{fig_idx}/{n_figs}] {fig_type} → "
-                    f"{len(geo_links)} vision links",
+                    f"[{fig_idx}/{n_figs}] {fig_type} → {len(geo_links)} vision links",
                 )
                 continue
 
@@ -2130,10 +2129,7 @@ class RadiolarianPipeline:
                 return True
             return False
 
-        return [
-            m for m in matches
-            if _label_in_caption2(getattr(m, "panel_id", None) or "")
-        ]
+        return [m for m in matches if _label_in_caption2(getattr(m, "panel_id", None) or "")]
 
     def _finalize_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Round 11 post-processing for one paper's emitted rows.
@@ -2172,6 +2168,7 @@ class RadiolarianPipeline:
         single row), then drop stubs/invalids.
         """
         import re as _re_stub
+
         SHAPE = _re_stub.compile(r"^(?:[A-H]|[1-9]\d{0,2}[a-z]?|0)$")
 
         # Phase 1: dedup by (figure_id, panel_id) keeping best row.
@@ -2215,7 +2212,8 @@ class RadiolarianPipeline:
             if not pid or not isinstance(pid, str) or not SHAPE.fullmatch(pid.strip()):
                 logger.debug(
                     "Drop row with invalid panel_id=%r (fig=%s)",
-                    pid, r.get("figure_id"),
+                    pid,
+                    r.get("figure_id"),
                 )
                 continue
             # Skip rows with no signal: no species AND no panel_path.
@@ -2225,7 +2223,8 @@ class RadiolarianPipeline:
             if not r.get("species") and not r.get("panel_path"):
                 logger.debug(
                     "Drop empty row (no species, no panel_path): fig=%s pid=%s",
-                    r.get("figure_id"), pid,
+                    r.get("figure_id"),
+                    pid,
                 )
                 continue
             kept.append(r)
@@ -2234,7 +2233,8 @@ class RadiolarianPipeline:
         if dropped_real:
             logger.info(
                 "Finalize rows: dropped %d invalid/empty/duplicate rows; kept %d",
-                dropped_real, len(kept),
+                dropped_real,
+                len(kept),
             )
 
         # Phase 3: stubs. Cross-link / range-chart linking pass has
@@ -2245,8 +2245,8 @@ class RadiolarianPipeline:
         dropped_stubs = len(stub_rows)
         if dropped_stubs:
             logger.debug(
-                "Finalize rows: dropped %d stub rows (MAP_CONTEXT / "
-                "RANGE_CHART / _ingestion_*)", dropped_stubs,
+                "Finalize rows: dropped %d stub rows (MAP_CONTEXT / RANGE_CHART / _ingestion_*)",
+                dropped_stubs,
             )
 
         return kept
@@ -2668,15 +2668,17 @@ Rules:
 
                     pre_filter = len(llm_results)
                     llm_results = [
-                        r for r in llm_results
-                        if _label_in_caption(r.get("panel_id") or "")
+                        r for r in llm_results if _label_in_caption(r.get("panel_id") or "")
                     ]
                     dropped = pre_filter - len(llm_results)
                     if dropped:
                         logger.info(
                             "Hallucination filter %s/%s: dropped %d/%d "
                             "panels whose labels are not in the caption set",
-                            paper_id, figure_id, dropped, pre_filter,
+                            paper_id,
+                            figure_id,
+                            dropped,
+                            pre_filter,
                         )
                 # Enrich LLM-first results with scale_bar + geology_links.
                 # Without this, the LLM-first path skips the metadata
@@ -2957,14 +2959,20 @@ Rules:
         if matches and (m3_caption_pairs or caption.caption):
             pre = len(matches)
             matches = self._filter_classical_hallucinations(
-                matches, caption, paper_id, figure_id,
+                matches,
+                caption,
+                paper_id,
+                figure_id,
             )
             dropped = pre - len(matches)
             if dropped:
                 logger.info(
                     "Classical hallucination filter %s/%s: dropped %d/%d "
                     "rows whose panel_id is not in the caption",
-                    paper_id, figure_id, dropped, pre,
+                    paper_id,
+                    figure_id,
+                    dropped,
+                    pre,
                 )
 
         # ---- M3 Stage 4 (per-panel matching) with stage 1 caption context ----

@@ -514,11 +514,19 @@ def compare_before_after(
     # the merged DataFrame (no _before/_after suffix). The species
     # columns DO get suffixes because they aren't in the merge key.
     if len(merged) > 0:
-        merged["correct_before"] = (merged["species_before"] == merged["gold_species"])
-        merged["correct_after"] = (merged["species_after"] == merged["gold_species"])
+        merged["correct_before"] = merged["species_before"] == merged["gold_species"]
+        merged["correct_after"] = merged["species_after"] == merged["gold_species"]
 
-    before_acc = float(merged["correct_before"].mean()) if len(merged) and "correct_before" in merged.columns else 0.0
-    after_acc = float(merged["correct_after"].mean()) if len(merged) and "correct_after" in merged.columns else 0.0
+    before_acc = (
+        float(merged["correct_before"].mean())
+        if len(merged) and "correct_before" in merged.columns
+        else 0.0
+    )
+    after_acc = (
+        float(merged["correct_after"].mean())
+        if len(merged) and "correct_after" in merged.columns
+        else 0.0
+    )
 
     # gemma_confidence is flattened from metadata above (only on the
     # after-side), so it doesn't get a _after suffix — pandas only

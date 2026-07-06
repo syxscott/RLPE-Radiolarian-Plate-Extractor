@@ -22,6 +22,7 @@ panels (bandini2011's largest plate has 42 panels), so 1-3
 digits is the safe shape. The fix is ``[1-9]\\d{0,2}[a-z]?``
 which caps the digit run at 3 characters.
 """
+
 from __future__ import annotations
 
 import sys
@@ -61,8 +62,7 @@ class TestCaptionClauseRegexHollis:
         # Spot-check that 'Amphisphaera coronata' was extracted.
         species_extracted = {p.species for p in pairs}
         assert any("Amphisphaera" in s for s in species_extracted), (
-            f"Expected 'Amphisphaera coronata' in extracted species; "
-            f"got {species_extracted!r}"
+            f"Expected 'Amphisphaera coronata' in extracted species; got {species_extracted!r}"
         )
 
     def test_prose_introduction_not_matched(self):
@@ -82,8 +82,7 @@ class TestCaptionClauseRegexHollis:
         text = "1. Introduction. 2. Methods section."
         matches = _CAPTION_CLAUSE_RE.findall(text)
         assert len(matches) == 0, (
-            f"Prose numbered list must not match as panel labels; "
-            f"got {matches!r}"
+            f"Prose numbered list must not match as panel labels; got {matches!r}"
         )
 
 
@@ -112,9 +111,7 @@ class TestPanelLabelShapeValidation:
         from rlpe.association import is_valid_panel_label
 
         for label in ("1", "12", "100", "0", "999"):
-            assert is_valid_panel_label(label), (
-                f"Valid 1-3 digit panel id {label!r} was rejected"
-            )
+            assert is_valid_panel_label(label), f"Valid 1-3 digit panel id {label!r} was rejected"
 
     def test_letter_suffix_panel_id_accepted(self):
         """``1a`` / ``12b`` must still be accepted (a/b panel suffixes)."""
@@ -139,15 +136,10 @@ class TestPanelLabelShapeValidation:
         re-introduce the OCR scale-bar leak."""
         from pathlib import Path as _Path
 
-        path = (
-            _Path(__file__).resolve().parents[1]
-            / "src" / "rlpe" / "association.py"
-        )
+        path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "association.py"
         text = path.read_text(encoding="utf-8")
         # Must have the {0,2} cap (1-3 digits).
-        assert r"[1-9]\d{0,2}[a-z]?" in text, (
-            "_PANEL_LABEL_SHAPE must cap at 3 digits via \\d{0,2}"
-        )
+        assert r"[1-9]\d{0,2}[a-z]?" in text, "_PANEL_LABEL_SHAPE must cap at 3 digits via \\d{0,2}"
         # Must NOT have the old unbounded \\d* pattern.
         assert r"[1-9]\d*[a-z]?" not in text, (
             "Old unbounded _PANEL_LABEL_SHAPE regex leaked back in"

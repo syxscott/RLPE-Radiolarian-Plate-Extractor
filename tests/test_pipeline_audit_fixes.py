@@ -91,9 +91,12 @@ class TestApplyGeoVisionMapFigureTypeBackfill:
 
     def test_explicit_figure_type_wins_over_extraction_source(self):
         """If ``figure_type`` is already set on the row, backfill is a no-op."""
-        assert self._backfill_figure_type(
-            {"figure_type": "strat_column", "extraction_source": "map_caption_heuristic"}
-        ) == "strat_column"
+        assert (
+            self._backfill_figure_type(
+                {"figure_type": "strat_column", "extraction_source": "map_caption_heuristic"}
+            )
+            == "strat_column"
+        )
 
     def test_unknown_extraction_source_does_not_backfill(self):
         """Rows without a recognised extraction_source keep figure_type=None."""

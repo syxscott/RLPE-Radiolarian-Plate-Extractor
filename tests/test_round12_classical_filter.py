@@ -29,14 +29,12 @@ def test_classical_hallucination_filter_present():
     # It must be called from the classical path branch (after
     # match_panels, before M3 stage 4).
     assert "self._filter_classical_hallucinations(" in src_text, (
-        "_filter_classical_hallucinations must be called from the "
-        "classical path branch"
+        "_filter_classical_hallucinations must be called from the classical path branch"
     )
     # Filter count: at least one call site.
     call_count = src_text.count("self._filter_classical_hallucinations(")
     assert call_count >= 1, (
-        f"_filter_classical_hallucinations must have ≥ 1 call site, "
-        f"got {call_count}"
+        f"_filter_classical_hallucinations must have ≥ 1 call site, got {call_count}"
     )
 
 
@@ -63,9 +61,7 @@ def test_classical_filter_drops_phantom_panels():
     from rlpe.pipeline import RadiolarianPipeline
 
     caption_labels = {1, 2, 3, 4, 5, 6, 7, 8, 9}
-    caption_text = (
-        "figs 1-9. Sample. figs 10a-b. Other. figs 11a-c. Other2."
-    )
+    caption_text = "figs 1-9. Sample. figs 10a-b. Other. figs 11a-c. Other2."
 
     @dataclass
     class FakeCaption:
@@ -82,7 +78,10 @@ def test_classical_filter_drops_phantom_panels():
         FakeMatch(panel_id=None, species=None),  # empty → drop
     ]
     kept = RadiolarianPipeline._filter_classical_hallucinations(
-        rows, FakeCaption(), "p1", "f1",
+        rows,
+        FakeCaption(),
+        "p1",
+        "f1",
     )
     kept_pids = {r.panel_id for r in kept}
     assert "10a" not in kept_pids, "Filter missed 10a"
@@ -117,8 +116,9 @@ def test_classical_filter_no_caption_keeps_everything():
 
     rows = [FakeMatch(panel_id="1"), FakeMatch(panel_id="999")]
     kept = RadiolarianPipeline._filter_classical_hallucinations(
-        rows, FakeCaption(), "p1", "f1",
+        rows,
+        FakeCaption(),
+        "p1",
+        "f1",
     )
-    assert len(kept) == 2, (
-        f"No caption should keep all rows, got {len(kept)}: {kept}"
-    )
+    assert len(kept) == 2, f"No caption should keep all rows, got {len(kept)}: {kept}"

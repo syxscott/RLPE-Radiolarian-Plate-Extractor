@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import shutil
 import sys
 import time
@@ -21,6 +20,7 @@ _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 
 from dotenv import load_dotenv
+
 load_dotenv(_REPO / ".env", override=False)
 
 from rlpe.config import PipelineConfig
@@ -106,10 +106,8 @@ def summarise(rows: list[dict]) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--work-root", type=Path,
-                        default=_REPO / "work" / "round10_live")
-    parser.add_argument("--no-llm", action="store_true",
-                        help="Disable LLM (rules-only path)")
+    parser.add_argument("--work-root", type=Path, default=_REPO / "work" / "round10_live")
+    parser.add_argument("--no-llm", action="store_true", help="Disable LLM (rules-only path)")
     args = parser.parse_args()
 
     pdf = args.pdf.resolve()
@@ -125,11 +123,11 @@ def main() -> int:
 
     summary = run_one(pdf, args.work_root, with_llm=not args.no_llm)
     stats = summarise(summary["rows"])
-    print(f"---")
+    print("---")
     print(f"Rows emitted:        {stats['n_total']}")
     print(f"With panel_id:       {stats['n_with_panel_id']}")
     print(f"With species:        {stats['n_with_species']}")
-    print(f"By extraction_method:")
+    print("By extraction_method:")
     for k, v in stats["by_method"].items():
         print(f"  {k}: {v}")
     print(f"Elapsed:             {summary['elapsed_s']}s")
@@ -145,9 +143,17 @@ def main() -> int:
                 "stats": stats,
                 "elapsed_s": summary["elapsed_s"],
                 "rows_sample": [
-                    {k: r.get(k) for k in
-                     ("paper_id", "figure_id", "panel_id", "species",
-                      "confidence", "label_text")}
+                    {
+                        k: r.get(k)
+                        for k in (
+                            "paper_id",
+                            "figure_id",
+                            "panel_id",
+                            "species",
+                            "confidence",
+                            "label_text",
+                        )
+                    }
                     for r in summary["rows"][:20]
                 ],
             },

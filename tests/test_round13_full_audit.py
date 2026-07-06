@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 # --- Bug A: API key redaction in _make_error_result -----------------------
 
+
 def test_redact_api_keys_basic():
     """``_redact_api_keys`` must replace sk-... style keys with [REDACTED]."""
     from rlpe.llm_backends import _redact_api_keys
@@ -62,9 +63,7 @@ def test_redact_api_keys_basic():
     # non-key text must not be eaten by the redaction. Use a realistic
     # 48-char Anthropic-style body so the regex is forced to terminate
     # cleanly at the end of the key.
-    assert _redact_api_keys(
-        "prefix sk-ant-api03-" + "a" * 48 + " tail"
-    ) == "prefix [REDACTED] tail"
+    assert _redact_api_keys("prefix sk-ant-api03-" + "a" * 48 + " tail") == "prefix [REDACTED] tail"
 
 
 def test_make_error_result_redacts():
@@ -80,13 +79,12 @@ def test_make_error_result_redacts():
     backend = MiniMaxM3Backend(api_key="placeholder")
     res = backend._make_error_result(FakeAuthError())
     assert "sk-ant-" not in res["error"], f"API key leaked in error: {res['error']!r}"
-    assert "sk-ant-" not in res["reasoning"], (
-        f"API key leaked in reasoning: {res['reasoning']!r}"
-    )
+    assert "sk-ant-" not in res["reasoning"], f"API key leaked in reasoning: {res['reasoning']!r}"
     assert "[REDACTED]" in res["error"]
 
 
 # --- Bug B: config coercion -----------------------------------------------
+
 
 def test_coerce_int_valid():
     from rlpe.llm_backends import _coerce_int
@@ -155,6 +153,7 @@ def test_build_backend_from_config_rejects_garbage_ints():
 
 # --- Bug C: taxon TaxoNERD shape guard -----------------------------------
 
+
 def test_taxon_skips_non_dict_items():
     """``TaxonRecognizer.predict`` must not crash when TaxoNERD returns
     a non-dict element. The bare ``except Exception: pass`` previously
@@ -162,6 +161,7 @@ def test_taxon_skips_non_dict_items():
     from rlpe.taxon import TaxonRecognizer
 
     rec = TaxonRecognizer(model="dummy")
+
     # Inject a fake engine whose .predict() returns a malformed result
     class FakeEngine:
         def predict(self, text: str):
@@ -181,6 +181,7 @@ def test_taxon_skips_non_dict_items():
 
 
 # --- Bug D: case-insensitive PDF accept ----------------------------------
+
 
 def test_addFiles_accepts_uppercase_pdf():
     """``addFiles`` should accept ``.PDF`` (uppercase) extensions, not just
@@ -220,6 +221,7 @@ def test_addFiles_accepts_uppercase_pdf():
 
 # --- Bug E: querySelector tab click fallback -----------------------------
 
+
 def test_jobs_tab_click_has_fallback():
     """The job-upload handler must NOT throw when the jobs tab button is
     missing — that previously bypassed ``uploadedFiles = []`` and confused
@@ -230,8 +232,8 @@ def test_jobs_tab_click_has_fallback():
     # has no guard against a missing button. The fix must use ?. or a null check.
     bad_pattern = "document.querySelector('[data-tab=\"jobs\"]').click()"
     assert bad_pattern not in src, (
-        f"Unsafe bare .click() still present at the upload handler — "
-        f"a missing jobs-tab button would throw and leave uploadedFiles uncleared."
+        "Unsafe bare .click() still present at the upload handler — "
+        "a missing jobs-tab button would throw and leave uploadedFiles uncleared."
     )
     # Verify the safer pattern is in place
     assert "if (jobsTab)" in src or "jobsTab?.click" in src, (
@@ -240,6 +242,7 @@ def test_jobs_tab_click_has_fallback():
 
 
 # --- Bug F: localStorage try/catch ---------------------------------------
+
 
 def test_safe_storage_helpers_used():
     """All non-test localStorage calls in app.js must go through
@@ -269,12 +272,16 @@ def test_safe_storage_helpers_used():
     # Find any direct localStorage calls outside the helpers
     raw_calls = re.findall(r"\blocalStorage\.(getItem|setItem|removeItem)\b", outside)
     assert not raw_calls, (
-        "Found " + str(len(raw_calls)) + " raw localStorage calls outside _safeStorage*: "
-        + repr(raw_calls) + ". Safari private mode would break these."
+        "Found "
+        + str(len(raw_calls))
+        + " raw localStorage calls outside _safeStorage*: "
+        + repr(raw_calls)
+        + ". Safari private mode would break these."
     )
 
 
 # --- Bug G: api/app.py usage falsy check ---------------------------------
+
 
 def test_api_app_usage_uses_isinstance():
     """``/api/MiniMax/test-connection`` must check usage is a dict, not
@@ -290,8 +297,11 @@ def test_api_app_usage_uses_isinstance():
             continue
         bad_pat = 'result.get("usage") or {}'
         assert bad_pat not in stripped, (
-            "Found live (non-comment) usage of `" + bad_pat + "` on line: "
-            + repr(stripped) + ". Use `isinstance(...)` check."
+            "Found live (non-comment) usage of `"
+            + bad_pat
+            + "` on line: "
+            + repr(stripped)
+            + ". Use `isinstance(...)` check."
         )
     # Confirm the fix is in place
     assert "isinstance(usage_raw, dict)" in src, (
@@ -300,6 +310,7 @@ def test_api_app_usage_uses_isinstance():
 
 
 # --- Bug H: simulate_v20 / v21 hard_species_f1 KeyError ------------------
+
 
 def test_simulate_v20_no_hard_species_f1():
     src = Path(__file__).resolve().parents[1] / "scripts" / "simulate_v20_fix.py"
@@ -333,12 +344,11 @@ def test_simulate_v20_has_main_guard():
     src = Path(__file__).resolve().parents[1] / "scripts" / "simulate_v20_fix.py"
     text = src.read_text(encoding="utf-8")
     assert "def main() -> int" in text, "simulate_v20_fix.py missing main()"
-    assert 'if __name__ == "__main__"' in text, (
-        "simulate_v20_fix.py missing __main__ guard"
-    )
+    assert 'if __name__ == "__main__"' in text, "simulate_v20_fix.py missing __main__ guard"
 
 
 # --- Bug I: archive XML escaping -----------------------------------------
+
 
 def test_archive_eml_escapes_user_fields():
     """The DwC-A EML builder must XML-escape paper title and authors —

@@ -125,7 +125,7 @@ def test_caption_above_plate_excluded():
     selected (caption is below figure in radiolarian layouts)."""
     captions = [
         _cap(5, "Header above plate", bbox=[0, 200, 200, 250]),  # cap_bottom=200 > plate_bottom=100
-        _cap(5, "Footer below plate", bbox=[0, 80, 200, 90]),     # cap_bottom=80 < plate_bottom=100
+        _cap(5, "Footer below plate", bbox=[0, 80, 200, 90]),  # cap_bottom=80 < plate_bottom=100
     ]
     plate = [_plate([0, 100, 200, 200])]
     out = _find_nearest_caption(plate, captions, 5)
@@ -147,6 +147,7 @@ def fake_od_tree(tmp_path):
     to filesystem paths. Returns ``(output_dir, images_dir)``.
     """
     import json
+
     output_dir = tmp_path
     paper_dir = output_dir / "od_output" / "p1"
     images_dir = paper_dir / "p1_images"
@@ -218,9 +219,7 @@ def test_rescue_skips_already_paired_plate_image(fake_od_tree):
         for ip in p.image_paths:
             if p is plate_out:
                 continue
-            assert not ip.endswith("imageFile1.png"), (
-                f"Plate image leaked into rescue: {ip}"
-            )
+            assert not ip.endswith("imageFile1.png"), f"Plate image leaked into rescue: {ip}"
 
 
 def test_rescue_does_not_modify_pairs_with_existing_images(fake_od_tree):

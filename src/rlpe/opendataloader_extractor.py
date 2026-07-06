@@ -1864,9 +1864,7 @@ def _find_nearest_caption(
         # with a bounding box wins; if still tied, first-encountered wins.
         # We model "first-encountered wins" by leaving best_* unchanged
         # when the new candidate is strictly worse on (dist, has_bbox).
-        is_better = dist < best_dist or (
-            dist == best_dist and cap_has_bbox and not best_has_bbox
-        )
+        is_better = dist < best_dist or (dist == best_dist and cap_has_bbox and not best_has_bbox)
         if is_better:
             best_dist = dist
             best_has_bbox = cap_has_bbox

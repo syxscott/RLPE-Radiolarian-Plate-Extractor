@@ -66,9 +66,7 @@ def test_fh1_refresh_interval_uses_safe_parse_int():
     m = re.search(r"refreshInterval:\s*([^,\n]+)", text)
     assert m, "refreshInterval config line not found"
     rhs = m.group(1).strip()
-    assert "_safeParseInt" in rhs, (
-        f"refreshInterval must use _safeParseInt; got: {rhs!r}"
-    )
+    assert "_safeParseInt" in rhs, f"refreshInterval must use _safeParseInt; got: {rhs!r}"
 
 
 def test_fh1_safe_parse_int_rejects_nan_strings():
@@ -165,9 +163,7 @@ def test_fh3_showtoast_delegates_to_shownotification():
         "showToast must call showNotification (no separate DOM element)"
     )
     # And must NOT call createElement or appendChild (no DOM leak).
-    assert "createElement" not in body, (
-        "showToast must not create its own DOM elements"
-    )
+    assert "createElement" not in body, "showToast must not create its own DOM elements"
     assert "appendChild" not in body
 
 
@@ -193,8 +189,7 @@ def test_fm1_minimax_modal_excluded_from_escape():
     """
     text = _read(APP_JS)
     assert "MiniMax-fallback-modal" in text, (
-        "MiniMax fallback modal must be referenced (excluded from "
-        "auto-close on Escape)"
+        "MiniMax fallback modal must be referenced (excluded from auto-close on Escape)"
     )
 
 
@@ -256,8 +251,7 @@ def test_fm4_status_filter_uses_oneshot_flag():
     assert fn_idx >= 0
     chunk = text[fn_idx : fn_idx + 1500]
     assert "__rlpeFilterWired" in chunk, (
-        "renderResultsStatusFilterCounts must use __rlpeFilterWired "
-        "single-delegation pattern"
+        "renderResultsStatusFilterCounts must use __rlpeFilterWired single-delegation pattern"
     )
     # And must NOT call addEventListener on each button (the old leak).
     assert "btn.addEventListener" not in chunk, (
@@ -286,10 +280,7 @@ def test_fm5_buildllmoptions_uses_optional_chaining():
         r"getElementById\([^)]+\)\.value(?!\?)",
         chunk,
     )
-    assert not bad, (
-        f"_buildLLMOptions has unguarded getElementById(...).value "
-        f"reads: {bad}"
-    )
+    assert not bad, f"_buildLLMOptions has unguarded getElementById(...).value reads: {bad}"
 
 
 def test_fm5_buildpaleodboptions_uses_optional_chaining():
@@ -302,10 +293,7 @@ def test_fm5_buildpaleodboptions_uses_optional_chaining():
         r"getElementById\([^)]+\)\.value(?!\?)",
         chunk,
     )
-    assert not bad, (
-        f"_buildPaleodbOptions has unguarded getElementById(...).value "
-        f"reads: {bad}"
-    )
+    assert not bad, f"_buildPaleodbOptions has unguarded getElementById(...).value reads: {bad}"
 
 
 def test_fm5_closecorrectionmodal_nullsafe():
@@ -332,9 +320,7 @@ def test_fl3_results_table_has_caption_and_aria_label():
     """
     text = _read(INDEX_HTML)
     assert 'id="results-table"' in text
-    assert 'aria-label="图版与标签匹配结果"' in text, (
-        "results-table must have aria-label"
-    )
+    assert 'aria-label="图版与标签匹配结果"' in text, "results-table must have aria-label"
     assert '<caption class="visually-hidden"' in text, (
         "results-table must have a visually-hidden <caption>"
     )
@@ -351,12 +337,8 @@ def test_fl3_modals_have_dialog_role():
         idx = text.find(f'id="{modal_id}"')
         assert idx >= 0, f"{modal_id} not found"
         snippet = text[idx : idx + 200]
-        assert 'role="dialog"' in snippet, (
-            f"{modal_id} must declare role=dialog"
-        )
-        assert 'aria-modal="true"' in snippet, (
-            f"{modal_id} must declare aria-modal=true"
-        )
+        assert 'role="dialog"' in snippet, f"{modal_id} must declare role=dialog"
+        assert 'aria-modal="true"' in snippet, f"{modal_id} must declare aria-modal=true"
 
 
 def test_fl3_icon_only_buttons_have_aria_label():
@@ -372,9 +354,7 @@ def test_fl3_icon_only_buttons_have_aria_label():
         idx = text.find(f'id="{btn_id}"')
         assert idx >= 0, f"button {btn_id} not found"
         snippet = text[idx : idx + 500]
-        assert f'aria-label="{expected}"' in snippet, (
-            f"{btn_id} must have aria-label={expected!r}"
-        )
+        assert f'aria-label="{expected}"' in snippet, f"{btn_id} must have aria-label={expected!r}"
 
 
 def test_fl3_visually_hidden_class_defined():
@@ -418,6 +398,5 @@ def test_fl4_no_hardcoded_z_index_for_overlay_surfaces():
         if val >= 1000:
             offenders.append((m.start(), val))
     assert not offenders, (
-        f"Hard-coded z-index >= 1000 found (use --z-modal/--z-toast "
-        f"tokens instead): {offenders}"
+        f"Hard-coded z-index >= 1000 found (use --z-modal/--z-toast tokens instead): {offenders}"
     )

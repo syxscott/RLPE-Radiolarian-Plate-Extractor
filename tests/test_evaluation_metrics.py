@@ -499,18 +499,26 @@ class TestCompareBeforeAfterRound9:
         the row and returned n_samples=0; post-fix the merge succeeds
         because the key is panel_id, not panel_path."""
         before = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
-             "species": "A", "panel_path": "/work/p1/fig1_panel_01.png"},
+            {
+                "paper_id": "p1",
+                "figure_id": "fig1",
+                "panel_id": "1",
+                "species": "A",
+                "panel_path": "/work/p1/fig1_panel_01.png",
+            },
         ]
         after = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
-             "species": "A", "panel_path": None},
+            {
+                "paper_id": "p1",
+                "figure_id": "fig1",
+                "panel_id": "1",
+                "species": "A",
+                "panel_path": None,
+            },
         ]
         gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}]
         result = compare_before_after(before, after, gold)
-        assert result["n_samples"] == 1, (
-            "LLM-first vs rules comparison must not silently drop rows"
-        )
+        assert result["n_samples"] == 1, "LLM-first vs rules comparison must not silently drop rows"
         assert result["match_acc_before"] == 1.0
         assert result["match_acc_after"] == 1.0
         assert result["match_improvement"] == 0.0
@@ -520,15 +528,26 @@ class TestCompareBeforeAfterRound9:
         catches it. Pre-fix n_samples=0 → improvement=0. Post-fix
         n_samples=1 → improvement reflects the actual delta."""
         before = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
-             "species": "wrong_species", "panel_path": "x.png"},
+            {
+                "paper_id": "p1",
+                "figure_id": "fig1",
+                "panel_id": "1",
+                "species": "wrong_species",
+                "panel_path": "x.png",
+            },
         ]
         after = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
-             "species": "right_species", "panel_path": None},
+            {
+                "paper_id": "p1",
+                "figure_id": "fig1",
+                "panel_id": "1",
+                "species": "right_species",
+                "panel_path": None,
+            },
         ]
-        gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
-                 "species": "right_species"}]
+        gold = [
+            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "right_species"}
+        ]
         result = compare_before_after(before, after, gold)
         assert result["n_samples"] == 1
         assert result["match_acc_before"] == 0.0
@@ -540,14 +559,29 @@ class TestCompareBeforeAfterRound9:
         must NOT participate in the merge — they're junk and would
         inflate the denominator with non-panel rows."""
         before = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": None,
-             "species": None, "panel_path": None},  # placeholder
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
-             "species": "A", "panel_path": "x.png"},
+            {
+                "paper_id": "p1",
+                "figure_id": "fig1",
+                "panel_id": None,
+                "species": None,
+                "panel_path": None,
+            },  # placeholder
+            {
+                "paper_id": "p1",
+                "figure_id": "fig1",
+                "panel_id": "1",
+                "species": "A",
+                "panel_path": "x.png",
+            },
         ]
         after = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
-             "species": "A", "panel_path": None},
+            {
+                "paper_id": "p1",
+                "figure_id": "fig1",
+                "panel_id": "1",
+                "species": "A",
+                "panel_path": None,
+            },
         ]
         gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}]
         result = compare_before_after(before, after, gold)
@@ -559,13 +593,23 @@ class TestCompareBeforeAfterRound9:
         after-side rows carry metadata.gemma_confidence. Pre-fix the
         merge dropped too many rows to surface anything meaningful."""
         before = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
-             "species": "A", "panel_path": "x.png"},
+            {
+                "paper_id": "p1",
+                "figure_id": "fig1",
+                "panel_id": "1",
+                "species": "A",
+                "panel_path": "x.png",
+            },
         ]
         after = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1",
-             "species": "A", "panel_path": None,
-             "metadata": {"gemma_confidence": 0.85}},
+            {
+                "paper_id": "p1",
+                "figure_id": "fig1",
+                "panel_id": "1",
+                "species": "A",
+                "panel_path": None,
+                "metadata": {"gemma_confidence": 0.85},
+            },
         ]
         gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}]
         result = compare_before_after(before, after, gold)
