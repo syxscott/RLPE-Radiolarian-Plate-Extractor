@@ -97,7 +97,19 @@ class PipelineConfig:
     caption_window: int = 2
     num_workers: int = 4
     render_dpi: int = 200
-    save_intermediate: bool = True
+    save_intermediate: bool = False
+    # Round 14: default OFF. When True, _process_region dumps a
+    # per-region ``auto_fig_pNNN_rNN.json`` to disk (34 MB each on
+    # 200-page PDFs) and _process_one_pdf dumps the full
+    # ``{slugify(figure_id)}.json``. A typical 5-paper OA smoke run
+    # produces ~9000 such files = ~117 GB of intermediate state.
+    # None of the eval scripts (eval_v19_normalized, simulate_v20_fix,
+    # simulate_v21, evaluate_image_verified, eval_round6_gold) read
+    # these files; the canonical output is the per-row
+    # ``manifests/matches.jsonl`` + ``run_output.json``. Set
+    # save_intermediate=True only when debugging the per-region
+    # processing chain (see ``pipeline._process_region`` call sites
+    # for the exact list of what gets written).
     extra: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
