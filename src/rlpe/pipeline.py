@@ -108,6 +108,23 @@ class RadiolarianPipeline:
         self.gemma_fallback_handler = None
         # Secondary Gemma runtime used as fallback target (lazy-init on first error)
         self._fallback_gemma_runtime = None
+        # Round 18 audit: ANTHROPIC_API_KEY is the project's documented
+        # .env key (Claude-Code-compatible name). If the user has
+        # ANTHROPIC_API_KEY but no MiniMax_api_key / MINIMAX_API_KEY,
+        # inject the Anthropic env var into the pipeline config so
+        # downstream LLM backend builders can see it. Done here so
+        # _try_init_gemma (which builds the MiniMaxM3Backend) picks
+        # it up automatically.
+        if (
+            not self.config.extra.get("MiniMax_api_key")
+            and not os.environ.get("MINIMAX_API_KEY")
+            and os.environ.get("ANTHROPIC_API_KEY")
+        ):
+            self.config.extra["MiniMax_api_key"] = os.environ.get("ANTHROPIC_API_KEY")
+            logger.info(
+                "Pipeline: using ANTHROPIC_API_KEY as MiniMax_api_key "
+                "(Anthropic env-var fallback)"
+            )
         self._try_init_gemma()
 
     @property
@@ -1085,12 +1102,21 @@ class RadiolarianPipeline:
                 continue
 
             # Stratigraphic column / litholog column / paleogeographic
-            # map: route to the proper multi-modal geology vision
-            # prompt instead of falling through to the plate
-            # segmentation path. Round 5 — previously these were
-            # misclassified as plate/range_chart and silently lost
-            # their specialized geological content.
-            if fig_type in ("strat_column", "litholog_column", "paleogeographic_map"):
+            # map / location map: route to the proper multi-modal geology
+            # vision prompt instead of falling through to the plate
+            # segmentation path. Round 5 added the first three; Round 20
+            # sampling showed that "Geological Map of...", "Location
+            # map of studied sections", and other map captions (which
+            # classify as plain ``map``) also need M3 vision extraction
+            # to surface formation/lithology/locality. Without "map"
+            # here, those figures fall through to plate segmentation
+            # and produce zero usable records.
+            if fig_type in (
+                "strat_column",
+                "litholog_column",
+                "paleogeographic_map",
+                "map",
+            ):
                 geo_links: list[dict[str, Any]] = []  # Audit Bug 1:
                 # initialize so _emit_progress below never hits
                 # UnboundLocalError when the image is missing or
@@ -1836,7 +1862,13 @@ class RadiolarianPipeline:
         """
         allowed: list[str] = list(
             self.config.extra.get("geo_vision_figure_types", [])
-            or ["range_chart", "stratigraphic_column", "litholog_column", "paleogeographic_map"]
+            or [
+                "plate",
+                "range_chart",
+                "stratigraphic_column",
+                "litholog_column",
+                "paleogeographic_map",
+            ]
         )
         for r in results:
             md = r.get("metadata") or {}
@@ -2063,6 +2095,17 @@ class RadiolarianPipeline:
             )
         # Round 11: post-process pipeline output (dedup + stub-row filter).
         # See ``_finalize_rows`` docstring for what each rule does.
+        # Round 18: enrich each row's geology_links with paleo
+        # coordinates + plate_id + reconstruction_model via
+        # ``paleo_reconstruction.enrich_geology_record``. The
+        # enrichment is in-place and a no-op when modern coords or an
+        # age are missing.
+        from .paleo_reconstruction import enrich_geology_record
+        for r in results:
+            md = r.get("metadata") or {}
+            for gl in md.get("geology_links") or []:
+                if isinstance(gl, dict):
+                    enrich_geology_record(gl)
         return self._finalize_rows(results)
 
     # ----- Round 11 post-processing -------------------------------------------------
@@ -3074,13 +3117,18 @@ Rules:
         #      with a generic caption -- a clear bug now fixed.
         from .geology_extraction import link_panels_to_geology as _link_panels
 
-        # Build a unique panel_caption key per match. Two matches in the
-        # same figure can share a panel_id (OCR misread duplicates) — a
-        # plain ``{m.panel_id: caption}`` dict comprehension would
-        # silently drop all but the last occurrence, and the lookup
-        # below (also keyed on panel_id) would assign the same geo list
-        # to every duplicate. Fall back to ``f"idx_{i}"`` when the
-        # panel_id is missing OR has already been seen.
+        # Round 18 audit fix: every panel used to receive the SAME
+        # figure-level geology_links because ``panel_captions`` was
+        # keyed on panel_id but valued with the same figure-level
+        # caption text. The result was a 27-panel Beccaro paper all
+        # stamped with the same "Fonzaso Formation" entry — even
+        # though only a few panels actually correspond to that
+        # formation. The expert reviewer flagged this as fabricated
+        # data. The fix: only panels that have a panel-level caption
+        # (non-placeholder) get per-panel geology. Panels whose own
+        # caption is a placeholder get an EMPTY list and a
+        # ``geology_scope="none"`` marker so the operator sees the
+        # data gap instead of fabricated content.
         panel_captions: dict[str, str] = {}
         panel_keys: list[str] = []
         for i, m in enumerate(matches):
@@ -3101,13 +3149,27 @@ Rules:
         for i, m in enumerate(matches):
             geo_list = section_links.get(m.species or "", [])
             if not geo_list:
-                # Panel-level fallback: scan this panel's own caption for
-                # age/formation/locality mentions. Use ``panel_keys[i]``
-                # (the same uniquified key we stored above) so a duplicate
-                # panel_id doesn't accidentally pull the previous match's
-                # geo list.
+                # Round 18 fix: only the FIRST panel in a figure with
+                # a non-placeholder caption inherits the figure-level
+                # geology as a default anchor. All other panels get
+                # empty lists (data gap, not fabricated). The
+                # ``geology_scope`` marker on the first panel tells
+                # the operator that the data is figure-level, not
+                # panel-specific.
                 key = panel_keys[i] if i < len(panel_keys) else (m.panel_id or f"idx_{i}")
-                geo_list = panel_geo.get(key, [])
+                panel_local_geo = panel_geo.get(key, [])
+                if panel_local_geo and not _looks_like_placeholder_caption(
+                    panel_captions.get(key, "")
+                ):
+                    geo_list = panel_local_geo
+                    m.metadata["geology_scope"] = "panel"
+                elif i == 0 and panel_local_geo:
+                    # First panel as figure-level anchor. Marked so
+                    # the operator can distinguish from panel-specific.
+                    geo_list = panel_local_geo
+                    m.metadata["geology_scope"] = "figure_anchor"
+                else:
+                    m.metadata["geology_scope"] = "none"
             m.metadata["scale_bar"] = merged_scale.to_dict()
             m.metadata["geology_links"] = geo_list[:5]
             m.metadata["m3_diagnostic"] = m3_diag
@@ -3190,8 +3252,21 @@ Rules:
             sp = row.get("species") or ""
             geo_list = section_links.get(sp, [])
             if not geo_list:
+                # Round 18 fix: only the FIRST panel in a figure
+                # inherits figure-level geology; others stay empty
+                # so we don't fabricate per-panel data.
                 key = panel_keys[i] if i < len(panel_keys) else (row.get("panel_id") or f"idx_{i}")
-                geo_list = panel_geo.get(key, [])
+                panel_local_geo = panel_geo.get(key, [])
+                if panel_local_geo and not _looks_like_placeholder_caption(
+                    panel_captions.get(key, "")
+                ):
+                    geo_list = panel_local_geo
+                    md["geology_scope"] = "panel"
+                elif i == 0 and panel_local_geo:
+                    geo_list = panel_local_geo
+                    md["geology_scope"] = "figure_anchor"
+                else:
+                    md["geology_scope"] = "none"
             md["scale_bar"] = merged_scale.to_dict()
             md["geology_links"] = geo_list[:5]
             md.setdefault("m3_diagnostic", {})
@@ -3453,6 +3528,24 @@ Rules:
             return result
 
         error_info = self._collect_fallback_error_info(result, paper_id, figure_id)
+        # Round 18 audit: M3 refuses to extract species from non-specimen
+        # figures (bar charts, tables, maps). Surfacing these as popup
+        # decisions wastes operator time and asks for a no-op answer.
+        # Silently skip the figure when the error text clearly indicates
+        # "this is not a specimen image". The figure is still recorded
+        # in m3_diagnostic with m3_rejected=True so the operator can
+        # audit the skip after the run.
+        if error_info.get("is_non_specimen_figure"):
+            logger.info(
+                "M3 returned 'non-specimen' refusal for %s/%s; "
+                "silently skipping (no popup): %s",
+                paper_id,
+                figure_id,
+                (error_info.get("error") or "")[:200],
+            )
+            for m in result:
+                m.metadata["MiniMax_fallback_action"] = "skipped_non_specimen"
+            return result
         action = self.gemma_fallback_handler(error_info)
 
         if action == "stop":
@@ -3599,7 +3692,55 @@ Rules:
             "error_type": first_type or ("MiniMaxAPIError" if first_fb else "Unknown"),
             "context": f"paper={paper_id} figure={figure_id} affected_panels="
             f"{sum(1 for m in matches if m.metadata.get('gemma_error') or m.metadata.get('gemma_fallback'))}",
+            # Round 18 audit: M3 frequently refuses to extract species
+            # from non-specimen figures (bar charts, tables, maps,
+            # publication-count graphs) and returns reasoning like
+            # "该panel为图表…无标签与物种可判定". The previous code
+            # surfaced this as a MiniMaxAPIError to the popup, which
+            # (a) wasted the operator's time on a no-decision and
+            # (b) burned API cost on a question with only one answer
+            # (skip the figure). Mark these cases so the popup
+            # handler can short-circuit to "silently skip" instead of
+            # asking the user to choose a fallback.
+            "is_non_specimen_figure": RadiolarianPipeline._looks_like_non_specimen_error(
+                first_err, first_type
+            ),
         }
+
+    @staticmethod
+    def _looks_like_non_specimen_error(err: str, err_type: str) -> bool:
+        """Return True if the MiniMax error text / type signals that
+        the figure isn't a radiolarian specimen image.
+
+        M3's stage-2 / LLM-first paths return deliberate refusals
+        for non-specimen content ("this is a bar chart, no species
+        to extract"). Surfacing those as MiniMaxAPIError to the
+        popup makes the operator click through a no-op. Detect them
+        and silently skip the figure instead.
+        """
+        if not err and not err_type:
+            return False
+        # Patterns that indicate M3 correctly refused to extract
+        # species because the figure isn't a radiolarian specimen
+        # image. Mix of Chinese ("该panel", "非标本") and English
+        # ("bar chart", "no specimen panels") markers; lowercased
+        # for case-insensitive matching.
+        non_specimen_markers = (
+            "该panel", "并非", "不涉及", "无标签", "无物种", "不可判定",
+            "不是放射虫", "不是标本", "非标本", "非放射虫", "不是图版",
+            "不是放射虫图版", "非图版", "非显微", "bar chart",
+            "bar graph", "柱状图", "统计图", "折线图", "数量统计",
+            "publication count", "publication number", "no specimen",
+            "no panel", "not a radiolarian", "not a specimen",
+            "no radiolarian", "is not a radiolarian", "is not a specimen",
+            "no specimen panels", "no panels found", "chart of",
+            "graph of", "table of", "is a chart", "is a table",
+            "is a graph", "is a diagram", "is a map", "is a photo",
+            "is a photomicrograph", "is text", "is a title page",
+            "is a reference",
+        )
+        haystack = ((err or "") + " " + (err_type or "")).lower()
+        return any(m.lower() in haystack for m in non_specimen_markers)
 
     def _build_local_gemma_fallback(self):
         """Try to build a local Gemma4 runtime as fallback target.

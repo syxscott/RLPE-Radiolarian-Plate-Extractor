@@ -304,6 +304,13 @@ class PanelMetadata(BaseModel):
     review_reasons: list[str] = Field(default_factory=list)
     reassigned_from_figure: str | None = None
     reassigned_reason: str | None = None
+    # Round 18 audit: marks the SCOPE of the geology_links attached
+    # to this panel. "panel" = derived from this panel's own caption;
+    # "figure_anchor" = first panel inheriting the figure-level
+    # caption as an anchor (others stay empty); "none" = no figure-
+    # level data, so the operator sees a data gap rather than
+    # fabricated per-panel data.
+    geology_scope: str = ""
 
 
 class PanelRecord(BaseModel):

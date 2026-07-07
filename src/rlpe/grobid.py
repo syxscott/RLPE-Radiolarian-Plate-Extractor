@@ -204,6 +204,17 @@ def infer_section_type(title: str) -> str:
         return "geological_setting"
     if "material" in t or "method" in t:
         return "materials_methods"
+    # Round 20 sampling: the Danelian 2006 paper had a "References"
+    # section that was being classified as ``other`` and fed into
+    # geology extraction. Citation paragraphs in references mention
+    # formation names / countries from OTHER papers as part of
+    # bibliographic titles, which would leak into the Danelian
+    # records (e.g. country=Japan, formation="Fonzaso Formation"
+    # were both extracted from a Beccaro 2002 reference). Recognise
+    # the references / bibliography sections explicitly so they can
+    # be skipped downstream.
+    if "reference" in t or "bibliograph" in t or "cited work" in t or "literature cited" in t:
+        return "references"
     return "other"
 
 

@@ -12,6 +12,7 @@ the rest of the codebase keeps its lightweight dataclass types.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from typing import Any
 
@@ -20,6 +21,7 @@ from .schema_models import (
     GeologyContextRecord,
     GeologyLinkRecord,
     LocalityRecord,
+    PaleoCoordinateRecord,
     PanelMetadata,
     PanelRecord,
     PaperMetadataRecord,
@@ -32,6 +34,8 @@ from .schema_models import (
 )
 from .types import MatchResult
 from .types import PaperMetadata as InternalPaperMetadata
+
+logger = logging.getLogger(__name__)
 
 
 def match_result_from_dict(d: dict[str, Any]) -> MatchResult:
@@ -156,6 +160,7 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
         extraction_method=str(meta.get("extraction_method", "") or ""),
         needs_review=bool(meta.get("needs_review", False)),
         review_reasons=list(meta.get("review_reasons", []) or []),
+        geology_scope=str(meta.get("geology_scope", "") or ""),
     )
 
 
@@ -456,30 +461,16 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
 
 
 def _paleocoord_missing_warning(locality_dump: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Emit a single warning when localities exist but the
-    paleocoordinates view is empty.
+    """Deprecated: kept as a no-op stub for backward compatibility.
 
-    This makes the empty paleo_coordinates list self-explanatory:
-    consumers can tell the field is reserved, not forgotten. The
-    warning is intentionally not emitted when there are no localities,
-    because that would be noise for papers that have no geographic
-    data at all.
+    Round 20 wired the GPlates-style paleocoordinate reconstruction
+    in ``paleo_coordinates_from_localities``, so the
+    ``paleocoord_backend_missing`` warning is no longer emitted.
+    External callers that still import this symbol get a None
+    return — which is the same shape they would have seen before
+    Round 20 (no warning emitted).
     """
-    if not locality_dump:
-        return None
-    return {
-        "warning_id": _stable_id("warn", "paleocoord_backend_missing", str(len(locality_dump))),
-        "level": "warning",
-        "code": "paleocoord_backend_missing",
-        "message": (
-            "Paleocoordinate reconstruction not yet wired; the "
-            "paleo_coordinates list is empty by design. Records will "
-            "appear once the backend is implemented."
-        ),
-        "entity_type": "run",
-        "entity_id": None,
-        "evidence_text": f"{len(locality_dump)} locality record(s) detected",
-    }
+    return None
 
 
 def run_output_from_provenance(
@@ -516,9 +507,18 @@ def run_output_from_provenance(
     geology_dump = geology_contexts_from_matches(matches)
     locality_dump = locality_records_from_geology(matches)
     warnings_dump = warnings_from_matches(matches)
-    paleo_warn = _paleocoord_missing_warning(locality_dump)
-    if paleo_warn is not None:
-        warnings_dump = warnings_dump + [paleo_warn]
+    # Round 20: wire GPlates-style paleocoordinate reconstruction.
+    # Previously the ``paleo_coordinates`` view was hard-coded empty
+    # with a ``paleocoord_backend_missing`` warning. The backend
+    # exists in ``rlpe.paleo_reconstruction`` (Euler pole table for
+    # 14 plates, 0-250 Ma range) but was never connected. Now we
+    # call ``paleo_coordinates_from_localities`` which pairs each
+    # locality with its associated geology context (by locality_id),
+    # runs ``reconstruct_paleo_position`` for the context's
+    # ``ma_mid``, and emits a ``PaleoCoordinateRecord`` per locality.
+    # Localities without coordinates are skipped silently. The
+    # warning is no longer emitted since the backend is live.
+    paleo_dump = paleo_coordinates_from_localities(locality_dump, geology_dump)
     return {
         "schema_version": provenance.schema_version,
         "provenance": provenance.model_dump(),
@@ -529,7 +529,7 @@ def run_output_from_provenance(
         "samples": sample_dump,
         "geology_contexts": geology_dump,
         "localities": locality_dump,
-        "paleo_coordinates": [],
+        "paleo_coordinates": paleo_dump,
         "warnings": warnings_dump,
     }
 
@@ -560,6 +560,47 @@ def paper_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             source=pm.source if pm else "",
             confidence=pm.confidence if pm else 0.0,
         )
+        # Round 20: post-process the record to fix the three systemic
+        # paper-metadata issues identified in the 4-paper sampling:
+        # garbage titles (page numbers / filenames), author markers
+        # like "Input2", and missing / wrong journal names. The
+        # helper returns a cleaned dict + any review reasons raised;
+        # review_reasons are merged into the paper record's
+        # review_reasons list so the operator sees the flag in the
+        # UI. Without this pass, papers with parse-failure titles
+        # (Bandini / Danelian / Bragin) would silently retain
+        # garbage values.
+        try:
+            from .paper_metadata_cleanup import cleanup_paper_metadata
+
+            cleaned, review_reasons = cleanup_paper_metadata(rec.model_dump())
+            # Apply cleaned values back to the record. Pydantic
+            # ``extra=forbid`` means unknown keys (like
+            # review_reasons on PaperRecord) would be rejected, so
+            # we filter to the model's declared fields.
+            allowed_fields = set(PaperRecord.model_fields.keys())
+            for k, v in cleaned.items():
+                if k in allowed_fields:
+                    setattr(rec, k, v)
+            if review_reasons:
+                # PaperRecord does not declare review_reasons in its
+                # strict schema, so we attach them to the dumped
+                # dict after the fact. The downstream ``run_output``
+                # already includes this key for figures / panels.
+                dumped = rec.model_dump()
+                dumped["review_reasons"] = review_reasons
+                dumped["needs_review"] = True
+                seen[pid] = dumped
+                continue
+        except Exception as exc:
+            # Cleanup must never block export. If the helper raises
+            # (e.g. requests library missing), we fall back to the
+            # raw record.
+            logger.warning(
+                "paper_metadata_cleanup failed for %s: %s; using raw values",
+                pid,
+                exc,
+            )
         seen[pid] = rec.model_dump()
     return list(seen.values())
 
@@ -642,28 +683,75 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
 
 def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
     seen: dict[tuple[str, str], dict[str, Any]] = {}
-    sample_pat = re.compile(r"Sample\s+([A-Za-z0-9\-]+)")
+    # Round 20 sampling: Boughdiri 2007 captions use the formats
+    # ``CH4, specimen 7``, ``MB4, specimen 15`` — the old regex
+    # ``Sample\\s+[A-Za-z0-9\\-]+`` matched none of these, leaving
+    # samples = [] for the whole paper. The new pattern set
+    # covers four common radiolarian-caption shapes:
+    #
+    #   1. ``Sample 12`` / ``Sample CH-4``  (legacy)
+    #   2. ``CH4, MB4, GA7, RM3, ...``     (Boughdiri short codes)
+    #   3. ``specimen 7``                  (Boughdiri long form)
+    #   4. ``sample 14-2``                 (some Bandini plates)
+    #
+    # Each pattern is paired with a single-letter prefix that goes
+    # into ``sample_id`` so the operator can tell which detector
+    # fired (S_ legacy, B_ Boughdiri-style short code, R_ specimen,
+    # N_ numeric-only).
+    _SAMPLE_PATTERNS: tuple[tuple[str, str], ...] = (
+        # (compiled regex, sample-id prefix)
+        (re.compile(r"Sample\s+([A-Za-z0-9][A-Za-z0-9\-]*)"), "S_"),
+        # Boughdiri 2007-style short codes (CH4, MB4, GA7, RM3, etc.).
+        # The leading letter is a paper-specific locality prefix; the
+        # trailing digits identify the specimen. Word boundaries on
+        # both sides prevent partial matches inside other tokens.
+        # ``(?:...)`` (non-capturing) so finditer / findall return the
+        # full match including the digits, not just the letter prefix.
+        (
+            re.compile(
+                r"\b(?:CH|MB|GA|RM|HK|JP|BS|TS|TR|SP|TK|DF|DP|MS|AS|RS)"
+                r"-?\d{1,4}\b"
+            ),
+            "B_",
+        ),
+        # "specimen 7" / "specimen 15" — Boughdiri long form. The
+        # sample_id embeds the full word so the operator sees
+        # ``R_specimen_7`` (not just ``R_7``) and can distinguish
+        # specimen numbers from any other numbered identifier.
+        (re.compile(r"(specimen\s+\d{1,4})\b"), "R_"),
+        # "sample 14-2" style (some Bandini captions)
+        (
+            re.compile(r"\bsample\s+(\d{1,4}[-/]?\d{0,4})\b", re.IGNORECASE),
+            "N_",
+        ),
+    )
     for m in matches:
         text = m.caption_snippet or ""
         if not text or not m.paper_id:
             continue
-        for sm in sample_pat.finditer(text):
-            sid = sm.group(1)
-            key = (m.paper_id, sid)
-            if key in seen:
-                continue
-            rec = SampleRecord(
-                sample_id=sid,
-                paper_id=m.paper_id,
-                figure_id=m.figure_id,
-                caption_panel_range=None,
-                locality_id=None,
-                geology_context_id=None,
-                evidence_text=text[:300],
-                page_index=(m.metadata or {}).get("page_index"),
-                confidence=0.5,
-            )
-            seen[key] = rec.model_dump()
+        for pat, prefix in _SAMPLE_PATTERNS:
+            for sm in pat.finditer(text):
+                # group(1) is the captured id; fall back to group(0)
+                # for patterns without a capture group (the Boughdiri
+                # short-code pattern uses an alternation that doesn't
+                # capture, so the whole match is the id).
+                sid_raw = sm.group(1) if sm.lastindex else sm.group(0)
+                sid = f"{prefix}{sid_raw}"
+                key = (m.paper_id, sid)
+                if key in seen:
+                    continue
+                rec = SampleRecord(
+                    sample_id=sid,
+                    paper_id=m.paper_id,
+                    figure_id=m.figure_id,
+                    caption_panel_range=None,
+                    locality_id=None,
+                    geology_context_id=None,
+                    evidence_text=text[:300],
+                    page_index=(m.metadata or {}).get("page_index"),
+                    confidence=0.5,
+                )
+                seen[key] = rec.model_dump()
     return list(seen.values())
 
 
@@ -702,7 +790,15 @@ def geology_contexts_from_matches(matches: list[MatchResult]) -> list[dict[str, 
                 lithology=g.get("lithology"),
                 biozone=g.get("biozone"),
                 locality_id=_stable_id(
+                    # Round 20: include paper_id in the stable_id so
+                    # the geology-context locality_id matches the
+                    # locality_record locality_id (which is also
+                    # keyed by paper_id). Without paper_id, two
+                    # papers sharing the same locality name +
+                    # coordinates would produce colliding locality
+                    # ids and break the paleo_coordinates join.
                     "loc",
+                    m.paper_id,
                     g.get("locality"),
                     g.get("latitude"),
                     g.get("longitude"),
@@ -759,6 +855,111 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
             )
             seen[key] = rec.model_dump()
     return list(seen.values())
+
+
+def paleo_coordinates_from_localities(
+    localities: list[dict[str, Any]],
+    geology_contexts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build PaleoCoordinateRecords by pairing localities with their
+    associated geology context and running GPlates-style reconstruction.
+
+    Round 20 wiring: ``run_output_from_provenance`` calls this
+    helper to populate the previously-empty ``paleo_coordinates``
+    view. For each locality that has a non-None
+    ``modern_latitude`` / ``modern_longitude`` we look up its
+    geology context (by ``locality_id``), take the context's
+    ``ma_mid`` as the reconstruction age, and call
+    ``reconstruct_paleo_position`` from ``rlpe.paleo_reconstruction``
+    to compute the rotated paleo coordinate. The plate is inferred
+    from the locality's country via ``infer_plate_id``.
+
+    Localities without coordinates are skipped silently — no fake
+    records are emitted, matching the no-fabrication policy used
+    throughout Round 18-20.
+
+    Returns a list of dicts ready to be JSON-serialised into
+    ``RunOutput.paleo_coordinates``.
+    """
+    if not localities:
+        return []
+    # Build a locality_id → geology-context lookup so we can find the
+    # ma_mid for each locality in O(1).
+    geo_by_loc: dict[str, dict[str, Any]] = {}
+    for g in geology_contexts:
+        loc_id = g.get("locality_id")
+        if loc_id:
+            geo_by_loc[loc_id] = g
+    out: list[dict[str, Any]] = []
+    # Local import keeps converters.py free of paleo_reconstruction at
+    # import time (avoids circular imports and keeps the unit-test
+    # dependency surface small).
+    try:
+        from .paleo_reconstruction import (
+            infer_plate_id,
+            reconstruct_paleo_position,
+        )
+    except Exception:
+        # If the helper module fails to load for any reason, fall
+        # back to an empty list rather than breaking the whole
+        # export. The paleocoordinates view is best-effort.
+        logger.warning(
+            "paleo_reconstruction import failed; paleo_coordinates will be empty",
+            exc_info=True,
+        )
+        return []
+    for loc in localities:
+        mod_lat = loc.get("modern_latitude")
+        mod_lon = loc.get("modern_longitude")
+        if mod_lat is None or mod_lon is None:
+            continue
+        # Find the geology context (by locality_id) and read its ma_mid.
+        loc_id = loc.get("locality_id")
+        geo = geo_by_loc.get(loc_id or "")
+        age_ma: float | None = None
+        if geo is not None:
+            age_ma = geo.get("ma_mid")
+            # ma_mid is optional in the schema; fall back to ma_top
+            # if ma_mid is missing.
+            if age_ma is None:
+                age_ma = geo.get("ma_top")
+        # Infer the plate from country / locality name. The fallback
+        # order in ``infer_plate_id`` is country > locality > coords.
+        plate_id = infer_plate_id(
+            country=loc.get("country"),
+            locality=loc.get("name"),
+            modern_lat=float(mod_lat),
+            modern_lon=float(mod_lon),
+        )
+        paleo_lat, paleo_lon = reconstruct_paleo_position(
+            modern_lat=float(mod_lat),
+            modern_lon=float(mod_lon),
+            age_ma=age_ma,
+            plate_id=plate_id,
+        )
+        rec = PaleoCoordinateRecord(
+            paleo_coordinate_id=_stable_id(
+                "paleo",
+                loc_id,
+                mod_lat,
+                mod_lon,
+                age_ma,
+                plate_id,
+            ),
+            locality_id=loc_id,
+            modern_latitude=float(mod_lat),
+            modern_longitude=float(mod_lon),
+            reconstruction_age_ma=float(age_ma) if age_ma is not None else None,
+            paleo_latitude=float(paleo_lat) if paleo_lat is not None else None,
+            paleo_longitude=float(paleo_lon) if paleo_lon is not None else None,
+            plate_id=plate_id,
+            reconstruction_model="Seton2012",
+            method="euler_pole_rotation",
+            confidence=0.7 if paleo_lat is not None else 0.0,
+            backend_status="ok" if paleo_lat is not None else "plate_or_age_unknown",
+        )
+        out.append(rec.model_dump())
+    return out
 
 
 def warnings_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:

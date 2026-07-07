@@ -127,33 +127,95 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
         "location of outcrop",
         "outcrop location",
         "sample location",
+        # Round 20 sampling: Boughdiri 2007 Fig 1 "Location of
+        # studied sections..." missed the bare "location map"
+        # pattern. Add "location of studied" / "location of section"
+        # so generic location-map captions route correctly.
+        "location of studied",
+        "location of section",
+        "location of the studied",
+        "study area map",
     ),
     # Stratigraphic column / litholog column — more specific than
     # "range_chart" so we route them to the proper vision prompt.
     "strat_column": (
+        # Round 20 sampling: the previous list missed 3 of the 4
+        # strat-column captions we found in real papers (overview
+        # captions, composite column captions, zone columns). Add
+        # the missing phrases below. ``overview of.*strat`` and
+        # ``strat.*overview`` are matched as two substrings; the
+        # classifier uses plain ``in`` so each is checked
+        # independently and the order doesn't matter.
         "stratigraphic column",
         "columnar section",
         "measured section",
         "generalized stratigraphy",
         "stratigraphic log",
+        "composite column",
+        "composite strat",
+        "lithostratigraphic column",
+        "composite lithostrat",
+        "zones and beds",
+        "zone column",
+        "stratigraphic overview",
+        "overview of the strat",
+        "overview of",
+        "tunisian jurassic strat",
+        "jurassic stratigraphy",
+        "jurassic strat",
+        "cretaceous stratigraphy",
+        "cretaceous strat",
+        "stratigraphic framework",
+        "chronostratigraphic",
     ),
     "litholog_column": (
+        # Round 20 sampling: Boughdiri 2007's "Lithological sections
+        # from Jebels Jédidi..." was missed by the old list. Add
+        # the multi-word variants below. We keep multi-word only
+        # because single-word "section" over-matches plate captions.
         "litholog column",
         "litholog log",
         "lithology column",
         "lithologic log",
         "lithology log",
+        "lithological section",
+        "lithological log",
+        "lithologic column",
+        "lithologic sections",
     ),
     "paleogeographic_map": (
+        # Round 20 sampling: Bragin 2025's "The most important
+        # localities of Oxfordian-Valanginian Boreal radiolarians
+        # in Russia" was missed (no map keyword). Add locality-map
+        # patterns. We keep "paleogeographic" / "palaeogeographic"
+        # intact for the strict paleogeographic-map type, plus
+        # locality/distribution patterns that often co-occur.
         "paleogeographic map",
         "palaeogeographic",
         "paleogeographic reconstruction",
         "palaeogeographic map",
+        "locality map",
+        "localities of",
+        "localities in",
+        "important localities",
+        "main localities",
+        "distribution of the",
     ),
     "photo": (
         "field photograph",
         "outcrop photograph",
         "field photo",
+        # Round 20 sampling: Boughdiri 2007 Fig 5 "Exposures from
+        # Oued Tazega section. a) General view..." was classified as
+        # "other" because the photo keyword list only had three
+        # variants. Add broader patterns so outcrop / field exposure
+        # photos route correctly.
+        "exposures from",
+        "exposure of",
+        "general view",
+        "outcrop view",
+        "outcrop photo",
+        "field exposure",
     ),
 }
 

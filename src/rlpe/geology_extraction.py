@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import asdict, dataclass, replace
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 AGE_PATTERN = re.compile(
     r"\b(?:Early|Middle|Late|Lower|Upper)\s+[A-Z][a-z]+|"
@@ -30,6 +33,157 @@ COORDINATE_PATTERN = re.compile(
     r"\b(\d{1,3}(?:\.\d+)?)\s*°?\s*([NSns])?[,\s]+(\d{1,3}(?:\.\d+)?)\s*°?\s*([EWew])?\b"
 )
 
+# Round 18 audit: split the FORMATION_PATTERN output into the three
+# stratigraphic ranks it actually covers (Group / Formation / Member)
+# and add lithology / biozone / country extraction so the published
+# GeologyLinkRecord fills more of its 25 declared fields.
+
+# Match the three ranks independently so a single string like
+# "Sicanian Group → Rosso Ammonitico Formation → Lower Member" parses
+# into {group, formation, member} in one pass.
+#
+# Round 18 audit: the previous regex used ``[A-Z][A-Za-z\-]+``
+# (greedy, 0-3 more words) which matched across sentence boundaries
+# and produced garbage like "RAM is the Fonzaso Formation" — the
+# regex would start matching at "Rosso" or "Medio" and walk forward
+# to "Formation" while eating every word in between. The fix uses a
+# much narrower ``[A-Z][A-Za-z\-]{0,30}`` with a non-greedy ``?``
+# quantifier and explicit word boundaries so the match terminates at
+# the first lowercase word or sentence end.
+_GROUP_RE = re.compile(
+    r"\b([A-Z][A-Za-z\-]{0,30}?\s+(?:Group|Gp\.))\b"
+)
+_FORMATION_RE = re.compile(
+    r"\b([A-Z][A-Za-z\-]{0,30}?\s+(?:Formation|Fm\.))\b"
+)
+_MEMBER_RE = re.compile(
+    r"\b([A-Z][A-Za-z\-]{0,30}?\s+(?:Member|Mb\.))\b"
+)
+
+# Lithology dictionary: lowercase match against a curated set of
+# sedimentary / volcanic / biogenic rock names that appear in
+# radiolarian-paper captions. ``\b`` boundaries prevent
+# "siliceous" matching inside "siliceously".
+_LITHOLOGY_TERMS = (
+    "siliceous limestone", "limestone", "chert", "radiolarian chert",
+    "bedded chert", "ribbon chert", "cherty limestone",
+    "marl", "marlstone", "shale", "mudstone", "claystone",
+    "sandstone", "siltstone", "conglomerate", "breccia",
+    "dolomite", "dolostone", "micrite", "biomicrite",
+    "calcarenite", "calcilutite", "tuff", "tuffaceous",
+    "basalt", "basaltic", "andesite", "rhyolite",
+    "ophiolite", "serpentinite", "chalk", "marlstone",
+    "glauconitic sandstone", "phosphorite", "ironstone",
+    "black shale", "organic-rich shale",
+)
+LITHOLOGY_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(t) for t in _LITHOLOGY_TERMS) + r")\b",
+    re.IGNORECASE,
+)
+
+# Biozone patterns:
+#   - "N. optima Zone" / "P. uvus Zone" (radiolarian first-letter abbrev.)
+#   - "Zone 5" / "Subzone 5a" (numbered biozones)
+#   - "Morozovella aragonensis Zone" (full taxon-named zone)
+_BIOZONE_RE = re.compile(
+    r"\b(?:[A-Z]\.\s*[a-z]+\s+Zone|"
+    r"(?:Sub)?zone\s+[A-Z0-9]+[a-z]?|"
+    r"[A-Z][a-z]+\s+[a-z]+\s+Zone)\b"
+)
+
+# Country list: ISO 3166-1 shortlist of countries that appear in
+# radiolarian-paper locality phrases. The list is intentionally
+# short — matches against a curated set beat a fuzzy geo-lookup for
+# "Italy" vs "Italian" (the regex boundary handles the difference).
+# ``Sicily`` etc. are deliberately excluded: they're regions, not
+# countries, and including them caused "Sicily" to wrongly match
+# before "Italy" in the Beccaro paper.
+_COUNTRIES = (
+    "Italy", "Japan", "China", "Turkey", "Greece", "Oman",
+    "New Zealand", "Australia", "Austria", "France", "Germany",
+    "Spain", "Portugal", "Swiss", "Switzerland", "Russia",
+    "Canada", "USA", "United States", "Mexico", "Argentina",
+    "Chile", "Brazil", "India", "Pakistan", "Philippines",
+    "Indonesia", "Iran", "Iraq", "Saudi Arabia", "South Africa",
+    "Egypt", "Tunisia", "Morocco", "Algeria", "Norway", "Sweden",
+    "Finland", "Denmark", "Poland", "Czech Republic", "Hungary",
+    "Romania", "Bulgaria", "Greece", "Turkey", "Cyprus",
+)
+# Region -> country override. Lets "Western Sicily" or "Sicilian
+# sections" map to "Italy" without listing Sicily (a region, not a
+# country) in the main country list. Add new region->country pairs
+# here when papers consistently use a regional name.
+_REGION_TO_COUNTRY = (
+    ("sicily", "Italy"),
+    ("sicilian", "Italy"),
+    ("tuscany", "Italy"),
+    ("sardinia", "Italy"),
+    ("calabria", "Italy"),
+    ("andalusia", "Spain"),
+    ("bohemia", "Czech Republic"),
+    ("scotland", "United Kingdom"),
+    ("england", "United Kingdom"),
+    ("wales", "United Kingdom"),
+    ("hokkaido", "Japan"),
+    ("honshu", "Japan"),
+    ("shikoku", "Japan"),
+    ("kyushu", "Japan"),
+)
+_COUNTRY_RE = re.compile(
+    r"\b(" + "|".join(re.escape(c) for c in _COUNTRIES) + r")\b"
+)
+
+# Modern vs paleo coordinate heuristic. A "paleo" coordinate appears
+# in a sentence that frames it as the position AT DEPOSITION TIME
+# (e.g. "the basin was located at 23°S, 47°W in the Late Triassic").
+# A "modern" coordinate appears in a present-day framing ("today
+# the locality is at 38°N, 14°E"). Keywords that flip the assignment.
+_PALEO_KEYWORDS = (
+    "during the ", "at that time", "at the time", "in the late ",
+    "in the early ", "in the middle ", "paleogeographic",
+    "paleolatitude", "paleolongitude", "during deposition",
+    "reconstructed", "was located", "lay at", "was situated",
+    "at deposition", "in triassic", "in jurassic", "in cretaceous",
+    "in permian", "in devonian", "in ordovician", "in silurian",
+    "in cambrian", "in carboniferous",
+)
+_MODERN_KEYWORDS = (
+    "today", "present-day", "present day", "currently",
+    "now ", "modern coordinates", "modern position",
+    "modern locality",
+)
+
+
+def _strip_leading_article(name: str | None) -> str | None:
+    """Strip leading English articles ("The ", "A ", "An ") from a
+    stratigraphic unit name so "The Lower Member" becomes "Lower
+    Member". Returns the original value if ``None``.
+    """
+    if not name:
+        return name
+    for art in ("The ", "the ", "A ", "a ", "An ", "an "):
+        if name.startswith(art):
+            return name[len(art):]
+    return name
+
+
+def _classify_coordinate_age(
+    text: str, match_start: int, match_end: int
+) -> str:
+    """Return ``"paleo"`` or ``"modern"`` based on keywords within
+    ~120 chars BEFORE the coordinate match. Defaults to ``"modern"``
+    when neither set of keywords appears (most radiolarian papers
+    report modern locality coordinates by default).
+    """
+    ctx = text[max(0, match_start - 120) : match_start].lower()
+    for kw in _PALEO_KEYWORDS:
+        if kw in ctx:
+            return "paleo"
+    for kw in _MODERN_KEYWORDS:
+        if kw in ctx:
+            return "modern"
+    return "modern"
+
 
 @dataclass(slots=True)
 class GeologyRecord:
@@ -47,9 +201,26 @@ class GeologyRecord:
     ma_base: float | None = None
     ma_mid: float | None = None
     formation: str | None = None
+    # Round 18 audit: split the formation regex output so a paper
+    # that mentions all three ranks (Group → Formation → Member)
+    # emits three separate fields. Previously everything landed in
+    # ``formation`` only.
+    group: str | None = None
+    member: str | None = None
+    lithology: str | None = None  # e.g. "siliceous limestone"
     locality: str | None = None
+    country: str | None = None
+    biozone: str | None = None  # e.g. "N. optima Zone"
     latitude: float | None = None
     longitude: float | None = None
+    # Round 18 audit: split lat/lon into modern vs paleo so the
+    # converter downstream can keep them distinct. The plain
+    # ``latitude``/``longitude`` keep the first coord found (which
+    # is usually modern for radiolarian locality tables).
+    modern_latitude: float | None = None
+    modern_longitude: float | None = None
+    paleo_latitude: float | None = None
+    paleo_longitude: float | None = None
     section_type: str | None = None
     section_title: str | None = None
     evidence_text: str | None = None
@@ -71,9 +242,159 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         text = sec.get("text", "")
         if not text:
             continue
-        ages = [m.group(0).strip() for m in AGE_PATTERN.finditer(text)]
-        forms = [m.group(1).strip() for m in FORMATION_PATTERN.finditer(text)]
-        locs = [m.group(1).strip(" .,;") for m in LOCALITY_PATTERN.finditer(text)]
+        # Round 20: skip references / bibliography sections entirely.
+        # Citation paragraphs mention formation names, countries, and
+        # localities as part of bibliographic titles — they are
+        # NOT geology facts of THIS paper. The Danelian 2006 paper
+        # leak (country=Japan, formation="Fonzaso Formation") was
+        # traced to a Beccaro 2002 reference being extracted as if
+        # it were Danelian's own geology. References must be
+        # filtered out at this point so no downstream code can
+        # confuse them with the paper's actual stratigraphy.
+        sec_type = (sec.get("section_type") or "").lower()
+        sec_title = (sec.get("title") or "").lower()
+        if sec_type == "references" or any(
+            kw in sec_title
+            for kw in ("reference", "bibliograph", "cited work", "literature cited")
+        ):
+            logger.debug(
+                "Skipping section %r (type=%r): bibliography / references section "
+                "cannot be a source of geology facts",
+                sec.get("title"),
+                sec_type,
+            )
+            continue
+        # Round 20: validate each AGE_PATTERN match against the ICS
+        # stratigraphy lexicon. The raw regex would match anything
+        # that looks like "Late <Capitalized>" or a period name; in
+        # real text, phrases like "lower part of the section",
+        # "upper reaches of the formation", or "Late effects of
+        # diagenesis" all match the first alternative and were
+        # leaking into the ``age`` column of GeologyLinkRecord. We
+        # classify each match through ``classify_age_string`` and
+        # keep only those that the lexicon recognises (confidence
+        # > 0). Empty / unrecognised ages are dropped, not stored
+        # as literal strings — geologists cannot interpret
+        # ``age="lower part"`` meaningfully.
+        raw_age_matches = [m.group(0).strip() for m in AGE_PATTERN.finditer(text)]
+        if classify_age_string is not None:
+            ages: list[str] = []
+            for raw in raw_age_matches:
+                cls = classify_age_string(raw)
+                if cls.confidence > 0 and (cls.period or cls.epoch or cls.age):
+                    ages.append(raw)
+                else:
+                    logger.debug(
+                        "AGE_PATTERN matched %r but stratigraphy lexicon "
+                        "rejected it (confidence=%.2f); dropping",
+                        raw,
+                        cls.confidence,
+                    )
+        else:
+            ages = raw_age_matches
+        # Round 20: filter locality matches against the stratigraphy
+        # lexicon. ``LOCALITY_PATTERN`` (e.g. ``from <Capitalized>``)
+        # over-matches when the preposition "from" / "in" / "at"
+        # precedes a known stratigraphic term. The Bandini 2006
+        # SPECIES LIST section starts with "Acaeniotyle ... from
+        # Upper Cretaceous formations" — the phrase "from Upper
+        # Cretaceous" was captured as locality=``"Upper Cretaceous"``
+        # even though it's a stratigraphic age, not a place. We
+        # reject any locality that the ICS lexicon recognises as a
+        # real period / epoch / age.
+        raw_locs = [m.group(1).strip(" .,;") for m in LOCALITY_PATTERN.finditer(text)]
+        locs: list[str] = []
+        for loc in raw_locs:
+            if classify_age_string is not None:
+                cls = classify_age_string(loc)
+                if cls.confidence > 0 and (cls.period or cls.epoch or cls.age):
+                    logger.debug(
+                        "LOCALITY_PATTERN matched %r but stratigraphy "
+                        "lexicon recognised it as %s; treating as age, "
+                        "not locality",
+                        loc,
+                        cls.rank,
+                    )
+                    continue
+            locs.append(loc)
+        # Round 18: split the formation regex into rank-specific
+        # matches so a single text span yields separate
+        # ``group`` / ``formation`` / ``member`` fields instead of
+        # collapsing all three into ``formation``. The legacy greedy
+        # FORMATION_PATTERN was retired — it matched across sentence
+        # boundaries (e.g. "The Sicanian Group contains the Lower
+        # Member which is siliceous limestone" swallowed the whole
+        # sentence as ``formation``).
+        #
+        # Round 20 hardening: post-filter to drop any match whose
+        # name prefix contains digits. The regex uses
+        # ``[A-Z][A-Za-z\-]{0,30}?`` which can absorb tokens like
+        # "19" / "20" in page references or sample IDs
+        # ("Karnezeika-19 Formation", "Bed 5 Formation"). Real
+        # formation names never start with a digit in the first
+        # capitalised token, so a digit anywhere in the prefix is a
+        # strong signal that the match is misaligned with the
+        # "Formation/Fm." keyword that follows.
+        def _formation_name_ok(name: str) -> bool:
+            # Strip the trailing "Formation"/"Fm." and check the
+            # remaining name. The trailing keyword is removed first
+            # so its presence doesn't pollute the digit check.
+            for kw in ("Formation", "Fm.", "Group", "Gp.", "Member", "Mb."):
+                if name.endswith(kw):
+                    name = name[: -len(kw)].rstrip()
+                    break
+            return not any(ch.isdigit() for ch in name)
+
+        groups = [
+            m.group(1).strip()
+            for m in _GROUP_RE.finditer(text)
+            if _formation_name_ok(m.group(1))
+        ]
+        formations = [
+            m.group(1).strip()
+            for m in _FORMATION_RE.finditer(text)
+            if _formation_name_ok(m.group(1))
+        ]
+        members = [
+            m.group(1).strip()
+            for m in _MEMBER_RE.finditer(text)
+            if _formation_name_ok(m.group(1))
+        ]
+        # ``forms`` is only used as a "did we find ANY formation
+        # keyword at all" gate in the skip-check below. We use the
+        # union of the three rank lists so we don't drop records that
+        # only mentioned "Group" or "Member".
+        forms = formations or groups or members
+        # Lithology: pick the first match (dedup case-insensitive).
+        lithology = None
+        seen_litho: set[str] = set()
+        for m in LITHOLOGY_PATTERN.finditer(text):
+            lit = m.group(0).strip()
+            key = lit.lower()
+            if key in seen_litho:
+                continue
+            seen_litho.add(key)
+            lithology = lit
+            break
+        # Biozone: pick first match
+        bio_match = _BIOZONE_RE.search(text)
+        biozone = bio_match.group(0).strip() if bio_match else None
+        # Country: search anywhere in the section text. Order
+        # matters only when a paper names both a country and a
+        # sub-region locality — we keep the first match in the text.
+        country_match = _COUNTRY_RE.search(text)
+        country = country_match.group(1) if country_match else None
+        # Round 18: if a region name (e.g. "Sicily") is mentioned
+        # but no country, fall back to the region->country override
+        # table so the operator still gets a country on a Sicily /
+        # Tuscany / Bohemia paper. The check is whole-word and
+        # case-insensitive on the lowercased text.
+        if country is None:
+            text_l = text.lower()
+            for region, fallback_country in _REGION_TO_COUNTRY:
+                if f" {region} " in f" {text_l} ":
+                    country = fallback_country
+                    break
 
         # Stratigraphy enrichment — find stage names (Changhsingian, Wuchiapingian, …)
         chrono = None
@@ -107,8 +428,35 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         # range check, which let invalid coordinates leak into
         # GeologyRecord.latitude/longitude.
         lat, lon = _extract_first_coord(text)
+        # Round 18: classify the coordinate as paleo vs modern based
+        # on surrounding keywords ("at deposition time" → paleo,
+        # "today / present-day" → modern). Without this, both
+        # modern_latitude and paleo_latitude hold the same value
+        # and the user can't tell which is which.
+        if lat is not None and lon is not None:
+            coord_match = COORDINATE_PATTERN.search(text)
+            if coord_match is not None:
+                coord_age = _classify_coordinate_age(
+                    text, coord_match.start(), coord_match.end()
+                )
+            else:
+                coord_age = "modern"
+        else:
+            coord_age = "modern"
 
-        if not ages and not forms and not locs and chrono is None and lat is None:
+        if (
+            not ages
+            and not forms
+            and not locs
+            and chrono is None
+            and lat is None
+            and not groups
+            and not formations
+            and not members
+            and lithology is None
+            and biozone is None
+            and country is None
+        ):
             continue
 
         # 以句子级片段做证据，先走规则抽取。
@@ -122,10 +470,19 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 ma_top=ma_top,
                 ma_base=ma_base,
                 ma_mid=ma_mid,
-                formation=forms[0] if forms else None,
+                group=_strip_leading_article(groups[0]) if groups else None,
+                formation=_strip_leading_article(formations[0]) if formations else None,
+                member=_strip_leading_article(members[0]) if members else None,
+                lithology=lithology,
                 locality=locs[0] if locs else None,
+                country=country,
+                biozone=biozone,
                 latitude=lat,
                 longitude=lon,
+                modern_latitude=lat if coord_age == "modern" else None,
+                modern_longitude=lon if coord_age == "modern" else None,
+                paleo_latitude=lat if coord_age == "paleo" else None,
+                paleo_longitude=lon if coord_age == "paleo" else None,
                 section_type=sec.get("section_type"),
                 section_title=sec.get("title"),
                 evidence_text=text[:300],
@@ -141,10 +498,19 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 ma_top=ma_top,
                 ma_base=ma_base,
                 ma_mid=ma_mid,
-                formation=forms[0] if forms else None,
+                group=_strip_leading_article(groups[0]) if groups else None,
+                formation=_strip_leading_article(formations[0]) if formations else None,
+                member=_strip_leading_article(members[0]) if members else None,
+                lithology=lithology,
                 locality=locs[0] if locs else None,
+                country=country,
+                biozone=biozone,
                 latitude=lat,
                 longitude=lon,
+                modern_latitude=lat if coord_age == "modern" else None,
+                modern_longitude=lon if coord_age == "modern" else None,
+                paleo_latitude=lat if coord_age == "paleo" else None,
+                paleo_longitude=lon if coord_age == "paleo" else None,
                 section_type=sec.get("section_type"),
                 section_title=sec.get("title"),
                 evidence_text=text[:300],
@@ -211,8 +577,37 @@ def link_species_to_geology(
 ) -> dict[str, list[dict[str, Any]]]:
     """Link species to geology records.
     If llm_runtime is provided, use LLM for relation refinement; else use proximity heuristics.
+
+    Round 20 sampling: Danelian 2006 panel 6 leaked
+    country=Japan / formation="Fonzaso Formation" through this
+    function. The "Systematic Palaeontology" section discusses
+    individual species and frequently cites other papers' type
+    localities / formations in synonymy lists — those citations
+    are NOT Danelian's own geology. To prevent the leak, this
+    function filters ``sections`` to only those typed as
+    ``geological_setting`` (or any non-excluded type if no
+    ``geological_setting`` section exists). The same filtering
+    was applied to ``link_panels_to_geology`` in Round 20.
     """
-    geology = extract_geology_from_sections(sections)
+    # Filter sections to trust-worthy geology sources. Same logic
+    # as ``link_panels_to_geology``: ``geological_setting`` first,
+    # then everything except ``references`` and
+    # ``systematic_paleontology`` as a fallback for papers that
+    # don't use typed sections.
+    geology_section_types = {"geological_setting"}
+    geo_sections = [
+        sec
+        for sec in sections
+        if (sec.get("section_type") or "").lower() in geology_section_types
+    ]
+    if not geo_sections:
+        geo_sections = [
+            sec
+            for sec in sections
+            if (sec.get("section_type") or "").lower()
+            not in {"references", "systematic_paleontology"}
+        ]
+    geology = extract_geology_from_sections(geo_sections)
     links: dict[str, list[dict[str, Any]]] = {s: [] for s in species_names}
     if not species_names:
         return links
@@ -246,7 +641,7 @@ def link_species_to_geology(
     )
     for s in species_names:
         best_records: list[dict[str, Any]] = []
-        for sec in sections:
+        for sec in geo_sections:
             text = sec.get("text", "")
             if not text:
                 continue
@@ -312,9 +707,41 @@ def link_panels_to_geology(
     # metadata, but the AGE/FORMATION/LOCALITY facts must appear in
     # the panel's own caption -- not in some other paragraph of
     # the body text.
+    #
+    # Round 20 sampling: Danelian 2006 panel 6 was getting
+    # country=Japan / formation="Fonzaso Formation" from the
+    # "Systematic Palaeontology" section. That section discusses
+    # individual species and frequently cites OTHER papers' type
+    # localities / formations in synonymy lists ("previously
+    # reported from Japan", "Beccaro 2002 on Fonzaso Formation").
+    # Those citations are NOT the paper's own geology. To prevent
+    # the leak, only pull candidates from sections that actually
+    # describe the paper's own stratigraphy / locality / age.
     candidates: list[GeologyRecord] = []
     if fallback_sections:
-        candidates = extract_geology_from_sections(fallback_sections)
+        # Section types we trust as geology sources for the
+        # candidate pool. ``systematic_paleontology`` /
+        # ``materials_methods`` / ``other`` are excluded because
+        # they discuss individual species (with citation leakage)
+        # or methods, not the paper's own geology.
+        geology_section_types = {"geological_setting"}
+        geo_sections = [
+            sec
+            for sec in fallback_sections
+            if (sec.get("section_type") or "").lower() in geology_section_types
+        ]
+        # If no explicit geological_setting section exists, fall
+        # back to the union of all sections EXCEPT references and
+        # systematic_paleontology — preserving the Round 19
+        # behaviour for papers that don't use the typed sections.
+        if not geo_sections:
+            geo_sections = [
+                sec
+                for sec in fallback_sections
+                if (sec.get("section_type") or "").lower()
+                not in {"references", "systematic_paleontology"}
+            ]
+        candidates = extract_geology_from_sections(geo_sections)
     out: dict[str, list[dict[str, Any]]] = {}
     # Memoise extraction results per unique caption text. In the
     # typical case (all panels in one figure), every panel_id maps

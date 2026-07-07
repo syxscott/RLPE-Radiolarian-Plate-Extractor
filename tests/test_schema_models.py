@@ -497,6 +497,12 @@ class TestProductDataPackage:
         """Two papers both mentioning 'Sample PR-SB26' must produce two
         distinct SampleRecord entries. The earlier code deduped on
         sample_id alone, which silently dropped the second paper.
+
+        Round 20: sample_ids now carry a prefix tag (``S_`` for
+        legacy ``Sample X``, ``B_`` for Boughdiri short codes,
+        ``R_`` for ``specimen N``) so the operator can tell which
+        detector fired. The dedup is still by ``(paper_id, sample_id)``
+        so two papers sharing a sample_id do NOT collide.
         """
         snippet = "Sample PR-SB26 (early Cretaceous)."
         m1 = replace(_make_match(), caption_snippet=snippet, metadata={})
@@ -505,7 +511,8 @@ class TestProductDataPackage:
         assert len(samples) == 2
         paper_ids = {s["paper_id"] for s in samples}
         assert paper_ids == {"abc", "paper-2"}
-        assert all(s["sample_id"] == "PR-SB26" for s in samples)
+        # Round 20: sample_id is now prefixed with "S_" (legacy pattern)
+        assert all(s["sample_id"] == "S_PR-SB26" for s in samples)
 
     def test_locality_records_namespaced_by_paper_id(self):
         """Two papers both reporting 'Italy' at (45.0, 10.0) must
@@ -587,17 +594,39 @@ class TestProductDataPackage:
         assert f["image_path"] is None
 
     def test_paleocoord_missing_warning_emitted_when_locality_nonempty(self):
-        """When localities exist but paleo_coordinates is empty, the
-        run must emit a single ``paleocoord_backend_missing`` warning
-        so the empty list is not mistaken for an oversight.
-        """
-        meta = {"geology_links": [{"locality": "Italy", "latitude": 45.0, "longitude": 10.0}]}
+        """Round 20: the GPlates-style paleocoord backend is now wired
+        in ``paleo_coordinates_from_localities``, so the
+        ``paleocoord_backend_missing`` warning is no longer emitted.
+        Instead, when a locality has coords + an age, the run
+        populates ``paleo_coordinates`` via the live backend. This
+        test was updated to assert the new (correct) behavior."""
+        meta = {
+            "geology_links": [
+                {
+                    "locality": "Italy",
+                    "latitude": 45.0,
+                    "longitude": 10.0,
+                    "ma_mid": 50.0,  # Eocene, for stable plate_id inference
+                    "ma_top": 50.0,
+                    "ma_base": 56.0,
+                }
+            ]
+        }
         m = replace(_make_match(), metadata=meta)
         prov = ProvenanceRecord(**build_provenance().to_dict())
         out = run_output_from_provenance(prov, [m])
         codes = [w["code"] for w in out["warnings"]]
-        assert "paleocoord_backend_missing" in codes
-        assert out["paleo_coordinates"] == []
+        # The deprecated warning must NOT appear — the backend is live.
+        assert "paleocoord_backend_missing" not in codes
+        # And the paleo_coordinates view should be populated.
+        assert out["paleo_coordinates"], (
+            "Round 20: paleo_coordinates expected non-empty when locality "
+            "has both coords and ma_mid (GPlates backend wired)."
+        )
+        pc = out["paleo_coordinates"][0]
+        assert pc["modern_latitude"] == 45.0
+        assert pc["modern_longitude"] == 10.0
+        assert pc["reconstruction_age_ma"] == 50.0
 
     def test_paleocoord_missing_warning_not_emitted_when_no_locality(self):
         """When no localities exist the empty paleo_coordinates list is
@@ -690,7 +719,10 @@ class TestProductDataPackage:
         )
         samples = sample_records_from_matches([m])
         assert len(samples) == 2
-        assert {s["sample_id"] for s in samples} == {"PR-SB28", "PR-SB30"}
+        # Round 20: sample_ids are prefixed with ``S_`` (legacy
+        # ``Sample X`` detector) so the operator can tell which
+        # detector fired.
+        assert {s["sample_id"] for s in samples} == {"S_PR-SB28", "S_PR-SB30"}
 
     def test_warnings_emitted_for_missing_panel_image(self):
         m = MatchResult(

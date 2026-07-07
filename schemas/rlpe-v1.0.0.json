@@ -981,6 +981,11 @@
           "title": "Geology Links",
           "type": "array"
         },
+        "geology_scope": {
+          "default": "",
+          "title": "Geology Scope",
+          "type": "string"
+        },
         "m3_diagnostic": {
           "additionalProperties": true,
           "title": "M3 Diagnostic",
