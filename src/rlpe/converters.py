@@ -556,6 +556,12 @@ def run_output_from_provenance(
         matches = []
     panels = [panel_record_from_match(m) for m in matches]
     panel_dump = [p.model_dump() for p in panels]
+    # Initialise warnings_dump BEFORE the helpers that may append
+    # their own warnings (paper_metadata_cleanup failure,
+    # paleo_reconstruction backend failure). The earlier order —
+    # define warnings_dump at the end — caused an F821 undefined-
+    # name error in the Round 23 cleanup pass.
+    warnings_dump = warnings_from_matches(matches)
     paper_dump, paper_warns = paper_records_from_matches(matches)
     if paper_warns:
         warnings_dump = warnings_dump + paper_warns
@@ -564,7 +570,6 @@ def run_output_from_provenance(
     sample_dump = sample_records_from_matches(matches)
     geology_dump = geology_contexts_from_matches(matches)
     locality_dump = locality_records_from_geology(matches)
-    warnings_dump = warnings_from_matches(matches)
     # Round 20: wire GPlates-style paleocoordinate reconstruction.
     # Previously the ``paleo_coordinates`` view was hard-coded empty
     # with a ``paleocoord_backend_missing`` warning. The backend
@@ -780,7 +785,10 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
     # into ``sample_id`` so the operator can tell which detector
     # fired (S_ legacy, B_ Boughdiri-style short code, R_ specimen,
     # N_ numeric-only).
-    _SAMPLE_PATTERNS: tuple[tuple[str, str], ...] = (
+    # Round 23 fix: the tuple type is ``tuple[re.Pattern[str], str]``
+    # (compiled regex + sample-id prefix), not ``tuple[str, str]``.
+    # The previous annotation was incorrect and tripped mypy.
+    _SAMPLE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         # (compiled regex, sample-id prefix)
         (re.compile(r"Sample\s+([A-Za-z0-9][A-Za-z0-9\-]*)"), "S_"),
         # Boughdiri 2007-style short codes (CH4, MB4, GA7, RM3, etc.).

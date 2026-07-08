@@ -439,10 +439,16 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         seen_litho: set[str] = set()
         for m in LITHOLOGY_PATTERN.finditer(text):
             lit = m.group(0).strip()
-            key = lit.lower()
-            if key in seen_litho:
+            # Round 23 fix: rename ``key`` → ``lit_key`` so mypy can
+            # disambiguate from the later ``key`` tuple used for
+            # ``rec not in out`` dedup. The previous name shadowed
+            # the outer-scope tuple and tripped the
+            # ``assignment has type tuple / variable has type str``
+            # error on line 622.
+            lit_key = lit.lower()
+            if lit_key in seen_litho:
                 continue
-            seen_litho.add(key)
+            seen_litho.add(lit_key)
             lithology = lit
             break
         # Biozone: pick first match
