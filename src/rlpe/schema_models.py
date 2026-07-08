@@ -81,6 +81,12 @@ class GeologyLinkRecord(BaseModel):
     evidence_text: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     biozone: str | None = None  # optional biozone name (e.g. "N. optima Zone")
+    # Round 22 audit: how the coordinates were derived. Empty string
+    # for regex-extracted coords (the default path), ``"country_centroid"``
+    # when the Round 21 country-centroid fallback supplied the lat/lon.
+    # The frontend / downstream consumers can use this to badge
+    # centroid-derived coords.
+    coord_source: str = ""
 
 
 class PaperMetadataRecord(BaseModel):
@@ -144,6 +150,15 @@ class PaperRecord(BaseModel):
     pdf_sha256: str | None = None
     source: str = ""
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Round 22 audit: ``paper_records_from_matches`` previously
+    # injected ``review_reasons`` and ``needs_review`` into the
+    # dumped dict AFTER validation, but those keys were never
+    # declared on the model, so they bypassed the strict schema
+    # silently. We now declare them so the Round 20 cleanup's
+    # ``title_extraction_failed`` / ``authors_input2`` flags
+    # actually reach the frontend.
+    review_reasons: list[str] = Field(default_factory=list)
+    needs_review: bool = False
 
 
 class ReviewFlagRecord(BaseModel):

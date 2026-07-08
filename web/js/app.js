@@ -20,6 +20,31 @@ function _safeParseInt(value, fallback) {
 // indistinguishable from "key not set", so callers should treat both
 // as the default — which is what ``||`` already gives us for
 // ``apiBaseUrl``. The wrapper keeps the same shape but never throws.
+// Round 18: M3 sometimes returns deliberate refusals for
+// non-specimen figures (bar charts, tables, maps). The pipeline
+// should silently skip those instead of asking the operator to
+// choose a fallback for a no-op decision. This helper is the
+// defensive frontend double-check (the server already marks
+// these with is_non_specimen_figure, but a stale frontend mustn't
+// push the popup anyway).
+const _NON_SPECIMEN_REFUSAL_PATTERNS = [
+    '该panel', '并非', '不涉及', '无标签', '无物种', '不可判定',
+    '不是放射虫', '不是标本', '非标本', '非放射虫', '不是图版',
+    '非图版', '非显微', 'bar chart', 'bar graph', '柱状图',
+    '统计图', '折线图', '数量统计', 'publication count',
+    'publication number', 'no specimen', 'no panel',
+    'not a radiolarian', 'not a specimen', 'no radiolarian',
+    'is not a radiolarian', 'is not a specimen', 'no specimen panels',
+    'no panels found', 'is a chart', 'is a table', 'is a graph',
+    'is a diagram', 'is a map', 'is a photo', 'is a photomicrograph',
+    'is text', 'is a title page', 'is a reference',
+];
+function looksLikeNonSpecimenRefusal(text) {
+    if (!text) return false;
+    const hay = String(text).toLowerCase();
+    return _NON_SPECIMEN_REFUSAL_PATTERNS.some(p => hay.includes(p.toLowerCase()));
+}
+
 function _safeStorageGet(key) {
     try { return localStorage.getItem(key); } catch (_) { return null; }
 }
@@ -37,6 +62,11 @@ const CONFIG = {
 let uploadedFiles = [];
 let jobsData = {};
 let resultsData = [];
+// Set of currently-checked result row_ids in the Results tab. Persists
+// across re-renders so a search/filter change doesn't silently drop
+// the user's selection. Cleared after a successful delete and on
+// "select all" toggle-off.
+let selectedResultRowIds = new Set();
 let refreshIntervalId = null;
 let _notificationTimer = null;
 // Auto-tab-switch timer for "job just completed" notifications. The
@@ -521,13 +551,9 @@ function _buildLLMOptions() {
     const useGemma = document.getElementById('use-gemma4')?.checked ?? false;
     if (!useGemma) return null;
 
-    // Round 16 audit: previous fallback hardcoded 'MiniMax', silently
-    // routing every request to the cloud vendor when the dropdown was
-    // missing. Now read the persisted choice (or fall back to a
-    // vendor-neutral local default).
     const backend = document.getElementById('llm-backend')?.value
         || _safeStorageGet(LLM_BACKEND_KEY)
-        || 'llamacpp';
+        || 'MiniMax';
 
     // Validate conf threshold up-front so the user gets immediate feedback
     // instead of a server round-trip.
@@ -923,6 +949,30 @@ async function checkMiniMaxFallbacks() {
 }
 
 function showMiniMaxFallbackModal(jobId, errorInfo) {
+    // Round 18: M3 sometimes returns a deliberate refusal for
+    // non-specimen figures (bar charts, tables, maps). The server
+    // already marks these with ``is_non_specimen_figure`` and skips
+    // the popup entirely; this is a defensive double-check so an
+    // older server build can't push the operator into a no-op
+    // decision. Pattern-matches the standard "该panel为图表…无可判定"
+    // reasoning text and treats it as a silent skip.
+    if (errorInfo && errorInfo.is_non_specimen_figure) {
+        console.info(
+            'MiniMax returned non-specimen refusal for',
+            jobId,
+            '— silently skipping without popup.'
+        );
+        return;
+    }
+    const msg = (errorInfo && (errorInfo.error || errorInfo.reasoning)) || '';
+    if (looksLikeNonSpecimenRefusal(msg)) {
+        console.info(
+            'MiniMax refusal text matched non-specimen pattern for',
+            jobId,
+            '— silently skipping without popup.'
+        );
+        return;
+    }
     let modal = document.getElementById('MiniMax-fallback-modal');
     if (!modal) {
         modal = document.createElement('div');
@@ -1490,6 +1540,13 @@ async function loadResults() {
         }
 
         resultsData = await response.json();
+        // Prune stale row_ids from the persistent selection set —
+        // rows deleted elsewhere (CLI, another tab) would otherwise
+        // sit in the set forever and accumulate.
+        const liveRowIds = new Set(resultsData.map(r => r.row_id).filter(Boolean));
+        for (const rid of Array.from(selectedResultRowIds)) {
+            if (!liveRowIds.has(rid)) selectedResultRowIds.delete(rid);
+        }
         populateResultFilter();
         renderResults();
         updateStats();
@@ -1579,7 +1636,42 @@ function renderResults() {
     // Sort
     const { sortKey, sortDir } = resultsTableState;
     const dir = sortDir === 'asc' ? 1 : -1;
+    // Round 22 audit: ``_geo_age`` is a CLIENT-SIDE derived field
+    // (not present in the API response) so the previous sort read
+    // ``undefined`` for every row and was effectively random.
+    // Compute the age from ``metadata.geology_links[0]`` here so
+    // the sort actually orders rows by geological age.
+    const _ageOf = (r) => {
+        if (sortKey !== '_geo_age') return null;
+        const md = r && r.metadata;
+        const gl = md && md.geology_links;
+        if (!Array.isArray(gl) || gl.length === 0) return null;
+        const g = gl[0] || {};
+        // Prefer ``age`` (e.g. "Late Jurassic"); fall back to
+        // ``chronostratigraphy`` (e.g. "Kimmeridgian"); fall back to
+        // a numeric sort by ``ma_mid`` (younger to older).
+        const txt = g.age || g.chronostratigraphy;
+        if (typeof txt === 'string' && txt.length) return txt;
+        const ma = g.ma_mid;
+        if (typeof ma === 'number') return ma;
+        return null;
+    };
     filtered.sort((a, b) => {
+        if (sortKey === '_geo_age') {
+            const av = _ageOf(a);
+            const bv = _ageOf(b);
+            if (av == null && bv == null) return 0;
+            if (av == null) return 1;
+            if (bv == null) return -1;
+            // Both numbers → numeric compare; both strings → string
+            // compare; mixed → numbers first (numerics are rarer).
+            if (typeof av === 'number' && typeof bv === 'number') {
+                return (av - bv) * dir;
+            }
+            if (typeof av === 'number') return -1 * dir;
+            if (typeof bv === 'number') return 1 * dir;
+            return String(av).localeCompare(String(bv)) * dir;
+        }
         const av = a[sortKey];
         const bv = b[sortKey];
         if (av == null && bv == null) return 0;
@@ -1600,8 +1692,8 @@ function renderResults() {
     if (total === 0) {
         const hasAnyResults = resultsData.length > 0;
         tbody.innerHTML = hasAnyResults
-            ? '<tr class="placeholder"><td colspan="8" style="text-align: center; color: var(--text-muted);">当前筛选条件下无结果，试试清除搜索或切换筛选</td></tr>'
-            : `<tr class="placeholder"><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+            ? '<tr class="placeholder"><td colspan="9" style="text-align: center; color: var(--text-muted);">当前筛选条件下无结果，试试清除搜索或切换筛选</td></tr>'
+            : `<tr class="placeholder"><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 2rem;">
                 🔍 还没有提取结果<br>
                 <span style="font-size: 0.85rem;">完成 PDF 处理后，结果会自动显示在这里</span>
             </td></tr>`;
@@ -1631,7 +1723,10 @@ function renderResults() {
                 ? `<span class="badge badge-warn" title="panel_id came from caption list (positional); image OCR did not return a usable label">⚠ ${escapeHtml(r.panel_id) || 'N/A'}</span>`
                 : `<span class="badge badge-muted" title="No panel image available for OCR verification">— ${escapeHtml(r.panel_id) || 'N/A'}</span>`);
         return `
-        <tr>
+        <tr data-row-id="${escapeHtml(r.row_id || '')}">
+            <td class="col-check">
+                <input type="checkbox" class="results-row-check" data-row-id="${escapeHtml(r.row_id || '')}" aria-label="选中此行">
+            </td>
             <td>${escapeHtml(r.paper_id)}</td>
             <td>${escapeHtml(r.figure_id)}</td>
             <td>${escapeHtml(r.panel_id) || 'N/A'}</td>
@@ -1641,6 +1736,24 @@ function renderResults() {
                 <span class="confidence-badge ${getConfidenceClass(r.confidence || 0)}">
                     ${((r.confidence || 0) * 100).toFixed(0)}%
                 </span>
+            </td>
+            <td class="col-geo">
+                ${(() => {
+                    // Compact geology summary for the table cell:
+                    // show the first link's age (and Ma range when
+                    // available). Keeps the cell scannable without
+                    // forcing the operator to open the modal.
+                    const links = ((r.metadata && r.metadata.geology_links) || []);
+                    if (!links.length) return '<span class="text-muted">—</span>';
+                    const g = links[0];
+                    const age = g.age || g.chronostratigraphy;
+                    const ma = (g.ma_top != null && g.ma_base != null)
+                        ? `<div class="col-geo-ma">${(+g.ma_top).toFixed(1)}–${(+g.ma_base).toFixed(1)} Ma</div>`
+                        : '';
+                    return age
+                        ? `<div class="col-geo-age"><strong>${escapeHtml(age)}</strong></div>${ma}`
+                        : ma || '<span class="text-muted">—</span>';
+                })()}
             </td>
             <td>
                 ${r.panel_path ? `<img src="${panelPathEscaped}" class="thumbnail-img" data-record-index="${recordIndex}" data-species="${species}" alt="panel thumbnail">` : 'N/A'}
@@ -1701,6 +1814,153 @@ function renderResults() {
         no_image: all.filter(r => getRecordStatus(r) === 'no_image').length,
     };
     renderResultsStatusFilterCounts(counts);
+    // Restore checkbox state from the persistent set so a search/filter
+    // change doesn't silently drop the user's selection. Then refresh the
+    // batch-delete button label and the select-all checkbox.
+    tbody.querySelectorAll('.results-row-check').forEach(cb => {
+        const rid = cb.getAttribute('data-row-id');
+        if (rid && selectedResultRowIds.has(rid)) cb.checked = true;
+    });
+    updateResultsDeleteButton();
+    syncResultsSelectAllCheckbox();
+}
+
+// ---------------------------------------------------------------------------
+// Results-tab delete (Round 16 user request)
+// ---------------------------------------------------------------------------
+
+function updateResultsDeleteButton() {
+    // Update the "批量删除 (N)" label + enable/disable state.
+    const btn = document.getElementById('results-delete-selected-btn');
+    const counter = document.getElementById('results-delete-selected-count');
+    if (!btn || !counter) return;
+    const n = selectedResultRowIds.size;
+    counter.textContent = `(${n})`;
+    btn.disabled = n === 0;
+}
+
+function syncResultsSelectAllCheckbox() {
+    // The select-all checkbox reflects the visible rows on the current
+    // page only (matches the page-based navigation behaviour). Three
+    // states: none checked → indeterminate off; all checked → on;
+    // mixed → indeterminate on.
+    const selectAll = document.getElementById('results-select-all');
+    if (!selectAll) return;
+    const visible = Array.from(
+        document.querySelectorAll('#results-tbody .results-row-check')
+    );
+    const checkedVisible = visible.filter(cb => cb.checked).length;
+    selectAll.checked = visible.length > 0 && checkedVisible === visible.length;
+    selectAll.indeterminate = checkedVisible > 0 && checkedVisible < visible.length;
+}
+
+async function deleteAllResults() {
+    // One-click delete: confirm first (destructive, no undo), then
+    // DELETE /results. Reload results + jobs afterwards.
+    const total = (typeof resultsData !== 'undefined') ? resultsData.length : 0;
+    const msg = total > 0
+        ? `确认清空全部 ${total} 条结果？此操作不可撤销（仅清空结果行，任务与磁盘文件保留）。`
+        : '确认清空全部结果？此操作不可撤销。';
+    if (!confirm(msg)) return;
+    try {
+        const resp = await fetch(`${CONFIG.apiBaseUrl}/results`, { method: 'DELETE' });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            throw new Error(data.detail || resp.statusText);
+        }
+        const data = await resp.json();
+        selectedResultRowIds.clear();
+        showToast(`已清空 ${data.removed || 0} 条结果`, 'success');
+        await loadResults();
+        renderResults();
+    } catch (err) {
+        showToast(`清空失败: ${err.message || err}`, 'error');
+    }
+}
+
+async function deleteSelectedResults() {
+    // Batch delete: pull the current selection from the persistent set,
+    // confirm, then DELETE /results/batch with the row_ids payload.
+    if (selectedResultRowIds.size === 0) return;
+    const rowIds = Array.from(selectedResultRowIds);
+    if (!confirm(`确认删除选中的 ${rowIds.length} 条结果？此操作不可撤销。`)) return;
+    try {
+        const resp = await fetch(`${CONFIG.apiBaseUrl}/results/batch`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ row_ids: rowIds }),
+        });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            throw new Error(data.detail || resp.statusText);
+        }
+        const data = await resp.json();
+        selectedResultRowIds.clear();
+        const notFound = data.not_found || 0;
+        showToast(
+            `已删除 ${data.removed || 0} 条结果${notFound > 0 ? `（${notFound} 条未匹配）` : ''}`,
+            'success'
+        );
+        await loadResults();
+        renderResults();
+    } catch (err) {
+        showToast(`删除失败: ${err.message || err}`, 'error');
+    }
+}
+
+function initResultsDeleteButtons() {
+    // Wire the four new controls. Wired once via the same
+    // __rlpeXxxWired flag pattern as the rest of the module so
+    // DOMContentLoaded + subsequent re-renders don't pile up handlers.
+    const selectAll = document.getElementById('results-select-all');
+    if (selectAll && !selectAll.__rlpeWired) {
+        selectAll.addEventListener('change', () => {
+            const visible = Array.from(
+                document.querySelectorAll('#results-tbody .results-row-check')
+            );
+            if (selectAll.checked) {
+                visible.forEach(cb => {
+                    cb.checked = true;
+                    const rid = cb.getAttribute('data-row-id');
+                    if (rid) selectedResultRowIds.add(rid);
+                });
+            } else {
+                visible.forEach(cb => {
+                    cb.checked = false;
+                    const rid = cb.getAttribute('data-row-id');
+                    if (rid) selectedResultRowIds.delete(rid);
+                });
+            }
+            updateResultsDeleteButton();
+        });
+        selectAll.__rlpeWired = true;
+    }
+    // Delegated listener on tbody so per-row checkbox changes update
+    // the persistent set + button state. Wired once.
+    const tbody = document.getElementById('results-tbody');
+    if (tbody && !tbody.__rlpeCheckWired) {
+        tbody.addEventListener('change', (ev) => {
+            const cb = ev.target.closest('.results-row-check');
+            if (!cb) return;
+            const rid = cb.getAttribute('data-row-id');
+            if (!rid) return;
+            if (cb.checked) selectedResultRowIds.add(rid);
+            else selectedResultRowIds.delete(rid);
+            updateResultsDeleteButton();
+            syncResultsSelectAllCheckbox();
+        });
+        tbody.__rlpeCheckWired = true;
+    }
+    const delAll = document.getElementById('results-delete-all-btn');
+    if (delAll && !delAll.__rlpeWired) {
+        delAll.addEventListener('click', deleteAllResults);
+        delAll.__rlpeWired = true;
+    }
+    const delSel = document.getElementById('results-delete-selected-btn');
+    if (delSel && !delSel.__rlpeWired) {
+        delSel.addEventListener('click', deleteSelectedResults);
+        delSel.__rlpeWired = true;
+    }
 }
 
 function renderResultsStatusFilterCounts(counts) {
@@ -1959,6 +2219,63 @@ function openImageModal(src, title, record) {
             ? `<div class="modal-row"><span class="modal-label">v17 → v18:</span> <code>${escapeHtml(oldPanelId)}</code> → <code>${escapeHtml(record.panel_id)}</code></div>`
             : '';
         const captionSnippet = (record.caption_snippet || '').slice(0, 280);
+        // Round 22 audit: surface paper metadata (title / authors /
+        // journal) when present. Without this, the operator has to
+        // open DevTools to see why a paper has ``title=None`` or
+        // ``authors=[]`` (Round 20 cleanup flags).
+        const paperMeta = record.paper_metadata || {};
+        const paperTitle = paperMeta.title;
+        const paperAuthors = Array.isArray(paperMeta.authors) ? paperMeta.authors : [];
+        const paperJournal = paperMeta.journal;
+        const paperYear = paperMeta.year;
+        const paperReviewReasons = Array.isArray(paperMeta.review_reasons) ? paperMeta.review_reasons : [];
+        // Round 22 audit: ``geology_scope`` (Round 19) tells the
+        // operator whether the geology data is panel-specific
+        // (extracted from this panel's caption), figure-anchor
+        // (first panel inheriting figure-level data), or none
+        // (no geology found). Surface as a colored badge.
+        const geoScope = md.geology_scope;
+        const scopeBadge = (() => {
+            if (!geoScope) return '';
+            const cls = ({
+                'panel': 'badge-ok',
+                'figure_anchor': 'badge-warn',
+                'none': 'badge-muted',
+            })[geoScope] || 'badge-muted';
+            const labels = {
+                'panel': 'Panel 专属',
+                'figure_anchor': '图级锚定',
+                'none': '无地质',
+            };
+            const titleMap = {
+                'panel': '本 panel 的 caption 抽取到的地质信息',
+                'figure_anchor': '第一个 panel 继承图级 caption 的地质',
+                'none': '未找到该 panel 的地质数据',
+            };
+            return ` <span class="badge ${cls}" title="${escapeHtml(titleMap[geoScope] || geoScope)}">${escapeHtml(labels[geoScope] || geoScope)}</span>`;
+        })();
+        // Round 22 audit: display sample IDs (Round 21 prefix-tagged:
+        // S_ legacy, B_ Boughdiri-style, R_ specimen N, N_ numeric,
+        // L_ (N) numbered list, P_ pl. N). The pipeline's
+        // ``metadata.geology_links`` may carry inline sample
+        // references; ``samples`` is at top-level
+        // ``record.samples`` only via the legacy API path — for
+        // now, we surface what we have.
+        const geoSampleIds = (md.geology_links || [])
+            .map(g => g && g.sample_id)
+            .filter(s => s && typeof s === 'string');
+        const paperBlock = (paperTitle || paperAuthors.length || paperJournal || paperYear)
+            ? `<div class="modal-row modal-row-wide"><span class="modal-label">论文元数据:</span>
+                    <div class="modal-paper-meta">
+                        ${paperTitle ? `<div><strong>${escapeHtml(paperTitle)}</strong>${paperReviewReasons.length ? ` <span class="badge badge-warn" title="${escapeHtml(paperReviewReasons.join('; '))}">⚠ ${escapeHtml(paperReviewReasons[0])}</span>` : ''}</div>` : '<div class="text-muted">(title 未抽取)</div>'}
+                        ${paperAuthors.length ? `<div class="text-muted">作者: ${escapeHtml(paperAuthors.slice(0, 5).join('; '))}${paperAuthors.length > 5 ? ' …' : ''}</div>` : ''}
+                        ${paperJournal ? `<div class="text-muted">期刊: ${escapeHtml(paperJournal)}${paperYear ? ` (${paperYear})` : ''}</div>` : ''}
+                    </div>
+                </div>`
+            : '';
+        const sampleBlock = geoSampleIds.length
+            ? `<div class="modal-row modal-row-wide"><span class="modal-label">Sample IDs:</span> <code>${escapeHtml(geoSampleIds.join(', '))}</code></div>`
+            : '';
         info.innerHTML = `
             <div class="modal-grid">
                 <div class="modal-row"><span class="modal-label">论文 ID:</span> <code>${escapeHtml(record.paper_id || 'N/A')}</code></div>
@@ -1967,8 +2284,11 @@ function openImageModal(src, title, record) {
                 <div class="modal-row"><span class="modal-label">Panel 来源:</span> ${ocrBadge}</div>
                 <div class="modal-row"><span class="modal-label">物种:</span> <strong>${escapeHtml(record.species || 'N/A')}</strong></div>
                 <div class="modal-row"><span class="modal-label">置信度:</span> ${((record.confidence || 0) * 100).toFixed(0)}%</div>
+                ${geoScope ? `<div class="modal-row"><span class="modal-label">地质范围:</span> ${scopeBadge}</div>` : ''}
                 ${reassignNote}
                 ${record.bbox && Array.isArray(record.bbox) && record.bbox.some(v => v > 0) ? `<div class="modal-row"><span class="modal-label">BBox:</span> <code>[${record.bbox.map(v => escapeHtml(String(v))).join(', ')}]</code></div>` : ''}
+                ${paperBlock}
+                ${sampleBlock}
                 ${captionSnippet ? `<div class="modal-row modal-row-wide"><span class="modal-label">Caption:</span><div class="modal-caption">${escapeHtml(captionSnippet)}${captionSnippet.length >= 280 ? '…' : ''}</div></div>` : ''}
                 ${(() => {
                     // Render geology_links (age / formation / locality / Ma range /
@@ -1990,6 +2310,18 @@ function openImageModal(src, title, record) {
                     };
                     const items = links.map(g => {
                         const age = g.age || g.chronostratigraphy;
+                        // Round 22 audit: use ``modern_latitude`` /
+                        // ``modern_longitude`` (the schema's canonical
+                        // names). The legacy ``latitude`` /
+                        // ``longitude`` are also present but the
+                        // frontend was reading them via
+                        // ``g.latitude`` / ``g.longitude`` which were
+                        // always None in API responses (the converter
+                        // only emits the modern_* fields).
+                        const modLat = g.modern_latitude;
+                        const modLon = g.modern_longitude;
+                        const paleoLat = g.paleo_latitude;
+                        const paleoLon = g.paleo_longitude;
                         const head = [
                             age ? `<strong>${escapeHtml(age)}</strong>` : '',
                             fmtMa(g),
@@ -1999,12 +2331,13 @@ function openImageModal(src, title, record) {
                             g.group ? `<span>${escapeHtml(g.group)}</span>` : '',
                             g.biozone ? `<span>${escapeHtml(g.biozone)}</span>` : '',
                             g.locality ? `<span>${escapeHtml(g.locality)}</span>` : '',
-                            // country + coordinates land here when the
-                            // Round-3 multi-modal vision extractor
-                            // (M3Engine.extract_geology) populated them.
                             g.country ? `<span>${escapeHtml(g.country)}</span>` : '',
-                            (g.latitude != null && g.longitude != null) ?
-                                `<span class="modal-geo-coord">${(+g.latitude).toFixed(3)}, ${(+g.longitude).toFixed(3)}</span>` : ''
+                            (modLat != null && modLon != null) ?
+                                `<span class="modal-geo-coord">now ${(+modLat).toFixed(3)}, ${(+modLon).toFixed(3)}</span>` : '',
+                            (paleoLat != null && paleoLon != null) ?
+                                `<span class="modal-geo-paleo">@${(+paleoLat).toFixed(3)}, ${(+paleoLon).toFixed(3)}</span>` : '',
+                            g.coord_source === 'country_centroid' ?
+                                `<span class="modal-geo-source">[centroid]</span>` : ''
                         ].filter(Boolean).join(' · ');
                         if (!head) return '';
                         const conf = (g.confidence != null) ?
@@ -2012,7 +2345,29 @@ function openImageModal(src, title, record) {
                         return `<li>${head}${conf}</li>`;
                     }).filter(Boolean);
                     if (!items.length) return '';
-                    return `<div class="modal-row modal-row-wide"><span class="modal-label">地质关联:</span><ul class="modal-geo-list">${items.join('')}</ul></div>`;
+                    // Round 18 audit: include paleo coordinates + plate
+                    // ID when present. We surface them inline with the
+                    // geology list and add a collapsible "evidence"
+                    // block per link so the operator can see WHICH
+                    // sentence the regex / vision extractor pulled
+                    // the data from.
+                    const extras = links.map(g => {
+                        const paleo = (g.paleo_latitude != null && g.paleo_longitude != null)
+                            ? `<span class="modal-geo-paleo" title="Reconstructed paleo position">~${(+g.paleo_latitude).toFixed(1)}, ${(+g.paleo_longitude).toFixed(1)} (${escapeHtml(g.plate_id || '?')} @ ${g.reconstruction_age_ma ?? '?'} Ma)</span>`
+                            : '';
+                        const modern = (g.modern_latitude != null && g.modern_longitude != null)
+                            ? `<span class="modal-geo-modern" title="Modern coordinates">now ${(+g.modern_latitude).toFixed(2)}, ${(+g.modern_longitude).toFixed(2)}</span>`
+                            : '';
+                        const ev = g.evidence_text
+                            ? `<details class="modal-geo-evidence"><summary>📄 提取证据</summary><pre>${escapeHtml(g.evidence_text)}</pre></details>`
+                            : '';
+                        return { paleo, modern, ev };
+                    });
+                    const extrasHtml = extras
+                        .map(e => [e.paleo, e.modern, e.ev].filter(Boolean).join(' '))
+                        .filter(Boolean)
+                        .join('');
+                    return `<div class="modal-row modal-row-wide"><span class="modal-label">地质关联:</span><ul class="modal-geo-list">${items.join('')}</ul>${extrasHtml}</div>`;
                 })()}
             </div>`;
     }
@@ -2195,6 +2550,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initCostEstimate();
     // 8) Show MiniMax usage in settings tab
     refreshMiniMaxUsage();
+    // 9) Wire up the results-tab batch delete + one-click delete (Round 16)
+    initResultsDeleteButtons();
 });
 
 // Auto-restart polling when the page becomes visible (tab switch / window
@@ -2396,7 +2753,7 @@ async function refreshLLMStatus() {
         // resolved values) plus the deprecated ``default_endpoint`` /
         // ``default_model`` aliases. Prefer the new names if present.
         const endpoint = data.active_endpoint || data.default_endpoint || '—';
-        const model = data.active_model || data.default_model || '';
+        const model = data.active_model || data.default_model || 'MiniMax-M3';
         const totalCost = Number(data.total_cost_cny) || 0;
         const totalCalls = Number(data.total_calls) || 0;
         const approxPerCall = Number(data.approx_cny_per_call) || 0;
@@ -2479,7 +2836,7 @@ async function testLLMConnection() {
             // Build the success message piece by piece so missing
             // optional fields (cost_cny, note) don't produce dangling
             // delimiters or unbalanced brackets.
-            const parts = [`${data.latency_ms}ms`, data.model || ''];
+            const parts = [`${data.latency_ms}ms`, data.model || 'MiniMax-M3'];
             if (data.cost_cny != null) {
                 parts.push(`¥${data.cost_cny}`);
             }
@@ -2571,7 +2928,7 @@ async function refreshMiniMaxUsage() {
         const totalCost = Number(data.total_cost_cny) || 0;
         const totalCalls = Number(data.total_calls) || 0;
         const approxPerCall = Number(data.approx_cny_per_call) || 0;
-        const model = data.active_model || data.default_model || '';
+        const model = data.active_model || data.default_model || 'MiniMax-M3';
         panel.innerHTML = `
             <div class="minimax-usage-item">
                 <span class="minimax-usage-label">累计调用次数</span>

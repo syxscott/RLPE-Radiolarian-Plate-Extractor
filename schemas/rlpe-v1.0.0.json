@@ -395,6 +395,11 @@
           "title": "Confidence",
           "type": "number"
         },
+        "coord_source": {
+          "default": "",
+          "title": "Coord Source",
+          "type": "string"
+        },
         "country": {
           "anyOf": [
             {
@@ -1571,6 +1576,11 @@
           "title": "Keywords",
           "type": "array"
         },
+        "needs_review": {
+          "default": false,
+          "title": "Needs Review",
+          "type": "boolean"
+        },
         "page_count": {
           "anyOf": [
             {
@@ -1622,6 +1632,13 @@
           ],
           "default": null,
           "title": "Publisher"
+        },
+        "review_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Reasons",
+          "type": "array"
         },
         "source": {
           "default": "",

@@ -136,6 +136,10 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
                 evidence_text=g.get("evidence_text"),
                 confidence=g.get("confidence", 0.0) or 0.0,
                 biozone=g.get("biozone"),
+                # Round 22 audit: forward the coord_source marker
+                # so the frontend can distinguish regex-extracted
+                # coords from country-centroid fallbacks.
+                coord_source=g.get("coord_source", "") or "",
             )
         )
     return out
@@ -205,6 +209,55 @@ def _stable_id(prefix: str, *parts: Any) -> str:
     raw = "|".join(str(p or "") for p in parts)
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
     return f"{prefix}_{digest}"
+
+
+def _geology_context_id(geo: dict[str, Any]) -> str:
+    """Build a stable ``geology_context_id`` from a geology-link dict.
+
+    Round 22 audit: ``panel_record_from_match`` previously used
+    ``_stable_id("geo", age, chrono, formation, locality, evidence_text)``
+    while ``geology_contexts_from_matches`` used
+    ``_stable_id("geoctx", age, chrono, formation, member, locality,
+    evidence_text)``. The two IDs NEVER matched for the same
+    underlying geology fact, so ``PanelRecord.geology_context_id``
+    could never reference a real ``GeologyContextRecord.geology_context_id``.
+    The audit also showed the panel version was missing the ``member``
+    field, so a panel whose first geology link's formation was the
+    same but member differed would point to the wrong context.
+
+    This helper produces ONE stable_id scheme used by both call
+    sites. We deliberately include ``member`` so the join is unique
+    on the full rank triad (Group / Formation / Member), matching
+    ``geology_contexts_from_matches`` (Round 18 split).
+    """
+    return _stable_id(
+        "geoctx",
+        geo.get("age"),
+        geo.get("chronostratigraphy"),
+        geo.get("formation"),
+        geo.get("member"),
+        geo.get("locality"),
+        geo.get("evidence_text"),
+    )
+
+
+def _locality_id(geo: dict[str, Any], paper_id: str) -> str:
+    """Build a stable ``locality_id`` from a geology-link dict.
+
+    Round 22 audit: ``geology_contexts_from_matches`` and
+    ``locality_records_from_geology`` previously each built the
+    locality_id inline with the same fields but slightly different
+    orderings, which could diverge on edge cases. This helper
+    centralises the schema to ``(paper_id, locality, lat, lon)`` so
+    the two lists always join.
+    """
+    return _stable_id(
+        "loc",
+        paper_id,
+        geo.get("locality"),
+        geo.get("latitude"),
+        geo.get("longitude"),
+    )
 
 
 def _normalise_species_name(species: str | None) -> str | None:
@@ -423,15 +476,13 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
     geology_context_id = None
     geos = meta.get("geology_links") or []
     if geos and isinstance(geos[0], dict):
-        g0 = geos[0]
-        geology_context_id = _stable_id(
-            "geo",
-            g0.get("age"),
-            g0.get("chronostratigraphy"),
-            g0.get("formation"),
-            g0.get("locality"),
-            g0.get("evidence_text"),
-        )
+        # Round 22 audit: use the shared helper so this ID matches
+        # the keys emitted by ``geology_contexts_from_matches`` (which
+        # uses prefix ``"geoctx"`` and includes the ``member`` field).
+        # The previous inline ``_stable_id("geo", ...)`` call used a
+        # different prefix and dropped ``member``, so the join was
+        # always broken.
+        geology_context_id = _geology_context_id(geos[0])
     return PanelRecord(
         paper_id=match.paper_id,
         figure_id=match.figure_id,
@@ -574,24 +625,19 @@ def paper_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             from .paper_metadata_cleanup import cleanup_paper_metadata
 
             cleaned, review_reasons = cleanup_paper_metadata(rec.model_dump())
-            # Apply cleaned values back to the record. Pydantic
-            # ``extra=forbid`` means unknown keys (like
-            # review_reasons on PaperRecord) would be rejected, so
-            # we filter to the model's declared fields.
+            # Round 22 audit: ``PaperRecord`` now declares
+            # ``review_reasons`` and ``needs_review`` so we can apply
+            # them via setattr on the Pydantic model (no more
+            # silent extra-key injection into the dumped dict, which
+            # previously bypassed ``extra=forbid`` and was not
+            # validated downstream).
             allowed_fields = set(PaperRecord.model_fields.keys())
             for k, v in cleaned.items():
                 if k in allowed_fields:
                     setattr(rec, k, v)
             if review_reasons:
-                # PaperRecord does not declare review_reasons in its
-                # strict schema, so we attach them to the dumped
-                # dict after the fact. The downstream ``run_output``
-                # already includes this key for figures / panels.
-                dumped = rec.model_dump()
-                dumped["review_reasons"] = review_reasons
-                dumped["needs_review"] = True
-                seen[pid] = dumped
-                continue
+                rec.review_reasons = list(review_reasons)
+                rec.needs_review = True
         except Exception as exc:
             # Cleanup must never block export. If the helper raises
             # (e.g. requests library missing), we fall back to the
@@ -804,15 +850,7 @@ def geology_contexts_from_matches(matches: list[MatchResult]) -> list[dict[str, 
         for g in geos:
             if not isinstance(g, dict):
                 continue
-            key = _stable_id(
-                "geoctx",
-                g.get("age"),
-                g.get("chronostratigraphy"),
-                g.get("formation"),
-                g.get("member"),
-                g.get("locality"),
-                g.get("evidence_text"),
-            )
+            key = _geology_context_id(g)
             if key in seen:
                 continue
             rec = GeologyContextRecord(
@@ -829,20 +867,7 @@ def geology_contexts_from_matches(matches: list[MatchResult]) -> list[dict[str, 
                 group=g.get("group"),
                 lithology=g.get("lithology"),
                 biozone=g.get("biozone"),
-                locality_id=_stable_id(
-                    # Round 20: include paper_id in the stable_id so
-                    # the geology-context locality_id matches the
-                    # locality_record locality_id (which is also
-                    # keyed by paper_id). Without paper_id, two
-                    # papers sharing the same locality name +
-                    # coordinates would produce colliding locality
-                    # ids and break the paleo_coordinates join.
-                    "loc",
-                    m.paper_id,
-                    g.get("locality"),
-                    g.get("latitude"),
-                    g.get("longitude"),
-                )
+                locality_id=_locality_id(g, m.paper_id)
                 if g.get("locality")
                 else None,
                 evidence_text=g.get("evidence_text"),
@@ -872,13 +897,7 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
             )
             if key in seen:
                 continue
-            loc_id = _stable_id(
-                "loc",
-                m.paper_id,
-                locality,
-                g.get("latitude"),
-                g.get("longitude"),
-            )
+            loc_id = _locality_id(g, m.paper_id)
             rec = LocalityRecord(
                 locality_id=loc_id,
                 name=locality,
@@ -889,7 +908,16 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
                 modern_longitude=_resolve_modern_coord(
                     g.get("modern_longitude"), g.get("longitude")
                 ),
-                coordinate_source="caption" if g.get("latitude") is not None else None,
+                # Round 22 audit: read the actual coord_source from
+                # the geology link. The previous code hardcoded
+                # ``"caption"`` regardless of whether the coordinate
+                # came from regex extraction or the country-centroid
+                # fallback (Round 21). The fallback signal is
+                # preserved here so the operator can distinguish.
+                coordinate_source=(
+                    g.get("coord_source")
+                    or ("caption" if g.get("latitude") is not None else None)
+                ),
                 geocoding_source=None,
                 confidence=float(g.get("confidence", 0.0) or 0.0),
             )

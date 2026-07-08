@@ -844,6 +844,24 @@ body {
     border-bottom: none;
 }
 
+/* Geology summary cell (Round 18 audit: operator requested
+   "every result's geology" be visible without opening the modal). */
+.results-table td.col-geo {
+    font-size: 0.85rem;
+    line-height: 1.35;
+    max-width: 200px;
+    white-space: normal;
+}
+.results-table .col-geo-age {
+    color: var(--primary-dark);
+    font-weight: 600;
+}
+.results-table .col-geo-ma {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+}
+
 .results-table .placeholder {
     text-align: center;
     color: var(--text-muted);
@@ -1025,10 +1043,10 @@ body {
     padding: 0.5rem 0.5rem 0.5rem 1.5rem;
     background: var(--bg-lighter);
     border-radius: 4px;
-    font-size: 0.85rem;
-    line-height: 1.6;
+    font-size: 0.9rem;
+    line-height: 1.7;
     color: var(--text-base);
-    max-height: 140px;
+    max-height: 220px;
     overflow-y: auto;
     list-style: disc outside;
 }
@@ -1065,6 +1083,80 @@ body {
     font-size: 0.78rem;
     font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
     font-variant-numeric: tabular-nums;
+}
+
+/* Round 18 audit: render paleo reconstructed position + plate ID
+   + collapsible evidence block under each geology link. */
+.modal-geo-paleo {
+    display: inline-block;
+    margin: 0.2rem 0.35rem 0 0;
+    padding: 0.1rem 0.4rem;
+    background: #fff7e6;
+    color: #8a5a00;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+    font-variant-numeric: tabular-nums;
+}
+/* Round 22 audit: a small inline badge for coordinates that
+   came from the country-centroid fallback (Round 21). Keeps the
+   distinction visible to the operator without a separate panel. */
+.modal-geo-source {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0 0.3rem;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+    vertical-align: middle;
+}
+/* Round 22 audit: paper metadata block (title / authors /
+   journal). Rendered as a small grid below the panel identifiers
+   so the operator can verify Round 20 cleanup decisions
+   (titles flagged as garbled, authors stripped of "Input2",
+   journals enriched from Crossref). */
+.modal-paper-meta {
+    margin-top: 0.25rem;
+    line-height: 1.5;
+    font-size: 0.85rem;
+}
+.modal-paper-meta > div + div {
+    margin-top: 0.15rem;
+}
+.modal-geo-modern {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+    margin-right: 0.5rem;
+}
+.modal-geo-evidence {
+    margin: 0.3rem 0 0.5rem 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+.modal-geo-evidence summary {
+    cursor: pointer;
+    user-select: none;
+    color: var(--primary-dark);
+    font-weight: 500;
+    padding: 0.1rem 0;
+}
+.modal-geo-evidence summary:hover {
+    text-decoration: underline;
+}
+.modal-geo-evidence pre {
+    margin: 0.25rem 0 0 0;
+    padding: 0.5rem 0.6rem;
+    background: var(--bg-lighter);
+    border-left: 3px solid var(--primary-soft);
+    border-radius: 3px;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-base);
 }
 
 .modal-caption {
