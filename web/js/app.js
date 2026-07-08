@@ -1623,10 +1623,30 @@ function renderResults() {
         const paperId = (r.paper_id || '').toLowerCase();
         const species = (r.species || '').toLowerCase();
         const panelId = String(r.panel_id || '').toLowerCase();
+        const figureId = String(r.figure_id || '').toLowerCase();
+        // Round 23 audit: expand search to cover geology fields so
+        // operators can search by formation / locality / age / country.
+        // The strings are pulled out of the first geology link's
+        // fields (most operators care about the primary fact).
+        const md = r.metadata || {};
+        const gl0 = Array.isArray(md.geology_links) && md.geology_links.length > 0
+            ? md.geology_links[0] : {};
+        const geoBlob = [
+            gl0.formation || '',
+            gl0.locality || '',
+            gl0.country || '',
+            gl0.age || '',
+            gl0.chronostratigraphy || '',
+            gl0.lithology || '',
+        ].join(' ').toLowerCase();
+        const caption = String(r.caption_snippet || '').toLowerCase();
         const matchesSearch = !searchTerm ||
             paperId.includes(searchTerm) ||
             species.includes(searchTerm) ||
-            panelId.includes(searchTerm);
+            panelId.includes(searchTerm) ||
+            figureId.includes(searchTerm) ||
+            geoBlob.includes(searchTerm) ||
+            caption.includes(searchTerm);
         const matchesFilter = !filterJob || r.job_id === filterJob;
         const matchesStatus = resultsTableState.statusFilter === 'all'
             || getRecordStatus(r) === resultsTableState.statusFilter;
@@ -2169,15 +2189,50 @@ document.getElementById('export-btn')?.addEventListener('click', () => {
     // the user gets what they see. Prepend a UTF-8 BOM so Excel auto-detects
     // the encoding and Chinese species names render correctly.
     const rows = getFilteredResults();
-    const header = ['论文ID', '图版ID', 'Panel标签', '物种', '置信度', 'OCR来源'];
-    const dataRows = rows.map(r => [
-        r.paper_id ?? '',
-        r.figure_id ?? '',
-        r.panel_id ?? '',
-        r.species ?? '',
-        r.confidence != null ? r.confidence : '',
-        (r.metadata && r.metadata.v18_panel_id_source) || '',
-    ]);
+    // Round 23 audit: include geology fields (age / formation /
+    // locality / lat / lon) and Round 21 sample IDs so the exported
+    // CSV is usable for downstream analysis. The header matches
+    // the modal's "地质关联" column group so users can pivot /
+    // join on the same columns.
+    const header = [
+        '论文ID', '图版ID', 'Panel标签', 'Panel来源', '物种',
+        '置信度', '地质范围',
+        '地层年代', '年代Chrono', 'Ma_top', 'Ma_base',
+        'Formation', 'Locality', 'Country', 'Modern_Lat', 'Modern_Lon',
+        'Paleo_Lat', 'Paleo_Lon', 'Coord来源',
+        'Sample IDs',
+    ];
+    const dataRows = rows.map(r => {
+        const md = r.metadata || {};
+        const gl = Array.isArray(md.geology_links) && md.geology_links.length > 0
+            ? md.geology_links[0] : {};
+        const sampleIds = (md.geology_links || [])
+            .map(g => g && g.sample_id)
+            .filter(s => s && typeof s === 'string')
+            .join('|');
+        return [
+            r.paper_id ?? '',
+            r.figure_id ?? '',
+            r.panel_id ?? '',
+            md.v18_panel_id_source || '',
+            r.species ?? '',
+            r.confidence != null ? r.confidence : '',
+            md.geology_scope || '',
+            gl.age || '',
+            gl.chronostratigraphy || '',
+            gl.ma_top != null ? gl.ma_top : '',
+            gl.ma_base != null ? gl.ma_base : '',
+            gl.formation || '',
+            gl.locality || '',
+            gl.country || '',
+            gl.modern_latitude != null ? gl.modern_latitude : '',
+            gl.modern_longitude != null ? gl.modern_longitude : '',
+            gl.paleo_latitude != null ? gl.paleo_latitude : '',
+            gl.paleo_longitude != null ? gl.paleo_longitude : '',
+            gl.coord_source || '',
+            sampleIds,
+        ];
+    });
     const csv = [header, ...dataRows]
         .map(row => row.map(csvCell).join(','))
         .join('\n');

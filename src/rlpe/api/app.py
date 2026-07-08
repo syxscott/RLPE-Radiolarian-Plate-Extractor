@@ -103,6 +103,9 @@ class ResultRecord(BaseModel):
     # internal field. The /system/info endpoint logs the JobOptions
     # drop list so frontend typos are still observable.
     model_config = ConfigDict(extra="ignore")
+    # ``row_id`` is the stable identity used by /results/batch DELETE.
+    # Computed in get_results() as ``f"{job_id}:{paper_id}:{figure_id}:{panel_id}"``.
+    row_id: str | None = None
     job_id: str | None = None
     paper_id: str
     figure_id: str
@@ -169,6 +172,14 @@ class JobOptions(BaseModel):
     paleodb_endpoint: str | None = None
     paleodb_cache_dir: str | None = None
     paleodb_offline: bool = False
+    # ---- Round 18 multi-modal geology vision ----
+    # When True, M3Engine.extract_geology() reads each figure image +
+    # caption and emits a structured GeologyLinkRecord. Default ON so
+    # web-UI users get all 25 published geology fields populated
+    # without having to flip an obscure flag. Operators who don't
+    # want the per-figure API cost can pass use_geo_vision=False.
+    use_geo_vision: bool = True
+    geo_vision_figure_types: list[str] | None = None
     # ---- Core pipeline overrides (previously rendered in the web form but
     # silently dropped by the API) ----
     grobid_url: str | None = None
@@ -343,6 +354,25 @@ app.add_middleware(
 )
 
 if WEB_DIR is not None:
+    # No-cache headers for the dev-mode static files so JS / CSS edits
+    # propagate without the operator having to hard-refresh. Cache
+    # busting is also wired into the script/link tags in index.html
+    # so a stale browser still re-fetches the new content. The
+    # trade-off (no intermediate cache) is fine for a research tool
+    # served from a single dev box.
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request as _Req
+
+    class _NoCacheStatic(BaseHTTPMiddleware):
+        async def dispatch(self, request: _Req, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith("/web/"):
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+            return response
+
+    app.add_middleware(_NoCacheStatic)
     app.mount("/web", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
 
 
@@ -640,8 +670,13 @@ def job_file(job_id: str, file_path: str):
     # outside job_root. Without strict=True, a symlink inside the
     # job's working directory pointing OUTSIDE would silently pass
     # the check and let the API serve an arbitrary host file.
+    # Verify ``target`` is inside ``job_root``. ``relative_to`` raises
+    # ValueError when target is not a subpath of job_root — that's the
+    # security guard we want. (PurePath.relative_to's ``strict=True``
+    # kwarg was added in Python 3.12; we deliberately don't pass it so
+    # this works on 3.10 too.)
     try:
-        target.relative_to(job_root, strict=True)
+        target.relative_to(job_root)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid file path")
     if not target.exists() or not target.is_file():
@@ -907,9 +942,33 @@ def submit_correction(payload: ReviewCorrection):
 
 
 @app.get("/results")
-def get_results() -> list[ResultRecord]:
-    """Get all accumulated results from completed jobs."""
-    results = []
+def get_results(
+    limit: int = 500,
+    offset: int = 0,
+) -> list[ResultRecord]:
+    """Get all accumulated results from completed jobs.
+
+    Round 23 audit: this endpoint previously returned the FULL
+    result set with no pagination. With 1000+ panels across many
+    jobs, the response could be huge (causing frontend lag or
+    timeouts). The new ``?limit=N&offset=M`` query params enable
+    pagination. ``limit`` is capped at 5000 to prevent abuse.
+
+    The response is ordered by ``(job_id, paper_id, figure_id,
+    panel_id)`` so pagination is stable across requests. The
+    response headers are NOT extended with a total-count link
+    because computing it would require walking all rows anyway;
+    the frontend asks for the next page until an empty page is
+    returned (length 0) — implicit pagination.
+    """
+    # Round 23 audit: clamp limit/offset to safe ranges. Negative
+    # offset returns the last ``limit`` rows; ``limit > 5000`` is
+    # treated as ``5000``. Empty page (``limit=0``) is allowed for
+    # callers that want to query "is there a next page?".
+    limit = max(0, min(int(limit), 5000))
+    offset = max(0, int(offset))
+    results: list[ResultRecord] = []
+    skipped = 0  # rows skipped before reaching the offset window
     with RESULT_LOCK:
         items = [(job_id, dict(job)) for job_id, job in RESULT_CACHE.items()]
     # Whitelist the row fields the public schema knows about. The
@@ -919,30 +978,122 @@ def get_results() -> list[ResultRecord]:
     # parsers downstream. ``ResultRecord.model_fields`` is the
     # authoritative list — keeping the filter here means adding a
     # new field to the schema is the only change needed.
-    allowed = set(ResultRecord.model_fields.keys()) - {"job_id"}
+    allowed = set(ResultRecord.model_fields.keys()) - {"job_id", "row_id"}
     for job_id, job in items:
-        if job.get("status") == "done" and job.get("result"):
-            for row in job["result"]:
-                if not isinstance(row, dict):
-                    continue
-                filtered = {k: v for k, v in row.items() if k in allowed}
-                # ``paper_id`` and ``figure_id`` are required fields;
-                # if a sanitiser ever produces a row missing them,
-                # skip rather than 500 the whole endpoint.
-                if "paper_id" not in filtered or "figure_id" not in filtered:
-                    continue
-                # confidence is required (non-optional float). Default
-                # to 0.0 so a partial row still serialises.
-                filtered.setdefault("confidence", 0.0)
-                try:
-                    results.append(ResultRecord(job_id=job_id, **filtered))
-                except Exception as exc:
-                    logger.warning(
-                        "Skipping malformed result row in job=%s: %s",
-                        job_id,
-                        exc,
-                    )
+        if job.get("status") != "done" or not job.get("result"):
+            continue
+        for row in job["result"]:
+            if not isinstance(row, dict):
+                continue
+            # Skip the first ``offset`` rows so callers can paginate.
+            if skipped < offset:
+                skipped += 1
+                continue
+            if limit and len(results) >= limit:
+                # Reached the requested page size; bail out early so
+                # we don't build a 10000-row response when the
+                # caller only asked for 500.
+                return results
+            filtered = {k: v for k, v in row.items() if k in allowed}
+            # ``paper_id`` and ``figure_id`` are required fields;
+            # if a sanitiser ever produces a row missing them,
+            # skip rather than 500 the whole endpoint.
+            if "paper_id" not in filtered or "figure_id" not in filtered:
+                continue
+            # confidence is required (non-optional float). Default
+            # to 0.0 so a partial row still serialises.
+            filtered.setdefault("confidence", 0.0)
+            # Inject the synthetic row_id so the frontend can
+            # address rows for /results/batch DELETE.
+            filtered["row_id"] = _row_id(job_id, filtered)
+            try:
+                results.append(ResultRecord(job_id=job_id, **filtered))
+            except Exception as exc:
+                logger.warning(
+                    "Skipping malformed result row in job=%s: %s",
+                    job_id,
+                    exc,
+                )
     return results
+
+
+# ---------------------------------------------------------------------------
+# Result-row delete endpoints (Round 16 UI addition).
+#
+# The /results table shows one row per panel extraction. Rows live inside a
+# job's ``result`` list; they don't have their own top-level identity in
+# RESULT_CACHE. We synthesise a stable ``row_id`` from the unique tuple
+# ``(job_id, paper_id, figure_id, panel_id)`` and delete rows by filtering
+# the job's result list against the requested row_ids.
+#
+# These endpoints deliberately only delete result rows — the job metadata
+# and the on-disk pipeline output are kept so the operator can re-run or
+# inspect after a clean-up pass.
+# ---------------------------------------------------------------------------
+
+
+def _row_id(job_id: str, row: dict[str, Any]) -> str:
+    """Stable identifier for one result row.
+
+    ``(job_id, paper_id, figure_id, panel_id)`` is unique within the
+    cache because ``panel_id`` is unique per figure within a paper.
+    """
+    return (
+        f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:{row.get('panel_id', '')}"
+    )
+
+
+@app.delete("/results")
+def delete_all_results() -> dict[str, int]:
+    """Clear every result row across every done job.
+
+    Keeps the job metadata (so ``/jobs`` listings, ``/system/info``
+    totals, and any in-flight pipeline runs are unaffected). Returns
+    the total number of rows removed.
+    """
+    total_removed = 0
+    with RESULT_LOCK:
+        for job_id, job in RESULT_CACHE.items():
+            result_list = job.get("result")
+            if isinstance(result_list, list):
+                total_removed += len(result_list)
+                job["result"] = []
+    return {"removed": total_removed}
+
+
+@app.delete("/results/batch")
+def delete_results_batch(payload: dict[str, list[str]]) -> dict[str, Any]:
+    """Delete specific result rows by ``row_id``.
+
+    Request body: ``{"row_ids": ["job_id:paper:figure:panel", ...]}``.
+    Rows whose row_id is unknown are silently skipped (idempotent).
+    Returns the number of rows actually removed and the not-found count.
+    """
+    row_ids = set(payload.get("row_ids") or [])
+    if not row_ids:
+        return {"removed": 0, "not_found": 0}
+    removed = 0
+    not_found: list[str] = []
+    matched_ids: set[str] = set()
+    with RESULT_LOCK:
+        for job_id, job in RESULT_CACHE.items():
+            result_list = job.get("result")
+            if not isinstance(result_list, list):
+                continue
+            kept: list[dict[str, Any]] = []
+            for row in result_list:
+                if not isinstance(row, dict):
+                    kept.append(row)
+                    continue
+                rid = _row_id(job_id, row)
+                if rid in row_ids:
+                    removed += 1
+                    matched_ids.add(rid)
+                else:
+                    kept.append(row)
+            job["result"] = kept
+    not_found = sorted(row_ids - matched_ids)
+    return {"removed": removed, "not_found": len(not_found)}
 
 
 @app.get("/system/info")
@@ -1489,6 +1640,9 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             "paleodb_endpoint",
             "paleodb_cache_dir",
             "paleodb_offline",
+            # Round 18 multi-modal geology vision
+            "use_geo_vision",
+            "geo_vision_figure_types",
         ):
             if key in options and options[key] is not None:
                 extra[key] = options[key]

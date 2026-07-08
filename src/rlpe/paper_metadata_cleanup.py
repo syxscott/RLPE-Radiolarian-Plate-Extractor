@@ -167,14 +167,25 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
     try:
         import requests  # local import to keep cold-import cheap
     except ImportError:
-        logger.debug("requests not available; cannot call Crossref")
+        # Round 23 audit: missing requests library is operationally
+        # important (papers will keep GROBID's null journal) so we
+        # upgrade to warning. The cached ``None`` still avoids
+        # retrying on every record.
+        logger.warning("requests not available; cannot call Crossref")
         _CROSSREF_CACHE[doi] = None
         return None
     url = f"https://api.crossref.org/works/{doi}"
     try:
         resp = requests.get(url, timeout=timeout_sec)
         if resp.status_code != 200:
-            logger.debug("Crossref returned %s for %s", resp.status_code, doi)
+            # Round 23 audit: non-200 from Crossref is also
+            # operationally relevant (the DOI may be invalid or the
+            # service is degraded); upgrade to warning.
+            logger.warning(
+                "Crossref returned HTTP %s for DOI=%s; journal stays empty",
+                resp.status_code,
+                doi,
+            )
             _CROSSREF_CACHE[doi] = None
             return None
         data = resp.json().get("message", {})
@@ -183,7 +194,11 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
         _CROSSREF_CACHE[doi] = title
         return title
     except Exception as exc:
-        logger.debug("Crossref lookup failed for %s: %s", doi, exc)
+        # Round 23 audit: network / JSON / TLS errors should be
+        # visible to operators (not silent debug-level).
+        logger.warning(
+            "Crossref lookup failed for DOI=%s: %s", doi, exc
+        )
         _CROSSREF_CACHE[doi] = None
         return None
 

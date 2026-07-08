@@ -489,7 +489,15 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
         panel_id=match.panel_id,
         caption_panel_id=str(caption_panel_id) if caption_panel_id is not None else None,
         printed_panel_id=str(printed_panel_id) if printed_panel_id is not None else None,
-        pipeline_panel_index=meta.get("pipeline_panel_index") or meta.get("panel_index"),
+        # Round 23 audit: ``pipeline_panel_index`` is declared on the
+        # schema but is never populated by the pipeline (the two
+        # MatchResult construction sites in pipeline.py don't pass
+        # it). Use ``getattr`` with a default so a future pipeline
+        # site that DOES set ``match.panel_index`` (e.g. via
+        # PanelCandidate) is picked up automatically. Until then,
+        # the field stays ``None`` — the schema correctly declares
+        # it as optional.
+        pipeline_panel_index=getattr(match, "panel_index", None),
         canonical_panel_id=str(canonical_panel_id) if canonical_panel_id is not None else None,
         panel_id_source=str(panel_id_source),
         species=match.species,
@@ -498,7 +506,7 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
         geology_context_id=geology_context_id,
         panel_path=match.panel_path,
         figure_image_path=meta.get("figure_image_path") or meta.get("image_path"),
-        bbox=(list(match.bbox) if match.bbox is not None and len(match.bbox) == 4 else None),
+        bbox=_validate_bbox(match.bbox, paper_id=getattr(match, "paper_id", None), figure_id=getattr(match, "figure_id", None), panel_id=match.panel_id),
         confidence=float(match.confidence),
         label_text=match.label_text,
         caption_snippet=match.caption_snippet,
@@ -511,17 +519,14 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
     )
 
 
-def _paleocoord_missing_warning(locality_dump: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Deprecated: kept as a no-op stub for backward compatibility.
-
-    Round 20 wired the GPlates-style paleocoordinate reconstruction
-    in ``paleo_coordinates_from_localities``, so the
-    ``paleocoord_backend_missing`` warning is no longer emitted.
-    External callers that still import this symbol get a None
-    return — which is the same shape they would have seen before
-    Round 20 (no warning emitted).
-    """
-    return None
+# Round 23 audit: removed the deprecated ``_paleocoord_missing_warning``
+# stub. It was Round-20 dead code (always returned ``None``) and
+# had no callers in the codebase. Removing it eliminates the
+# "is this safe to call?" ambiguity for future readers. The
+# Round 20 ``paleo_coordinates_from_localities`` helper emits
+# ``paleo_reconstruction_unavailable`` warnings via the
+# ``(records, warnings)`` return shape, so the warning channel
+# is preserved.
 
 
 def run_output_from_provenance(
@@ -551,7 +556,9 @@ def run_output_from_provenance(
         matches = []
     panels = [panel_record_from_match(m) for m in matches]
     panel_dump = [p.model_dump() for p in panels]
-    paper_dump = paper_records_from_matches(matches)
+    paper_dump, paper_warns = paper_records_from_matches(matches)
+    if paper_warns:
+        warnings_dump = warnings_dump + paper_warns
     figure_dump = figure_records_from_matches(matches)
     taxon_dump = taxon_records_from_matches(matches)
     sample_dump = sample_records_from_matches(matches)
@@ -569,7 +576,9 @@ def run_output_from_provenance(
     # ``ma_mid``, and emits a ``PaleoCoordinateRecord`` per locality.
     # Localities without coordinates are skipped silently. The
     # warning is no longer emitted since the backend is live.
-    paleo_dump = paleo_coordinates_from_localities(locality_dump, geology_dump)
+    paleo_dump, paleo_warns = paleo_coordinates_from_localities(locality_dump, geology_dump)
+    if paleo_warns:
+        warnings_dump = warnings_dump + paleo_warns
     return {
         "schema_version": provenance.schema_version,
         "provenance": provenance.model_dump(),
@@ -585,8 +594,20 @@ def run_output_from_provenance(
     }
 
 
-def paper_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
+def paper_records_from_matches(
+    matches: list[MatchResult],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build paper-level records from matches.
+
+    Round 23 audit: returns ``(records, warnings)``. The warnings
+    list contains ``WarningRecord`` dicts for failures the
+    post-processing cleanup encountered (e.g. requests library
+    missing for Crossref). These flow into ``RunOutput.warnings``
+    so the operator sees backend failures in the UI rather than
+    only in server logs.
+    """
     seen: dict[str, dict[str, Any]] = {}
+    warnings_out: list[dict[str, Any]] = []
     for m in matches:
         pid = m.paper_id
         if not pid or pid in seen:
@@ -641,14 +662,29 @@ def paper_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         except Exception as exc:
             # Cleanup must never block export. If the helper raises
             # (e.g. requests library missing), we fall back to the
-            # raw record.
+            # raw record but emit a WarningRecord so the operator
+            # sees the failure in the UI rather than only in
+            # server logs.
             logger.warning(
                 "paper_metadata_cleanup failed for %s: %s; using raw values",
                 pid,
                 exc,
             )
+            warnings_out.append(
+                _warning_record(
+                    code="paper_metadata_cleanup_failed",
+                    message=(
+                        f"paper_metadata_cleanup failed for paper_id="
+                        f"{pid!r}; falling back to raw GROBID values. "
+                        "title / authors / journal may be missing or "
+                        "wrong."
+                    ),
+                    entity_type="paper",
+                    evidence_text=str(exc)[:300],
+                )
+            )
         seen[pid] = rec.model_dump()
-    return list(seen.values())
+    return list(seen.values()), warnings_out
 
 
 def _blank_to_none(v: Any) -> Any:
@@ -925,10 +961,78 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
     return list(seen.values())
 
 
+def _validate_bbox(
+    bbox: list[int] | tuple[int, ...] | None,
+    *,
+    paper_id: str | None = None,
+    figure_id: str | None = None,
+    panel_id: str | None = None,
+) -> list[int] | None:
+    """Validate that ``bbox`` is a 4-element integer list.
+
+    Round 23 audit: the previous code silently coerced a malformed
+    bbox (length != 4) to ``None``. The Pydantic model would
+    reject it (``min_length=4, max_length=4``), so the silent
+    coercion was masking a data-quality bug. Now we log a warning
+    and let ``None`` flow through only when the bbox is truly
+    absent (``None``). The empty / wrong-length case emits a
+    warning so the operator can find the offending panel.
+
+    Returns the bbox list when valid, ``None`` when the bbox is
+    absent. Raises no exception: malformed bbox still produces a
+    valid ``PanelRecord`` (with ``bbox=None``) but logs the issue
+    so the operator can investigate.
+    """
+    if bbox is None:
+        return None
+    if len(bbox) != 4:
+        logger.warning(
+            "bbox has wrong length %d (expected 4) for paper=%s figure=%s panel=%s; "
+            "storing as None. This usually indicates an upstream panel-"
+            "detector bug; please file an issue with the offending "
+            "paper_id so we can fix the source.",
+            len(bbox),
+            paper_id,
+            figure_id,
+            panel_id,
+        )
+        return None
+    return list(bbox)
+
+
+def _warning_record(
+    code: str,
+    message: str,
+    entity_type: str = "run",
+    evidence_text: str | None = None,
+) -> dict[str, Any]:
+    """Build a WarningRecord dict for emission to ``RunOutput.warnings``.
+
+    Round 23 audit: the conversion helpers previously returned
+    ``None`` or empty lists when their backend (Crossref, paleo
+    reconstruction, paper_metadata cleanup) failed. Operators had
+    no UI surface for these failures. This helper lets the
+    converters emit a structured warning so the failures reach the
+    ``/results`` response and the frontend's warnings tab.
+
+    The shape matches ``WarningRecord.model_dump()`` so it can be
+    merged into ``RunOutput.warnings`` directly.
+    """
+    return {
+        "warning_id": _stable_id("warn", code, message[:80]),
+        "level": "warning",
+        "code": code,
+        "message": message,
+        "entity_type": entity_type,
+        "entity_id": None,
+        "evidence_text": evidence_text,
+    }
+
+
 def paleo_coordinates_from_localities(
     localities: list[dict[str, Any]],
     geology_contexts: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build PaleoCoordinateRecords by pairing localities with their
     associated geology context and running GPlates-style reconstruction.
 
@@ -946,11 +1050,22 @@ def paleo_coordinates_from_localities(
     records are emitted, matching the no-fabrication policy used
     throughout Round 18-20.
 
-    Returns a list of dicts ready to be JSON-serialised into
-    ``RunOutput.paleo_coordinates``.
+    Round 23 audit: returns ``(records, warnings)`` so the caller
+    can surface backend-import failures or per-locality
+    reconstruction failures as ``WarningRecord`` entries in the
+    run output. Previously the import-failure was logged-only
+    (no UI surface); now the warning reaches the operator.
+
+    Returns a 2-tuple ``(records, warnings)``:
+      * ``records`` — list of dicts ready to be JSON-serialised
+        into ``RunOutput.paleo_coordinates``.
+      * ``warnings`` — list of WarningRecord dicts (already in
+        ``WarningRecord.model_dump()`` shape) to merge into
+        ``RunOutput.warnings``.
     """
+    warnings_out: list[dict[str, Any]] = []
     if not localities:
-        return []
+        return [], warnings_out
     # Build a locality_id → geology-context lookup so we can find the
     # ma_mid for each locality in O(1).
     geo_by_loc: dict[str, dict[str, Any]] = {}
@@ -967,15 +1082,29 @@ def paleo_coordinates_from_localities(
             infer_plate_id,
             reconstruct_paleo_position,
         )
-    except Exception:
-        # If the helper module fails to load for any reason, fall
-        # back to an empty list rather than breaking the whole
-        # export. The paleocoordinates view is best-effort.
+    except Exception as exc:
+        # Round 23 audit: surface this as a WarningRecord so the
+        # operator sees the backend is unavailable (was previously
+        # only a server-log warning). The paleocoordinates view will
+        # be empty for this run, which is the correct degraded
+        # behaviour.
         logger.warning(
             "paleo_reconstruction import failed; paleo_coordinates will be empty",
             exc_info=True,
         )
-        return []
+        warnings_out.append(
+            _warning_record(
+                code="paleo_reconstruction_unavailable",
+                message=(
+                    "Paleocoordinate reconstruction backend "
+                    "(paleo_reconstruction.py) failed to import. "
+                    "paleo_coordinates will be empty for this run."
+                ),
+                entity_type="run",
+                evidence_text=str(exc)[:300],
+            )
+        )
+        return [], warnings_out
     for loc in localities:
         mod_lat = loc.get("modern_latitude")
         mod_lon = loc.get("modern_longitude")
@@ -1027,7 +1156,7 @@ def paleo_coordinates_from_localities(
             backend_status="ok" if paleo_lat is not None else "plate_or_age_unknown",
         )
         out.append(rec.model_dump())
-    return out
+    return out, warnings_out
 
 
 def warnings_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:

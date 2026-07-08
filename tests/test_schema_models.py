@@ -427,7 +427,11 @@ class TestProductDataPackage:
     def test_paper_records_deduped_by_paper_id(self):
         m1 = _make_match()
         m2 = replace(_make_match(), figure_id="fig_2")
-        papers = paper_records_from_matches([m1, m2])
+        # Round 23 audit: paper_records_from_matches now returns
+        # ``(records, warnings)`` so the converter can surface
+        # backend failures as WarningRecord entries. Tests must
+        # unpack the tuple.
+        papers, _warnings = paper_records_from_matches([m1, m2])
         assert len(papers) == 1
         assert papers[0]["paper_id"] == "abc"
         assert papers[0]["title"] == "Test"

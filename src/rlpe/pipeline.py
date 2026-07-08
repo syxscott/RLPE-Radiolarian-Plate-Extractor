@@ -1148,36 +1148,59 @@ class RadiolarianPipeline:
                             exc,
                         )
                         geo_links = []
+                    # Round 23 audit: emit a stub record EVEN when
+                    # ``geo_links`` is empty. Previously the ``if
+                    # geo_links:`` guard at line 1151 silently dropped
+                    # the figure when M3 vision returned an empty
+                    # list — the figure vanished from ``results`` with
+                    # only a debug-level log line. Operators had no
+                    # way to know the figure had been processed but
+                    # produced no geology. Now we always emit the
+                    # stub so downstream consumers see the figure
+                    # (with ``geology_links=[]``) and can decide
+                    # whether to surface it.
+                    results.append(
+                        {
+                            "paper_id": paper_id,
+                            "figure_id": pair.figure_id,
+                            "panel_id": f"GEO_VISION_{fig_type.upper()}",
+                            "species": None,
+                            "panel_path": geo_image_path,
+                            "bbox": None,
+                            "confidence": 0.0,
+                            "label_text": None,
+                            "caption_snippet": (pair.caption_text or "")[:240],
+                            "ocr_text": None,
+                            "paper_metadata": None,
+                            "metadata": {
+                                "figure_type": fig_type,
+                                "extraction_source": "geo_vision",
+                                "geology_links": geo_links,
+                                "geo_vision_used": bool(geo_links),
+                                "geo_vision_figure_type": fig_type,
+                            },
+                        }
+                    )
                     if geo_links:
-                        # Wrap geology links into a stub record so the
-                        # downstream eval/export pipeline sees them.
-                        results.append(
-                            {
-                                "paper_id": paper_id,
-                                "figure_id": pair.figure_id,
-                                "panel_id": f"GEO_VISION_{fig_type.upper()}",
-                                "species": None,
-                                "panel_path": geo_image_path,
-                                "bbox": None,
-                                "confidence": 0.0,
-                                "label_text": None,
-                                "caption_snippet": (pair.caption_text or "")[:240],
-                                "ocr_text": None,
-                                "paper_metadata": None,
-                                "metadata": {
-                                    "figure_type": fig_type,
-                                    "extraction_source": "geo_vision",
-                                    "geology_links": geo_links,
-                                    "geo_vision_used": True,
-                                    "geo_vision_figure_type": fig_type,
-                                },
-                            }
-                        )
                         logger.info(
                             "%s %s: extracted %d geo links via vision",
                             fig_type,
                             pair.figure_id,
                             len(geo_links),
+                        )
+                    else:
+                        # Round 23 audit: emit a warning so operators
+                        # see when M3 vision returned empty for a
+                        # strat/litholog/paleogeo figure. The stub
+                        # record above is now emitted regardless, but
+                        # the warning makes the "M3 found nothing"
+                        # signal visible in server logs.
+                        logger.warning(
+                            "%s %s: M3 vision returned 0 geo links; "
+                            "stub record still emitted so the figure "
+                            "is not silently lost",
+                            fig_type,
+                            pair.figure_id,
                         )
                 self._emit_progress(
                     fig_idx,
