@@ -364,16 +364,34 @@ class OpenDataLoaderExtractor:
 
         # 2) Build the set of caption texts already represented in
         #    the existing figures so we don't double-emit.
-        existing_caption_snippets = set()
+        #
+        # Round 21 sampling: a stub ``FigureCaptionPair`` with
+        # ``image_paths == []`` AND ``caption_text == None`` from
+        # the FALLBACK branch would silently mask the real
+        # ``Fig. N`` caption in this dedup — the stub's empty
+        # caption_text was treated as "no caption" and the rescue
+        # would skip the real Fig. caption when its 60-char prefix
+        # matched an empty string (which it does, vacuously).
+        # Fix: only add to the dedup set when the existing pair
+        # has BOTH a non-empty caption AND non-empty image_paths.
+        # Stubs (no caption, no image, or either empty) are not
+        # treated as "represented" and the real Fig. caption
+        # always wins.
+        existing_caption_snippets: set[str] = set()
         for fig in existing_figures:
             # Existing figures may be FigureCaptionPair objects OR
             # dicts (e.g. when callers have already serialised them).
             # Support both to keep this robust against future callers.
             if isinstance(fig, dict):
                 cap = (fig.get("caption_text") or "").strip()
+                imgs = fig.get("image_paths") or []
             else:
                 cap = (fig.caption_text or "").strip()
-            if cap:
+                imgs = list(fig.image_paths or [])
+            # Only count pairs that are "real" — both caption and
+            # image_paths non-empty. Stubs are excluded so the
+            # rescue can overwrite them with the real Fig. caption.
+            if cap and imgs:
                 # Match by the first 60 chars (caption previews may
                 # differ in trailing whitespace/punctuation).
                 # Round 9 (L4): previously the check used
@@ -507,8 +525,22 @@ class OpenDataLoaderExtractor:
             # Use the exact claimed image IDs (not just their page numbers) so an
             # image on a "plate page" but linked to a different plate is not
             # accidentally re-surfaced as a leftover.
+            #
+            # Round 21 sampling: Boughdiri 2007's non-plate images on
+            # p2-p7 (strat column, litholog sections, location map,
+            # outcrop photos) were silently dropped because OD's image
+            # IDs are sometimes non-integer strings like ``"p011f1"``,
+            # and ``int(img.get("id", -1))`` raised ``ValueError`` which
+            # the broad ``except`` clause below swallowed. We now use
+            # opaque string-keyed IDs (matching by the string the OD
+            # JSON actually emits) so the lookup doesn't crash.
+            _claimed_str: set[str] = set()
+            for cid in claimed_image_ids:
+                _claimed_str.add(str(cid))
             leftover_images = [
-                img for img in images if int(img.get("id", -1)) not in claimed_image_ids
+                img
+                for img in images
+                if str(img.get("id", -1)) not in _claimed_str
             ]
             if leftover_images:
                 # Build a single fallback figure for unassigned images so the
@@ -516,17 +548,25 @@ class OpenDataLoaderExtractor:
                 # matcher instead of being silently dropped.
                 plate_imgs = _merge_nearby_images(leftover_images, gap_pt=self.merge_gap_pt)
                 for plate_idx, plate_images in enumerate(plate_imgs, start=1):
-                    # Build a caption lookup keyed by linked_content_id
-                    caption_for_image: dict[int, str] = {}
+                    # Build a caption lookup keyed by linked_content_id.
+                    # Round 21: keys are strings (not ints) so the
+                    # dict lookup survives string image IDs like
+                    # ``"p011f1"``. OD emits ``linked content id`` as
+                    # an integer in some versions and a string in
+                    # others — we coerce both sides to ``str`` so the
+                    # lookup is format-agnostic.
+                    caption_for_image: dict[str, str] = {}
                     for cap in captions:
                         linked = cap.get("linked content id")
                         if linked is not None:
-                            caption_for_image[int(linked)] = cap.get("content") or ""
+                            caption_for_image[str(linked)] = cap.get("content") or ""
                     plate_cap_list: list[str] = []
                     for img in plate_images:
                         img_id = img.get("id")
                         cap_text = (
-                            caption_for_image.get(int(img_id)) if img_id is not None else None
+                            caption_for_image.get(str(img_id))
+                            if img_id is not None
+                            else None
                         )
                         if cap_text:
                             plate_cap_list.append(cap_text)
@@ -553,17 +593,23 @@ class OpenDataLoaderExtractor:
             plates = _merge_nearby_images(images, gap_pt=self.merge_gap_pt)
             pairs: list[FigureCaptionPair] = []
             for plate_idx, plate_images in enumerate(plates, start=1):
-                # Build a caption lookup keyed by linked_content_id
-                caption_for_image: dict[int, str] = {}
+                # Build a caption lookup keyed by linked_content_id.
+                # Round 21: keys are strings (not ints) so non-
+                # integer image IDs (e.g. ``"p011f1"``) link to
+                # captions correctly. See the plate-captions branch
+                # above for the full rationale.
+                caption_for_image: dict[str, str] = {}
                 for cap in captions:
                     linked = cap.get("linked content id")
                     if linked is not None:
-                        caption_for_image[int(linked)] = cap.get("content") or ""
+                        caption_for_image[str(linked)] = cap.get("content") or ""
 
                 plate_caps: list[str] = []
                 for img in plate_images:
                     img_id = img.get("id")
-                    cap_text = caption_for_image.get(int(img_id)) if img_id is not None else None
+                    cap_text = (
+                        caption_for_image.get(str(img_id)) if img_id is not None else None
+                    )
                     if cap_text:
                         plate_caps.append(cap_text)
 
@@ -636,6 +682,16 @@ def _rescue_unmatched_captions(
     immediately after) attaches the nearest cross-page image.
     """
     # Build the set of caption snippets that are already attached.
+    #
+    # Round 21 sampling: stubs with empty ``caption_text`` (e.g. the
+    # FALLBACK branch's no-caption pair) must NOT block this rescue
+    # from emitting the real ``Fig. N`` caption. Only count pairs
+    # that have a non-empty caption (i.e. real, not stubs) when
+    # building the dedup set. Round 9 (L4) noted that the previous
+    # bidirectional substring check ``text[:60] in s or s in text[:60]``
+    # over-matched ("Fig. 1" is a prefix of "Fig. 10 ..."); the
+    # new check uses exact 60-char prefix equality like
+    # ``_extract_unpaired_captions``.
     existing_snippets: set[str] = set()
     for p in pairs:
         cap = (p.caption_text or "").strip()
@@ -651,7 +707,11 @@ def _rescue_unmatched_captions(
             continue
         if not text:
             continue
-        if any(s and (text[:60] in s or s in text[:60]) for s in existing_snippets):
+        # Round 21: use exact 60-char prefix match (NOT the
+        # bidirectional substring check that was retired in
+        # Round 9 L4). This avoids spurious "Fig. 1" / "Fig. 10"
+        # collisions and over-matches on empty strings.
+        if text[:60] in existing_snippets:
             continue
         page = int(cap.get("page number", 0))
         existing_snippets.add(text[:60])

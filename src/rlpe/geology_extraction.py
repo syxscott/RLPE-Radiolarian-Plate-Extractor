@@ -109,6 +109,68 @@ _COUNTRIES = (
     "Finland", "Denmark", "Poland", "Czech Republic", "Hungary",
     "Romania", "Bulgaria", "Greece", "Turkey", "Cyprus",
 )
+
+# Round 21: country centroid fallback table. When a paper mentions
+# only a country name (e.g. "Greece", "Tunisia") without explicit
+# coordinates, the older pipeline returned ``modern_latitude=None``
+# because ``_extract_first_coord`` requires hemisphere or degree
+# symbol. We now look up the country centroid as a low-confidence
+# fallback. Centroid coordinates are approximate (a single point
+# representing the country), so they're tagged with
+# ``confidence=0.3`` and ``coordinate_source="country_centroid"`` so
+# the operator can tell centroid-derived coords from regex-derived
+# ones.
+#
+# This is intentionally a SHORT list — only countries that appear in
+# radiolarian papers. For countries NOT in this table the older
+# behaviour (None coords) applies. A future round could swap this
+# for a GeoNames / OpenStreetMap gazetteer lookup.
+_COUNTRY_CENTROIDS: dict[str, tuple[float, float]] = {
+    "Italy": (41.5, 12.5),
+    "Japan": (36.0, 138.0),
+    "China": (35.0, 105.0),
+    "Turkey": (39.0, 35.0),
+    "Greece": (39.0, 22.0),
+    "Oman": (21.0, 57.0),
+    "New Zealand": (-41.0, 174.0),
+    "Australia": (-25.0, 133.0),
+    "Austria": (47.5, 14.5),
+    "France": (46.0, 2.0),
+    "Germany": (51.0, 9.0),
+    "Spain": (40.0, -4.0),
+    "Portugal": (39.5, -8.0),
+    "Switzerland": (46.8, 8.2),
+    "Russia": (60.0, 100.0),
+    "Canada": (60.0, -95.0),
+    "USA": (40.0, -100.0),
+    "United States": (40.0, -100.0),
+    "Mexico": (23.0, -102.0),
+    "Argentina": (-34.0, -64.0),
+    "Chile": (-35.0, -71.0),
+    "Brazil": (-14.0, -51.0),
+    "India": (20.0, 77.0),
+    "Pakistan": (30.0, 70.0),
+    "Philippines": (13.0, 122.0),
+    "Indonesia": (-0.8, 113.0),
+    "Iran": (32.0, 53.0),
+    "Iraq": (33.0, 44.0),
+    "Saudi Arabia": (25.0, 45.0),
+    "South Africa": (-29.0, 24.0),
+    "Egypt": (27.0, 30.0),
+    "Tunisia": (33.5, 9.0),
+    "Morocco": (32.0, -5.0),
+    "Algeria": (28.0, 1.0),
+    "Norway": (62.0, 10.0),
+    "Sweden": (60.0, 15.0),
+    "Finland": (64.0, 26.0),
+    "Denmark": (56.0, 10.0),
+    "Poland": (52.0, 19.0),
+    "Czech Republic": (49.7, 15.5),
+    "Hungary": (47.0, 19.5),
+    "Romania": (46.0, 25.0),
+    "Bulgaria": (43.0, 25.0),
+    "Cyprus": (35.0, 33.0),
+}
 # Region -> country override. Lets "Western Sicily" or "Sicilian
 # sections" map to "Italy" without listing Sicily (a region, not a
 # country) in the main country list. Add new region->country pairs
@@ -225,6 +287,13 @@ class GeologyRecord:
     section_title: str | None = None
     evidence_text: str | None = None
     confidence: float = 0.0
+    # Round 21: how the coordinate was derived. Empty for regex-
+    # extracted coords (the default path), ``"country_centroid"``
+    # when the country-centroid fallback table supplied the
+    # latitude/longitude. The ``converters`` path doesn't currently
+    # surface this field, but it's available for downstream
+    # inspection (e.g. UI badge "derived from country centroid").
+    coord_source: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -428,6 +497,26 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         # range check, which let invalid coordinates leak into
         # GeologyRecord.latitude/longitude.
         lat, lon = _extract_first_coord(text)
+        # Round 21: country-centroid fallback. When the section text
+        # has no explicit coordinates (only a country name like
+        # "Greece" or "Tunisia"), look up the centroid as a low-
+        # confidence fallback. The ``confidence`` flag on the
+        # GeologyRecord reflects this: regex-extracted coords are
+        # 0.7 / 0.55; centroid fallback is 0.3 (and the
+        # ``coord_source`` field carries "country_centroid" so the
+        # operator can tell).
+        centroid_source = ""
+        if lat is None and lon is None and country is not None:
+            centroid = _COUNTRY_CENTROIDS.get(country)
+            if centroid is not None:
+                lat, lon = centroid
+                centroid_source = "country_centroid"
+                logger.debug(
+                    "country centroid fallback: country=%r → lat=%s lon=%s",
+                    country,
+                    lat,
+                    lon,
+                )
         # Round 18: classify the coordinate as paleo vs modern based
         # on surrounding keywords ("at deposition time" → paleo,
         # "today / present-day" → modern). Without this, both
@@ -486,7 +575,13 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 section_type=sec.get("section_type"),
                 section_title=sec.get("title"),
                 evidence_text=text[:300],
-                confidence=0.7 if chrono else 0.55,
+                # Round 21: country-centroid fallback coords are
+                # tagged with lower confidence (0.3) so the
+                # downstream UI / consumers can distinguish them
+                # from regex-extracted coords. Regex-extracted
+                # values stay at 0.7 / 0.55.
+                confidence=0.3 if centroid_source else (0.7 if chrono else 0.55),
+                coord_source=centroid_source,
             )
             out.append(rec)
         # If no ages were found but chrono was, still emit a record
@@ -514,7 +609,8 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 section_type=sec.get("section_type"),
                 section_title=sec.get("title"),
                 evidence_text=text[:300],
-                confidence=0.7,
+                confidence=0.3 if centroid_source else 0.7,
+                coord_source=centroid_source,
             )
             # Compare on a stable key tuple instead of the full dataclass.
             # `dataclass(slots=True)` gives an auto-generated __eq__ that

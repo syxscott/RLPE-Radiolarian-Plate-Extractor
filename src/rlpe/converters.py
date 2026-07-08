@@ -702,15 +702,39 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
         # (compiled regex, sample-id prefix)
         (re.compile(r"Sample\s+([A-Za-z0-9][A-Za-z0-9\-]*)"), "S_"),
         # Boughdiri 2007-style short codes (CH4, MB4, GA7, RM3, etc.).
-        # The leading letter is a paper-specific locality prefix; the
-        # trailing digits identify the specimen. Word boundaries on
-        # both sides prevent partial matches inside other tokens.
-        # ``(?:...)`` (non-capturing) so finditer / findall return the
-        # full match including the digits, not just the letter prefix.
+        # Round 21: extended prefix list to cover Bandini / Danelian /
+        # other Mediterranean / Russian papers. The original 13 prefixes
+        # (CH|MB|GA|RM|HK|JP|BS|TS|TR|SP|TK|DF|DP|MS|AS|RS) covered
+        # Boughdiri; the additions cover:
+        #   Al  — Bandini 2006 ("Al74_300" Greek locality codes)
+        #   Mg  — Danelian 2006 ("Mg-100" Vocontian-Basin samples)
+        #   Tr  — Tatric / Triassic / common 2-letter locality prefix
+        #   Pl  — Polino / Polish / Plutonic papers
+        #   BK  — Boughdiri Korbeek-Lo (less common but seen)
+        #   OC  — Oceanic Core (IODP-style)
+        #   WP  — West Pacific (deep-sea papers)
+        #   CM  — Central Morocco / Mediterranean
+        # The regex pattern uses three non-capturing tricks:
+        #   1. ``(?<![A-Za-z0-9])`` — a NEGATIVE lookbehind so we
+        #      don't match inside longer alphanumeric tokens. This
+        #      replaces the leading ``\b`` which fails when the
+        #      preceding char is itself alphanumeric (rare but seen
+        #      in species names like ``NannAl74``).
+        #   2. ``[-_]?\d{1,4}(?:[-_]\d{1,4})?`` — optionally a
+        #      second ``-`` or ``_`` separated digit block, so
+        #      Bandini's ``Al74_300`` (year_sample) matches fully
+        #      rather than truncating to ``Al74``.
+        #   3. ``(?!\d)`` — a NEGATIVE lookahead after the digit
+        #      block so we don't truncate matches in the middle of
+        #      longer digit runs.
+        # Together these let us match ``Al74_300`` as a single
+        # identifier (the full locality code + sample number).
         (
             re.compile(
-                r"\b(?:CH|MB|GA|RM|HK|JP|BS|TS|TR|SP|TK|DF|DP|MS|AS|RS)"
-                r"-?\d{1,4}\b"
+                r"(?<![A-Za-z0-9])"
+                r"(?:CH|MB|GA|RM|HK|JP|BS|TS|TR|SP|TK|DF|DP|MS|AS|RS|"
+                r"Al|Mg|Tr|Pl|BK|OC|WP|CM)"
+                r"[-_]?\d{1,4}(?:[-_]\d{1,4})?(?!\d)"
             ),
             "B_",
         ),
@@ -724,6 +748,22 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
             re.compile(r"\bsample\s+(\d{1,4}[-/]?\d{0,4})\b", re.IGNORECASE),
             "N_",
         ),
+        # Round 21: parenthesized numbered list "(1) (2) (3) ..." —
+        # common in Bragin 2025 captions ("(1) Praeparvicingula
+        # blackhorsensis, (2) Praeparvicingula donnae ..."). Tagged
+        # with prefix ``L_`` because the operator must verify each
+        # match isn't a figure number reference. The regex is narrow
+        # (``\d{1,3}`` max 3 digits, in parentheses) so false positives
+        # are rare.
+        (re.compile(r"\(\d{1,3}\)"), "L_"),
+        # Round 21: "pl. N" abbreviated plate reference — Bragin 2025
+        # and other Russian / older papers. ``pl.`` is unambiguous in
+        # plate captions. Tagged with prefix ``P_``.
+        (re.compile(r"pl\.\s*(\d{1,2})\b"), "P_"),
+        # Round 21: "Sample (12)" parenthesized form (rare but seen
+        # in some Bandini captions). Tagged ``S_`` to fold into the
+        # legacy sample bucket.
+        (re.compile(r"Sample\s+\(\d+\)"), "S_"),
     )
     for m in matches:
         text = m.caption_snippet or ""

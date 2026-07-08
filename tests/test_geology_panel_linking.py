@@ -146,8 +146,15 @@ def test_species_present_in_fulltext_section_yields_that_section_records() -> No
         species_names=["Acanthocircus impolitus"],
         sections=[
             {
-                "title": "Systematic palaeontology",
-                "section_type": "systematic_paleontology",
+                # Round 21 fix: ``link_species_to_geology`` excludes
+                # systematic_paleontology sections (Danelian 2006's
+                # systematic section had citation leakage where Beccaro
+                # 2002's "Fonzaso Formation" and "Japan" were
+                # extracted as if they were Danelian's own geology).
+                # Use "geological_setting" instead so the test
+                # exercises the legitimate geology-linking path.
+                "title": "Geological setting",
+                "section_type": "geological_setting",
                 "text": "Acanthocircus impolitus is described from the Dalong Formation, Upper Permian.",
             }
         ],
@@ -156,7 +163,7 @@ def test_species_present_in_fulltext_section_yields_that_section_records() -> No
     recs = out["Acanthocircus impolitus"]
     assert recs, "Species present in section should be linked"
     for r in recs:
-        assert r["section_title"] == "Systematic palaeontology"
+        assert r["section_title"] == "Geological setting"
 
 
 # ---------------------------------------------------------------------------
