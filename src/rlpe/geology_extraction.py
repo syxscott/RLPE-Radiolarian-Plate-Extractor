@@ -135,6 +135,44 @@ _CHEMOSTRAT_VOCAB = (
     "δ13C negative excursion", "strontium isotope excursion",
     "osmium isotope excursion", "mercury anomaly",
 )
+
+# Round 25 (user audit follow-up): the user asked specifically
+# for "geochemistry & paleoenvironment proxies" and highlighted
+# that for P/T boundary research the core data points are
+# the δ¹³C values themselves (not just the EVENT name). Round 25
+# adds a regex that captures the numeric value of a stable
+# isotope measurement: ``δ13C = -3.2 ‰`` or ``δ18O = +5.1 ‰`` or
+# ``87Sr/86Sr = 0.70712``. These are stored as additional
+# chemostrat proxies so the operator can run numeric comparisons
+# without re-parsing the paper.
+#
+# Patterns:
+#   - δ13C = -3.2 ‰ / δ13C: -3.2 / δ13C -3.2 permil
+#   - δ18O = +5.1 ‰
+#   - 87Sr/86Sr = 0.70712 (isotope ratio)
+#   - TOC = 4.5 wt% (total organic carbon)
+#   - 13C isotope excursion of -2 ‰
+#
+# Each pattern is captured into the geology link's
+# ``evidence_text`` so the operator can see the exact sentence
+# from which the value was extracted. We don't try to store
+# the value itself as a separate field because that would
+# require schema changes (multiple values per record); the
+# operator can grep the evidence_text instead.
+_ISOTOPE_PATTERN = re.compile(
+    r"(?:"
+    # δ13C / δ18O / δ34S — with optional sign, value, permil
+    r"\b[δd](?:1[38]C|1[78]O|3[24]S|1[15]N|8[78]Sr)\s*"
+    r"(?:=|:)?\s*[-+]?\d+(?:\.\d+)?\s*[‰%]*"
+    r"|"  # 87Sr/86Sr (or 86/86, 87/87, 88/86) ratio
+    r"\b8[67]Sr/8[67]Sr\s*(?:=|:)?\s*0\.\d{3,6}"
+    r"|"  # TOC = 4.5 wt%
+    r"\bTOC\s*(?:=|:)?\s*\d+(?:\.\d+)?\s*(?:wt%|%)"
+    r"|"  # Hg anomaly (mercury, ppb)
+    r"\bHg(?:\s+anomaly)?\s*(?:=|:)?\s*\d+(?:\.\d+)?\s*ppb"
+    r")",
+    re.IGNORECASE,
+)
 CHEMOSTRAT_PATTERN = re.compile(
     r"(?:" + "|".join(re.escape(t) for t in _CHEMOSTRAT_VOCAB) + r")",
     re.IGNORECASE,
@@ -552,6 +590,14 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         chemostrat = chemostrat_match.group(0).strip() if chemostrat_match else None
         facies_match = FACIES_PATTERN.search(text)
         facies = facies_match.group(0).strip() if facies_match else None
+        # Round 25: isotope values (δ13C / δ18O / 87Sr/86Sr / TOC
+        # / Hg). The user audit specifically called out "geochem
+        # values" as a missing data point for P/T boundary
+        # research. We capture the FIRST match per section and
+        # append it to evidence_text so the operator can see the
+        # exact value without re-parsing the paper.
+        iso_match = _ISOTOPE_PATTERN.search(text)
+        isotope_value = iso_match.group(0).strip() if iso_match else None
         # Country: search anywhere in the section text. Order
         # matters only when a paper names both a country and a
         # sub-region locality — we keep the first match in the text.
@@ -649,6 +695,16 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
             and lithology is None
             and biozone is None
             and country is None
+            # Round 24+25: also pass the skip-check if the new
+            # proxies are populated. Otherwise a record with ONLY
+            # chemostrat / paleoenvironment / redox / facies would
+            # be silently dropped. The proxies are the entire point
+            # of the new extraction so a record with no other
+            # fields but a useful proxy is still valuable.
+            and paleoenvironment is None
+            and redox is None
+            and chemostrat is None
+            and facies is None
         ):
             continue
 
@@ -683,7 +739,13 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 paleo_longitude=lon if coord_age == "paleo" else None,
                 section_type=sec.get("section_type"),
                 section_title=sec.get("title"),
-                evidence_text=text[:300],
+                # Round 25: append the captured isotope value to
+                # the evidence text so the operator can see
+                # "δ13C = -3.2 ‰" without re-parsing the paper.
+                # Truncated to 300 chars to keep the cell small.
+                evidence_text=(
+                    (text + (f"  [isotope: {isotope_value}]" if isotope_value else ""))[:300]
+                ),
                 # Round 21: country-centroid fallback coords are
                 # tagged with lower confidence (0.3) so the
                 # downstream UI / consumers can distinguish them
@@ -722,7 +784,13 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 paleo_longitude=lon if coord_age == "paleo" else None,
                 section_type=sec.get("section_type"),
                 section_title=sec.get("title"),
-                evidence_text=text[:300],
+                # Round 25: append the captured isotope value to
+                # the evidence text so the operator can see
+                # "δ13C = -3.2 ‰" without re-parsing the paper.
+                # Truncated to 300 chars to keep the cell small.
+                evidence_text=(
+                    (text + (f"  [isotope: {isotope_value}]" if isotope_value else ""))[:300]
+                ),
                 confidence=0.3 if centroid_source else 0.7,
                 coord_source=centroid_source,
             )
@@ -866,13 +934,25 @@ def link_species_to_geology(
             if conf < 0.4:
                 continue
             reasoning = str(out.get("reasoning", ""))
+            # Round 25: the LLM path doesn't run the isotope
+            # regex on the LLM response (the regex runs on the
+            # raw section text in the regex path). Default to
+            # None so the f-string is well-formed.
+            iso_match = _ISOTOPE_PATTERN.search(reasoning)
+            isotope_value = iso_match.group(0).strip() if iso_match else None
             rec = GeologyRecord(
                 age=_extract_first(AGE_PATTERN, reasoning),
                 formation=_extract_first(FORMATION_PATTERN, reasoning),
                 locality=_extract_first(LOCALITY_PATTERN, reasoning),
                 section_type=sec.get("section_type"),
                 section_title=sec.get("title"),
-                evidence_text=text[:300],
+                # Round 25: append the captured isotope value to
+                # the evidence text so the operator can see
+                # "δ13C = -3.2 ‰" without re-parsing the paper.
+                # Truncated to 300 chars to keep the cell small.
+                evidence_text=(
+                    (text + (f"  [isotope: {isotope_value}]" if isotope_value else ""))[:300]
+                ),
                 confidence=conf,
             )
             best_records.append(rec.to_dict())

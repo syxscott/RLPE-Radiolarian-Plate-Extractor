@@ -745,6 +745,19 @@ def figure_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
 
 
 def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
+    """Build one TaxonRecord per unique species.
+
+    Round 25: when the pipeline has PBDB metadata attached
+    (``m.metadata["paleodb"]["taxonomy"]``), the family / order /
+    class_name fields are populated from PBDB. Without PBDB, these
+    three fields stay ``None`` — the rest of the fields
+    (verbatim_name / genus / specific_epithet / qualifier) are
+    always populated from the species string itself.
+
+    PBDB lookups are rate-limited (30 req/min on the public
+    endpoint); the pipeline caches results to disk and a
+    second run is instant. See ``rlpe.paleodb.PaleoDB``.
+    """
     seen: dict[str, dict[str, Any]] = {}
     for m in matches:
         sp = _normalise_species_name(m.species)
@@ -754,6 +767,14 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         if taxon_id in seen:
             continue
         parts = _taxon_parts(sp)
+        # Round 25: read PBDB taxonomy from match metadata. The
+        # pipeline (``_attach_paleodb_metadata``) attaches the
+        # full payload (``taxonomy`` / ``occurrences`` /
+        # ``occurrence_count``) when ``use_paleodb=True`` is set
+        # in the job options. Without PBDB, all three are None.
+        meta = m.metadata or {}
+        pbdb = meta.get("paleodb") or {}
+        pbdb_tax = pbdb.get("taxonomy") or {}
         rec = TaxonRecord(
             taxon_id=taxon_id,
             verbatim_name=sp,
@@ -761,15 +782,21 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             genus=parts["genus"],
             specific_epithet=parts["specific_epithet"],
             qualifier=parts["qualifier"],
-            authority=None,
-            rank="species" if parts["specific_epithet"] else "genus_or_other",
-            family=None,
-            order=None,
-            class_name=None,
-            source=(m.metadata or {}).get("extraction_method") or None,
+            authority=pbdb_tax.get("authority") or None,
+            rank=(
+                pbdb_tax.get("rank")
+                or ("species" if parts["specific_epithet"] else "genus_or_other")
+            ),
+            # Round 25: PBDB fills family / order / class_name when
+            # available. Without PBDB these are None — the
+            # Round 25 source-guard test verifies the path.
+            family=pbdb_tax.get("family"),
+            order=pbdb_tax.get("order"),
+            class_name=pbdb_tax.get("class"),
+            source=meta.get("extraction_method") or None,
             confidence=float(m.confidence),
-            needs_review=bool((m.metadata or {}).get("needs_review", False)),
-            review_reasons=list((m.metadata or {}).get("review_reasons", []) or []),
+            needs_review=bool(meta.get("needs_review", False)),
+            review_reasons=list(meta.get("review_reasons", []) or []),
         )
         seen[taxon_id] = rec.model_dump()
     return list(seen.values())
@@ -892,8 +919,140 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
     return list(seen.values())
 
 
+def _pbdb_enrich_geology(
+    matches: list[MatchResult],
+) -> None:
+    """In-place: fill missing geology-link fields from PBDB occurrences.
+
+    For each unique species with a ``paleodb.occurrences`` payload
+    (the PBDB occurrences list), aggregate the most-common
+    ``early_interval`` (used as biozone fallback), ``formation``,
+    ``locality``, ``country``, and ``latitude`` / ``longitude``.
+    When a panel's first geology link is missing any of these,
+    fill from the PBDB aggregation. The cross-dating use case
+    (user's suggestion 1) — e.g. "did this species also occur in
+    the P/T boundary?  find its biostratigraphic range" — is
+    the primary motivation.
+
+    The fill is **only** into empty fields; the original
+    extracted text is preserved. The ``coord_source`` is set
+    to ``"paleodb"`` for coords filled this way so the
+    operator can distinguish them from regex / centroid sources.
+
+    Round 25: this function is no-op if no ``paleodb`` payload
+    is attached to any match (i.e. ``use_paleodb=False`` in
+    JobOptions).
+    """
+    # Aggregate per species: most-common non-None value per field.
+    species_agg: dict[str, dict[str, Any]] = {}
+    for m in matches:
+        pbdb = (m.metadata or {}).get("paleodb") or {}
+        occs = pbdb.get("occurrences") or []
+        sp = (m.species or "").strip()
+        if not sp or not occs:
+            continue
+        agg = species_agg.setdefault(
+            sp,
+            {
+                "early_interval": {},
+                "formation": {},
+                "locality": {},
+                "country": {},
+                "ma_top": [],
+                "ma_base": [],
+                "lat": [],
+                "lon": [],
+            },
+        )
+        for o in occs:
+            for f in ("early_interval", "formation", "locality", "country"):
+                v = o.get(f)
+                if v:
+                    agg[f][v] = agg[f].get(v, 0) + 1
+            mt = o.get("max_ma")
+            mb = o.get("min_ma")
+            if isinstance(mt, (int, float)):
+                agg["ma_top"].append(float(mt))
+            if isinstance(mb, (int, float)):
+                agg["ma_base"].append(float(mb))
+            lat = o.get("latitude")
+            lon = o.get("longitude")
+            if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+                agg["lat"].append(float(lat))
+                agg["lon"].append(float(lon))
+
+    # Per-species most-common value.
+    species_top: dict[str, dict[str, Any]] = {}
+    for sp, agg in species_agg.items():
+        top: dict[str, Any] = {}
+        for f in ("early_interval", "formation", "locality", "country"):
+            if agg[f]:
+                top[f] = max(agg[f].items(), key=lambda x: x[1])[0]
+        if agg["ma_top"]:
+            top["ma_top"] = sum(agg["ma_top"]) / len(agg["ma_top"])
+        if agg["ma_base"]:
+            top["ma_base"] = sum(agg["ma_base"]) / len(agg["ma_base"])
+        if agg["lat"]:
+            top["lat"] = sum(agg["lat"]) / len(agg["lat"])
+            top["lon"] = sum(agg["lon"]) / len(agg["lon"])
+        species_top[sp] = top
+
+    # Fill missing fields on each geology link.
+    for m in matches:
+        sp = (m.species or "").strip()
+        if not sp or sp not in species_top:
+            continue
+        top = species_top[sp]
+        for g in (m.metadata.get("geology_links") or []):
+            if not isinstance(g, dict):
+                continue
+            if not g.get("biozone") and top.get("early_interval"):
+                # Round 25: cross-dating — PBDB's first-occurrence
+                # interval becomes a biozone proxy. Tagged with
+                # ``_paleodb_biozone`` so the operator can tell
+                # the source.
+                g["biozone"] = top["early_interval"]
+                g.setdefault("evidence_text", "")
+                g["evidence_text"] = (
+                    (g.get("evidence_text") or "")[:120]
+                    + f" [PBDB first-occurrence: {top['early_interval']}]"
+                )[:300]
+            if not g.get("formation") and top.get("formation"):
+                g["formation"] = top["formation"]
+            if not g.get("locality") and top.get("locality"):
+                g["locality"] = top["locality"]
+            if not g.get("country") and top.get("country"):
+                g["country"] = top["country"]
+            # Modern coords: only fill if BOTH lat AND lon missing.
+            if (
+                g.get("latitude") is None
+                and g.get("longitude") is None
+                and top.get("lat") is not None
+                and top.get("lon") is not None
+            ):
+                g["latitude"] = round(top["lat"], 4)
+                g["longitude"] = round(top["lon"], 4)
+                g["modern_latitude"] = round(top["lat"], 4)
+                g["modern_longitude"] = round(top["lon"], 4)
+                g["coord_source"] = "paleodb"
+                g["paleo_latitude"] = None
+                g["paleo_longitude"] = None
+            # Ma bounds from PBDB: only if the regex didn't
+            # extract them.
+            if g.get("ma_top") is None and top.get("ma_top") is not None:
+                g["ma_top"] = round(top["ma_top"], 2)
+            if g.get("ma_base") is None and top.get("ma_base") is not None:
+                g["ma_base"] = round(top["ma_base"], 2)
+
+
 def geology_contexts_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
     seen: dict[str, dict[str, Any]] = {}
+    # Round 25: in-place enrich missing geology fields from
+    # PBDB occurrences. The enrichment is a no-op when no
+    # ``paleodb.occurrences`` payload is attached, so the
+    # behaviour matches the pre-R25 path for jobs that
+    # don't enable ``use_paleodb``.
+    _pbdb_enrich_geology(matches)
     for m in matches:
         geos = (m.metadata or {}).get("geology_links") or []
         if not isinstance(geos, list):

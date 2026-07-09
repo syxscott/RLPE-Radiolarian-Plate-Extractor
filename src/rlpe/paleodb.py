@@ -203,8 +203,21 @@ class PaleoDB:
         cache_key = _stable_cache_key(f"taxa|{clean.lower()}")
         params = {
             "name": clean,
-            "show": "attr,app,class",
-            "rel": "all",
+            # Round 25 audit: ``show=attr,app,class`` returns
+            # HTTP 400 ("bad value 'app' for 'show'") — ``app``
+            # is not a valid PBDB show token. The valid tokens
+            # for taxonomy records are ``attr`` (the
+            # free-form attributes), ``class`` (the full
+            # classification path), ``app`` (the age of first
+            # and last appearance, only on occurrence queries),
+            # etc. We want only the classification here.
+            "show": "attr,class",
+            # ``rel=all`` is also invalid (returns HTTP 400).
+            # The valid values are documented in PBDB's error
+            # response. We use ``children`` which is the broadest
+            # available match that includes the queried name +
+            # all child taxa (most permissive for fuzzy match).
+            "rel": "children",
             "vocab": "pbdb",
             "limit": 1,
         }
