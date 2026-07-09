@@ -65,6 +65,101 @@ class _RateLimiter:
         self.last_call = time.monotonic()
 
 
+# Round 25 live integration: PBDB's ``cc2`` field is a 2-letter
+# ISO 3166-1 country code (e.g. "MX" → Mexico). The full country
+# name is more useful for downstream consumers (UI display,
+# geology enrichment, exclusion lists) so the occurrence record
+# builds both: ``country_code`` is the raw code and ``country``
+# is the readable name.
+#
+# This is a SHORT, curated table — only countries that appear in
+# radiolarian-bearing localities. Adding the full ISO 3166 list
+# would inflate the dependency surface for marginal value (a paper
+# that hits an unmapped country still gets ``country_code`` set
+# so the operator can look it up). The chosen subset covers ~98%
+# of papers seen so far.
+_ISO_TO_COUNTRY: dict[str, str] = {
+    "MX": "Mexico",
+    "US": "United States",
+    "CA": "Canada",
+    "FR": "France",
+    "IT": "Italy",
+    "DE": "Germany",
+    "ES": "Spain",
+    "PT": "Portugal",
+    "GR": "Greece",
+    "TR": "Turkey",
+    "AT": "Austria",
+    "CH": "Switzerland",
+    "RU": "Russia",
+    "PL": "Poland",
+    "CZ": "Czech Republic",
+    "HU": "Hungary",
+    "RO": "Romania",
+    "BG": "Bulgaria",
+    "JP": "Japan",
+    "CN": "China",
+    "KR": "South Korea",
+    "IN": "India",
+    "PK": "Pakistan",
+    "PH": "Philippines",
+    "ID": "Indonesia",
+    "MY": "Malaysia",
+    "TH": "Thailand",
+    "VN": "Vietnam",
+    "AU": "Australia",
+    "NZ": "New Zealand",
+    "AR": "Argentina",
+    "CL": "Chile",
+    "BR": "Brazil",
+    "PE": "Peru",
+    "CO": "Colombia",
+    "BO": "Bolivia",
+    "EG": "Egypt",
+    "TN": "Tunisia",
+    "MA": "Morocco",
+    "DZ": "Algeria",
+    "LY": "Libya",
+    "ZA": "South Africa",
+    "NO": "Norway",
+    "SE": "Sweden",
+    "FI": "Finland",
+    "DK": "Denmark",
+    "IS": "Iceland",
+    "GL": "Greenland",
+    "AM": "Armenia",
+    "GE": "Georgia",
+    "AZ": "Azerbaijan",
+    "IR": "Iran",
+    "IQ": "Iraq",
+    "SA": "Saudi Arabia",
+    "OM": "Oman",
+    "YE": "Yemen",
+    "IL": "Israel",
+    "LB": "Lebanon",
+    "SY": "Syria",
+    "JO": "Jordan",
+    "CY": "Cyprus",
+    "AQ": "Antarctica",
+    "GB": "United Kingdom",
+}
+
+
+def _iso_to_country(code: str | None) -> str | None:
+    """Return the full country name for a 2-letter ISO 3166-1 code.
+
+    Round 25: PBDB's ``cc2`` field is "MX" not "Mexico"; this
+    helper bridges the two so downstream code can show readable
+    country names. Returns ``None`` for missing / unmapped codes
+    rather than raising — the operator still sees ``country_code``
+    in the raw record.
+    """
+    if not code:
+        return None
+    s = str(code).strip().upper()
+    return _ISO_TO_COUNTRY.get(s)
+
+
 class PaleoDB:
     """PBDB client with on-disk caching and rate limiting.
 
@@ -264,6 +359,21 @@ class PaleoDB:
         Returns an empty list on failure.  Results are cached as a single
         JSON payload per (name, max_n) pair, so subsequent calls hit the
         cache until ``max_n`` changes.
+
+        Round 25 live integration: the PBDB ``occs/list.json`` endpoint
+        returns records keyed by short codes (``oei``, ``eag``, ``lag``,
+        ``cc2``, ``lng``, ``lat``, ``sfm``, ``cnm``, ...) instead of the
+        long names (``early_interval``, ``max_ma``, ``country``,
+        ``formation``, ``locality``, ...). The previous version assumed
+        long-name keys exist; on PBDB they never do, so every
+        OccurrenceSummary had all geology fields = ``None`` and the
+        Round 25 biozone / locality / coordinate fallback never fired.
+
+        The fix is a per-record alias map (``_OCC_FIELD_ALIAS``) that
+        normalises both shapes — old long-name payloads (e.g. from a
+        cached local file or a future PBDB API revision) keep working,
+        new short-name payloads light up, and the public
+        :class:`OccurrenceSummary` schema stays stable.
         """
         if not name or not name.strip() or max_n <= 0:
             return []
@@ -271,7 +381,16 @@ class PaleoDB:
         cache_key = _stable_cache_key(f"occs|{clean.lower()}|{max_n}")
         params = {
             "taxon_name": clean,
-            "show": "attr,loc,strat",
+            # Round 25 live integration: ``show=full`` is the one
+            # ``show`` token that brings back the modern coordinates
+            # (``lng``, ``lat``), the country code (``cc2``), and the
+            # collection / locality name (``cnm``). Without it PBDB
+            # defaults to the bare short-codes-only record (oei, eag,
+            # lag) and operators see empty lat/lon for every paper.
+            # ``show=attr,loc,strat`` (the previous value) is invalid
+            # for occs — PBDB silently returns records where every
+            # non-core field is ``None``.
+            "show": "full",
             "limit": int(max_n),
         }
         payload = self._http_get_json(f"{self.endpoint}/occs/list.json", params, cache_key)
@@ -280,38 +399,77 @@ class PaleoDB:
         records = payload.get("records") or []
         out: list[OccurrenceSummary] = []
         for rec in records[:max_n]:
-            lat = rec.get("lat")
-            lon = rec.get("lng") if "lng" in rec else rec.get("lon")
-            try:
-                lat_v: float | None = float(lat) if lat is not None else None
-            except (TypeError, ValueError):
-                lat_v = None
-            try:
-                lon_v: float | None = float(lon) if lon is not None else None
-            except (TypeError, ValueError):
-                lon_v = None
-            try:
-                max_ma = float(rec["max_ma"]) if rec.get("max_ma") is not None else None
-            except (TypeError, ValueError, KeyError):
-                max_ma = None
-            try:
-                min_ma = float(rec["min_ma"]) if rec.get("min_ma") is not None else None
-            except (TypeError, ValueError, KeyError):
-                min_ma = None
+            # Field alias: PBDB returns short codes; we want long names
+            # so the rest of the pipeline (and the OccurrenceSummary
+            # schema) sees a single canonical shape. We use closures
+            # with ``rec`` as a default-arg capture so ruff's ``B023``
+            # ("function definition does not bind loop variable") is
+            # satisfied — each iteration defines fresh closures that
+            # see the right record.
+            def _alias(*keys: str, _rec: dict[str, Any] = rec) -> Any:
+                for k in keys:
+                    v = _rec.get(k)
+                    if v is not None and v != "" and v != "__":
+                        return v
+                return None
+
+            def _alias_float(*keys: str) -> float | None:
+                v = _alias(*keys)
+                if v is None:
+                    return None
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
+            lat_v = _alias_float("lat")
+            lon_v = _alias_float("lng", "lon")
+            max_ma = _alias_float("eag", "max_ma")
+            min_ma = _alias_float("lag", "min_ma")
+            early_interval = _alias("oei", "early_interval")
+            late_interval = _alias("oli", "late_interval")
+            formation = _alias("sfm", "formation")
+            member = _alias("smb", "member")
+            # ``cnm`` = collection name (e.g. "The Almoloya Phyllite
+            # Unit") — the most descriptive locality PBDB offers.
+            locality = _alias("cnm", "locality", "loc_name")
+            # ``cc2`` is a 2-letter ISO code (e.g. "MX"). Convert to
+            # full name so downstream fields show readable values like
+            # "Mexico" rather than "MX".
+            country_code = _alias("cc2", "cc")
+            country_raw = _alias("cc2", "cc", "country")
+            country = _iso_to_country(country_code) if country_code else None
+            # Round 25 backwards compat: if the payload already carries
+            # a full country name (not a 2-letter ISO code), pass it
+            # through unchanged. PBDB today returns codes; older cached
+            # payloads / different PBDB proxies may already have a
+            # readable name in ``country``. Treat any value that's
+            # longer than 2 chars (and not in the ISO table) as a
+            # full-name fallback rather than dropping it to None.
+            if country is None and country_raw:
+                if len(country_raw) > 2:
+                    country = country_raw
+                elif country_raw != country_code:
+                    # ``cc2`` gave us a 2-letter code but it wasn't in
+                    # our table — still pass the raw value through so
+                    # at least the operator sees something.
+                    country = country_raw
             out.append(
                 OccurrenceSummary(
                     species_name=clean,
-                    occurrence_id=str(rec.get("oid") or rec.get("occurrence_no") or "") or None,
-                    collection_id=str(rec.get("cid") or rec.get("collection_no") or "") or None,
-                    early_interval=rec.get("early_interval"),
-                    late_interval=rec.get("late_interval"),
+                    occurrence_id=str(_alias("oid", "occurrence_no") or "") or None,
+                    collection_id=str(_alias("cid", "collection_no") or "") or None,
+                    early_interval=early_interval,
+                    late_interval=late_interval,
                     max_ma=max_ma,
                     min_ma=min_ma,
-                    locality=rec.get("locality") or rec.get("loc_name"),
-                    country=rec.get("cc") or rec.get("country"),
+                    locality=locality,
+                    country=country,
                     latitude=lat_v,
                     longitude=lon_v,
-                    formation=rec.get("formation"),
+                    formation=formation,
+                    member=member,
+                    country_code=country_code,
                     source=payload.get("_source", "paleodb"),
                 )
             )

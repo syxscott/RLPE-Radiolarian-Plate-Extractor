@@ -141,9 +141,20 @@ class OccurrenceSummary:
     min_ma: float | None = None
     locality: str | None = None
     country: str | None = None
+    # Round 25 live integration: PBDB returns ``cc2`` (2-letter
+    # ISO code like "MX") rather than a full country name. The
+    # converter writes the readable name to ``country`` and keeps
+    # ``country_code`` for downstream consumers that want the raw
+    # ISO value.
+    country_code: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     formation: str | None = None
+    # Round 25: PBDB returns ``smb`` separately from ``sfm`` (the
+    # member-rank of a formation). Carrying it through is cheap
+    # and lets the converter promote member -> formation when both
+    # are missing in the paper's own geology records.
+    member: str | None = None
     source: str = "paleodb"
 
     def to_dict(self) -> dict[str, Any]:

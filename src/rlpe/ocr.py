@@ -37,26 +37,33 @@ class OCRBackend:
                     from paddleocr import PaddleOCR
 
                     # ``use_angle_cls`` was deprecated in PaddleOCR 3.x
-                    # in favour of ``use_textline_orientation``; the new
-                    # kwarg is the documented replacement. The old name
-                    # still works in 2.x but emits a DeprecationWarning
-                    # on every import. Try the new name first and fall
-                    # back to the legacy one for 2.x users.
+                    # in favour of ``use_textline_orientation``. PaddleOCR
+                    # 3.x also removed ``use_gpu`` in favour of ``device``
+                    # (``"cpu"`` / ``"gpu"`` / ``"gpu:0"``). The legacy
+                    # 2.x form takes ``use_gpu=bool``; passing it to 3.x
+                    # raises ValueError. Pick the right kwarg name first,
+                    # fall back to the legacy combo on TypeError.
+                    device_kw = "cpu" if not self.use_gpu else "gpu"
                     try:
                         self._engine = PaddleOCR(
                             use_textline_orientation=True,
                             lang="en",
-                            use_gpu=self.use_gpu,
+                            device=device_kw,
                         )
                     except TypeError:
+                        # 2.x legacy form
                         self._engine = PaddleOCR(
                             use_angle_cls=True,
                             lang="en",
                             use_gpu=self.use_gpu,
                         )
                     return self._engine
-                except Exception:
-                    logger.warning("PaddleOCR init failed; falling back to EasyOCR")
+                except Exception as exc:
+                    logger.warning(
+                        "PaddleOCR init failed (%s: %s); falling back to EasyOCR",
+                        type(exc).__name__,
+                        exc,
+                    )
                     self.backend = "easyocr"
             if self.backend == "easyocr":
                 try:

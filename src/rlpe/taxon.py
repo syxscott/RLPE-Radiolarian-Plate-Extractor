@@ -25,6 +25,11 @@ class TaxonRecognizer:
         hf_model_path: str | None = None,
         lexicon_path: str | None = None,
     ) -> None:
+        # ``model`` is kept for API compat with earlier TaxoNERD versions
+        # but the installed TaxoNERD 1.5.x signature is
+        # ``(self, prefer_gpu=False, verbose=False, logger=None)`` —
+        # the ``model`` kwarg is silently ignored / raises. We store
+        # the preference and pass ``prefer_gpu`` instead at init time.
         self.model = model
         self.hf_model_path = hf_model_path
         self.lexicon_path = lexicon_path
@@ -50,7 +55,20 @@ class TaxonRecognizer:
             try:
                 from taxonerd import TaxoNERD
 
-                self._engine = TaxoNERD(model=self.model)
+                # Round 18 audit: previous code did
+                # ``TaxoNERD(model=self.model)`` which raises
+                # ``TypeError: __init__() got an unexpected keyword
+                # argument 'model'`` on TaxoNERD 1.5.x. The accepted
+                # kwargs are ``prefer_gpu``, ``verbose``, ``logger``;
+                # the model name is fixed at package level (en_eco /
+                # en_plus / etc., set via TaxoNERD's own config).
+                # Silently swallowed exceptions meant the pipeline
+                # fell back to regex without telling anyone.
+                try:
+                    self._engine = TaxoNERD(prefer_gpu=False, verbose=False)
+                except TypeError:
+                    # Older signature (rare; some 1.4.x versions accept it)
+                    self._engine = TaxoNERD()
             except Exception as exc:
                 # TaxoNERD is the primary species-recognition engine.
                 # A silent fallback to the regex path leaves the

@@ -1,25 +1,29 @@
-"""Round 16 source-guard tests: vendor neutrality / no-default-MiniMax.
+"""Round 16 source-guard tests: project default = MiniMax, with safety.
 
-The 2026-07-06 user audit asked: is the frontend defaulting to MiniMax
-as the LLM backend? Four parallel agents confirmed the lock-in:
+After the 2026-07-06 audit found MiniMax hardcoded as the project
+default throughout the UI and pipeline, the user chose to keep
+MiniMax as the *project default* (their preferred cloud backend)
+but tighten the safety rails around it:
 
-  - HTML: both <select> elements pre-select MiniMax with 🌟 + "推荐"
-  - HTML: onboarding banner sells MiniMax on first visit
-  - HTML: success-green badge "默认 MiniMax M3"
-  - HTML: extended-thinking checkbox checked by default
-  - JS:  ``?? 'MiniMax'`` fallback when the dropdown is missing
-  - JS:  LLM backend not persisted to localStorage — every reload
-         reverts to MiniMax regardless of past selection
-  - API: JobOptions.MiniMax_enable_thinking defaults to True
-  - API: backend dataclass defaults base_url=https://api.minimaxi.com
-  - Backend: data_outbound_policy='api_full' (least private default)
-  - Pipeline: M3Engine auto-enables for MiniMax backend only
-         (asymmetric opt-in vs opt-out across vendors)
-  - Pipeline: ANTHROPIC_API_KEY (Claude Code's key) silently routes
-         to MiniMax
+  Project-default-Minimax (UI defaults):
+    - HTML: both <select> elements pre-select MiniMax with 🌟 + "推荐"
+    - HTML: onboarding banner sells MiniMax on first visit
+    - HTML: success-green badge "默认 MiniMax M3"
+    - JS:  ``?? 'MiniMax'`` fallback when the dropdown is missing
+    - JS:  model-name fallback hardcoded as "MiniMax-M3"
 
-The fixes below are pinned by source-guard tests so a future refactor
-can't silently restore the lock-in.
+  Safety rails (independent of vendor choice):
+    - Extended-thinking checkbox defaults to UNCHECKED (avoid
+      surprise API cost; user must opt in)
+    - data_outbound_policy defaults to "api_redacted" (privacy)
+    - M3Engine requires explicit m3_enhanced_mode=True for ALL
+      backends (no vendor gets a privileged default)
+    - ANTHROPIC_API_KEY is NOT silently consumed for MiniMax
+    - LLM backend choice persists to localStorage (so a user who
+      switches off MiniMax keeps that choice across reloads)
+
+These tests pin both: the project default (MiniMax-first UX) AND
+the safety improvements (cost / privacy / opt-in).
 """
 
 from __future__ import annotations
@@ -37,51 +41,52 @@ def _read(path: str) -> str:
     return Path(__file__).resolve().parents[1].joinpath(path).read_text(encoding="utf-8")
 
 
-def test_basic_view_default_is_not_minimax():
-    """``<select id="llm-backend-basic">`` must NOT pre-select MiniMax.
-    A privacy-conscious / offline-first user landing on the page should
-    see a local backend by default."""
+def test_basic_view_default_is_minimax():
+    """``<select id="llm-backend-basic">`` MUST pre-select MiniMax with
+    the 🌟 + '推荐' label — this is the project's chosen default LLM
+    backend. Tests pin the project default so it doesn't accidentally
+    drift."""
     src = _read("web/index.html")
-    # Locate the basic-view <select> block
     idx = src.find('id="llm-backend-basic"')
     assert idx > 0
-    # Find the next closing </select>
     end = src.find("</select>", idx)
     block = src[idx : end + len("</select>")]
-    # The 'selected' attribute must NOT appear on a MiniMax option.
-    assert 'value="MiniMax" selected' not in block, (
-        "Basic-view <select> still pre-selects MiniMax. "
-        "Default must be a local backend (llamacpp / ollama / transformers)."
+    assert 'value="MiniMax" selected' in block, (
+        "Basic-view <select> does not pre-select MiniMax. Project default is MiniMax M3 (云端 API)."
     )
+    assert "🌟" in block, "Basic-view option should carry the 🌟 marker"
 
 
-def test_advanced_view_default_is_not_minimax():
-    """``<select id="llm-backend">`` (advanced view) must NOT pre-select MiniMax."""
+def test_advanced_view_default_is_minimax():
+    """``<select id="llm-backend">`` (advanced view) MUST pre-select MiniMax."""
     src = _read("web/index.html")
     idx = src.find('id="llm-backend"')
     assert idx > 0
     end = src.find("</select>", idx)
     block = src[idx : end + len("</select>")]
-    assert 'value="MiniMax" selected' not in block, (
-        "Advanced-view <select> still pre-selects MiniMax. Default must be a local backend."
+    assert 'value="MiniMax" selected' in block, (
+        "Advanced-view <select> does not pre-select MiniMax."
     )
 
 
-def test_onboarding_banner_is_vendor_neutral():
-    """The onboarding banner copy must NOT name MiniMax as the
-    pre-configured / recommended choice. First-visit UX should be
-    neutral so users with no MiniMax account are not funnelled into
-    one."""
+def test_onboarding_banner_mentions_minimax():
+    """The onboarding banner copy MUST mention MiniMax as the
+    pre-configured choice (project default)."""
     src = _read("web/index.html")
-    # Find the onboarding-banner block
-    idx = src.find("onboarding-banner")
-    assert idx > 0
-    end = src.find("</div>", idx)
-    # Walk through nested </div>s to find the block end
+    # Find the onboarding-banner block via the class attribute
+    marker = 'class="onboarding-banner'
+    idx = src.find(marker)
+    assert idx > 0, "Onboarding banner block not found"
+    # Walk forward to find the matching </div> using a depth counter
+    # that respects opening/closing tags inside attributes (rare in
+    # this banner).
     depth = 0
     cursor = idx
+    end = idx
     while cursor < len(src):
-        if src[cursor : cursor + 6] == "<div " or src[cursor : cursor + 5] == "<div>":
+        if src[cursor : cursor + 5] == "<div>":
+            depth += 1
+        elif src[cursor : cursor + 5] == "<div ":
             depth += 1
         elif src[cursor : cursor + 6] == "</div>":
             depth -= 1
@@ -90,26 +95,20 @@ def test_onboarding_banner_is_vendor_neutral():
                 break
         cursor += 1
     block = src[idx:end]
-    # Banner must not contain the marketing phrasings
-    for phrase in (
-        "已为您预设最佳配置",
-        "MiniMax M3 云端 API",
-        "MiniMax Token Plan",
-        "platform.minimaxi.com",
-    ):
-        assert phrase not in block, (
-            f"Onboarding banner still contains '{phrase}' — the first-visit UX "
-            f"must not funnel users toward MiniMax."
-        )
+    assert "MiniMax M3" in block, (
+        "Onboarding banner no longer mentions MiniMax M3 as the "
+        "pre-configured choice. The project default is MiniMax M3 — "
+        "first-visit UX should reflect that."
+    )
 
 
-def test_recommended_badge_not_minimax_lockin():
-    """The LLM status card must not carry a '默认 MiniMax M3' success-green
-    badge — it implied MiniMax was the canonical/recommended choice."""
+def test_recommended_badge_mentions_minimax():
+    """The LLM status card carries a '默认 MiniMax M3' success-green
+    badge — pinning the project default."""
     src = _read("web/index.html")
-    assert "默认 MiniMax M3" not in src, (
-        "The '默认 MiniMax M3' success-green badge is still in the "
-        "LLM status card — replace with a vendor-neutral backend label."
+    assert "默认 MiniMax M3" in src, (
+        "The '默认 MiniMax M3' success-green badge is missing from the "
+        "LLM status card — project default should be visible at a glance."
     )
 
 
@@ -130,43 +129,29 @@ def test_thinking_checkbox_defaults_off():
 # --- 2) JS: fallback chain must not hardcode MiniMax ---------------------
 
 
-def test_js_backend_fallback_is_vendor_neutral():
-    """web/js/app.js: the LLM backend fallback must not hardcode 'MiniMax'.
-    The previous fallback silently routed every job to the cloud vendor
-    when the dropdown was missing."""
+def test_js_backend_fallback_defaults_to_minimax():
+    """web/js/app.js: the LLM backend fallback chain ends with 'MiniMax'.
+    This is the project's chosen default — when no dropdown is found
+    AND no localStorage entry exists, MiniMax is used."""
     src = _read("web/js/app.js")
-    # Strip comments and string literals from each line so a docstring
-    # mention of 'MiniMax' (which is legitimate) doesn't trigger the
-    # assertion. We only care about code paths.
     code_lines = []
     for line in src.splitlines():
-        # Drop full-line comments
         stripped = line.strip()
         if stripped.startswith("//"):
             continue
-        # Drop inline // comments
         if "//" in line:
             line = line.split("//", 1)[0]
         code_lines.append(line)
     code_only = "\n".join(code_lines)
-    # Look for the fallback pattern in code paths
-    bad_patterns = [
-        "?.value ?? 'MiniMax'",
-        "|| 'MiniMax'",
-        "?? 'MiniMax'",
-    ]
-    for pat in bad_patterns:
-        assert pat not in code_only, (
-            f"web/js/app.js still contains the hardcoded MiniMax fallback "
-            f"{pat!r} in code. Replace with a vendor-neutral local default."
-        )
-    # The model-name fallbacks (data.active_model || ... || 'MiniMax-M3')
-    # also need to stop naming a vendor product. They should fall back
-    # to '' or 'N/A' instead.
-    assert "|| 'MiniMax-M3'" not in code_only, (
-        "Model-name fallbacks (e.g. data.active_model || ... || 'MiniMax-M3') "
-        "still name a vendor product. Replace with '' or 'N/A' so local-backend "
-        "users don't see 'MiniMax-M3' as their model."
+    # The fallback chain must end with 'MiniMax' (project default).
+    assert "|| 'MiniMax'" in code_only or "?? 'MiniMax'" in code_only, (
+        "web/js/app.js no longer falls back to 'MiniMax'. The project "
+        "default LLM backend is MiniMax M3 — pin it as the ultimate fallback."
+    )
+    # The model-name fallbacks should reference MiniMax-M3 (project model).
+    assert "|| 'MiniMax-M3'" in code_only, (
+        "Model-name fallbacks no longer reference 'MiniMax-M3'. The "
+        "project default model name should pin to MiniMax-M3."
     )
 
 
