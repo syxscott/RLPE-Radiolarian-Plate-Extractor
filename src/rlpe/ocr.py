@@ -19,12 +19,84 @@ class OCRToken:
     metadata: dict[str, Any] | None = None
 
 
+# Phase 27: map our internal short names to the engine-native spellings
+# the PaddleOCR / EasyOCR packages expect. PaddleOCR uses "japan" and "ch"
+# while EasyOCR uses "ja" and "ch_sim". We accept either form from the
+# caller (CLI uses the short names; legacy callers pass the long names).
+_PADDLE_LANG_MAP: dict[str, str] = {
+    "ja": "japan",
+    "japan": "japan",
+    "ch_sim": "ch",
+    "ch_tra": "chinese_cht",
+    "ch": "ch",
+    "en": "en",
+    "fr": "fr",
+    "de": "german",
+    "ko": "korean",
+    "ru": "ru",
+}
+
+
 class OCRBackend:
-    def __init__(self, backend: str = "paddleocr", use_gpu: bool = True) -> None:
+    # Whitelist of internal lang short names. Anything outside this set
+    # is silently dropped at construction time (with a warning) so a
+    # typo in --ocr-lang never crashes the pipeline.
+    SUPPORTED_LANGS = {"en", "ja", "ch_sim", "ch_tra", "fr", "de", "ko", "ru"}
+
+    def __init__(
+        self,
+        backend: str = "paddleocr",
+        use_gpu: bool = True,
+        lang: str | list[str] = "en",
+    ) -> None:
         self.backend = backend.lower()
         self.use_gpu = use_gpu
+        self.lang: list[str] = self._normalise_lang(lang)
         self._engine = None
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _normalise_lang(lang: str | list[str]) -> list[str]:
+        """Accept ``"en,ja"`` / ``["en","ja"]`` / ``"en"`` → ``["en","ja"]``.
+
+        Unknown short names are dropped with a warning rather than raising,
+        so a typo in --ocr-lang does not break the pipeline. An empty
+        result falls back to ``["en"]`` to preserve legacy behaviour.
+        """
+        if isinstance(lang, str):
+            langs = [s.strip() for s in lang.split(",") if s.strip()]
+        else:
+            langs = [str(s).strip() for s in lang]
+        out: list[str] = []
+        for l in langs:
+            if l in OCRBackend.SUPPORTED_LANGS:
+                out.append(l)
+            else:
+                logger.warning(
+                    "OCRBackend: unknown OCR lang %r (supported: %s); ignoring",
+                    l,
+                    sorted(OCRBackend.SUPPORTED_LANGS),
+                )
+        return out or ["en"]
+
+    def _paddle_lang(self) -> str:
+        """First configured lang, mapped to PaddleOCR's spelling.
+
+        PaddleOCR accepts only a single lang string; if the caller asked
+        for multi-lang we use the first one and log a notice — EasyOCR is
+        the right choice when multi-lang is required.
+        """
+        if len(self.lang) > 1:
+            logger.info(
+                "OCRBackend: PaddleOCR supports a single language; "
+                "using first of %r",
+                self.lang,
+            )
+        first = self.lang[0]
+        mapped = _PADDLE_LANG_MAP.get(first, first)
+        if mapped != first:
+            logger.info("OCRBackend: PaddleOCR lang %r → %r", first, mapped)
+        return mapped
 
     def _lazy_init(self):
         if self._engine is not None:
@@ -44,17 +116,18 @@ class OCRBackend:
                     # raises ValueError. Pick the right kwarg name first,
                     # fall back to the legacy combo on TypeError.
                     device_kw = "cpu" if not self.use_gpu else "gpu"
+                    paddle_lang = self._paddle_lang()
                     try:
                         self._engine = PaddleOCR(
                             use_textline_orientation=True,
-                            lang="en",
+                            lang=paddle_lang,
                             device=device_kw,
                         )
                     except TypeError:
                         # 2.x legacy form
                         self._engine = PaddleOCR(
                             use_angle_cls=True,
-                            lang="en",
+                            lang=paddle_lang,
                             use_gpu=self.use_gpu,
                         )
                     return self._engine
@@ -69,7 +142,11 @@ class OCRBackend:
                 try:
                     import easyocr
 
-                    self._engine = easyocr.Reader(["en"], gpu=self.use_gpu)
+                    # EasyOCR natively accepts a list of lang codes and
+                    # handles multi-lang in one Reader (it downloads each
+                    # model's weights on first use). Phase 27: pass the
+                    # full configured lang list, not a hard-coded ["en"].
+                    self._engine = easyocr.Reader(self.lang, gpu=self.use_gpu)
                     return self._engine
                 except Exception:
                     logger.warning("EasyOCR init failed; OCR disabled")

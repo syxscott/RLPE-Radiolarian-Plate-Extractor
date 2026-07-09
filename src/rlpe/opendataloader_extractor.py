@@ -8,6 +8,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+
+# Phase 27: tiny helper that normalises ``ocr_lang`` into a list of
+# short names. The OD extractor's caption-band EasyOCR (line ~191)
+# receives ``self.ocr_lang`` which can be either a single string
+# (``"en"`` / ``"en,ja"``) or an already-list from callers that
+# normalised at the OCRBackend level. EasyOCR's ``Reader`` constructor
+# only accepts a list/tuple — strings produce a confusing
+# ``TypeError: unhashable type`` later. We keep the helper here so
+# ``opendataloader_extractor`` does not import from ``rlpe.ocr``.
+def _normalise_ocr_lang(lang: Any) -> list[str]:
+    if isinstance(lang, (list, tuple)):
+        out = [str(s).strip() for s in lang if str(s).strip()]
+    elif isinstance(lang, str):
+        out = [s.strip() for s in lang.split(",") if s.strip()]
+    else:
+        out = ["en"]
+    return out or ["en"]
+
 try:
     import fitz  # PyMuPDF — used for page rendering in the caption-band OCR fallback
 except Exception:  # pragma: no cover
@@ -189,7 +207,11 @@ class OpenDataLoaderExtractor:
                 import easyocr
 
                 self._ocr_engine = easyocr.Reader(
-                    ["en"],
+                    # Phase 27: pass the configured OCR language list
+                    # through. ``self.ocr_lang`` may be a comma-string
+                    # (legacy callers via pipeline.py) or already a
+                    # list — normalise both forms.
+                    _normalise_ocr_lang(self.ocr_lang),
                     gpu=False,
                     verbose=False,
                 )
@@ -356,7 +378,11 @@ class OpenDataLoaderExtractor:
                 continue
             content = (el.get("content") or "").strip()
             low = content.lower()
-            if not (low.startswith("fig.") or low.startswith("figure ") or low.startswith("fig ")):
+            # Phase 27: use the shared predicate so JA 図 markers
+            # also pass this filter (line 1192 area of
+            # ``_looks_like_fig_caption`` keeps its English-only
+            # behaviour; only the routing filter is extended).
+            if not _is_caption_kind_marker(low):
                 continue
             if not content:
                 continue
@@ -703,7 +729,10 @@ def _rescue_unmatched_captions(
     for cap in all_caps:
         text = (cap.get("content") or "").strip()
         low = text.lower()
-        if not (low.startswith("fig.") or low.startswith("figure ") or low.startswith("fig ")):
+        # Phase 27: shared predicate — JA 図 markers now pass this
+        # filter alongside English Fig./Figure prefixes. See
+        # ``_is_caption_kind_marker`` for the canonical list.
+        if not _is_caption_kind_marker(low):
             continue
         if not text:
             continue
@@ -1156,6 +1185,45 @@ _FIG_CAPTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Phase 27: Japanese caption markers. JA radiolarian papers use 図版
+# (``zuhan`` = plate, literally "picture-book") for plate-level captions
+# and 図 (``zu`` = figure) for in-text figure references. Both follow
+# the same Arabic-digit convention as English ``Plate N`` / ``Fig. N``,
+# so the existing dispatcher's ``plate_number`` / ``kind`` fields
+# generalise without modification (group 1 is always the digit string
+# for the JA patterns).
+#
+# Anchoring policy mirrors ``_PLATE_CAPTION_RE`` / ``_FIG_CAPTION_RE``:
+# the regex must match at the START of the element. Mid-paragraph
+# references like ``(図1参照)`` are rejected because they don't begin
+# the element. The existing ``_looks_like_fig_caption`` 25-character
+# gate (line 1555) further filters out any short JA fragments that
+# sneak through.
+_JA_PLATE_CAPTION_RE = re.compile(
+    r"^\s*(?:説明\s*)?(?:図版|圖版)\s*(?:[IVX]+|No\.?\s*)?(\d+)\s*[\.:]?\s*",
+)
+_JA_FIG_CAPTION_RE = re.compile(
+    r"^\s*図\s*(\d+)([a-z]?)\s*([.\s])\s*(\S)",
+)
+
+
+def _is_caption_kind_marker(low: str) -> bool:
+    """Return True if ``low`` (caption text, lowercased) starts with a kind
+    marker we route on.
+
+    Phase 27: extended from the original English-only ``startswith("fig.")``
+    check to also accept the single-char JA figure marker ``図``. Used in
+    both ``_extract_unpaired_captions`` (line 359 area) and
+    ``_rescue_unmatched_captions`` (line 706 area) so the two sites
+    stay in lockstep when adding new languages.
+    """
+    return (
+        low.startswith("fig.")
+        or low.startswith("figure ")
+        or low.startswith("fig ")
+        or low.startswith("図")  # JA figure marker (single kanji)
+    )
+
 # Match an inline plate figure reference inside a body paragraph.
 # Pouille 2014 has no real "Plate N" captions; the species list lives
 # in the systematic paleontology descriptions, e.g.:
@@ -1313,7 +1381,12 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if not isinstance(_li, dict):
                     continue
                 _txt = (_li.get("content") or "").strip()
-                if _txt and _PLATE_CAPTION_RE.match(_txt):
+                # Phase 27: also recognise JA plate markers here so JA
+                # papers whose list_items hold 図版 N headers get the
+                # same synthetic-paragraph expansion as English papers.
+                if _txt and (
+                    _PLATE_CAPTION_RE.match(_txt) or _JA_PLATE_CAPTION_RE.match(_txt)
+                ):
                     expanded_kids.append(
                         {
                             "type": "paragraph",
@@ -1341,13 +1414,25 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Try Plate N first (preferred — radiolarian-plate papers use this
         # convention). Fall back to Fig. N for review/synthesis papers
         # that use "Fig. 1..6" numbering instead (Wever 2006 et al.).
-        # Each kind is tracked separately so a paper that uses BOTH
-        # conventions (e.g. Plate 1..3 + Fig. 1..6 charts) keeps both
-        # sets of captions rather than collapsing them on the same int.
+        # Phase 27: also try Japanese 図版 (plate) and 図 (figure)
+        # markers so JA papers like Takahashi 2004 / Uchino 2005 produce
+        # real captions instead of the empty "Auto-generated figure"
+        # stub. Each kind is tracked separately so a paper that uses
+        # multiple conventions (e.g. Plate 1..3 + Fig. 1..6 + 図1..3)
+        # keeps all sets of captions rather than collapsing them on
+        # the same int.
         m = _PLATE_CAPTION_RE.match(content)
         kind = "plate" if m else None
         if not m:
             m = _FIG_CAPTION_RE.match(content)
+            kind = "fig" if m else None
+        # Phase 27: JA dispatch — same structure, same group-1 captures
+        # the Arabic digit, so ``_plate_number_from_match`` works as-is.
+        if not m:
+            m = _JA_PLATE_CAPTION_RE.match(content)
+            kind = "plate" if m else None
+        if not m:
+            m = _JA_FIG_CAPTION_RE.match(content)
             kind = "fig" if m else None
         if not m:
             continue
@@ -1355,7 +1440,8 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # regex also matches body-text paragraphs that happen to start
         # with "Fig. N" (e.g. "Fig. 14 continued c", "Fig. 26", or a
         # species description starting with "Fig. N Archaeodictyomitra
-        # montisserei(SQUINABOL) Pl. 8"). Reject:
+        # montisserei(SQUINABOL) Pl. 8"). The same quality gate
+        # applies to JA fig-kind matches. Reject:
         #   1. too-short matches (< 25 chars) — almost always a list
         #      reference or a continuation marker, not a real caption.
         #   2. body-text species descriptions: any "(UPPERCASE_WORD)"

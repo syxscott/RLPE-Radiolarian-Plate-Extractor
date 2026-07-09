@@ -52,6 +52,9 @@ _KNOWN_EXTRA_KEYS = {
     "od_use_ocr",
     "od_ocr_lang",
     "od_merge_gap_pt",
+    # Phase 27: multilingual OCR + caption language selection
+    "ocr_lang",
+    "m3_prompt_lang",
     # M3 5-stage semantic engine
     "m3_enhanced_mode",
     "m3_stage_1",

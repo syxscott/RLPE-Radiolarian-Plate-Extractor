@@ -55,6 +55,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", type=Path, default=None)
     p.add_argument("--grobid-url", type=str, default="http://localhost:8070")
     p.add_argument("--ocr-backend", type=str, default="paddleocr", choices=["paddleocr", "easyocr"])
+    # Phase 27: multilingual OCR. Comma-separated list; EasyOCR accepts
+    # multi-lang in a single Reader (downloads each model on first run),
+    # PaddleOCR uses only the first and maps "ja" → "japan" internally.
+    p.add_argument(
+        "--ocr-lang",
+        type=str,
+        default="en",
+        help="Comma-separated OCR language list, e.g. 'en', 'en,ja', "
+        "'en,ja,ch_sim'. EasyOCR supports multi-lang; PaddleOCR uses "
+        "the first lang only and maps internal names → engine-native "
+        "(ja → japan, ch_sim → ch). Default 'en'.",
+    )
     p.add_argument("--taxon-model", type=str, default="en_eco")
     p.add_argument(
         "--use-gpu",
@@ -108,6 +120,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gemma-timeout-sec", type=int, default=120)
     p.add_argument("--gemma-conf-threshold", type=float, default=0.70)
     p.add_argument("--gemma-prompt-lang", type=str, default="zh", choices=["zh", "en"])
+    # Phase 27: pin the M3 parse_caption system-prompt language. Default
+    # ``auto`` lets the engine detect Hiragana / Katakana / CJK chars and
+    # dispatch to the JA prompt when needed. Set explicitly to ``zh`` /
+    # ``en`` / ``ja`` to override auto-detection.
+    p.add_argument(
+        "--m3-prompt-lang",
+        type=str,
+        default="auto",
+        choices=["auto", "zh", "en", "ja"],
+        help="Force the M3 parse_caption system-prompt language. "
+        "Default 'auto' = detect from caption text. JA dispatches to a "
+        "Japanese system prompt; otherwise the existing ZH prompt.",
+    )
     p.add_argument("--gemma-no-4bit", action="store_true")
     p.add_argument("--gemma-no-bfloat16", action="store_true")
     # MiniMax M3 API parameters
@@ -324,6 +349,12 @@ def main() -> int:
             "gemma_timeout_sec": args.gemma_timeout_sec,
             "gemma_conf_threshold": args.gemma_conf_threshold,
             "gemma_prompt_lang": args.gemma_prompt_lang,
+            # Phase 27: pass OCR + M3 prompt language to the pipeline.
+            # ``ocr_lang`` is forwarded to ``OCRBackend`` (default ``"en"``)
+            # and ``m3_prompt_lang`` to the parse_caption prompt selector
+            # (default ``"auto"`` → detector picks ja/zh).
+            "ocr_lang": args.ocr_lang,
+            "m3_prompt_lang": args.m3_prompt_lang,
             "gemma_use_4bit": not args.gemma_no_4bit,
             "gemma_bfloat16": not args.gemma_no_bfloat16,
             "gemma_device_map": "auto",

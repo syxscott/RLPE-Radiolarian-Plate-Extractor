@@ -1292,6 +1292,66 @@ _PARSE_CAPTION_SYSTEM = """你是放射虫古生物学专家，专长是从图�
 只输出 JSON 数组，不要任何解释文本。"""
 
 
+# Phase 27: Japanese system prompt for parse_caption. Mirrors the
+# Chinese prompt above byte-for-byte on the JSON output schema so the
+# downstream ``_safe_json_loads`` and ``CaptionPair`` field-mapping
+# code paths work unchanged. Only the language of the *system
+# instructions* is Japanese — the actual caption text in the user
+# prompt can be any language (JA, bilingual JA+EN, or even ZH).
+#
+# Triggered automatically by ``_detect_caption_lang`` when the caption
+# contains Hiragana / Katakana / CJK ideographs, OR explicitly via
+# ``--m3-prompt-lang ja``.
+_PARSE_CAPTION_SYSTEM_JA = """あなたは放散虫古生物学の専門家で、図版キャプションから「ラベル集合 → ラテン学名」のマッピングを抽出することが専門です。
+
+タスク: 非構造化の図版説明文を受け取り、すべての (label集合 → 種) ペアを出力する。
+
+出力規則 (strict JSON array; 各要素 1 ペア):
+1. labels: 文字列配列。図版印刷順に並べる。A,B / A-D / 3,4 / 3-5 / A-C, 4 など。
+2. species: ラテン学名 (属 + 種小名; sp. / cf. / aff. / n. sp. 等を含む)。
+3. modifier: 単独の修飾語 ("sp." / "cf." / "aff." / "n. sp." / "?" / "")。
+4. confidence: 0-1。解析の確信度。
+5. notes: 簡潔な解析メモ (例: "括注 = scale 50μm, 無視"); なければ空文字列。
+6. raw_text: ペア生成元の原文抜粋。なければ空文字列。
+
+入力例 (和文キャプション):
+"図版1 走査電子顕微鏡写真。A-D: Tetraspongodiscus stauracanthus n. sp.; E, F: Falcispongus scalaris sp. nov. Scale bars = 50 μm in A, C; 30 μm in B, D-F."
+
+出力例:
+[{"labels":["A","B","C","D"],"species":"Tetraspongodiscus stauracanthus","modifier":"n. sp.","confidence":0.97,"notes":"","raw_text":"A-D: Tetraspongodiscus stauracanthus n. sp."},{"labels":["E","F"],"species":"Falcispongus scalaris","modifier":"sp. nov.","confidence":0.95,"notes":"","raw_text":"E, F: Falcispongus scalaris sp. nov."}]
+
+JSON 配列のみを出力し、説明文は付けないこと。"""
+
+
+def _detect_caption_lang(text: str) -> str:
+    """Heuristic language detector for caption text.
+
+    Returns ``"ja"`` if the text contains Hiragana, Katakana, or any
+    CJK Unified Ideograph (the latter intentionally covers both JA
+    kanji and ZH hanzi — for our routing purposes both map to the
+    JA-aware parse_caption prompt, because the JA prompt is also the
+    closest match for ZH bilingual JA+EN papers; the ZH-only prompt
+    remains the fallback). Returns ``"zh"`` otherwise so English-only
+    captions and ASCII text fall through to the legacy Chinese
+    system prompt unchanged.
+
+    Phase 27: this is a tiny O(n) char scan, no external deps. It's
+    deliberately conservative — false-positives on Hiragana are
+    extremely rare in radiolarian papers (the surrounding text is
+    either Latin species binomials, CJK running text, or English).
+    """
+    if not text:
+        return "zh"
+    for ch in text:
+        code = ord(ch)
+        # Hiragana (0x3040-0x309F), Katakana (0x30A0-0x30FF),
+        # CJK Unified Ideographs (0x4E00-0x9FFF — covers both JA kanji
+        # and ZH hanzi).
+        if 0x3040 <= code <= 0x30FF or 0x4E00 <= code <= 0x9FFF:
+            return "ja"
+    return "zh"
+
+
 _CLASSIFY_PLATE_SYSTEM = """你是放射虫图版审查员。请判断一张给定的图像是否是一张"含放射虫标本的图版（plate）"。
 
 任务：观察图像并返回严格 JSON。
@@ -1476,13 +1536,24 @@ class M3Engine:
         self._thinking_retry_lock = RLock()
 
     # ------------------------------------------------------------------ stage 1
-    def parse_caption(self, caption_text: str) -> list[CaptionPair]:
+    def parse_caption(
+        self,
+        caption_text: str,
+        lang: str | None = None,
+    ) -> list[CaptionPair]:
         """Stage 1: caption text -> structured (label, species) pairs.
 
         Tries the LLM first; if the LLM returns nothing (rate-limited, low
         quality, model errors), falls back to a regex-based parser that
         handles the most common caption formats:
             "fig 1. Species A" / "figs 1-3. Species B" / "fig 1, 4. Species C"
+
+        Phase 27: ``lang`` selects the system prompt. ``"ja"`` uses
+        ``_PARSE_CAPTION_SYSTEM_JA`` (Japanese instructions, same JSON
+        output schema); ``"zh"`` / ``"en"`` / ``None`` + detector returns
+        ``"zh"`` use the existing Chinese prompt. ``None`` triggers
+        auto-detection via ``_detect_caption_lang`` — Hiragana /
+        Katakana / CJK characters in the caption text switch to JA.
         """
         if not self._stage_enabled(1) or not caption_text or not caption_text.strip():
             return []
@@ -1497,11 +1568,21 @@ class M3Engine:
                     len(fallback),
                 )
             return fallback
+        # Phase 27: language dispatch. Explicit ``lang`` from the caller
+        # wins; otherwise auto-detect from the caption text. Only ``"ja"``
+        # switches prompts — everything else keeps the legacy Chinese
+        # prompt so English-only papers are unaffected.
+        if lang is None:
+            lang = _detect_caption_lang(caption_text)
+        if lang == "ja":
+            system_prompt = _PARSE_CAPTION_SYSTEM_JA
+        else:
+            system_prompt = _PARSE_CAPTION_SYSTEM
         prompt = (
             "请解析下列图版说明，输出严格的 JSON 数组（label->物种 配对列表）。"
             "\n\n[Caption]\n" + caption_text.strip() + "\n\n[输出 JSON]"
         )
-        raw = self._infer_text(_PARSE_CAPTION_SYSTEM, prompt)
+        raw = self._infer_text(system_prompt, prompt)
         if not raw or raw.get("fallback_used"):
             return []
         try:

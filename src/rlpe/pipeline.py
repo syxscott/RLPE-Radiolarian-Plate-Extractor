@@ -71,7 +71,16 @@ class RadiolarianPipeline:
         # band of the job progress.
         self._progress_cb = progress_callback
         self.grobid = GrobidClient(server_url=config.grobid_url)
-        self.ocr = OCRBackend(backend=config.ocr_backend, use_gpu=config.use_gpu)
+        # Phase 27: forward the configured OCR language list. Default
+        # ``"en"`` keeps the legacy English-only flow identical. JA
+        # papers pass ``--ocr-lang en,ja`` and EasyOCR / PaddleOCR both
+        # see the JA model. See ``src/rlpe/ocr.py`` for the
+        # normalisation logic and the PaddleOCR ``ja → japan`` mapping.
+        self.ocr = OCRBackend(
+            backend=config.ocr_backend,
+            use_gpu=config.use_gpu,
+            lang=config.extra.get("ocr_lang", "en"),
+        )
         self.taxon = TaxonRecognizer(
             model=config.taxon_model,
             hf_model_path=config.extra.get("taxon_hf_model_path"),
@@ -2609,7 +2618,10 @@ Rules:
                     logger.debug("Regex caption parser failed: %s", exc)
                 if not pair_lookup and self.m3_engine is not None:
                     try:
-                        caption_pairs = self.m3_engine.parse_caption(caption.caption or "")
+                        caption_pairs = self.m3_engine.parse_caption(
+                        caption.caption or "",
+                        lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
+                    )
                         for cp in caption_pairs:
                             for lbl in cp.labels or []:
                                 pair_lookup.setdefault(lbl.strip(), cp.species)
@@ -2799,7 +2811,10 @@ Rules:
                         plate_pil = _im.convert("RGB")
                 # Stage 1: caption parser
                 if self.m3_engine._stage_enabled(1):
-                    m3_caption_pairs = self.m3_engine.parse_caption(caption.caption or "")
+                    m3_caption_pairs = self.m3_engine.parse_caption(
+                        caption.caption or "",
+                        lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
+                    )
                     m3_diag["stage1_pairs"] = len(m3_caption_pairs)
                 # Stage 2: plate classifier — early exit on non-radiolarian
                 if self.m3_engine._stage_enabled(2):
@@ -3894,6 +3909,27 @@ Rules:
 
 
 # ---- module-level helpers -----------------------------------------------
+
+
+def _resolve_m3_prompt_lang(value: Any) -> str | None:
+    """Phase 27: translate the CLI's ``--m3-prompt-lang`` value to the
+    argument expected by ``M3Engine.parse_caption(..., lang=)``.
+
+    Rules:
+    - ``None`` / ``"auto"`` / empty → return ``None`` so the engine
+      auto-detects from the caption text (Hiragana/Katakana/CJK chars
+      → JA; else ZH).
+    - ``"ja"`` → ``"ja"`` (Japanese system prompt).
+    - ``"zh"`` / ``"en"`` / anything else → return the value as-is,
+      which causes the engine to fall through to the default ZH
+      prompt (matches the legacy behaviour for non-JA captions).
+    """
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    if not s or s == "auto":
+        return None
+    return s
 
 
 def _merge_panel_hints(
