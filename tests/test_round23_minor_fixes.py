@@ -98,25 +98,31 @@ def test_frontend_search_includes_geology_fields():
     )
 
 
-# --- Audit-10: CSV export includes geology -----------------------------
+# --- Audit-10: export includes geology (CSV/Excel) ----------------------
 
 
-def test_csv_export_includes_geology_columns():
-    """The CSV export must include formation / locality / country /
-    lat / lon / sample_ids columns. Round 23 Audit-10 expanded
-    the export from 6 columns to 20."""
-    src = _read("web/js/app.js")
-    assert "'Formation'" in src or '"Formation"' in src, (
-        "CSV export header missing 'Formation' column."
+def test_export_includes_geology_columns():
+    """The export must include formation / locality / country / lat /
+    lon / sample_ids columns. Round 23 Audit-10 expanded the
+    CSV from 6 columns to 20; Round 24 replaced the CSV path
+    with a backend Excel endpoint, but the columns are still
+    surfaced in the same 20-column shape (just via a different
+    code path)."""
+    # Round 24: the CSV path was replaced by an Excel endpoint,
+    # so the test now asserts the xlsx exporter has the columns
+    # instead of the (now-removed) client-side CSV.
+    src_xlsx = _read("src/rlpe/exporters/xlsx.py")
+    assert "'Formation'" in src_xlsx or '"Formation"' in src_xlsx, (
+        "xlsx.py export header missing 'Formation' column."
     )
-    assert "'Locality'" in src or '"Locality"' in src, (
-        "CSV export header missing 'Locality' column."
+    assert "'Locality'" in src_xlsx or '"Locality"' in src_xlsx, (
+        "xlsx.py export header missing 'Locality' column."
     )
-    assert "'Modern_Lat'" in src or '"Modern_Lat"' in src, (
-        "CSV export header missing 'Modern_Lat' column."
+    assert "'Modern_Lat'" in src_xlsx or '"Modern_Lat"' in src_xlsx, (
+        "xlsx.py export header missing 'Modern_Lat' column."
     )
-    assert "'Sample IDs'" in src or '"Sample IDs"' in src, (
-        "CSV export header missing 'Sample IDs' column."
+    assert "'Sample IDs'" in src_xlsx or '"Sample IDs"' in src_xlsx, (
+        "xlsx.py export header missing 'Sample IDs' column."
     )
 
 

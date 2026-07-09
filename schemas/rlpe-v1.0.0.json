@@ -364,6 +364,18 @@
           "default": null,
           "title": "Biozone"
         },
+        "chemostrat": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chemostrat"
+        },
         "chronostratigraphy": {
           "anyOf": [
             {
@@ -423,6 +435,18 @@
           ],
           "default": null,
           "title": "Evidence Text"
+        },
+        "facies": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Facies"
         },
         "formation": {
           "anyOf": [
@@ -604,6 +628,18 @@
           "default": null,
           "title": "Paleo Longitude"
         },
+        "paleoenvironment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paleoenvironment"
+        },
         "plate_id": {
           "anyOf": [
             {
@@ -639,6 +675,18 @@
           ],
           "default": null,
           "title": "Reconstruction Model"
+        },
+        "redox": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Redox"
         },
         "sample_id": {
           "anyOf": [

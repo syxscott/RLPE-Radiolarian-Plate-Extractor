@@ -81,6 +81,83 @@ LITHOLOGY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Round 24 (user audit): paleoenvironment / redox / chemostrat /
+# facies dictionaries. Each is a curated vocabulary of 20-30
+# terms chosen to be cross-referenced against standard
+# sedimentology literature. The regex matches case-insensitive
+# whole-word. The first match wins (we keep the operator focused
+# on the dominant signal, not every mention).
+#
+# ``paleoenvironment`` answers "how oxygenated was the water
+# column?"  e.g. ``anoxic``, ``euxinic``, ``oxic``, ``suboxic``,
+# ``dysoxic``, ``upwelling zone``, ``restricted basin``.
+# Critical for P/T boundary research: anoxia / euxinia is one of
+# the leading kill mechanisms for radiolarians.
+_PALEOENV_VOCAB = (
+    "anoxic", "euxinic", "oxic", "suboxic", "dysoxic", "suboxic-anoxic",
+    "oxygen minimum zone", "OMZ", "upwelling", "upwelling zone",
+    "restricted basin", "open marine", "pelagic", "hemipelagic",
+    "neritic", "littoral", "shallow marine", "deep marine",
+    "near-shore", "slope", "basinal", "abyssal", "photic zone",
+    "aphotic zone", "dysoxic bottom water",
+)
+PALEOENV_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(t) for t in _PALEOENV_VOCAB) + r")\b",
+    re.IGNORECASE,
+)
+
+# ``redox`` uses the Algeo & Tribovillard (2009) classification:
+# oxic / dysoxic / suboxic / anoxic / euxinic.
+_REDOX_VOCAB = (
+    "oxic", "dysoxic", "suboxic", "anoxic", "euxinic",
+    "ferruginous", "sulfidic", "anoxic-ferruginous", "anoxic-sulfidic",
+    "non-sulfidic anoxic",
+)
+REDOX_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(t) for t in _REDOX_VOCAB) + r")\b",
+    re.IGNORECASE,
+)
+
+# ``chemostrat`` covers carbon-isotope excursions, mass
+# extinctions, and other named chemostratigraphic events.
+# Critical for P/T boundary: a δ¹³C negative excursion marks
+# the extinction horizon.
+_CHEMOSTRAT_VOCAB = (
+    "CIE", "carbon isotope excursion", "δ13C excursion",
+    "delta 13C excursion", "delta-13C excursion", "C-isotope excursion",
+    "mass extinction", "biocalcification crisis", "LIP", "large igneous province",
+    "Siberian Traps", "TE disaster", "oceanic anoxic event", "OAE",
+    "bonarelli event", "toarcian OAE", "cenomanian-turonian OAE",
+    "Frasnian-Famennian boundary", "Hangenberg event", "P/T boundary",
+    "end-Triassic extinction", "end-Permian extinction",
+    "end-Guadalupian extinction",
+    "Permian-Triassic boundary", "carbon isotope negative excursion",
+    "δ13C negative excursion", "strontium isotope excursion",
+    "osmium isotope excursion", "mercury anomaly",
+)
+CHEMOSTRAT_PATTERN = re.compile(
+    r"(?:" + "|".join(re.escape(t) for t in _CHEMOSTRAT_VOCAB) + r")",
+    re.IGNORECASE,
+)
+
+# ``facies`` is the standard sedimentological facies vocabulary.
+# We support both descriptive terms and named lithofacies.
+_FACIES_VOCAB = (
+    "turbidite", "turbiditic", "calciturbidite", "debrites",
+    "pelagic", "hemipelagic", "neritic", "littoral", "shallow water",
+    "deep water", "deep-sea", "abyssal", "slope", "shelf", "platform",
+    "carbonate platform", "rimmed platform", "isolated platform",
+    "basinal", "basin", "back-arc basin", "fore-arc basin",
+    "intra-arc basin", "rift basin", "passive margin",
+    "active margin", "subduction zone", "accretionary wedge",
+    "foreshore", "shoreface", "offshore", "deep-water",
+    "basin plain", "distal turbidite", "proximal turbidite",
+)
+FACIES_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(t) for t in _FACIES_VOCAB) + r")\b",
+    re.IGNORECASE,
+)
+
 # Biozone patterns:
 #   - "N. optima Zone" / "P. uvus Zone" (radiolarian first-letter abbrev.)
 #   - "Zone 5" / "Subzone 5a" (numbered biozones)
@@ -294,6 +371,14 @@ class GeologyRecord:
     # surface this field, but it's available for downstream
     # inspection (e.g. UI badge "derived from country centroid").
     coord_source: str = ""
+    # Round 24: environment / geochem proxies. See the schema
+    # docstrings for the field semantics. Populated by
+    # ``extract_geology_from_sections`` from the curated
+    # vocabularies.
+    paleoenvironment: str | None = None
+    redox: str | None = None
+    chemostrat: str | None = None
+    facies: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -454,6 +539,19 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         # Biozone: pick first match
         bio_match = _BIOZONE_RE.search(text)
         biozone = bio_match.group(0).strip() if bio_match else None
+        # Round 24: paleoenvironment / redox / chemostrat / facies
+        # proxies. Each is matched case-insensitive whole-word.
+        # First match wins (the operator cares about the dominant
+        # signal, not every mention). All four are optional — the
+        # section is not penalised for missing these.
+        paleoenv_match = PALEOENV_PATTERN.search(text)
+        paleoenvironment = paleoenv_match.group(0).strip() if paleoenv_match else None
+        redox_match = REDOX_PATTERN.search(text)
+        redox = redox_match.group(0).strip() if redox_match else None
+        chemostrat_match = CHEMOSTRAT_PATTERN.search(text)
+        chemostrat = chemostrat_match.group(0).strip() if chemostrat_match else None
+        facies_match = FACIES_PATTERN.search(text)
+        facies = facies_match.group(0).strip() if facies_match else None
         # Country: search anywhere in the section text. Order
         # matters only when a paper names both a country and a
         # sub-region locality — we keep the first match in the text.
@@ -569,6 +667,11 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 formation=_strip_leading_article(formations[0]) if formations else None,
                 member=_strip_leading_article(members[0]) if members else None,
                 lithology=lithology,
+                # Round 24: environment / geochem proxies.
+                paleoenvironment=paleoenvironment,
+                redox=redox,
+                chemostrat=chemostrat,
+                facies=facies,
                 locality=locs[0] if locs else None,
                 country=country,
                 biozone=biozone,
@@ -603,6 +706,11 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 formation=_strip_leading_article(formations[0]) if formations else None,
                 member=_strip_leading_article(members[0]) if members else None,
                 lithology=lithology,
+                # Round 24: environment / geochem proxies.
+                paleoenvironment=paleoenvironment,
+                redox=redox,
+                chemostrat=chemostrat,
+                facies=facies,
                 locality=locs[0] if locs else None,
                 country=country,
                 biozone=biozone,

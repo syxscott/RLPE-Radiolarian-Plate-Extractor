@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections import Counter
 from typing import Any
 
 from .schema_models import (
@@ -140,6 +141,12 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
                 # so the frontend can distinguish regex-extracted
                 # coords from country-centroid fallbacks.
                 coord_source=g.get("coord_source", "") or "",
+                # Round 24: environment / geochem / facies fields
+                # (see GeologyLinkRecord docstring in schema_models.py).
+                paleoenvironment=g.get("paleoenvironment"),
+                redox=g.get("redox"),
+                chemostrat=g.get("chemostrat"),
+                facies=g.get("facies"),
             )
         )
     return out
@@ -1168,9 +1175,25 @@ def paleo_coordinates_from_localities(
 
 
 def warnings_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
+    """Build WarningRecord dicts for each panel's review reasons.
+
+    Round 24: prepend a single JOB-LEVEL summary warning that
+    aggregates the per-panel counts. Without the summary, a paper
+    with 78 panels missing a printed_panel_id produces 78 nearly
+    identical warning rows in the UI, drowning out the actionable
+    signals (e.g. one rare "bbox invalid" warning). The summary
+    has ``entity_type="run"`` and ``level="info"`` so it shows in
+    the warnings tab without triggering review workflows.
+
+    The per-panel warnings are still emitted (with
+    ``entity_type="panel"``) so the operator can drill down to
+    individual panels. The summary is purely additive.
+    """
     out: list[dict[str, Any]] = []
+    code_counts: Counter[str] = Counter()
     for m in matches:
         for code in _panel_review_reasons(m):
+            code_counts[code] += 1
             # The warning_id is content-derived only (no loop index) so
             # it is stable when matches are re-ordered. Two runs over
             # the same logical panel emit the same warning_id.
@@ -1185,4 +1208,30 @@ def warnings_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
                 evidence_text=(m.caption_snippet or "")[:200],
             )
             out.append(wr.model_dump())
+    if code_counts:
+        # Prepend a single run-level summary so the operator sees
+        # the count distribution at a glance without scrolling
+        # through 100s of per-panel rows.
+        summary = {
+            "warning_id": _stable_id(
+                "warn", "summary", "round24", *sorted(code_counts.keys())
+            ),
+            "level": "info",
+            "code": "panel_review_summary",
+            "message": (
+                "Per-panel review reasons: "
+                + ", ".join(
+                    f"{c}={n}" for c, n in
+                    sorted(code_counts.items(), key=lambda x: -x[1])
+                )
+            ),
+            "entity_type": "run",
+            "entity_id": None,
+            "evidence_text": (
+                f"Total panels: {len(matches)}; "
+                f"panels with at least one review reason: "
+                f"{sum(1 for m in matches if _panel_review_reasons(m))}."
+            ),
+        }
+        out.insert(0, summary)
     return out

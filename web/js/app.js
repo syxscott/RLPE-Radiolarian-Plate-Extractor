@@ -2184,67 +2184,62 @@ function csvCell(v) {
     return `"${s.replace(/"/g, '""')}"`;
 }
 
-document.getElementById('export-btn')?.addEventListener('click', () => {
-    // Export the currently-filtered subset (not the full resultsData) so
-    // the user gets what they see. Prepend a UTF-8 BOM so Excel auto-detects
-    // the encoding and Chinese species names render correctly.
+document.getElementById('export-btn')?.addEventListener('click', async () => {
+    // Round 24: replaced client-side CSV with a backend Excel
+    // (multi-sheet .xlsx via openpyxl). The endpoint
+    // ``GET /jobs/{job_id}/export.xlsx`` returns a 5-sheet
+    // workbook (panels / geology_contexts / localities /
+    // paleo_coordinates / legend). The frontend iterates over
+    // the filtered rows, groups by ``job_id`` (since each job is
+    // a separate .xlsx), and downloads one file per job.
+    //
+    // If only one job is in the filtered set, the file is
+    // downloaded directly. If multiple, the user is asked to
+    // download each one.
     const rows = getFilteredResults();
-    // Round 23 audit: include geology fields (age / formation /
-    // locality / lat / lon) and Round 21 sample IDs so the exported
-    // CSV is usable for downstream analysis. The header matches
-    // the modal's "地质关联" column group so users can pivot /
-    // join on the same columns.
-    const header = [
-        '论文ID', '图版ID', 'Panel标签', 'Panel来源', '物种',
-        '置信度', '地质范围',
-        '地层年代', '年代Chrono', 'Ma_top', 'Ma_base',
-        'Formation', 'Locality', 'Country', 'Modern_Lat', 'Modern_Lon',
-        'Paleo_Lat', 'Paleo_Lon', 'Coord来源',
-        'Sample IDs',
-    ];
-    const dataRows = rows.map(r => {
-        const md = r.metadata || {};
-        const gl = Array.isArray(md.geology_links) && md.geology_links.length > 0
-            ? md.geology_links[0] : {};
-        const sampleIds = (md.geology_links || [])
-            .map(g => g && g.sample_id)
-            .filter(s => s && typeof s === 'string')
-            .join('|');
-        return [
-            r.paper_id ?? '',
-            r.figure_id ?? '',
-            r.panel_id ?? '',
-            md.v18_panel_id_source || '',
-            r.species ?? '',
-            r.confidence != null ? r.confidence : '',
-            md.geology_scope || '',
-            gl.age || '',
-            gl.chronostratigraphy || '',
-            gl.ma_top != null ? gl.ma_top : '',
-            gl.ma_base != null ? gl.ma_base : '',
-            gl.formation || '',
-            gl.locality || '',
-            gl.country || '',
-            gl.modern_latitude != null ? gl.modern_latitude : '',
-            gl.modern_longitude != null ? gl.modern_longitude : '',
-            gl.paleo_latitude != null ? gl.paleo_latitude : '',
-            gl.paleo_longitude != null ? gl.paleo_longitude : '',
-            gl.coord_source || '',
-            sampleIds,
-        ];
-    });
-    const csv = [header, ...dataRows]
-        .map(row => row.map(csvCell).join(','))
-        .join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const filterSuffix = resultsTableState.statusFilter !== 'all' ? `_${resultsTableState.statusFilter}` : '';
-    a.download = `rlpe_results${filterSuffix}_${stamp}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showNotification(`已导出 ${rows.length} 条结果`);
+    if (rows.length === 0) {
+        showNotification('当前筛选下没有可导出的结果');
+        return;
+    }
+    // Group rows by job_id. The frontend caches job_id on each
+    // row (set in get_results()).
+    const jobIds = new Set();
+    for (const r of rows) {
+        if (r.job_id) jobIds.add(r.job_id);
+    }
+    showNotification(`正在导出 ${rows.length} 条结果 (${jobIds.size} 个 job) ...`);
+    for (const jobId of jobIds) {
+        try {
+            const resp = await fetch(`/jobs/${jobId}/export.xlsx`, {
+                method: 'GET',
+                credentials: 'same-origin',
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                showNotification(`导出 ${jobId} 失败: ${err.detail || resp.status}`, true);
+                continue;
+            }
+            const blob = await resp.blob();
+            // Filename comes from the Content-Disposition header
+            // (the server sets ``Content-Disposition: attachment;
+            // filename="rlpe_<paper_id>_<job_id>.xlsx"``). Fall
+            // back to a client-side timestamp if the header is
+            // missing (older server versions).
+            const dispo = resp.headers.get('Content-Disposition') || '';
+            const m = dispo.match(/filename="([^"]+)"/);
+            const filename = m ? m[1] : `rlpe_export_${jobId}.xlsx`;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (err) {
+            showNotification(`导出 ${jobId} 异常: ${err}`, true);
+        }
+    }
 });
 
 // ==================== Image Modal ==================== //

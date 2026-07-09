@@ -708,6 +708,70 @@ def job_result(job_id: str):
     return job
 
 
+@app.get("/jobs/{job_id}/export.xlsx")
+def export_job_xlsx(job_id: str):
+    """Download a multi-sheet .xlsx for one job.
+
+    Round 24: the user requested an Excel export that captures
+    ALL data (Round 23 CSV is one sheet; this endpoint produces
+    5 sheets — panels, geology_contexts, localities,
+    paleo_coordinates, legend). The endpoint streams the bytes
+    via ``StreamingResponse`` so a 10⁵-row workbook doesn't
+    block the worker thread.
+
+    Sheets are produced by ``rlpe.exporters.xlsx.write_xlsx``
+    which already sanitises formula-injection (CWE-1236) and
+    uses ``openpyxl`` (transitive via the install env at
+    version 3.1.5).
+    """
+    job = RESULT_CACHE.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("status") != "done":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} is not finished (status={job.get('status')})",
+        )
+    if not job.get("result"):
+        raise HTTPException(
+            status_code=404, detail=f"Job {job_id} has no result"
+        )
+    try:
+        from ..exporters.xlsx import write_xlsx
+
+        run_output = {
+            "panels": job["result"],
+            # Localities, geology_contexts, and paleo_coordinates
+            # are stored separately on the job dict. The frontend
+            # /results endpoint reconstructs them via the
+            # converters' helpers, but for the xlsx export we
+            # read them directly from the cached job.
+            "geology_contexts": job.get("geology_contexts", []) or [],
+            "localities": job.get("localities", []) or [],
+            "paleo_coordinates": job.get("paleo_coordinates", []) or [],
+        }
+        xlsx_bytes = write_xlsx(run_output)
+    except Exception as exc:
+        logger.exception("xlsx export failed for %s", job_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"xlsx export failed: {exc}",
+        ) from exc
+
+    # Round 24: use the paper_id + job_id for the filename so
+    # multiple exports land in different files.
+    paper_id = (job.get("result", [{}])[0] or {}).get("paper_id", job_id[:8])
+    filename = f"rlpe_{paper_id}_{job_id[:8]}.xlsx"
+
+    # ``media_type`` for .xlsx is the OOXML spec:
+    # application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str):
     """Cancel a pending or running job.

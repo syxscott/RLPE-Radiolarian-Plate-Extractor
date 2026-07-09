@@ -81,6 +81,25 @@ class GeologyLinkRecord(BaseModel):
     evidence_text: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     biozone: str | None = None  # optional biozone name (e.g. "N. optima Zone")
+    # Round 24: environment / geochem / facies fields. The
+    # radiolarian-extraction user requested these to support
+    # Permian–Triassic extinction / recovery studies (P/T
+    # boundary, anoxic events, etc.) where the core research
+    # question is "when did radiolarians go extinct due to
+    # anoxia / acidification / cooling, and when did they
+    # recover?". Without these proxies, the data is not
+    # geochemically contextualised.
+    #
+    # Each field is a single keyword from a curated vocabulary
+    # (see ``geology_extraction._PALEOENVIRONMENT_VOCAB`` etc.).
+    # Round 24 dictionaries are English; the extractor matches
+    # case-insensitive. The ``evidence_*`` fields carry the
+    # sentence the term was extracted from so the operator can
+    # verify the source.
+    paleoenvironment: str | None = None  # e.g. "anoxic", "oxic", "upwelling"
+    redox: str | None = None  # e.g. "euxinic", "dysoxic", "oxic" (per Algeo & Tribovillard 2009)
+    chemostrat: str | None = None  # e.g. "δ13C excursion", "CIE", "TE disaster"
+    facies: str | None = None  # e.g. "pelagic", "turbidite", "platform", "basin"
     # Round 22 audit: how the coordinates were derived. Empty string
     # for regex-extracted coords (the default path), ``"country_centroid"``
     # when the Round 21 country-centroid fallback supplied the lat/lon.

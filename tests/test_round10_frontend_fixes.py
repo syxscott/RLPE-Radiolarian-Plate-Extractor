@@ -349,7 +349,7 @@ def test_fl3_icon_only_buttons_have_aria_label():
     for btn_id, expected in [
         ("refresh-jobs-btn", "刷新任务列表"),
         ("delete-selected-btn", "删除选中的任务"),
-        ("export-btn", "导出当前筛选结果为 CSV"),
+        ("export-btn", "导出当前筛选结果为 Excel 多 sheet 工作簿"),
     ]:
         idx = text.find(f'id="{btn_id}"')
         assert idx >= 0, f"button {btn_id} not found"
