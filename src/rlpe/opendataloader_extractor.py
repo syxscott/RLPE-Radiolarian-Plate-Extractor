@@ -1249,6 +1249,29 @@ _JA_FIG_CAPTION_RE = re.compile(
 )
 
 
+# Phase 30: Chinese caption markers. ZH papers use the same
+# ``图版 N`` / ``图 N`` convention as Japanese ``図版 N`` /
+# ``図 N``. Two encoding families exist:
+#
+#   * Simplified (``图版`` / ``图`` — GB2312) — Mainland China
+#   * Traditional (``圖版`` / ``圖`` — Big5) — Taiwan/HK/overseas
+#
+# The plate regex forces a two-character prefix ``图版`` / ``圖版``
+# to eliminate single-char ``图`` collisions (``图书馆`` library,
+# ``地图`` map, ``图片`` image). The fig regex requires a digit
+# after ``图`` / ``圖``, so body-text mentions like ``图1说明``
+# fire correctly but ``图书馆分类`` does not.
+#
+# Anchoring mirrors the JA policy: ``^\s*`` so mid-paragraph references
+# like ``(图1参照)`` are rejected — they don't begin the element.
+_ZH_PLATE_CAPTION_RE = re.compile(
+    r"^\s*(?:说明\s*)?(?:图版|圖版)\s*(?:[IVX]+|No\.?\s*)?(\d+)\s*[\.:]?\s*",
+)
+_ZH_FIG_CAPTION_RE = re.compile(
+    r"^\s*(?:图|圖)\s*(\d+)([a-z]?)\s*([.\s])\s*(\S)",
+)
+
+
 def _is_caption_kind_marker(low: str) -> bool:
     """Return True if ``low`` (caption text, lowercased) starts with a kind
     marker we route on.
@@ -1258,12 +1281,18 @@ def _is_caption_kind_marker(low: str) -> bool:
     both ``_extract_unpaired_captions`` (line 359 area) and
     ``_rescue_unmatched_captions`` (line 706 area) so the two sites
     stay in lockstep when adding new languages.
+
+    Phase 30: also accepts the Chinese figure markers ``图`` (simplified)
+    and ``圖`` (traditional). Both are different code points but
+    share the fig-marker semantics in their respective papers.
     """
     return (
         low.startswith("fig.")
         or low.startswith("figure ")
         or low.startswith("fig ")
         or low.startswith("図")  # JA figure marker (single kanji)
+        or low.startswith("图")  # ZH Simplified figure marker
+        or low.startswith("圖")  # ZH Traditional figure marker
     )
 
 # Match an inline plate figure reference inside a body paragraph.
@@ -1429,8 +1458,12 @@ def _find_plate_captions(
                 # Phase 27: also recognise JA plate markers here so JA
                 # papers whose list_items hold 図版 N headers get the
                 # same synthetic-paragraph expansion as English papers.
+                # Phase 30: extend to ZH (``图版`` / ``圖版``) so Mainland
+                # China + Taiwan papers get the same treatment.
                 if _txt and (
-                    _PLATE_CAPTION_RE.match(_txt) or _JA_PLATE_CAPTION_RE.match(_txt)
+                    _PLATE_CAPTION_RE.match(_txt)
+                    or _JA_PLATE_CAPTION_RE.match(_txt)
+                    or _ZH_PLATE_CAPTION_RE.match(_txt)
                 ):
                     expanded_kids.append(
                         {
@@ -1478,6 +1511,16 @@ def _find_plate_captions(
             kind = "plate" if m else None
         if not m:
             m = _JA_FIG_CAPTION_RE.match(content)
+            kind = "fig" if m else None
+        # Phase 30: ZH dispatch — matches simplified ``图版`` / ``图``
+        # (Mainland) and traditional ``圖版`` / ``圖`` (Taiwan/HK).
+        # Same structure as JA; the existing ``_plate_number_from_match``
+        # + ``_looks_like_fig_caption`` gates handle the rest.
+        if not m:
+            m = _ZH_PLATE_CAPTION_RE.match(content)
+            kind = "plate" if m else None
+        if not m:
+            m = _ZH_FIG_CAPTION_RE.match(content)
             kind = "fig" if m else None
         if not m:
             continue
