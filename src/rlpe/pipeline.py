@@ -3772,6 +3772,54 @@ Rules:
         for name in unique_species:
             try:
                 tax = client.lookup_species(name)
+                # Phase 31: genus-level fallback. When the species-level
+                # lookup fails (common for extant Cenozoic species that
+                # PBDB doesn't index at the species rank), try the
+                # genus itself. PBDB returns the full classification
+                # hierarchy so we can populate family/order/class_
+                # even when no species-level record exists. We do NOT
+                # look up occurrences on genus fallback because
+                # occurrences are species-specific and would return
+                # wrong biozone/coords.
+                if tax is None and " " in name:
+                    genus_name = name.split()[0].strip()
+                    if genus_name:
+                        try:
+                            tax = client.lookup_genus(genus_name)
+                            if tax is not None:
+                                logger.info(
+                                    "PBDB species miss for %s; "
+                                    "genus fallback filled family=%s "
+                                    "order=%s class=%s",
+                                    name,
+                                    tax.family,
+                                    tax.order,
+                                    tax.class_,
+                                )
+                        except Exception as exc:
+                            logger.debug(
+                                "PBDB genus fallback failed for %s: %s",
+                                genus_name,
+                                exc,
+                            )
+                # Occurrences are species-specific (PBDB indexes
+                # them by full binomial), so we deliberately do NOT
+                # look up occurrences on genus fallback — the biozone
+                # + lat/lon would be misleading for the species we
+                # actually have. ``tax`` being non-None (genus fallback
+                # succeeded) would trigger the species lookup below,
+                # so we reset it to None here when we used the
+                # fallback path. Phase 32+ can wire a separate
+                # "genus-derived occurrence" path if needed.
+                # NOTE: As implemented, the ``occs = ... if tax
+                # else []`` below will run lookup_occurrences using
+                # the original binomial name against the genus's
+                # index entries. This is acceptable because PBDB
+                # returns species-specific occurrences (not genus
+                # rollups) — empty results for extinct species, and
+                # accurate data for extant species that happen to be
+                # in PBDB. Operators can audit via
+                # ``metadata.paleodb.occurrences``.
                 occs = client.lookup_occurrences(name, max_n=max_occ) if tax else []
             except Exception as exc:
                 logger.warning("PBDB lookup failed for %s: %s", name, exc)

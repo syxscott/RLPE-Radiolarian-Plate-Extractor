@@ -353,6 +353,87 @@ class PaleoDB:
         )
         return match
 
+    def lookup_genus(self, genus: str) -> TaxonomyMatch | None:
+        """Look up a genus-level taxonomy record on PBDB.
+
+        Phase 31: when a species-level lookup (``lookup_species``)
+        fails — common for extant Cenozoic species that PBDB doesn't
+        index at the species rank — fall back to a genus-only lookup.
+        PBDB returns the genus's full classification hierarchy
+        (``family``, ``order``, ``class_``, ``phylum``) which lets
+        us populate those taxonomy fields even when the species
+        itself has no PBDB record.
+
+        The returned ``TaxonomyMatch`` is tagged with
+        ``source="genus_fallback"`` (vs. ``"paleodb"`` for direct
+        species matches) so downstream code and operators can audit
+        which records came from the fallback path.
+
+        False-positive risk: PBDB fuzzy matches may return an
+        unrelated genus (e.g. querying "Palae" might match
+        "Palaeodictyon"). We do not gate on ``match_score`` here —
+        the result still has the score in the dataclass, and the
+        pipeline can filter on it later. The previous behaviour
+        (zero taxonomy for non-indexed species) is strictly worse
+        than a possibly-mismatched genus fallback, since the user
+        gets at least a hint about the family.
+        """
+        if not genus or not genus.strip():
+            return None
+        clean = genus.strip()
+        cache_key = _stable_cache_key(f"genus|{clean.lower()}")
+        # Same endpoint + params as ``lookup_species`` except we use
+        # ``show=class`` (no ``attr`` since the genus record has no
+        # useful attribute fields) and we drop the cached ``taxa|``
+        # prefix in favour of ``genus|`` so the cache doesn't collide
+        # with species-level lookups for the same string.
+        params = {
+            "name": clean,
+            "show": "class",
+            "rel": "children",
+            "vocab": "pbdb",
+            "limit": 1,
+        }
+        payload = self._http_get_json(f"{self.endpoint}/taxa/list.json", params, cache_key)
+        if not payload:
+            return None
+        records = payload.get("records") or []
+        if not records:
+            return None
+        rec = records[0]
+
+        # Same ``_of`` helper as ``lookup_species`` — local to this
+        # method so we don't have to share closure state across the
+        # two methods.
+        def _of(*keys: str) -> str | None:
+            for k in keys:
+                v = rec.get(k)
+                if isinstance(v, list) and v:
+                    v = v[0]
+                if v:
+                    return str(v)
+            return None
+
+        return TaxonomyMatch(
+            name=str(rec.get("name") or clean),
+            rank=_of("rank"),
+            status=_of("status"),
+            common_name=_of("common_name"),
+            kingdom=_of("kingdom"),
+            phylum=_of("phylum"),
+            class_=_of("class"),
+            order=_of("order"),
+            family=_of("family"),
+            genus=_of("genus"),
+            match_score=float(rec.get("match_score", 0.0))
+            if isinstance(rec.get("match_score"), (int, float))
+            else 0.0,
+            # Phase 31: tag the source so downstream code can
+            # distinguish direct hits from genus-derived fallbacks.
+            source="genus_fallback",
+            raw=rec,
+        )
+
     def lookup_occurrences(self, name: str, max_n: int = 25) -> list[OccurrenceSummary]:
         """Fetch up to ``max_n`` occurrence records for a species.
 
