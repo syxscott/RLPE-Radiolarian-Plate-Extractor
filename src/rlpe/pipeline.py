@@ -70,7 +70,22 @@ class RadiolarianPipeline:
         # ``current/total`` to map a real pipeline position onto the 30-90%
         # band of the job progress.
         self._progress_cb = progress_callback
-        self.grobid = GrobidClient(server_url=config.grobid_url)
+        # Phase 29: forward retry + timeout knobs from the config
+        # ``extra`` dict. Defaults match legacy behaviour (3 retries,
+        # 300s timeout) — only operators who pass ``--grobid-max-retries``
+        # or ``--grobid-timeout`` see different behaviour.
+        self.grobid = GrobidClient(
+            server_url=config.grobid_url,
+            timeout=int(self.config.extra.get("grobid_timeout", 300)),
+            max_retries=int(self.config.extra.get("grobid_max_retries", 3)),
+        )
+        # Phase 29: cycle guard. ``_process_one_pdf_grobid`` may now
+        # call ``_process_one_pdf_od`` on failure, and ``_process_one_pdf_od``
+        # calls ``_process_one_pdf_grobid`` on its own failure. Without
+        # this set, GROBID-down + OD-down would loop indefinitely.
+        # The set tracks paper_ids currently in the GROBID code path
+        # so OD can detect re-entry and skip the recursive GROBID call.
+        self._grobid_in_progress: set[str] = set()
         # Phase 27: forward the configured OCR language list. Default
         # ``"en"`` keeps the legacy English-only flow identical. JA
         # papers pass ``--ocr-lang en,ja`` and EasyOCR / PaddleOCR both
@@ -884,7 +899,20 @@ class RadiolarianPipeline:
                 "OpenDataLoader failed (%s); falling back to GROBID+layout",
                 error,
             )
-            fallback = self._process_one_pdf_grobid(paper_id, pdf_path)
+            # Phase 29 cycle guard: if we're already inside the GROBID
+            # code path (i.e. GROBID failed → OD called us → OD also
+            # failed), skip the recursive GROBID call to avoid an
+            # infinite loop. Return empty so the caller can fall
+            # through to the visual-stub fallback.
+            if paper_id in self._grobid_in_progress:
+                logger.warning(
+                    "Skipping recursive GROBID fallback for %s; "
+                    "OD↔GROBID cycle detected.",
+                    paper_id,
+                )
+                fallback = []
+            else:
+                fallback = self._process_one_pdf_grobid(paper_id, pdf_path)
             # Audit P1-5: append an ingestion-failed warning stub so
             # the failure is visible in run_output.warnings instead of
             # being silently dropped. Without this, a corrupt PDF (or
@@ -1986,6 +2014,28 @@ class RadiolarianPipeline:
     # -----------------------------------------------------------------------
 
     def _process_one_pdf_grobid(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+        # Phase 29: mark this paper as currently in the GROBID code
+        # path so the OD-fallback path can detect re-entry and break
+        # the GROBID↔OD cycle. Cleared in the finally block.
+        self._grobid_in_progress.add(paper_id)
+        try:
+            return self._process_one_pdf_grobid_inner(paper_id, pdf_path)
+        finally:
+            # Phase 29: clear the cycle-guard entry on every exit path
+            # so the OD↔GROBID fallback doesn't leak paper_ids across
+            # unrelated papers.
+            self._grobid_in_progress.discard(paper_id)
+
+    def _process_one_pdf_grobid_inner(
+        self, paper_id: str, pdf_path: Path
+    ) -> list[dict[str, Any]]:
+        """Inner body of ``_process_one_pdf_grobid`` (Phase 29 split).
+
+        Extracted so the cycle-guard setup / teardown at the
+        outer ``_process_one_pdf_grobid`` wraps everything in a
+        single ``try / finally`` block without rewriting 150 lines of
+        indent.
+        """
         grobid_result = self.grobid.process_pdf(pdf_path, self.config.resolved_output_dir())
 
         if not grobid_result.success:
@@ -2025,7 +2075,47 @@ class RadiolarianPipeline:
             return []
 
         # Fallback: when TEI captions are unavailable, do visual-first extraction.
+        # Phase 29: prefer OpenDataLoader over the visual-only stub.
+        # OD doesn't need a server, so when GROBID is down we still
+        # get real caption-image pairing (esp. helpful for JA/ZH
+        # papers whose caption markers wouldn't match the visual
+        # fallback's regex). The visual-only stub is now the last
+        # resort, used only when both GROBID and OD fail.
         if not tei_captions:
+            # Log the failure mode for the operator. ``retry_count``
+            # and ``error_type`` were populated by
+            # ``GrobidClient.process_pdf`` in Phase 29.
+            logger.warning(
+                "GROBID produced no captions for %s (retries=%d, error_type=%s, error=%s)",
+                paper_id,
+                grobid_result.retry_count,
+                grobid_result.error_type,
+                grobid_result.error,
+            )
+            # Attempt OD fallback unless OD is explicitly disabled.
+            if not self.config.extra.get("disable_od_fallback", False):
+                od_results = self._process_one_pdf_od(paper_id, pdf_path)
+                if od_results:
+                    logger.info(
+                        "GROBID → OpenDataLoader fallback succeeded for %s (%d rows)",
+                        paper_id,
+                        len(od_results),
+                    )
+                    # Tag the rows so the consumer can see this came
+                    # from OD-after-GROBID-failure.
+                    for row in od_results:
+                        row.setdefault("extraction_source", "od_after_grobid_failed")
+                        row.setdefault(
+                            "ingestion_warning",
+                            f"GROBID failed ({grobid_result.error_type}); "
+                            f"OD fallback used.",
+                        )
+                    return od_results
+                logger.warning(
+                    "OpenDataLoader fallback also failed for %s; "
+                    "falling back to visual-only stub.",
+                    paper_id,
+                )
             return self._fallback_process_without_captions(
                 paper_id,
                 pages,

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import re
+import time
+import xml
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
@@ -10,6 +13,8 @@ import requests
 from .layout import extract_figure_number
 from .types import CaptionEntity, CaptionRecord, PaperMetadata
 from .utils import ensure_dir, stable_id
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -22,51 +27,157 @@ class GrobidResult:
     fulltext_sections: list[dict[str, str]]
     success: bool
     error: str | None = None
+    # Phase 29: ``retry_count`` records how many HTTP attempts were
+    # made before either success or final failure. ``error_type`` is
+    # one of the constants in ``GrobidClient._ERROR_TYPES`` (or
+    # ``"none"`` on success). Pipeline code uses these to decide
+    # between OD-fallback vs. visual-stub fallback.
+    retry_count: int = 0
+    error_type: str = "none"
 
 
 class GrobidClient:
-    def __init__(self, server_url: str = "http://localhost:8070", timeout: int = 300) -> None:
+    """GROBID TEI client with retry + structured error reporting.
+
+    Phase 29: The previous implementation made a single POST and
+    silently swallowed every failure with ``except Exception``.
+    Operators had no visibility into whether GROBID was down, slow,
+    or rejecting the PDF, and the pipeline had no way to distinguish
+    ``ConnectionRefused`` (server down) from ``HTTPError 500`` (server
+    processing error) from ``Timeout`` (server too slow).
+
+    The new client:
+    * Retries up to ``max_retries`` times with exponential backoff
+      capped at 30s (mirrors the pattern in
+      ``llm_backends.MiniMaxM3Backend._call_api``).
+    * Distinguishes error types via ``_classify_exception``.
+    * Returns ``retry_count`` and ``error_type`` in ``GrobidResult``
+      so the pipeline can make an informed OD-vs-visual-stub choice.
+    """
+
+    _ERROR_TYPES = (
+        "none",
+        "connection_refused",
+        "timeout",
+        "http_5xx",
+        "http_4xx",
+        "parse_error",
+        "unknown",
+    )
+
+    def __init__(
+        self,
+        server_url: str = "http://localhost:8070",
+        timeout: int = 300,
+        max_retries: int = 3,
+        retry_backoff: float = 1.0,
+    ) -> None:
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
+        self.max_retries = max(1, int(max_retries))
+        self.retry_backoff = max(0.0, float(retry_backoff))
+
+    @staticmethod
+    def _classify_exception(exc: BaseException) -> str:
+        """Map a requests/IO exception to a coarse error_type bucket.
+
+        Used by ``process_pdf`` to surface the failure mode to the
+        pipeline so it can pick the right fallback (OD vs. visual
+        stub) and so operators can grep the log for the category.
+        """
+        # requests.ConnectionError wraps socket errors; the more
+        # specific ConnectionRefusedError bubbles up in Py3.10+ as
+        # ``ConnectionRefusedError(111, ...)`` inside the wrapped
+        # ``__cause__`` chain. Check both forms.
+        if isinstance(exc, requests.ConnectionError):
+            cause = exc.__cause__ or exc.__context__
+            if isinstance(cause, ConnectionRefusedError):
+                return "connection_refused"
+            # EOF / DNS failure on some platforms shows up as a
+            # generic OSError wrapped by requests.
+            if isinstance(cause, OSError) and getattr(cause, "errno", None) in {
+                111,  # ECONNREFUSED
+                -2,   # Name or service not known (some glibc)
+            }:
+                return "connection_refused"
+            return "connection_refused"
+        if isinstance(exc, (requests.Timeout, TimeoutError)):
+            return "timeout"
+        if isinstance(exc, requests.HTTPError):
+            status = getattr(getattr(exc, "response", None), "status_code", 0) or 0
+            if 500 <= status < 600:
+                return "http_5xx"
+            if 400 <= status < 500:
+                return "http_4xx"
+            return "unknown"
+        # XML parse error (raised by callers of parse_captions_from_tei)
+        if isinstance(exc, (ET.ParseError, xml.etree.ElementTree.ParseError)):
+            return "parse_error"
+        return "unknown"
 
     def process_pdf(self, pdf_path: Path, output_dir: Path) -> GrobidResult:
         paper_id = stable_id(pdf_path)
         tei_dir = ensure_dir(output_dir / "tei")
         tei_path = tei_dir / f"{paper_id}.tei.xml"
-        try:
-            with pdf_path.open("rb") as f:
-                resp = requests.post(
-                    f"{self.server_url}/api/processFulltextDocument",
-                    files={"input": (pdf_path.name, f, "application/pdf")},
-                    data={"consolidateHeader": "1", "consolidateCitations": "1"},
-                    timeout=self.timeout,
+        last_exc: BaseException | None = None
+        last_error_type = "unknown"
+        # Phase 29 retry loop. ``max_retries`` is the *total* number of
+        # attempts; we sleep ``min(2**attempt * retry_backoff, 30)``
+        # between attempts. Successful attempt returns immediately.
+        for attempt in range(self.max_retries):
+            try:
+                with pdf_path.open("rb") as f:
+                    resp = requests.post(
+                        f"{self.server_url}/api/processFulltextDocument",
+                        files={"input": (pdf_path.name, f, "application/pdf")},
+                        data={"consolidateHeader": "1", "consolidateCitations": "1"},
+                        timeout=self.timeout,
+                    )
+                resp.raise_for_status()
+                tei_path.write_text(resp.text, encoding="utf-8")
+                captions = parse_captions_from_tei(
+                    resp.text, paper_id=paper_id, source_xml=str(tei_path)
                 )
-            resp.raise_for_status()
-            tei_path.write_text(resp.text, encoding="utf-8")
-            captions = parse_captions_from_tei(
-                resp.text, paper_id=paper_id, source_xml=str(tei_path)
-            )
-            sections = parse_fulltext_sections_from_tei(resp.text)
-            return GrobidResult(
-                paper_id=paper_id,
-                pdf_path=pdf_path,
-                tei_path=tei_path,
-                tei_xml=resp.text,
-                captions=captions,
-                fulltext_sections=sections,
-                success=True,
-            )
-        except Exception as exc:
-            return GrobidResult(
-                paper_id=paper_id,
-                pdf_path=pdf_path,
-                tei_path=None,
-                tei_xml=None,
-                captions=[],
-                fulltext_sections=[],
-                success=False,
-                error=str(exc),
-            )
+                sections = parse_fulltext_sections_from_tei(resp.text)
+                return GrobidResult(
+                    paper_id=paper_id,
+                    pdf_path=pdf_path,
+                    tei_path=tei_path,
+                    tei_xml=resp.text,
+                    captions=captions,
+                    fulltext_sections=sections,
+                    success=True,
+                    retry_count=attempt,
+                    error_type="none",
+                )
+            except Exception as exc:
+                last_exc = exc
+                last_error_type = self._classify_exception(exc)
+                logger.warning(
+                    "GROBID attempt %d/%d failed for %s (error_type=%s): %s",
+                    attempt + 1,
+                    self.max_retries,
+                    pdf_path.name,
+                    last_error_type,
+                    exc,
+                )
+                # Sleep before next attempt unless this was the last.
+                if attempt + 1 < self.max_retries and self.retry_backoff > 0:
+                    delay = min(2**attempt * self.retry_backoff, 30.0)
+                    time.sleep(delay)
+        # All retries exhausted. Return a structured failure.
+        return GrobidResult(
+            paper_id=paper_id,
+            pdf_path=pdf_path,
+            tei_path=None,
+            tei_xml=None,
+            captions=[],
+            fulltext_sections=[],
+            success=False,
+            error=str(last_exc) if last_exc is not None else "GROBID failed",
+            retry_count=self.max_retries,
+            error_type=last_error_type,
+        )
 
 
 def parse_captions_from_tei(

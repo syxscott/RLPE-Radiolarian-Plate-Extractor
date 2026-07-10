@@ -54,6 +54,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--work-dir", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, default=None)
     p.add_argument("--grobid-url", type=str, default="http://localhost:8070")
+    # Phase 29: GROBID retry + timeout knobs (defaults match legacy behaviour).
+    p.add_argument(
+        "--grobid-max-retries",
+        type=int,
+        default=None,
+        help="Total GROBID POST attempts before giving up (default 3). "
+        "Exponential backoff with cap 30s between attempts.",
+    )
+    p.add_argument(
+        "--grobid-timeout",
+        type=int,
+        default=None,
+        help="Per-attempt GROBID POST timeout in seconds (default 300).",
+    )
     p.add_argument("--ocr-backend", type=str, default="paddleocr", choices=["paddleocr", "easyocr"])
     # Phase 27: multilingual OCR. Comma-separated list; EasyOCR accepts
     # multi-lang in a single Reader (downloads each model on first run),
@@ -365,6 +379,14 @@ def main() -> int:
             args.od_caption_window if args.od_caption_window is not None else 5
         ),
         extra={
+            # Phase 29: forward GROBID retry + timeout. None means use
+            # the PipelineConfig-level default (3 retries, 300s).
+            "grobid_max_retries": (
+                args.grobid_max_retries if args.grobid_max_retries is not None else 3
+            ),
+            "grobid_timeout": (
+                args.grobid_timeout if args.grobid_timeout is not None else 300
+            ),
             "sam2_checkpoint": args.sam2_checkpoint,
             "sam2_model_cfg": args.sam2_model_cfg,
             "sam2_grid_size": args.sam2_grid_size,

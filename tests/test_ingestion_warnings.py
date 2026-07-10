@@ -59,9 +59,17 @@ class TestIngestionWarningSourceGuard:
 
         path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
         text = path.read_text(encoding="utf-8")
-        marker = "def _process_one_pdf_grobid("
+        # Phase 29: the GROBID code path was split into
+        # ``_process_one_pdf_grobid`` (cycle guard) + an inner helper
+        # ``_process_one_pdf_grobid_inner`` (the original body). The
+        # ``grobid_failed`` warning stub lives in the inner helper, so
+        # the source guard must look there.
+        marker = "def _process_one_pdf_grobid_inner("
         i = text.find(marker)
-        assert i > 0
+        assert i > 0, (
+            "Phase 29 split should leave _process_one_pdf_grobid_inner "
+            "as the body that holds the grobid_failed warning stub."
+        )
         next_def = text.find("\n    def ", i + 1)
         assert next_def > 0
         body = text[i:next_def]

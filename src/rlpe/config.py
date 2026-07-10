@@ -55,6 +55,14 @@ _KNOWN_EXTRA_KEYS = {
     # Phase 27: multilingual OCR + caption language selection
     "ocr_lang",
     "m3_prompt_lang",
+    # Phase 29: GROBID retry + OD-fallback knobs. ``grobid_max_retries``
+    # is the total HTTP attempts; ``grobid_timeout`` is the per-attempt
+    # request timeout. ``disable_od_fallback`` is an escape hatch for
+    # operators who want strict legacy behaviour (visual stub on
+    # GROBID failure, no OD retry).
+    "grobid_max_retries",
+    "grobid_timeout",
+    "disable_od_fallback",
     # M3 5-stage semantic engine
     "m3_enhanced_mode",
     "m3_stage_1",
