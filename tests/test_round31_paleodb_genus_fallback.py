@@ -220,34 +220,30 @@ def test_pipeline_genus_fallback_skips_genus_only_input():
 
 
 def test_pipeline_genus_fallback_does_not_call_lookup_occurrences():
-    """When the species lookup misses and genus fallback fills the
-    taxonomy, we must NOT call ``lookup_occurrences`` because the
-    occurrences are species-specific and would return wrong biozone.
+    """Bug-fix M-1: when the species lookup misses and genus fallback
+    fills the taxonomy, ``lookup_occurrences`` must NOT be called
+    because occurrences are species-specific and would return wrong
+    biozone.
 
-    The pipeline currently achieves this by keeping the same ``occs``
-    conditional: ``occs = client.lookup_occurrences(name, max_n=max_occ)
-    if tax else []``. After genus fallback, ``tax`` is non-None (the
-    genus record), so ``occs`` would be looked up using the original
-    binomial species name. To prevent this, the inner code should
-    keep ``tax_genus_fallback`` separate from the species-lookup
-    branch. We pin that the pipeline does not silently accept
-    genus-derived occurrences by checking that the ``occs`` lookup
-    is gated on the species-level hit (not on the genus fallback).
+    The pipeline gates the occurrence lookup on ``not tax_from_genus``:
+    ``occs = client.lookup_occurrences(name, max_n=max_occ) if (tax and
+    not tax_from_genus) else []``. We pin that gate here.
     """
     src = _read("src/rlpe/pipeline.py")
-    # Find the fallback block
-    fallback_idx = src.find("lookup_genus")
-    fallback_end = fallback_idx + 1500
+    # Find the fallback block. Start a bit before ``lookup_genus`` so
+    # the leading comment ("occurrences are species-specific") is
+    # included.
+    fallback_idx = max(0, src.find("lookup_genus") - 800)
+    fallback_end = fallback_idx + 3500
     block = src[fallback_idx:fallback_end]
-    # The occs assignment must be guarded by ``if tax else []`` AND
-    # there must be a comment near the genus fallback explaining why
-    # occurrences are not looked up on genus fallback.
-    assert "lookup_occurrences(name, max_n=max_occ) if tax else []" in src, (
-        "The occs lookup must remain gated on the species-level tax"
+    # Bug-fix M-1: occurrences must be gated by ``not tax_from_genus``.
+    assert "tax_from_genus" in block, (
+        "Pipeline must track ``tax_from_genus`` to gate occurrence lookup"
+    )
+    assert "if tax and not tax_from_genus" in block, (
+        "Occurrence lookup must be gated by ``not tax_from_genus`` (M-1 fix)"
     )
     # The comment explaining the design decision may use any of:
-    # "occurrences are species-specific", "do NOT look up occurrences",
-    # "NOT looked up", or simply note that occs stay empty on fallback.
     has_comment = any(
         phrase in block
         for phrase in (
@@ -259,7 +255,7 @@ def test_pipeline_genus_fallback_does_not_call_lookup_occurrences():
     )
     assert has_comment, (
         f"Genus fallback block must explain why occurrences aren't "
-        f"looked up. Block:\n{block[:400]}"
+        f"looked up. Block:\n{block[:800]}"
     )
 
 

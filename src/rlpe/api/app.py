@@ -194,6 +194,14 @@ class JobOptions(BaseModel):
     # the paper or captions sit on the page adjacent to the figure.
     caption_window: int | None = None  # 1..50
     od_caption_window: int | None = None  # 1..200
+    # ---- Phase 29 GROBID retry + OD-fallback knobs ----
+    # ``grobid_max_retries`` is the total HTTP attempts; ``grobid_timeout``
+    # is the per-attempt request timeout. ``disable_od_fallback`` is the
+    # escape hatch for operators who want strict legacy behaviour (visual
+    # stub on GROBID failure, no OD retry). Defaults match CLI defaults.
+    grobid_max_retries: int | None = None  # 1..10
+    grobid_timeout: int | None = None  # 10..3600
+    disable_od_fallback: bool = False
 
     @field_validator("llm_backend")
     @classmethod
@@ -301,6 +309,25 @@ class JobOptions(BaseModel):
         allowed = {"paddleocr", "easyocr"}
         if v not in allowed:
             raise ValueError(f"ocr_backend must be one of {sorted(allowed)}, got {v!r}")
+        return v
+
+    # Phase 29: GROBID retry + timeout validators
+    @field_validator("grobid_max_retries")
+    @classmethod
+    def _validate_grobid_max_retries(cls, v: int | None) -> int | None:
+        if v is None:
+            return v
+        if v < 1 or v > 10:
+            raise ValueError(f"grobid_max_retries must be 1..10, got {v!r}")
+        return v
+
+    @field_validator("grobid_timeout")
+    @classmethod
+    def _validate_grobid_timeout(cls, v: int | None) -> int | None:
+        if v is None:
+            return v
+        if v < 10 or v > 3600:
+            raise ValueError(f"grobid_timeout must be 10..3600, got {v!r}")
         return v
 
     @model_validator(mode="before")
@@ -1779,6 +1806,16 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             pipeline_kwargs["caption_window"] = int(options["caption_window"])
         if options.get("od_caption_window") is not None:
             pipeline_kwargs["od_caption_window"] = int(options["od_caption_window"])
+        # Phase 29: forward GROBID retry + timeout + OD-fallback opt-out.
+        # ``caption_window`` (GROBID) and ``od_caption_window`` (OD) are
+        # first-class PipelineConfig fields; the GROBID retry + OD-fallback
+        # knobs are extras consumed by ``RadiolarianPipeline.__init__``.
+        if options.get("grobid_max_retries") is not None:
+            extra["grobid_max_retries"] = int(options["grobid_max_retries"])
+        if options.get("grobid_timeout") is not None:
+            extra["grobid_timeout"] = int(options["grobid_timeout"])
+        if options.get("disable_od_fallback"):
+            extra["disable_od_fallback"] = True
         cfg = PipelineConfig(**pipeline_kwargs)
 
         # If using MiniMax, register a web-popup fallback handler.

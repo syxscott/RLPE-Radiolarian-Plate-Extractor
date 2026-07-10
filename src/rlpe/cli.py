@@ -68,6 +68,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Per-attempt GROBID POST timeout in seconds (default 300).",
     )
+    # Phase 29: opt-out for OD fallback. By default, when GROBID
+    # retries are exhausted the pipeline falls back to OpenDataLoader
+    # (which doesn't need a server). Operators who want strict
+    # legacy behaviour — visual-only stub on GROBID failure, no
+    # OD retry — can set this flag.
+    p.add_argument(
+        "--disable-od-fallback",
+        action="store_true",
+        default=False,
+        help="Disable automatic OpenDataLoader fallback when GROBID "
+        "fails. Default: fall back to OD so JA/ZH papers still get "
+        "real captions. Set this flag to restore legacy visual-stub "
+        "behaviour.",
+    )
     p.add_argument("--ocr-backend", type=str, default="paddleocr", choices=["paddleocr", "easyocr"])
     # Phase 27: multilingual OCR. Comma-separated list; EasyOCR accepts
     # multi-lang in a single Reader (downloads each model on first run),
@@ -387,6 +401,10 @@ def main() -> int:
             "grobid_timeout": (
                 args.grobid_timeout if args.grobid_timeout is not None else 300
             ),
+            # Phase 29: opt-out for OD fallback. Default False means
+            # fall back to OD on GROBID failure; ``--disable-od-fallback``
+            # sets True to restore legacy visual-stub behaviour.
+            "disable_od_fallback": bool(args.disable_od_fallback),
             "sam2_checkpoint": args.sam2_checkpoint,
             "sam2_model_cfg": args.sam2_model_cfg,
             "sam2_grid_size": args.sam2_grid_size,

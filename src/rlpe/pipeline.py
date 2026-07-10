@@ -2090,7 +2090,9 @@ class RadiolarianPipeline:
                 paper_id,
                 grobid_result.retry_count,
                 grobid_result.error_type,
-                grobid_result.error,
+                # Truncate error to keep log lines readable. The
+                # full error string can be 1000+ chars (full traceback).
+                (grobid_result.error or "")[:200],
             )
             # Attempt OD fallback unless OD is explicitly disabled.
             if not self.config.extra.get("disable_od_fallback", False):
@@ -3777,16 +3779,24 @@ Rules:
                 # PBDB doesn't index at the species rank), try the
                 # genus itself. PBDB returns the full classification
                 # hierarchy so we can populate family/order/class_
-                # even when no species-level record exists. We do NOT
-                # look up occurrences on genus fallback because
-                # occurrences are species-specific and would return
-                # wrong biozone/coords.
+                # even when no species-level record exists.
+                #
+                # Bug-fix M-1: occurrences are species-specific (PBDB
+                # indexes them by full binomial). Looking up
+                # occurrences on genus fallback would yield wrong
+                # biozone / lat / lon for the species we actually
+                # have. We track ``tax_from_genus`` separately and
+                # skip the occurrence lookup when the taxonomy came
+                # from the genus fallback path.
+                tax_from_genus = False
                 if tax is None and " " in name:
                     genus_name = name.split()[0].strip()
                     if genus_name:
                         try:
-                            tax = client.lookup_genus(genus_name)
-                            if tax is not None:
+                            genus_tax = client.lookup_genus(genus_name)
+                            if genus_tax is not None:
+                                tax = genus_tax
+                                tax_from_genus = True
                                 logger.info(
                                     "PBDB species miss for %s; "
                                     "genus fallback filled family=%s "
@@ -3802,25 +3812,12 @@ Rules:
                                 genus_name,
                                 exc,
                             )
-                # Occurrences are species-specific (PBDB indexes
-                # them by full binomial), so we deliberately do NOT
-                # look up occurrences on genus fallback — the biozone
-                # + lat/lon would be misleading for the species we
-                # actually have. ``tax`` being non-None (genus fallback
-                # succeeded) would trigger the species lookup below,
-                # so we reset it to None here when we used the
-                # fallback path. Phase 32+ can wire a separate
-                # "genus-derived occurrence" path if needed.
-                # NOTE: As implemented, the ``occs = ... if tax
-                # else []`` below will run lookup_occurrences using
-                # the original binomial name against the genus's
-                # index entries. This is acceptable because PBDB
-                # returns species-specific occurrences (not genus
-                # rollups) — empty results for extinct species, and
-                # accurate data for extant species that happen to be
-                # in PBDB. Operators can audit via
-                # ``metadata.paleodb.occurrences``.
-                occs = client.lookup_occurrences(name, max_n=max_occ) if tax else []
+                # Skip occurrence lookup on genus fallback path.
+                occs = (
+                    client.lookup_occurrences(name, max_n=max_occ)
+                    if tax and not tax_from_genus
+                    else []
+                )
             except Exception as exc:
                 logger.warning("PBDB lookup failed for %s: %s", name, exc)
                 tax = None

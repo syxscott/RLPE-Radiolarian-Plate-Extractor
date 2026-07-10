@@ -117,7 +117,7 @@ class TaxonomyMatch:
     family: str | None = None
     genus: str | None = None
     match_score: float = 0.0
-    source: str = "paleodb"  # "paleodb" | "cache" | "offline"
+    source: str = "paleodb"  # "paleodb" | "cache" | "offline" | "genus_fallback" (Phase 31)
     raw: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

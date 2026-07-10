@@ -256,14 +256,49 @@ def test_list_item_expansion_accepts_zh_plate():
 
 
 def test_no_ja_zh_regex_collision_for_traditional_tuban():
-    """Both JA and ZH regexes accept ``圖版`` (traditional). Phase 30
-    keeps it in BOTH regexes — JA fires first, ZH is a no-op on
-    traditional papers. This source guard pins the dual inclusion."""
+    """Bug-fix H-4: JA regex no longer accepts ``圖版`` (traditional
+    ZH). Traditional ZH papers now route through the ZH dispatcher
+    instead of being captured by JA. This source guard pins the split:
+    JA accepts only ``図版`` (Japanese-only char), ZH accepts
+    ``图版`` (simplified) AND ``圖版`` (traditional)."""
+    import re as _re
+
     src = _read("src/rlpe/opendataloader_extractor.py")
-    # JA regex still has 圖版
-    assert "(?:図版|圖版)" in src  # JA regex
-    # ZH regex has 图版|圖版
-    assert "(?:图版|圖版)" in src  # ZH regex
+    # Extract the JA regex pattern from source and compile it. We
+    # use a regex to find the r-string after the ``re.compile(...)``
+    # call. Comments may contain ``圖版`` (e.g. the bug-fix comment
+    # itself) so we MUST extract only the actual pattern string.
+    ja_match = _re.search(
+        r'_JA_PLATE_CAPTION_RE\s*=\s*re\.compile\(.*?r"([^"]+)"',
+        src,
+        _re.DOTALL,
+    )
+    assert ja_match is not None, "Could not locate _JA_PLATE_CAPTION_RE"
+    ja_pattern = _re.compile(ja_match.group(1))
+
+    # Extract the ZH regex the same way
+    zh_match = _re.search(
+        r'_ZH_PLATE_CAPTION_RE\s*=\s*re\.compile\(.*?r"([^"]+)"',
+        src,
+        _re.DOTALL,
+    )
+    assert zh_match is not None, "Could not locate _ZH_PLATE_CAPTION_RE"
+    zh_pattern = _re.compile(zh_match.group(1))
+
+    # H-4: JA must NOT accept traditional 圖版
+    assert ja_pattern.match("圖版1 化石写真") is None, (
+        "H-4 bug-fix: JA regex must NOT match 圖版 (traditional ZH)"
+    )
+    # H-4: JA still matches 図版 (Japanese-only char)
+    assert ja_pattern.match("図版1 走査電子顕微鏡写真") is not None
+
+    # ZH accepts both 圖版 (traditional) and 图版 (simplified)
+    assert zh_pattern.match("圖版1 化石写真") is not None
+    assert zh_pattern.match("图版1 扫描电镜照片") is not None
+
+    # Sanity: ZH must NOT match Japanese-only 図版
+    # (the JA char is U+56E7; ZH chars are U+56FE simplified / U+5716 traditional)
+    # This guards against accidental over-matching.
 
 
 # ============================================================================

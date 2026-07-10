@@ -25,15 +25,11 @@ class OCRToken:
 # caller (CLI uses the short names; legacy callers pass the long names).
 _PADDLE_LANG_MAP: dict[str, str] = {
     "ja": "japan",
-    "japan": "japan",
     "ch_sim": "ch",
     "ch_tra": "chinese_cht",
-    "ch": "ch",
-    "en": "en",
-    "fr": "fr",
     "de": "german",
-    "ko": "korean",
-    "ru": "ru",
+    # Note: "en", "fr", "ko", "ru", "japan", "ch" all pass through
+    # unchanged (PaddleOCR accepts those spellings natively).
 }
 
 

@@ -106,7 +106,17 @@ class OpenDataLoaderExtractor:
         # Phase 28: stash the caption-pairing window. All OD path
         # functions that hard-coded a page-distance limit read this
         # instead. See module docstring + tests/test_round28_*.
-        self.caption_window = int(caption_window)
+        caption_window = int(caption_window)
+        # Bug-fix: caption_window=0 silently degenerates the rescue
+        # window to ``max_page_diff = 0 * 4 = 0`` which skips every
+        # candidate. Reject it at construction so the failure mode
+        # surfaces immediately rather than producing empty output
+        # at runtime.
+        if caption_window < 1:
+            raise ValueError(
+                f"caption_window must be >= 1 (got {caption_window})"
+            )
+        self.caption_window = caption_window
         self._available: bool | None = None
         # Lazy EasyOCR engine + lock. The previous implementation
         # declared these as locals inside ``_ocr_missing_captions`` and
@@ -1242,7 +1252,10 @@ _FIG_CAPTION_RE = re.compile(
 # gate (line 1555) further filters out any short JA fragments that
 # sneak through.
 _JA_PLATE_CAPTION_RE = re.compile(
-    r"^\s*(?:説明\s*)?(?:図版|圖版)\s*(?:[IVX]+|No\.?\s*)?(\d+)\s*[\.:]?\s*",
+    # Bug-fix H-4: JA regex no longer accepts 圖版 (traditional ZH).
+    # Traditional ZH papers (e.g. Taiwan/Hong Kong) now route
+    # through the ZH dispatcher instead of being captured by JA.
+    r"^\s*(?:説明\s*)?図版\s*(?:[IVX]+|No\.?\s*)?(\d+)\s*[\.:]?\s*",
 )
 _JA_FIG_CAPTION_RE = re.compile(
     r"^\s*図\s*(\d+)([a-z]?)\s*([.\s])\s*(\S)",
@@ -1268,6 +1281,9 @@ _ZH_PLATE_CAPTION_RE = re.compile(
     r"^\s*(?:说明\s*)?(?:图版|圖版)\s*(?:[IVX]+|No\.?\s*)?(\d+)\s*[\.:]?\s*",
 )
 _ZH_FIG_CAPTION_RE = re.compile(
+    # Bug-fix M-3: capture sub-figure letter (e.g. 圖1a) the same
+    # way the JA regex does, so ZH papers with figure sub-letters
+    # don't fall through to body-text rejection.
     r"^\s*(?:图|圖)\s*(\d+)([a-z]?)\s*([.\s])\s*(\S)",
 )
 
