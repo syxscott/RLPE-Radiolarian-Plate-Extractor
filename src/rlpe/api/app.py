@@ -186,6 +186,14 @@ class JobOptions(BaseModel):
     ocr_backend: str | None = None  # "paddleocr" | "easyocr"
     num_workers: int | None = None  # 1..32
     min_panel_score: float | None = None  # 0.0..1.0
+    # ---- Phase 28 caption-pairing page-distance windows ----
+    # caption_window: GROBID path lookup window (default 2). Increase
+    # when figure numbers in body text are far from the figure.
+    # od_caption_window: OpenDataLoader path cross-page limit
+    # (default 5). Increase when plates are clustered at the end of
+    # the paper or captions sit on the page adjacent to the figure.
+    caption_window: int | None = None  # 1..50
+    od_caption_window: int | None = None  # 1..200
 
     @field_validator("llm_backend")
     @classmethod
@@ -253,6 +261,27 @@ class JobOptions(BaseModel):
             return v
         if v < 1 or v > 32:
             raise ValueError(f"num_workers must be 1..32, got {v!r}")
+        return v
+
+    # Phase 28: caption-window validators. Both default to None which
+    # lets the pipeline fall back to its own field defaults (caption_window=2
+    # for GROBID, od_caption_window=5 for OpenDataLoader).
+    @field_validator("caption_window")
+    @classmethod
+    def _validate_caption_window(cls, v: int | None) -> int | None:
+        if v is None:
+            return v
+        if v < 1 or v > 50:
+            raise ValueError(f"caption_window must be 1..50, got {v!r}")
+        return v
+
+    @field_validator("od_caption_window")
+    @classmethod
+    def _validate_od_caption_window(cls, v: int | None) -> int | None:
+        if v is None:
+            return v
+        if v < 1 or v > 200:
+            raise ValueError(f"od_caption_window must be 1..200, got {v!r}")
         return v
 
     @field_validator("min_panel_score")
@@ -1744,6 +1773,12 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             pipeline_kwargs["num_workers"] = int(options["num_workers"])
         if options.get("min_panel_score") is not None:
             pipeline_kwargs["min_panel_score"] = float(options["min_panel_score"])
+        # Phase 28: forward the two caption-page-distance windows.
+        # These are first-class PipelineConfig fields, not extras.
+        if options.get("caption_window") is not None:
+            pipeline_kwargs["caption_window"] = int(options["caption_window"])
+        if options.get("od_caption_window") is not None:
+            pipeline_kwargs["od_caption_window"] = int(options["od_caption_window"])
         cfg = PipelineConfig(**pipeline_kwargs)
 
         # If using MiniMax, register a web-popup fallback handler.

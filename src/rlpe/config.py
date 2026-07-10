@@ -97,7 +97,20 @@ class PipelineConfig:
     ocr_backend: str = "paddleocr"
     taxon_model: str = "en_eco"
     min_panel_score: float = 0.80
+    # GROBID path only: how far ahead/behind the page of a TEI caption
+    # to look for a matching figure when figure numbers don't appear in
+    # body text. Default 2 (legacy). Operators can widen via
+    # ``--caption-window N``.
     caption_window: int = 2
+    # Phase 28: OpenDataLoader path page-distance limit for caption↔image
+    # pairing. Replaces four previously hard-coded limits in
+    # ``opendataloader_extractor.py`` (the +2 plate forward window,
+    # ±2 Fig. cross-page offsets, ±20 rescue hard cap, +3 body-ref
+    # reconstruction window). Default 5 catches appendix-style layouts
+    # (plates clustered at end of paper, caption on the previous/next
+    # page from the figure) without enlarging enough to cause
+    # cross-plate theft. Operators can widen via ``--od-caption-window N``.
+    od_caption_window: int = 5
     num_workers: int = 4
     render_dpi: int = 200
     save_intermediate: bool = False

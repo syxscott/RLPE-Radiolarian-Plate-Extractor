@@ -161,6 +161,11 @@ def test_boughdiri_caption_yields_od_fig_pair():
         )
     ]
     extractor = OpenDataLoaderExtractor.__new__(OpenDataLoaderExtractor)
+    # Phase 28: ``_extract_unpaired_captions`` reads
+    # ``self.caption_window`` (default 5). ``__new__`` skips __init__ so
+    # we must set the attribute explicitly for tests that bypass the
+    # constructor.
+    extractor.caption_window = 5
     # First arg is the full OD data dict (we wrap kids in expected shape)
     data = {"kids": kids}
     rescued = extractor._extract_unpaired_captions(

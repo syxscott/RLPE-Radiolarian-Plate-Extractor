@@ -80,6 +80,15 @@ class OpenDataLoaderExtractor:
     merge_gap_pt : float
         Maximum gap (in PDF points) between two images on the same page for
         them to be considered part of the same plate.  Default 72pt ≈ 1 inch.
+    caption_window : int
+        Phase 28: page-distance limit for caption↔image pairing. Controls
+        the plate forward window (``_build_figures_from_plate_captions``),
+        the Fig. cross-page offsets (``_extract_unpaired_captions``), the
+        rescue hard cap (``_rescue_missing_images``, applied ×4), and the
+        body-ref reconstruction window (``_reconstruct_plates_from_body_refs``).
+        Default 5 catches appendix-style layouts (plates clustered at end
+        of paper, caption on adjacent page) without enlarging enough to
+        cause cross-plate theft.
     """
 
     def __init__(
@@ -88,11 +97,16 @@ class OpenDataLoaderExtractor:
         ocr_lang: str = "en",
         image_format: str = "png",
         merge_gap_pt: float = 72.0,
+        caption_window: int = 5,
     ) -> None:
         self.use_ocr = use_ocr
         self.ocr_lang = ocr_lang
         self.image_format = image_format
         self.merge_gap_pt = merge_gap_pt
+        # Phase 28: stash the caption-pairing window. All OD path
+        # functions that hard-coded a page-distance limit read this
+        # instead. See module docstring + tests/test_round28_*.
+        self.caption_window = int(caption_window)
         self._available: bool | None = None
         # Lazy EasyOCR engine + lock. The previous implementation
         # declared these as locals inside ``_ocr_missing_captions`` and
@@ -473,15 +487,22 @@ class OpenDataLoaderExtractor:
                     ),
                 )
             if chosen_img is None:
-                # Search a small window of pages around the caption.
-                # Window of ±2 is wide enough to catch typical "plates
-                # at the end of the paper" layouts (most such papers
-                # have body in pages 1–10 and plates in 11–20), but
-                # tight enough to avoid grabbing a totally unrelated
-                # image on a far-away page. We score each candidate by
-                # 1/(1 + page_distance) so the closest image wins.
+                # Search a window of pages around the caption. Phase 28:
+                # the window size comes from ``self.caption_window``
+                # (default 5, set by ``OpenDataLoaderExtractor.__init__``
+                # or ``PipelineConfig.od_caption_window``). The legacy
+                # hard-coded ±2 limit was too tight for appendix-style
+                # layouts (body pp. 1–30, plates pp. 50–80) where
+                # Fig. N captions can be many pages away from their
+                # figures. We score each candidate by 1/(1 + page_distance)
+                # so the closest image still wins, regardless of window.
                 candidates: list[tuple[float, dict[str, Any]]] = []
-                for offset in (1, -1, 2, -2):
+                w = int(self.caption_window)
+                # Build the offsets list once: ±1, ±2, …, ±w. Two
+                # passes (positive then negative) keep the scoring
+                # order intuitive — closest first.
+                offsets = list(range(1, w + 1)) + list(range(-1, -w - 1, -1))
+                for offset in offsets:
                     for img in page_to_images.get(page + offset, []):
                         score = 1.0 / (1.0 + abs(offset))
                         # Slight bonus for a large image, since
@@ -541,10 +562,14 @@ class OpenDataLoaderExtractor:
         # Most OA radiolarian papers use this convention; OpenDataLoader does not
         # link captions to images reliably, so we do the plate association here
         # by anchoring the figure_id to the plate number.
-        plate_captions = _find_plate_captions(kids)
+        plate_captions = _find_plate_captions(kids, caption_window=self.caption_window)
         if plate_captions:
             plate_pairs, claimed_image_ids = _build_figures_from_plate_captions(
-                plate_captions, images, output_dir, paper_id
+                plate_captions,
+                images,
+                output_dir,
+                paper_id,
+                caption_window=self.caption_window,
             )
             # Always also include plate-less figures (so the geological/stratigraphic
             # index figures, like "Fig. 2 distribution map", still get processed).
@@ -679,7 +704,12 @@ class OpenDataLoaderExtractor:
         if plate_captions:
             pairs = plate_pairs
         pairs = _rescue_unmatched_captions(pairs, kids, output_dir, paper_id)
-        return _rescue_missing_images(pairs, kids, output_dir, paper_id)
+        # Phase 28: forward the caption-window so the rescue hard cap
+        # scales with the operator's choice (default 5 → cap 20,
+        # matching the legacy behaviour).
+        return _rescue_missing_images(
+            pairs, kids, output_dir, paper_id, caption_window=self.caption_window
+        )
 
 
 def _rescue_unmatched_captions(
@@ -769,6 +799,7 @@ def _rescue_missing_images(
     kids: list[dict[str, Any]],
     output_dir: Path,
     paper_id: str,
+    caption_window: int = 5,
 ) -> list[FigureCaptionPair]:
     """Pair caption-only figures with the nearest cross-page image.
 
@@ -876,7 +907,18 @@ def _rescue_missing_images(
             if (img_page, img_id) in rescued_used_keys:
                 continue
             page_diff = abs(img_page - cap_page)
-            if page_diff > 20:
+            # Phase 28: rescue hard cap is now ``caption_window * 4``.
+            # At the default ``caption_window=5`` the cap remains at
+            # 20 (= 5×4) — fully backward compatible. Operators who
+            # widen ``--od-caption-window`` to 10 get a ±40 rescue
+            # radius (covers "plates clustered at end" of a 50-page
+            # paper) without needing a separate flag. The 4× factor
+            # keeps the rescue radius proportionally larger than the
+            # Fig.-caption window, which is appropriate because
+            # rescue is a last-chance catch-all rather than the
+            # primary pairing path.
+            max_page_diff = int(caption_window) * 4
+            if page_diff > max_page_diff:
                 continue
             # Inverse-page-distance weight × area bonus (prefer the
             # largest image on the closest page).
@@ -1309,7 +1351,10 @@ def _collect_following_text(
     return "\n\n".join(parts)
 
 
-def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _find_plate_captions(
+    kids: list[dict[str, Any]],
+    caption_window: int = 5,
+) -> list[dict[str, Any]]:
     """Return elements whose text starts with ``Plate N`` /
     ``Explanation of Plate N``.
 
@@ -1527,7 +1572,7 @@ def _find_plate_captions(kids: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # 1 is described on p4 with the figure on p5).
         next_plate_page = next((pp for pp in real_plate_pages if pp > ref_page), None)
         page_lo = ref_page
-        page_hi = next_plate_page if next_plate_page is not None else ref_page + 3
+        page_hi = next_plate_page if next_plate_page is not None else ref_page + int(caption_window)
         has_image = any(page_lo <= p <= page_hi for p in images_by_page)
         if not has_image:
             continue
@@ -1716,6 +1761,7 @@ def _build_figures_from_plate_captions(
     images: list[dict[str, Any]],
     output_dir: Path,
     paper_id: str,
+    caption_window: int = 5,
 ) -> tuple[list[FigureCaptionPair], set[int]]:
     """Build FigureCaptionPair list by linking each plate caption to nearby images.
 
@@ -1740,9 +1786,14 @@ def _build_figures_from_plate_captions(
     claimed_image_ids: set[int] = set()
     for idx, cap in enumerate(plate_captions):
         page_lo = cap["page_number"]
-        # Default forward window is page_lo..page_lo+2 (covers the
-        # caption-below-figure and figure-on-next-page layouts).
-        page_hi = page_lo + 2
+        # Phase 28: forward window now configurable via
+        # ``caption_window`` (default 5 on PipelineConfig / OD
+        # extractor). Covers the caption-below-figure and
+        # figure-on-next-page layouts, plus appendix-style layouts
+        # where plates sit a few pages after their caption. The next-
+        # caption clamp below prevents Plate A from stealing images
+        # that belong to Plate B even when the window is wide.
+        page_hi = page_lo + int(caption_window)
         if idx + 1 < n:
             next_cap_page = plate_captions[idx + 1]["page_number"]
             # Clamp the forward window when the next caption is at

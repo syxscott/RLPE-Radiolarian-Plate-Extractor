@@ -148,6 +148,10 @@ class RadiolarianPipeline:
                         use_ocr=bool(self.config.extra.get("od_use_ocr", False)),
                         ocr_lang=str(self.config.extra.get("od_ocr_lang", "en")),
                         merge_gap_pt=float(self.config.extra.get("od_merge_gap_pt", 72.0)),
+                        # Phase 28: forward the OD path page-distance
+                        # limit. Default 5 on PipelineConfig; CLI
+                        # overrides via ``--od-caption-window``.
+                        caption_window=self.config.od_caption_window,
                     )
         return self._od_extractor
 

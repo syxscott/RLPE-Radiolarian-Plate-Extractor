@@ -75,6 +75,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable GPU for OCR and neural modules. "
         "Default: auto-detect (True if CUDA available, else False).",
     )
+    # Phase 28: caption→page lookup window for the GROBID path. Default
+    # 2 matches the legacy ``caption_window`` config. Increase for
+    # papers where figure numbers appear far from the figure (e.g.
+    # body text far from plates).
+    p.add_argument(
+        "--caption-window",
+        type=int,
+        default=None,
+        help="GROBID caption→page lookup window (default 2). Larger "
+        "values help when figure numbers only appear in body text "
+        "far from the actual figure (e.g. body pp. 1-10, plates "
+        "pp. 40-60). 1..50.",
+    )
+    # Phase 28: OpenDataLoader path page-distance limit for caption↔
+    # image pairing. Default 5 catches appendix-style layouts (plates
+    # clustered at end, caption on adjacent page) without enlarging
+    # enough to cause cross-plate theft.
+    p.add_argument(
+        "--od-caption-window",
+        type=int,
+        default=None,
+        help="OpenDataLoader caption↔image page-distance limit "
+        "(default 5). Controls the plate forward window, Fig. "
+        "cross-page offsets, rescue hard cap (×4), and body-ref "
+        "reconstruction window. Increase for appendix-style "
+        "layouts. 1..200.",
+    )
     p.add_argument(
         "--num-workers",
         type=int,
@@ -328,6 +355,15 @@ def main() -> int:
         min_panel_score=args.min_panel_score,
         render_dpi=args.render_dpi,
         save_intermediate=args.save_intermediate,
+        # Phase 28: forward the two caption-window knobs. Both fields
+        # have defaults on PipelineConfig (caption_window=2,
+        # od_caption_window=5); we only override when the user passed
+        # the CLI flag explicitly so non-interactive callers keep the
+        # legacy behaviour.
+        caption_window=args.caption_window if args.caption_window is not None else 2,
+        od_caption_window=(
+            args.od_caption_window if args.od_caption_window is not None else 5
+        ),
         extra={
             "sam2_checkpoint": args.sam2_checkpoint,
             "sam2_model_cfg": args.sam2_model_cfg,
