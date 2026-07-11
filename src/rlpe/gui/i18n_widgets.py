@@ -99,11 +99,13 @@ def tr_button(
     object_name: Optional[str] = None,
     parent: Optional[QWidget] = None,
     object_name_attr: str = "default",
+    min_height: int = 30,
 ) -> QPushButton:
     btn = QPushButton(parent)
     key = object_name or text_key
     btn.setObjectName(key)
     btn.setProperty("object_name_attr", object_name_attr)
+    btn.setMinimumHeight(min_height)
     i18n.register_widget_text(key, "text", key)
     i18n._tr(key)  # force registration
     # We can't call _set_text because it would re-set the objectName.
@@ -117,10 +119,17 @@ def tr_checkbox(
     object_name: Optional[str] = None,
     parent: Optional[QWidget] = None,
     checked: bool = False,
+    min_height: int = 30,
 ) -> QCheckBox:
+    """Create a QCheckBox with translated text.
+
+    Phase 35: default ``min_height=30`` so long checkbox labels
+    like "Enable PBDB enrichment (taxonomy + occurrences)" wrap
+    cleanly rather than clipping at the QSS 22-px checkbox height."""
     cb = QCheckBox(parent)
     key = object_name or text_key
     cb.setChecked(checked)
+    cb.setMinimumHeight(min_height)
     _set_text(cb, "text", key)
     return cb
 
@@ -144,16 +153,22 @@ def tr_lineedit(
     parent: Optional[QWidget] = None,
     min_width: int = 180,
     text: str = "",
+    min_height: int = 30,
 ) -> QLineEdit:
     """Create a QLineEdit with a translated placeholder.
 
     Note: only the *placeholder* is translated. The user input is
     not (and should not be) re-translated when the language changes
     — that would clobber what the user is typing.
+
+    Phase 35: default ``min_height=30`` so the row in any layout
+    matches the 30-px QSpinBox / QComboBox row height and the
+    value text isn't clipped.
     """
     le = QLineEdit(text, parent)
     key = object_name or placeholder_key
     le.setMinimumWidth(min_width)
+    le.setMinimumHeight(min_height)
     le.setObjectName(key)
     i18n.register_widget_text(key, "placeholderText", key)
     le.setPlaceholderText(i18n._tr(key))
@@ -169,13 +184,18 @@ def tr_spinbox(
     min_val: int = 0,
     max_val: int = 1000,
     value: int = 0,
+    min_height: int = 30,
 ) -> QSpinBox:
     """Create a QSpinBox. The label above / beside the spinbox is
     a separate ``tr_label`` call — this factory only creates the
     numeric input. We still register a translation key for the
-    spinbox's prefix / suffix via the surrounding label."""
+    spinbox's prefix / suffix via the surrounding label.
+
+    Phase 35: default ``min_height=30`` for visual parity with the
+    row heights in QFormLayout."""
     sb = QSpinBox(parent)
     sb.setMinimumWidth(min_width)
+    sb.setMinimumHeight(min_height)
     sb.setRange(min_val, max_val)
     sb.setValue(value)
     if object_name:
@@ -192,9 +212,11 @@ def tr_doublespinbox(
     max_val: float = 1.0,
     value: float = 0.5,
     step: float = 0.05,
+    min_height: int = 30,
 ) -> QDoubleSpinBox:
     sb = QDoubleSpinBox(parent)
     sb.setMinimumWidth(min_width)
+    sb.setMinimumHeight(min_height)
     sb.setRange(min_val, max_val)
     sb.setSingleStep(step)
     sb.setValue(value)
@@ -211,6 +233,7 @@ def tr_combobox(
     min_width: int = 130,
     items: Optional[list[str]] = None,
     current: Optional[str] = None,
+    min_height: int = 30,
 ) -> QComboBox:
     """Create a QComboBox with a translated list of items.
 
@@ -218,10 +241,12 @@ def tr_combobox(
     are pulled from a separate per-key item list (not all keys
     have items — only the ones that need translation). If
     ``items`` is provided, those literal strings are inserted.
-    """
+
+    Phase 35: default ``min_height=30`` for visual parity."""
     cb = QComboBox(parent)
     key = object_name or text_key
     cb.setMinimumWidth(min_width)
+    cb.setMinimumHeight(min_height)
     if items:
         cb.addItems(items)
     if current:

@@ -179,7 +179,10 @@ QPushButton {{
     border: 1px solid #cdd5e0;
     border-radius: {RADIUS_S}px;
     padding: 6px 16px;
-    min-height: 22px;
+    /* Phase 35: bumped from 22 → 30 so buttons inside QFormLayout rows
+       are the same height as QSpinBox / QComboBox / QLineEdit, and
+       the text never clips at 150% DPI or under the QSS dark theme. */
+    min-height: 30px;
 }}
 QPushButton:hover {{
     background-color: #d6e4ff;
@@ -225,6 +228,12 @@ QPushButton#flat:hover {{
 QCheckBox, QRadioButton {{
     spacing: 6px;
     color: #1f2933;
+    /* Phase 35: ensure the checkbox row in QFormLayout is the same
+       height as the spinbox/combobox/lineedit rows so long labels
+       like "Enable PBDB enrichment (taxonomy + occurrences)" wrap
+       cleanly instead of clipping to ~16 px. */
+    min-height: 30px;
+    padding: 2px 0;
 }}
 QCheckBox::indicator, QRadioButton::indicator {{
     width: 16px;
@@ -531,7 +540,8 @@ QPushButton {{
     border: 1px solid #2d3748;
     border-radius: {RADIUS_S}px;
     padding: 6px 16px;
-    min-height: 22px;
+    /* Phase 35: bumped from 22 → 30 for parity with form-input rows. */
+    min-height: 30px;
 }}
 QPushButton:hover {{
     background-color: #2c5282;
@@ -575,6 +585,10 @@ QPushButton#flat:hover {{
 QCheckBox, QRadioButton {{
     spacing: 6px;
     color: #e2e8f0;
+    /* Phase 35: same as the light theme — min-height 30px + 2px
+       vertical padding keeps long checkbox labels readable. */
+    min-height: 30px;
+    padding: 2px 0;
 }}
 QCheckBox::indicator, QRadioButton::indicator {{
     width: 16px;

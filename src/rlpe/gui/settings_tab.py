@@ -256,8 +256,7 @@ class SettingsTab(QWidget):
         playout.setHorizontalSpacing(SPACE_L)
         playout.setVerticalSpacing(SPACE_S)
 
-        self._use_pbdb = QCheckBox("Enable PBDB enrichment (taxonomy + occurrences)")
-        self._use_pbdb.setChecked(True)
+        self._use_pbdb = tr_checkbox("settab.pbdb.use", checked=True)
         playout.addRow("", self._use_pbdb)
 
         self._pbdb_max_occ = QSpinBox()
@@ -282,7 +281,7 @@ class SettingsTab(QWidget):
         self._dpi.setValue(DEFAULT_RENDER_DPI)
         dlayout.addRow(tr_label("settab.diag.dpi"), self._dpi)
 
-        self._save_intermediate = QCheckBox("Save intermediate panels (large disk usage)")
+        self._save_intermediate = tr_checkbox("settab.diag.save_intermediate")
         dlayout.addRow("", self._save_intermediate)
 
         self._open_log_btn = tr_button("settab.diag.log_btn")
@@ -495,17 +494,25 @@ class SettingsTab(QWidget):
     # Public API used by the parent MainWindow
     # ------------------------------------------------------------------
     def _normalise_input_heights(self, min_height: int = 30) -> None:
-        """Phase 34: clamp every input widget's minimum height.
+        """Phase 34/35: clamp every input widget's minimum height.
 
         QFormLayout collapses a row to the height of its smallest
         child, so a QSpinBox with default 22-px height clips the value
         text in the QSS dark theme and at 150% DPI. This walks all
         descendants once after _build_ui() and forces each input
-        widget (SpinBox / DoubleSpinBox / ComboBox / LineEdit) to
-        have a minimum height of ``min_height``.
+        widget (SpinBox / DoubleSpinBox / ComboBox / LineEdit /
+        PushButton / CheckBox) to have a minimum height of ``min_height``.
+
+        Phase 35 added QCheckBox — long checkbox labels such as
+        "Enable PBDB enrichment (taxonomy + occurrences)" or
+        "Save intermediate panels (large disk usage)" would otherwise
+        wrap / clip at the QSS-imposed 22-px checkbox height.
         """
         for w in self.findChildren(QWidget):
-            if isinstance(w, (QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit, QPushButton)):
+            if isinstance(
+                w,
+                (QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit, QPushButton, QCheckBox),
+            ):
                 if w.minimumHeight() < min_height:
                     w.setMinimumHeight(min_height)
 

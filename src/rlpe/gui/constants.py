@@ -153,7 +153,7 @@ INPUT_WIDTH_FULL: Final[int] = 600      # Long-form comments / descriptors
 
 # Buttons
 BUTTON_MIN_WIDTH: Final[int] = 90
-BUTTON_MIN_HEIGHT: Final[int] = 28
+BUTTON_MIN_HEIGHT: Final[int] = 30     # Phase 35: bumped from 28 → 30 for parity with input rows
 BUTTON_PRIMARY_HEIGHT: Final[int] = 34     # Main action button (e.g. Start)
 
 # QComboBox

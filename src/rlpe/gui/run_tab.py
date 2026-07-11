@@ -64,7 +64,7 @@ from .constants import (
 )
 from .i18n_widgets import (
     tr_button, tr_checkbox, tr_combobox, tr_doublespinbox,
-    tr_groupbox, tr_label, tr_lineedit, tr_spinbox,
+    tr_form_row, tr_groupbox, tr_label, tr_lineedit, tr_spinbox,
 )
 from . import i18n
 from .styles import SPACE_L, SPACE_M, SPACE_S, SPACE_XL
@@ -270,69 +270,72 @@ class RunTab(QWidget):
         self._llm_combo = QComboBox()
         self._llm_combo.addItems(["minimax", "minimax-m3", "minimax_api", "transformers", "ollama", "llamacpp"])
         self._llm_combo.setCurrentText(DEFAULT_LLM_BACKEND)
-        adv_layout.addRow("LLM backend:", self._llm_combo)
+        lbl, w = tr_form_row("runtab.label.llm_backend", self._llm_combo)
+        adv_layout.addRow(lbl, w)
 
         self._m3_lang = QComboBox()
         self._m3_lang.addItems(["auto", "zh", "en", "ja"])
         self._m3_lang.setCurrentText(DEFAULT_M3_PROMPT_LANG)
-        adv_layout.addRow("M3 prompt lang:", self._m3_lang)
+        lbl, w = tr_form_row("runtab.label.m3_lang", self._m3_lang)
+        adv_layout.addRow(lbl, w)
 
         self._m3_model_edit = QLineEdit(DEFAULT_MINIMAX_MODEL)
-        adv_layout.addRow("M3 model:", self._m3_model_edit)
+        lbl, w = tr_form_row("runtab.label.m3_model", self._m3_model_edit)
+        adv_layout.addRow(lbl, w)
 
         self._m3_budget = QSpinBox()
         self._m3_budget.setRange(*RANGE_M3_BUDGET)
         self._m3_budget.setValue(1024)
-        adv_layout.addRow("M3 thinking budget:", self._m3_budget)
+        lbl, w = tr_form_row("runtab.label.m3_budget", self._m3_budget)
+        adv_layout.addRow(lbl, w)
 
         self._m3_output = QSpinBox()
         self._m3_output.setRange(*RANGE_M3_OUTPUT_TOKENS)
         self._m3_output.setValue(2048)
-        adv_layout.addRow("M3 max output tokens:", self._m3_output)
+        lbl, w = tr_form_row("runtab.label.m3_output", self._m3_output)
+        adv_layout.addRow(lbl, w)
 
         self._m3_timeout = QSpinBox()
         self._m3_timeout.setRange(*RANGE_M3_TIMEOUT)
         self._m3_timeout.setValue(DEFAULT_M3_TIMEOUT)
-        adv_layout.addRow("M3 timeout (s):", self._m3_timeout)
+        lbl, w = tr_form_row("runtab.label.m3_timeout", self._m3_timeout)
+        adv_layout.addRow(lbl, w)
 
         self._m3_max_retries = QSpinBox()
         self._m3_max_retries.setRange(*RANGE_M3_MAX_RETRIES)
         self._m3_max_retries.setValue(3)
-        adv_layout.addRow("M3 max retries:", self._m3_max_retries)
+        lbl, w = tr_form_row("runtab.label.m3_max_retries", self._m3_max_retries)
+        adv_layout.addRow(lbl, w)
 
-        self._paleodb_check = QCheckBox("Use Paleobiology Database for taxonomy + occurrence enrichment")
-        self._paleodb_check.setChecked(True)
+        self._paleodb_check = tr_checkbox("runtab.use_pbdb", checked=True)
         adv_layout.addRow("", self._paleodb_check)
 
         self._paleodb_occ = QSpinBox()
         self._paleodb_occ.setRange(*RANGE_PALEO_OCC)
         self._paleodb_occ.setValue(DEFAULT_PALEO_MAX_OCC)
-        adv_layout.addRow("PBDB max occurrences:", self._paleodb_occ)
+        lbl, w = tr_form_row("runtab.label.paleodb_occ", self._paleodb_occ)
+        adv_layout.addRow(lbl, w)
 
-        self._geo_vision = QCheckBox("Multi-modal geology vision (Round 6)")
-        self._geo_vision.setChecked(True)
+        self._geo_vision = tr_checkbox("runtab.geo_vision", checked=True)
         adv_layout.addRow("", self._geo_vision)
 
-        self._m3_stage3 = QCheckBox("M3 stage 3 (panel refinement)")
-        self._m3_stage3.setChecked(True)
+        self._m3_stage3 = tr_checkbox("runtab.m3_stage3", checked=True)
         adv_layout.addRow("", self._m3_stage3)
 
-        self._m3_multi_plate = QCheckBox("M3 multi-plate enrichment (Round 7)")
-        self._m3_multi_plate.setChecked(True)
+        self._m3_multi_plate = tr_checkbox("runtab.m3_multi_plate", checked=True)
         adv_layout.addRow("", self._m3_multi_plate)
 
-        self._od_fallback = QCheckBox("Allow OpenDataLoader fallback when GROBID fails (Phase 29)")
-        self._od_fallback.setChecked(True)
+        self._od_fallback = tr_checkbox("runtab.od_fallback", checked=True)
         adv_layout.addRow("", self._od_fallback)
 
-        self._save_intermediate = QCheckBox("Save intermediate panels (large disk usage)")
-        self._save_intermediate.setChecked(False)
+        self._save_intermediate = tr_checkbox("runtab.save_intermediate", checked=False)
         adv_layout.addRow("", self._save_intermediate)
 
         self._dpi = QSpinBox()
         self._dpi.setRange(*RANGE_DPI)
         self._dpi.setValue(DEFAULT_RENDER_DPI)
-        adv_layout.addRow("Render DPI:", self._dpi)
+        lbl, w = tr_form_row("runtab.label.dpi", self._dpi)
+        adv_layout.addRow(lbl, w)
 
         cfg_layout.addWidget(adv)
         cfg_layout.addStretch(1)
