@@ -94,10 +94,10 @@ def _tr(key: str, default: Optional[str] = None) -> str:
 # Widget text registry
 # ============================================================
 # Each entry: (objectName, attr_name, translation_key)
-_REGISTRY: list[tuple[str, str, str]] = []
+_REGISTRY: list[tuple[str, str, str, dict]] = []
 
 
-def register_widget_text(object_name: str, attr: str, key: str) -> None:
+def register_widget_text(object_name: str, attr: str, key: str, **fmt) -> None:
     """Bind a translation key to a widget identified by ``objectName``.
 
     The widget is looked up by ``objectName`` (set this on the
@@ -115,12 +115,18 @@ def register_widget_text(object_name: str, attr: str, key: str) -> None:
     The text is applied immediately at registration time (so the
     widget displays the right string at first paint) and re-applied
     on every ``set_language`` call.
+
+    Phase 34: ``fmt`` keyword args are substituted into the
+    translated text via ``str.format(**fmt)``. Use this for
+    templates like ``"⚙️ {app}  ·  v{version}"`` where the placeholders
+    are language-independent (English vs Chinese versions both have
+    the same ``{app}`` / ``{version}`` slots).
     """
-    _REGISTRY.append((object_name, attr, key))
-    _apply_to_one(object_name, attr, key)
+    _REGISTRY.append((object_name, attr, key, fmt))
+    _apply_to_one(object_name, attr, key, fmt)
 
 
-def _apply_to_one(object_name: str, attr: str, key: str) -> None:
+def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None) -> None:
     """Apply a single (objectName, attr, key) immediately.
 
     Skipped if QApplication is not yet constructed (early imports).
@@ -134,6 +140,14 @@ def _apply_to_one(object_name: str, attr: str, key: str) -> None:
         if w.objectName() != object_name:
             continue
         text = _tr(key)
+        # Phase 34: apply .format() so translated templates
+        # like "⚙️ {app}  ·  v{version}" can carry language-
+        # independent placeholders.
+        if fmt and "{" in text:
+            try:
+                text = text.format(**fmt)
+            except (KeyError, IndexError):
+                pass  # leave unformatted if caller didn't supply all keys
         try:
             if attr == "text":
                 w.setText(text)
@@ -157,8 +171,8 @@ def _apply_to_one(object_name: str, attr: str, key: str) -> None:
 
 def _apply_registry() -> None:
     """Re-apply every registered widget for the current language."""
-    for object_name, attr, key in list(_REGISTRY):
-        _apply_to_one(object_name, attr, key)
+    for object_name, attr, key, fmt in list(_REGISTRY):
+        _apply_to_one(object_name, attr, key, fmt)
 
 
 # ============================================================

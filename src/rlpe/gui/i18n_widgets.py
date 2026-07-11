@@ -234,3 +234,38 @@ def tr_combobox(
         i18n.register_widget_text(key, "placeholderText", text_key)
         cb.setPlaceholderText(i18n._tr(text_key))
     return cb
+
+
+# ============================================================
+# Phase 34: form-row helper + input-height normalisation
+# ============================================================
+def tr_form_row(
+    label_key: str,
+    widget: QWidget,
+    *,
+    label_align: Qt.AlignmentFlag = Qt.AlignRight | Qt.AlignVCenter,
+    min_height: int = 30,
+) -> tuple[QLabel, QWidget]:
+    """Create a (label, widget) pair ready to be passed to
+    ``QFormLayout.addRow``. The label is translated via
+    ``label_key``; the widget's height is forced to ``min_height``
+    so a QSpinBox / QComboBox value isn't visually clipped at
+    high DPI or under the QSS dark theme.
+    """
+    lbl = tr_label(label_key)
+    lbl.setAlignment(label_align)
+    lbl.setMinimumHeight(min_height)
+    widget.setMinimumHeight(min_height)
+    return lbl, widget
+
+
+def normalise_input_height(widget: QWidget, min_height: int = 30) -> None:
+    """Force ``min_height`` on an existing input widget.
+
+    Phase 34 fix: QFormLayout with a QSpinBox/QComboBox used to
+    collapse the row to ~22 px (the widget's natural height),
+    which clipped the value text in the QSS dark theme and at
+    150% DPI. Setting a 30-px min height keeps the value visible
+    and the row visually balanced with the QGroupBox title.
+    """
+    widget.setMinimumHeight(min_height)

@@ -253,4 +253,8 @@ STRINGS = {
     'toolbar.results': '📊  结果',
     'toolbar.run': '▶  运行',
     'toolbar.settings': '⚙️  设置',
+    # Added in Phase 34 for language switcher
+    'settab.lang': '语言：',
+    'app.name': 'RLPE - 放射虫图版提取系统',
+    'app.version': '0.1.0',
 }

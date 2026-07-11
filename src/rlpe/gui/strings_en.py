@@ -317,4 +317,8 @@ STRINGS = {
     "filter.csv": "CSV files (*.csv)",
     "filter.zip": "Zip files (*.zip)",
     "filter.dir": "Directories",
+    # Added in Phase 34 for language switcher
+    "settab.lang": "Language:",
+    "app.name": "RLPE - Radiolarian Plate Extractor",
+    "app.version": "0.1.0",
 }

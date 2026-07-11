@@ -70,7 +70,7 @@ from .constants import (
     THEME_LIGHT,
     THEME_SYSTEM,
 )
-from .i18n_widgets import tr_button, tr_checkbox, tr_combobox, tr_groupbox, tr_label, tr_lineedit, tr_spinbox
+from .i18n_widgets import (normalise_input_height, tr_button, tr_checkbox, tr_combobox, tr_form_row, tr_groupbox, tr_label, tr_lineedit, tr_spinbox)
 from .styles import SPACE_L, SPACE_M, SPACE_S, apply_theme
 from . import i18n
 from .utils import get_gui_logger
@@ -94,16 +94,28 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
+        # Phase 34: normalise all input heights so the QSS dark theme
+        # and 150% DPI don't clip QSpinBox / QComboBox value text.
+        # Called at the end of _build_ui via _normalise_input_heights().
         outer.setContentsMargins(SPACE_L, SPACE_L, SPACE_L, SPACE_L)
         outer.setSpacing(SPACE_M)
 
         # Title
-        title = QLabel(f"⚙️ {APP_NAME}  ·  v{APP_VERSION}")
-        title.setObjectName("sectionTitle")
+        # Phase 34: title is a translated template with {app}/{version}.
+        # We do NOT use tr_label or i18n.register_widget_text for the
+        # title because both would substitute APP_NAME (the Python
+        # constant) into the template, locking the language. Instead
+        # the _refresh_texts method calls i18n._tr("app.name") so the
+        # ZH title says "RLPE - 放射虫图版提取系统" rather than the
+        # EN constant.
+        title = QLabel(self)
+        title.setObjectName("settab.title")
+        title.setProperty("class", "sectionTitle")
+        self._title_label = title
         outer.addWidget(title)
 
         # ---- Appearance ----
-        appearance = QGroupBox("🎨 Appearance")
+        appearance = tr_groupbox("settab.appearance")
         alayout = QFormLayout(appearance)
         alayout.setHorizontalSpacing(SPACE_L)
         alayout.setVerticalSpacing(SPACE_S)
@@ -128,113 +140,118 @@ class SettingsTab(QWidget):
         self._lang_combo.currentIndexChanged.connect(self._on_lang_change)
         alayout.addRow(tr_label("settab.lang"), self._lang_combo)
 
+        # Phase 34: add the title to the outer layout so it shows at the
+        # top of the settings tab. (Previously the title QLabel was
+        # created but never inserted, so it was invisible — which is
+        # also why the i18n refresh never reached it.)
+        outer.addWidget(self._title_label)
         outer.addWidget(appearance)
 
         # ---- Default directories ----
-        dirs_group = QGroupBox("📁 Default directories")
+        dirs_group = tr_groupbox("settab.dirs")
         dlayout = QFormLayout(dirs_group)
         dlayout.setHorizontalSpacing(SPACE_L)
         dlayout.setVerticalSpacing(SPACE_S)
 
         self._pdf_dir_edit = QLineEdit()
         self._pdf_dir_edit.setReadOnly(True)
-        dlayout.addRow("Default PDF directory:", self._build_file_row(self._pdf_dir_edit, "pdf_dir"))
+        dlayout.addRow(tr_label("settab.dir.pdf"), self._build_file_row(self._pdf_dir_edit, "pdf_dir"))
 
         self._out_dir_edit = QLineEdit()
         self._out_dir_edit.setReadOnly(True)
-        dlayout.addRow("Default output directory:", self._build_file_row(self._out_dir_edit, "output_dir"))
+        dlayout.addRow(tr_label("settab.dir.out"), self._build_file_row(self._out_dir_edit, "output_dir"))
 
         outer.addWidget(dirs_group)
 
         # ---- GROBID defaults ----
-        grobid = QGroupBox("🌐 GROBID defaults")
+        grobid = tr_groupbox("settab.grobid")
         glayout = QFormLayout(grobid)
         glayout.setHorizontalSpacing(SPACE_L)
         glayout.setVerticalSpacing(SPACE_S)
 
         self._grobid_url = QLineEdit(DEFAULT_GROBID_URL)
-        glayout.addRow("GROBID URL:", self._grobid_url)
+        glayout.addRow(tr_label("settab.grobid.url"), self._grobid_url)
 
         self._grobid_retries = QSpinBox()
         self._grobid_retries.setRange(*RANGE_GROBID_MAX_RETRIES)
         self._grobid_retries.setValue(DEFAULT_GROBID_MAX_RETRIES)
-        glayout.addRow("Max retries:", self._grobid_retries)
+        glayout.addRow(tr_label("settab.grobid.retries"), self._grobid_retries)
 
         self._grobid_timeout = QSpinBox()
         self._grobid_timeout.setRange(*RANGE_GROBID_TIMEOUT)
         self._grobid_timeout.setValue(DEFAULT_GROBID_TIMEOUT)
-        glayout.addRow("Timeout (s):", self._grobid_timeout)
+        glayout.addRow(tr_label("settab.grobid.timeout"), self._grobid_timeout)
 
         outer.addWidget(grobid)
 
         # ---- OCR defaults ----
-        ocr = QGroupBox("🔡 OCR defaults")
+        ocr = tr_groupbox("settab.ocr")
         olayout = QFormLayout(ocr)
         olayout.setHorizontalSpacing(SPACE_L)
         olayout.setVerticalSpacing(SPACE_S)
 
         self._ocr_backend = QComboBox()
         self._ocr_backend.addItems(["paddleocr", "easyocr"])
-        olayout.addRow("OCR backend:", self._ocr_backend)
+        olayout.addRow(tr_label("settab.ocr.backend"), self._ocr_backend)
 
         self._ocr_lang = QLineEdit(DEFAULT_OCR_LANG)
         self._ocr_lang.setPlaceholderText("en, en,ja, en,ch_sim…")
-        olayout.addRow("OCR language(s):", self._ocr_lang)
+        olayout.addRow(tr_label("settab.ocr.lang"), self._ocr_lang)
 
         self._caption_window = QSpinBox()
         self._caption_window.setRange(1, 50)
         self._caption_window.setValue(2)
-        olayout.addRow("Caption window (GROBID):", self._caption_window)
+        olayout.addRow(tr_label("settab.ocr.caption_window"), self._caption_window)
 
         self._od_caption_window = QSpinBox()
         self._od_caption_window.setRange(*RANGE_OD_CAPTION_WINDOW)
         self._od_caption_window.setValue(5)
-        olayout.addRow("OD caption window:", self._od_caption_window)
+        olayout.addRow(tr_label("settab.ocr.od_caption_window"), self._od_caption_window)
 
         outer.addWidget(ocr)
 
         # ---- LLM defaults ----
-        llm = QGroupBox("🧠 LLM / M3 defaults")
+        llm = tr_groupbox("settab.llm")
         llayout = QFormLayout(llm)
         llayout.setHorizontalSpacing(SPACE_L)
         llayout.setVerticalSpacing(SPACE_S)
 
         self._llm_backend = QComboBox()
         self._llm_backend.addItems(["minimax", "minimax-m3", "minimax_api", "transformers", "ollama", "llamacpp"])
-        llayout.addRow("LLM backend:", self._llm_backend)
+        llayout.addRow(tr_label("settab.llm.backend"), self._llm_backend)
 
         self._m3_model = QLineEdit(DEFAULT_MINIMAX_MODEL)
-        llayout.addRow("M3 model:", self._m3_model)
+        llayout.addRow(tr_label("settab.m3.model"), self._m3_model)
 
         self._m3_prompt_lang = QComboBox()
         self._m3_prompt_lang.addItems(["auto", "zh", "en", "ja"])
         self._m3_prompt_lang.setCurrentText(DEFAULT_M3_PROMPT_LANG)
-        llayout.addRow("M3 prompt lang:", self._m3_prompt_lang)
+        llayout.addRow(tr_label("settab.m3.lang"), self._m3_prompt_lang)
 
         self._m3_budget = QSpinBox()
         self._m3_budget.setRange(*RANGE_M3_BUDGET)
         self._m3_budget.setValue(DEFAULT_M3_BUDGET)
-        llayout.addRow("M3 thinking budget:", self._m3_budget)
+        llayout.addRow(tr_label("settab.m3.budget"), self._m3_budget)
 
         self._m3_output = QSpinBox()
         self._m3_output.setRange(*RANGE_M3_OUTPUT_TOKENS)
         self._m3_output.setValue(2048)
-        llayout.addRow("M3 max output tokens:", self._m3_output)
+        llayout.addRow(tr_label("settab.m3.output"), self._m3_output)
 
         self._m3_timeout = QSpinBox()
         self._m3_timeout.setRange(*RANGE_M3_TIMEOUT)
         self._m3_timeout.setValue(DEFAULT_M3_TIMEOUT)
-        llayout.addRow("M3 timeout (s):", self._m3_timeout)
+        llayout.addRow(tr_label("settab.m3.timeout"), self._m3_timeout)
 
         self._m3_max_retries = QSpinBox()
         self._m3_max_retries.setRange(*RANGE_M3_MAX_RETRIES)
         self._m3_max_retries.setValue(3)
-        llayout.addRow("M3 max retries:", self._m3_max_retries)
+        llayout.addRow(tr_label("settab.m3.max_retries"), self._m3_max_retries)
 
         outer.addWidget(llm)
 
         # ---- PBDB defaults ----
-        pbdb = QGroupBox("🦴 Paleobiology Database defaults")
+        pbdb = tr_groupbox("settab.pbdb")
         playout = QFormLayout(pbdb)
         playout.setHorizontalSpacing(SPACE_L)
         playout.setVerticalSpacing(SPACE_S)
@@ -246,16 +263,16 @@ class SettingsTab(QWidget):
         self._pbdb_max_occ = QSpinBox()
         self._pbdb_max_occ.setRange(*RANGE_PALEO_OCC)
         self._pbdb_max_occ.setValue(DEFAULT_PALEO_MAX_OCC)
-        playout.addRow("Max occurrences per species:", self._pbdb_max_occ)
+        playout.addRow(tr_label("settab.pbdb.occ"), self._pbdb_max_occ)
 
         self._pbdb_endpoint = QLineEdit("https://paleobiodb.org/data1.2")
         self._pbdb_endpoint.setPlaceholderText("(leave blank for default)")
-        playout.addRow("PBDB endpoint:", self._pbdb_endpoint)
+        playout.addRow(tr_label("settab.pbdb.endpoint"), self._pbdb_endpoint)
 
         outer.addWidget(pbdb)
 
         # ---- Diagnostics ----
-        diag = QGroupBox("🛠️ Diagnostics")
+        diag = tr_groupbox("settab.diag")
         dlayout = QFormLayout(diag)
         dlayout.setHorizontalSpacing(SPACE_L)
         dlayout.setVerticalSpacing(SPACE_S)
@@ -263,14 +280,14 @@ class SettingsTab(QWidget):
         self._dpi = QSpinBox()
         self._dpi.setRange(*RANGE_DPI)
         self._dpi.setValue(DEFAULT_RENDER_DPI)
-        dlayout.addRow("Render DPI:", self._dpi)
+        dlayout.addRow(tr_label("settab.diag.dpi"), self._dpi)
 
         self._save_intermediate = QCheckBox("Save intermediate panels (large disk usage)")
         dlayout.addRow("", self._save_intermediate)
 
-        self._open_log_btn = QPushButton("📂 Open log file")
+        self._open_log_btn = tr_button("settab.diag.log_btn")
         self._open_log_btn.clicked.connect(self._open_log_file)
-        dlayout.addRow("Logs:", self._open_log_btn)
+        dlayout.addRow(tr_label("settab.diag.log_label"), self._open_log_btn)
 
         outer.addWidget(diag)
 
@@ -281,24 +298,30 @@ class SettingsTab(QWidget):
         actions.setSpacing(SPACE_S)
         actions.addStretch(1)
 
-        reset_btn = QPushButton("Reset to defaults")
-        reset_btn.setObjectName("flat")
+        reset_btn = tr_button("settab.reset")
+        reset_btn.setProperty("class", "flat")
         reset_btn.clicked.connect(self._reset_defaults)
         actions.addWidget(reset_btn)
 
-        save_btn = QPushButton("💾 Save settings")
-        save_btn.setObjectName("primary")
+        save_btn = tr_button("settab.save")
+        save_btn.setProperty("class", "primary")
         save_btn.clicked.connect(self._save)
         actions.addWidget(save_btn)
 
         outer.addLayout(actions)
+
+        # Phase 34: ensure every input widget has a 30-px
+        # minimum height so the value is visible. This runs once
+        # at construction; for runtime dynamic widgets, call
+        # ``_normalise_input_heights()`` after adding them.
+        self._normalise_input_heights()
 
     def _build_file_row(self, line_edit: QLineEdit, kind: str) -> QHBoxLayout:
         """Build a QLineEdit + browse button row."""
         row = QHBoxLayout()
         row.setSpacing(SPACE_S)
         row.addWidget(line_edit, 1)
-        btn = QPushButton("Browse…")
+        btn = tr_button("common.browse")
         btn.clicked.connect(lambda: self._pick_dir(line_edit, kind))
         row.addWidget(btn)
         return row
@@ -471,17 +494,40 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------
     # Public API used by the parent MainWindow
     # ------------------------------------------------------------------
+    def _normalise_input_heights(self, min_height: int = 30) -> None:
+        """Phase 34: clamp every input widget's minimum height.
+
+        QFormLayout collapses a row to the height of its smallest
+        child, so a QSpinBox with default 22-px height clips the value
+        text in the QSS dark theme and at 150% DPI. This walks all
+        descendants once after _build_ui() and forces each input
+        widget (SpinBox / DoubleSpinBox / ComboBox / LineEdit) to
+        have a minimum height of ``min_height``.
+        """
+        for w in self.findChildren(QWidget):
+            if isinstance(w, (QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit, QPushButton)):
+                if w.minimumHeight() < min_height:
+                    w.setMinimumHeight(min_height)
+
     def _refresh_texts(self) -> None:
         # Re-translate the appearance + section labels.
         # Most settings widgets are QLabel/QComboBox/QLineEdit and
         # would be retexted by the global i18n._apply_registry()
         # sweep; this method exists so the parent MainWindow can
         # call back into us after a language switch.
-        for w in self.findChildren((QLabel, QGroupBox, QPushButton, QCheckBox)):
-            name = w.objectName()
-            if name and i18n._tr(name) != "⟦" + name + "⟦":
-                # Already registered; the registry re-applies it.
-                pass
+        # Phase 34: re-format the title. Use the *translated* app.name
+        # + app.version so the ZH title says "RLPE - 放射虫图版提取系统"
+        # rather than the EN constant. ``APP_NAME`` and ``APP_VERSION``
+        # are language-independent (e.g. version numbers) so we use
+        # them as-is.
+        for w in self.findChildren(QLabel):
+            if w.objectName() == "settab.title":
+                w.setText(
+                    i18n._tr("settab.title").format(
+                        app=i18n._tr("app.name"),
+                        version=APP_VERSION,
+                    )
+                )
 
     def apply_to_run_settings(self) -> None:
         """When the Run tab starts, push current Settings-tab values
