@@ -40,8 +40,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .constants import RESULT_COLUMNS
+from .constants import INPUT_WIDTH_LONG, RESULT_COLUMNS
 from .styles import SPACE_M, SPACE_S
+from . import i18n
 from .image_preview import ImagePreviewWidget
 from .utils import (
     fmt_count,
@@ -85,7 +86,7 @@ class ResultsTab(QWidget):
         header.addWidget(QLabel("Search:"))
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Filter rows by species / caption / panel id / family…")
-        self._search_edit.setMaximumWidth(360)
+        self._search_edit.setMaximumWidth(INPUT_WIDTH_LONG + 80)  # was 360, +80 for CN text
         self._search_edit.textChanged.connect(self._refresh_view)
         header.addWidget(self._search_edit)
 
@@ -215,6 +216,23 @@ class ResultsTab(QWidget):
         )
         self._refresh_filter_options()
         self._refresh_view()
+
+    def _refresh_texts(self) -> None:
+        """Re-translate column headers + filter labels."""
+        for i, col in enumerate(RESULT_COLUMNS):
+            self._table.horizontalHeaderItem(i).setText(i18n._tr(f"restab.col.{col.key}"))
+        # Filter dropdown placeholders
+        for combo, key in (
+            (self._species_filter, "restab.filter.all"),
+            (self._family_filter,   "restab.filter.all"),
+            (self._has_pbdb,        "restab.filter.any"),
+        ):
+            current = combo.currentText()
+            combo.clear()
+            combo.addItem(i18n._tr(key))
+            if key == "restab.filter.any":
+                combo.addItems([i18n._tr("restab.filter.yes"), i18n._tr("restab.filter.no")])
+            combo.setCurrentText(current)
 
     def clear(self) -> None:
         self._all_rows = []

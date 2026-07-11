@@ -54,6 +54,8 @@ from .constants import (
     STATUS_RUNNING,
 )
 from .styles import SPACE_M, SPACE_S
+from . import i18n
+from .i18n_widgets import tr_button, tr_label
 from .utils import (
     file_size_human,
     fmt_count,
@@ -502,3 +504,17 @@ class JobsTab(QWidget):
     def _clear_all(self) -> None:
         for jid in list(self._jobs.keys()):
             self._remove_job(jid)
+
+    def _refresh_texts(self) -> None:
+        """Re-apply column headers / buttons after language switch."""
+        headers = [
+            i18n._tr("jobstab.col.id"),
+            i18n._tr("jobstab.col.pdf"),
+            i18n._tr("jobstab.col.status"),
+            i18n._tr("jobstab.col.progress"),
+            i18n._tr("jobstab.col.rows"),
+            i18n._tr("jobstab.col.elapsed"),
+            i18n._tr("jobstab.col.out"),
+        ]
+        for i, h in enumerate(headers):
+            self._table.horizontalHeaderItem(i).setText(h)

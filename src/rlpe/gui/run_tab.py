@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -29,6 +30,9 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import (
+    BUTTON_MIN_HEIGHT,
+    BUTTON_PRIMARY_HEIGHT,
+    COMBO_MIN_WIDTH,
     DEFAULT_GROBID_MAX_RETRIES,
     DEFAULT_GROBID_TIMEOUT,
     DEFAULT_GROBID_URL,
@@ -43,6 +47,10 @@ from .constants import (
     DEFAULT_OCR_LANG,
     DEFAULT_PALEO_MAX_OCC,
     DEFAULT_RENDER_DPI,
+    INPUT_WIDTH_LONG,
+    INPUT_WIDTH_OCR_LANG,
+    INPUT_WIDTH_PATH,
+    INPUT_WIDTH_SHORT,
     QS_KEY_LAST_DIR,
     RANGE_DPI,
     RANGE_GROBID_MAX_RETRIES,
@@ -54,6 +62,11 @@ from .constants import (
     RANGE_OD_CAPTION_WINDOW,
     RANGE_PALEO_OCC,
 )
+from .i18n_widgets import (
+    tr_button, tr_checkbox, tr_combobox, tr_doublespinbox,
+    tr_groupbox, tr_label, tr_lineedit, tr_spinbox,
+)
+from . import i18n
 from .styles import SPACE_L, SPACE_M, SPACE_S, SPACE_XL
 from .pipeline_worker import PipelineWorker
 from .utils import (
@@ -90,39 +103,46 @@ class RunTab(QWidget):
         outer.setSpacing(SPACE_M)
 
         # ---- File picker row ----
-        file_group = QGroupBox("📄 Input PDF")
+        file_group = tr_groupbox("runtab.input_group")
         file_layout = QHBoxLayout(file_group)
         file_layout.setSpacing(SPACE_S)
 
-        self._path_edit = QLineEdit()
-        self._path_edit.setPlaceholderText("Pick a radiolarian paper PDF to extract plates from…")
+        self._path_edit = tr_lineedit(
+            "runtab.input.placeholder",
+            min_width=INPUT_WIDTH_PATH * 2,  # paths are long
+        )
         self._path_edit.setReadOnly(True)
         file_layout.addWidget(self._path_edit, 1)
 
-        browse_btn = QPushButton("Browse…")
+        browse_btn = tr_button("runtab.browse", object_name="runtab.browse")
+        browse_btn.setMinimumHeight(BUTTON_MIN_HEIGHT)
         browse_btn.clicked.connect(self._on_browse)
         file_layout.addWidget(browse_btn)
 
-        clear_btn = QPushButton("Clear")
-        clear_btn.setObjectName("flat")
+        clear_btn = tr_button("runtab.clear", object_name="runtab.clear")
+        clear_btn.setProperty("class", "flat")  # QSS object-name selector
+        clear_btn.setMinimumHeight(BUTTON_MIN_HEIGHT)
         clear_btn.clicked.connect(self._on_clear)
         file_layout.addWidget(clear_btn)
 
         outer.addWidget(file_group)
 
         # ---- Output dir row ----
-        out_group = QGroupBox("💾 Output directory")
+        out_group = tr_groupbox("runtab.out_group")
         out_layout = QHBoxLayout(out_group)
         out_layout.setSpacing(SPACE_S)
-        self._out_edit = QLineEdit()
-        self._out_edit.setPlaceholderText("Where to write manifests / figures / xlsx…")
+        self._out_edit = tr_lineedit(
+            "runtab.out.placeholder",
+            min_width=INPUT_WIDTH_PATH * 2,
+        )
         self._out_edit.setReadOnly(True)
         out_layout.addWidget(self._out_edit, 1)
-        out_btn = QPushButton("Choose…")
+        out_btn = tr_button("runtab.out.choose", object_name="runtab.out.choose")
+        out_btn.setMinimumHeight(BUTTON_MIN_HEIGHT)
         out_btn.clicked.connect(self._on_pick_outdir)
         out_layout.addWidget(out_btn)
-        open_btn = QToolButton()
-        open_btn.setText("Open")
+        open_btn = tr_button("runtab.out.open", object_name="runtab.out.open")
+        open_btn.setMinimumHeight(BUTTON_MIN_HEIGHT)
         open_btn.clicked.connect(self._on_open_outdir)
         out_layout.addWidget(open_btn)
         outer.addWidget(out_group)
@@ -138,84 +158,111 @@ class RunTab(QWidget):
         cfg_layout.setSpacing(SPACE_M)
 
         # Basic config grid
-        basic = QGroupBox("⚙️ Basic configuration")
+        basic = tr_groupbox("runtab.basic_group")
         basic_layout = QGridLayout(basic)
         basic_layout.setHorizontalSpacing(SPACE_L)
         basic_layout.setVerticalSpacing(SPACE_S)
         row = 0
 
         # OCR backend
-        basic_layout.addWidget(QLabel("OCR backend:"), row, 0)
-        from PySide6.QtWidgets import QComboBox
-        self._ocr_combo = QComboBox()
-        self._ocr_combo.addItems(["paddleocr", "easyocr"])
-        self._ocr_combo.setCurrentText(DEFAULT_OCR_BACKEND)
+        basic_layout.addWidget(tr_label("runtab.label.ocr_backend"), row, 0)
+        self._ocr_combo = tr_combobox(
+            "runtab.label.ocr_backend",
+            min_width=COMBO_MIN_WIDTH,
+            items=["paddleocr", "easyocr"],
+            current=DEFAULT_OCR_BACKEND,
+        )
         basic_layout.addWidget(self._ocr_combo, row, 1)
 
-        basic_layout.addWidget(QLabel("OCR language(s):"), row, 2)
-        self._ocr_lang_edit = QLineEdit(DEFAULT_OCR_LANG)
-        self._ocr_lang_edit.setPlaceholderText("e.g. en, ja, ch_sim")
+        basic_layout.addWidget(tr_label("runtab.label.ocr_lang"), row, 2)
+        self._ocr_lang_edit = tr_lineedit(
+            "runtab.ocr_lang.placeholder",
+            min_width=INPUT_WIDTH_OCR_LANG,
+            text=DEFAULT_OCR_LANG,
+        )
         self._ocr_lang_edit.setToolTip("Comma-separated language list (EasyOCR accepts multi-lang)")
         basic_layout.addWidget(self._ocr_lang_edit, row, 3)
         row += 1
 
         # GROBID
-        basic_layout.addWidget(QLabel("GROBID URL:"), row, 0)
-        self._grobid_edit = QLineEdit(DEFAULT_GROBID_URL)
+        basic_layout.addWidget(tr_label("runtab.label.grobid_url"), row, 0)
+        self._grobid_edit = tr_lineedit(
+            "runtab.label.grobid_url",
+            min_width=INPUT_WIDTH_LONG,
+            text=DEFAULT_GROBID_URL,
+        )
         basic_layout.addWidget(self._grobid_edit, row, 1, 1, 3)
         row += 1
 
-        basic_layout.addWidget(QLabel("GROBID retries:"), row, 0)
-        self._grobid_retries = QSpinBox()
-        self._grobid_retries.setRange(*RANGE_GROBID_MAX_RETRIES)
-        self._grobid_retries.setValue(DEFAULT_GROBID_MAX_RETRIES)
+        basic_layout.addWidget(tr_label("runtab.label.grobid_retries"), row, 0)
+        self._grobid_retries = tr_spinbox(
+            "runtab.label.grobid_retries",
+            min_width=INPUT_WIDTH_SHORT,
+            min_val=RANGE_GROBID_MAX_RETRIES[0],
+            max_val=RANGE_GROBID_MAX_RETRIES[1],
+            value=DEFAULT_GROBID_MAX_RETRIES,
+        )
         basic_layout.addWidget(self._grobid_retries, row, 1)
-        basic_layout.addWidget(QLabel("GROBID timeout (s):"), row, 2)
-        self._grobid_timeout = QSpinBox()
-        self._grobid_timeout.setRange(*RANGE_GROBID_TIMEOUT)
-        self._grobid_timeout.setValue(DEFAULT_GROBID_TIMEOUT)
+        basic_layout.addWidget(tr_label("runtab.label.grobid_timeout"), row, 2)
+        self._grobid_timeout = tr_spinbox(
+            "runtab.label.grobid_timeout",
+            min_width=INPUT_WIDTH_SHORT,
+            min_val=RANGE_GROBID_TIMEOUT[0],
+            max_val=RANGE_GROBID_TIMEOUT[1],
+            value=DEFAULT_GROBID_TIMEOUT,
+        )
         basic_layout.addWidget(self._grobid_timeout, row, 3)
         row += 1
 
         # Caption windows
-        basic_layout.addWidget(QLabel("Caption window (GROBID):"), row, 0)
-        self._caption_window = QSpinBox()
-        self._caption_window.setRange(1, 50)
-        self._caption_window.setValue(2)
+        basic_layout.addWidget(tr_label("runtab.label.caption_window"), row, 0)
+        self._caption_window = tr_spinbox(
+            "runtab.label.caption_window",
+            min_width=INPUT_WIDTH_SHORT,
+            min_val=1, max_val=50, value=2,
+        )
         self._caption_window.setToolTip("GROBID caption→page lookup window (Phase 28)")
         basic_layout.addWidget(self._caption_window, row, 1)
-        basic_layout.addWidget(QLabel("OD caption window:"), row, 2)
-        self._od_caption_window = QSpinBox()
-        self._od_caption_window.setRange(*RANGE_OD_CAPTION_WINDOW)
-        self._od_caption_window.setValue(5)
+        basic_layout.addWidget(tr_label("runtab.label.od_caption_window"), row, 2)
+        self._od_caption_window = tr_spinbox(
+            "runtab.label.od_caption_window",
+            min_width=INPUT_WIDTH_SHORT,
+            min_val=RANGE_OD_CAPTION_WINDOW[0],
+            max_val=RANGE_OD_CAPTION_WINDOW[1],
+            value=5,
+        )
         self._od_caption_window.setToolTip("OpenDataLoader caption↔image cross-page window (Phase 28)")
         basic_layout.addWidget(self._od_caption_window, row, 3)
         row += 1
 
         # Workers
-        basic_layout.addWidget(QLabel("Workers:"), row, 0)
-        self._workers = QSpinBox()
-        self._workers.setRange(1, 32)
-        self._workers.setValue(1)
+        basic_layout.addWidget(tr_label("runtab.label.workers"), row, 0)
+        self._workers = tr_spinbox(
+            "runtab.label.workers",
+            min_width=INPUT_WIDTH_SHORT,
+            min_val=1, max_val=32, value=1,
+        )
         basic_layout.addWidget(self._workers, row, 1)
-        basic_layout.addWidget(QLabel("Panel score:"), row, 2)
-        self._panel_score = QDoubleSpinBox()
-        self._panel_score.setRange(0.0, 1.0)
-        self._panel_score.setSingleStep(0.05)
-        self._panel_score.setValue(0.80)
+        basic_layout.addWidget(tr_label("runtab.label.panel_score"), row, 2)
+        self._panel_score = tr_doublespinbox(
+            min_width=INPUT_WIDTH_SHORT,
+            min_val=0.0, max_val=1.0, value=0.80, step=0.05,
+        )
         basic_layout.addWidget(self._panel_score, row, 3)
         row += 1
 
         # Use GPU
-        basic_layout.addWidget(QLabel("Use GPU:"), row, 0)
-        self._gpu_check = QCheckBox("Auto-detect CUDA at startup")
-        self._gpu_check.setChecked(True)
+        basic_layout.addWidget(tr_label("runtab.label.use_gpu"), row, 0)
+        self._gpu_check = tr_checkbox(
+            "runtab.gpu_check",
+            checked=True,
+        )
         basic_layout.addWidget(self._gpu_check, row, 1, 1, 3)
 
         cfg_layout.addWidget(basic)
 
         # Advanced config
-        adv = QGroupBox("🔬 Advanced (LLM / M3 / PBDB)")
+        adv = tr_groupbox("runtab.adv_group")
         adv_layout = QFormLayout(adv)
         adv_layout.setHorizontalSpacing(SPACE_L)
         adv_layout.setVerticalSpacing(SPACE_S)
@@ -299,21 +346,22 @@ class RunTab(QWidget):
         action_layout.setContentsMargins(0, SPACE_M, 0, 0)
         action_layout.setSpacing(SPACE_S)
 
-        self._start_btn = QPushButton("▶  Start extraction")
-        self._start_btn.setObjectName("primary")
-        self._start_btn.setMinimumHeight(34)
+        self._start_btn = tr_button("runtab.start", object_name="runtab.start")
+        self._start_btn.setProperty("class", "primary")
+        self._start_btn.setMinimumHeight(BUTTON_PRIMARY_HEIGHT)
         self._start_btn.clicked.connect(self._on_start)
         action_layout.addWidget(self._start_btn)
 
-        self._cancel_btn = QPushButton("⏹  Cancel")
-        self._cancel_btn.setObjectName("danger")
+        self._cancel_btn = tr_button("runtab.cancel", object_name="runtab.cancel")
+        self._cancel_btn.setProperty("class", "danger")
+        self._cancel_btn.setMinimumHeight(BUTTON_MIN_HEIGHT)
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.clicked.connect(self._on_cancel)
         action_layout.addWidget(self._cancel_btn)
 
         action_layout.addStretch(1)
 
-        self._status_label = QLabel("Idle")
+        self._status_label = tr_label("runtab.status.idle", object_name="runtab.status_label")
         self._status_label.setProperty("class", "status")
         action_layout.addWidget(self._status_label)
 
@@ -322,7 +370,7 @@ class RunTab(QWidget):
         # ---- Progress bar ----
         self._progress = QProgressBar()
         self._progress.setValue(0)
-        self._progress.setFormat("Idle  (%v / %m)")
+        self._progress.setFormat(i18n._tr("runtab.progress.idle"))
         self._progress.setMinimumHeight(20)
         outer.addWidget(self._progress)
 
@@ -429,6 +477,15 @@ class RunTab(QWidget):
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+
+    def _refresh_formats(self) -> None:
+        """Refresh status / progress / idle / start strings after
+        a language switch. Called by the parent MainWindow."""
+        self._progress.setFormat(i18n._tr("runtab.progress.idle"))
+        # Toggle button enabled state so the trigger text updates
+        has = bool(self._path_edit.text().strip())
+        if self._worker is None:
+            self._start_btn.setEnabled(has)
 
     def _on_path_changed(self, text: str) -> None:
         has = bool(text and Path(text).exists())

@@ -131,3 +131,30 @@ QS_KEY_THEME: Final[str] = "ui/theme"
 QS_KEY_GEOMETRY: Final[str] = "ui/main_window_geometry"
 QS_KEY_STATE: Final[str] = "ui/main_window_state"
 QS_KEY_RECENT_DIRS: Final[str] = "io/recent_dirs"
+# ============================================================
+# Input widget sizing (Phase 33)
+# ============================================================
+# Centralised so all tabs use consistent widths. These were chosen
+# to fit:
+#   - Default system font (13px)
+#   - Most common values (e.g. PBDB endpoint URL, GROBID URL,
+#     GROBID timeout numbers)
+#   - Chinese placeholder text which is often longer than the
+#     English equivalent (Phase 33 bug fix: results_tab search box
+#     was hard-coded at 360px which clipped the Chinese placeholder)
+
+# Editable text fields
+INPUT_WIDTH_SHORT: Final[int] = 100      # SpinBox for small ints (0-99)
+INPUT_WIDTH_MEDIUM: Final[int] = 180     # Single-line text (URLs, paths)
+INPUT_WIDTH_LONG: Final[int] = 320      # Long URLs, search boxes
+INPUT_WIDTH_PATH: Final[int] = 420      # File paths (PDF, output dir)
+INPUT_WIDTH_OCR_LANG: Final[int] = 160   # OCR language code lists
+INPUT_WIDTH_FULL: Final[int] = 600      # Long-form comments / descriptors
+
+# Buttons
+BUTTON_MIN_WIDTH: Final[int] = 90
+BUTTON_MIN_HEIGHT: Final[int] = 28
+BUTTON_PRIMARY_HEIGHT: Final[int] = 34     # Main action button (e.g. Start)
+
+# QComboBox
+COMBO_MIN_WIDTH: Final[int] = 130

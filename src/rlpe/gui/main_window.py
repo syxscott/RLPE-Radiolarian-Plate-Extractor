@@ -44,6 +44,8 @@ from PySide6.QtWidgets import (
 )
 
 from .batch_dialog import BatchDialog
+from . import i18n
+from .i18n_widgets import tr_label
 from .styles import apply_theme
 from .utils import (
     fmt_count,
@@ -565,6 +567,16 @@ class MainWindow(QMainWindow):
         self._run_tab._on_start()
 
     # Patch into the run tab to advance the batch on each completion
+    def _refresh_texts(self) -> None:
+        """Re-apply all menu / tab labels after a language switch."""
+        for i in range(self._tabs.count()):
+            key = ("tab.run", "tab.jobs", "tab.results", "tab.settings")[i]
+            self._tabs.setTabText(i, i18n._tr(key))
+        self.setWindowTitle(i18n._tr("app.title") + f"  v{i18n._tr('app.title')}".replace("RLPE - Radiolarian Plate Extractor", "").strip())
+        # Re-render the tab bar widget tree (objects registered via
+        # setObjectName are retexted by i18n._apply_registry)
+        # (already done by set_language in i18n.py)
+
     def _on_settings_changed(self) -> None:
         # Re-apply settings to Run tab
         self._settings_tab.apply_to_run_settings()

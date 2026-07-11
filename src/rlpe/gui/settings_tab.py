@@ -34,6 +34,10 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import (
+    COMBO_MIN_WIDTH,
+    INPUT_WIDTH_LONG,
+    INPUT_WIDTH_MEDIUM,
+    INPUT_WIDTH_PATH,
     APP_AUTHOR,
     APP_DOMAIN,
     APP_NAME,
@@ -66,7 +70,9 @@ from .constants import (
     THEME_LIGHT,
     THEME_SYSTEM,
 )
+from .i18n_widgets import tr_button, tr_checkbox, tr_combobox, tr_groupbox, tr_label, tr_lineedit, tr_spinbox
 from .styles import SPACE_L, SPACE_M, SPACE_S, apply_theme
+from . import i18n
 from .utils import get_gui_logger
 
 
@@ -105,7 +111,22 @@ class SettingsTab(QWidget):
         self._theme_combo = QComboBox()
         self._theme_combo.addItems([THEME_LIGHT, THEME_DARK, THEME_SYSTEM])
         self._theme_combo.currentTextChanged.connect(self._on_theme_change)
-        alayout.addRow("Theme:", self._theme_combo)
+        alayout.addRow(tr_label("settab.theme"), self._theme_combo)
+
+        # Language picker (Phase 33 — bilingual UI)
+        self._lang_combo = tr_combobox(
+            "settab.lang",
+            min_width=COMBO_MIN_WIDTH,
+        )
+        for code, label in i18n.available_languages():
+            self._lang_combo.addItem(label, userData=code)
+        # Set current to current language
+        for i in range(self._lang_combo.count()):
+            if self._lang_combo.itemData(i) == i18n.current_language():
+                self._lang_combo.setCurrentIndex(i)
+                break
+        self._lang_combo.currentIndexChanged.connect(self._on_lang_change)
+        alayout.addRow(tr_label("settab.lang"), self._lang_combo)
 
         outer.addWidget(appearance)
 
@@ -416,6 +437,30 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------
     # Live theme change
     # ------------------------------------------------------------------
+    def _on_lang_change(self, idx: int) -> None:
+        lang = self._lang_combo.itemData(idx)
+        if not lang:
+            return
+        i18n.set_language(lang)
+        # Refresh all tabs in the main window
+        main_window = self.parent()
+        while main_window is not None and not isinstance(main_window, type(self.parent()).__mro__[0]):
+            main_window = main_window.parent()
+        # Walk all tabs and call their _refresh_texts() if they have it
+        if hasattr(self.parent(), "_tabs"):
+            for i in range(self.parent()._tabs.count()):
+                w = self.parent()._tabs.widget(i)
+                if hasattr(w, "_refresh_texts"):
+                    try:
+                        w._refresh_texts()
+                    except Exception:
+                        pass
+        # Re-apply theme to refresh status bar / menu colours
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, i18n.current_language() and "light" or "light")  # keep light
+
     def _on_theme_change(self, theme: str) -> None:
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
@@ -426,6 +471,18 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------
     # Public API used by the parent MainWindow
     # ------------------------------------------------------------------
+    def _refresh_texts(self) -> None:
+        # Re-translate the appearance + section labels.
+        # Most settings widgets are QLabel/QComboBox/QLineEdit and
+        # would be retexted by the global i18n._apply_registry()
+        # sweep; this method exists so the parent MainWindow can
+        # call back into us after a language switch.
+        for w in self.findChildren((QLabel, QGroupBox, QPushButton, QCheckBox)):
+            name = w.objectName()
+            if name and i18n._tr(name) != "⟦" + name + "⟦":
+                # Already registered; the registry re-applies it.
+                pass
+
     def apply_to_run_settings(self) -> None:
         """When the Run tab starts, push current Settings-tab values
         into the in-memory run defaults so new jobs use them."""

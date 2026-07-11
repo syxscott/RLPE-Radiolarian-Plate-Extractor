@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import BATCH_DIALOG_DEFAULT_SIZE
+from .i18n_widgets import tr_button, tr_label
 from .styles import SPACE_M, SPACE_S
 from .utils import file_size_human, get_gui_logger, short_path
 

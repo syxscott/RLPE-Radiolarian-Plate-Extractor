@@ -43,8 +43,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .constants import IMAGE_PREVIEW_MIN_SIZE
+from .constants import BUTTON_MIN_WIDTH, IMAGE_PREVIEW_MIN_SIZE
 from .styles import SPACE_M, SPACE_S
+from . import i18n
+from .i18n_widgets import tr_label
 from .utils import get_gui_logger
 
 
@@ -74,7 +76,7 @@ class ImagePreviewWidget(QWidget):
         bar.setContentsMargins(SPACE_S, SPACE_S, SPACE_S, 0)
         bar.setSpacing(SPACE_S)
 
-        self._path_label = QLabel("(no image)")
+        self._path_label = tr_label("preview.no_image", object_name="preview.path_label")
         self._path_label.setObjectName("metricLabel")
         bar.addWidget(self._path_label, 1)
 
@@ -85,7 +87,7 @@ class ImagePreviewWidget(QWidget):
             ("1:1",  self._zoom_actual),
         ):
             btn = QPushButton(label)
-            btn.setMaximumWidth(40)
+            btn.setMaximumWidth(BUTTON_MIN_WIDTH + 30)  # emoji + cn label
             btn.clicked.connect(slot)
             bar.addWidget(btn)
 
