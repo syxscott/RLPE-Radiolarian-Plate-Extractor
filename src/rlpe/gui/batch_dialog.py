@@ -1,0 +1,254 @@
+"""Batch manager — queue and run multiple PDFs in serial.
+
+The CLI has a ``--num-workers`` flag for parallel batch. The GUI
+implements serial batch (one job at a time) because:
+  * Parallel batch + Qt's signal/slot model + cv2/torch has
+    measurable deadlock risk. We don't want to debug a GUI freeze
+    the day before a demo.
+  * Single-GPU machines (which is most radiolarian researchers)
+    don't benefit much from parallel OCR anyway.
+  * Serial batch is the safest UX: each job completes before
+    the next starts, so per-job error handling is simple.
+
+The batch dialog is launched from the main window's File menu.
+It reuses the existing ``PipelineWorker`` (one job at a time) plus
+the Jobs / Results tabs.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .constants import BATCH_DIALOG_DEFAULT_SIZE
+from .styles import SPACE_M, SPACE_S
+from .utils import file_size_human, get_gui_logger, short_path
+
+
+class BatchDialog(QDialog):
+    """Modal dialog for queuing multiple PDFs."""
+
+    batch_started = Signal(list, dict)  # list[Path], settings
+    batch_closed = Signal()
+
+    def __init__(self, settings: dict[str, Any], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._log = get_gui_logger()
+        self._settings = settings
+        self._pdfs: list[Path] = []
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        self.setWindowTitle("Batch manager — Queue multiple PDFs")
+        self.resize(*BATCH_DIALOG_DEFAULT_SIZE)
+        outer = QVBoxLayout(self)
+        outer.setSpacing(SPACE_M)
+        outer.setContentsMargins(SPACE_M, SPACE_M, SPACE_M, SPACE_M)
+
+        # ---- File list ----
+        files_group = QGroupBox("📚 PDFs to process (in serial order)")
+        fg_layout = QVBoxLayout(files_group)
+        fg_layout.setSpacing(SPACE_S)
+
+        # File list + buttons
+        list_row = QHBoxLayout()
+        self._file_list = QListWidget()
+        self._file_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._file_list.setAlternatingRowColors(True)
+        list_row.addWidget(self._file_list, 1)
+
+        file_btns = QVBoxLayout()
+        add_btn = QPushButton("➕ Add PDFs…")
+        add_btn.clicked.connect(self._on_add)
+        file_btns.addWidget(add_btn)
+
+        add_dir_btn = QPushButton("📁 Add directory…")
+        add_dir_btn.clicked.connect(self._on_add_dir)
+        file_btns.addWidget(add_dir_btn)
+
+        file_btns.addSpacing(SPACE_S)
+
+        remove_btn = QPushButton("➖ Remove selected")
+        remove_btn.clicked.connect(self._on_remove)
+        file_btns.addWidget(remove_btn)
+
+        clear_btn = QPushButton("🗑 Clear all")
+        clear_btn.clicked.connect(lambda: self._file_list.clear())
+        file_btns.addWidget(clear_btn)
+
+        file_btns.addStretch(1)
+        list_row.addLayout(file_btns)
+        fg_layout.addLayout(list_row)
+
+        # Drag & drop support
+        self._file_list.setAcceptDrops(True)
+        self._file_list.viewport().setAcceptDrops(True)
+        self._file_list.setDragDropMode(QAbstractItemView.DropOnly)
+        self._file_list.dragEnterEvent = self._drag_enter  # type: ignore[assignment]
+        self._file_list.dragMoveEvent = self._drag_enter   # type: ignore[assignment]
+        self._file_list.dropEvent = self._drop_files     # type: ignore[assignment]
+
+        outer.addWidget(files_group, 1)
+
+        # ---- Options ----
+        opts_group = QGroupBox("⚙️ Batch options")
+        og = QFormLayout(opts_group)
+        og.setHorizontalSpacing(SPACE_M)
+        og.setVerticalSpacing(SPACE_S)
+
+        self._out_dir_edit = QLineEdit(self._settings.get("last_export_dir", str(Path.home() / "rlpe_batch_out")))
+        og.addRow("Output directory:", self._out_dir_edit)
+
+        out_row = QHBoxLayout()
+        out_row.addWidget(self._out_dir_edit, 1)
+        out_btn = QPushButton("Browse…")
+        out_btn.clicked.connect(self._on_pick_out)
+        out_row.addWidget(out_btn)
+        og.addRow("", _wrap(out_row))
+
+        self._stop_on_error = QCheckBox("Stop batch on first error")
+        self._stop_on_error.setChecked(False)
+        og.addRow("", self._stop_on_error)
+
+        self._xlsx_at_end = QCheckBox("Export combined xlsx when all jobs finish")
+        self._xlsx_at_end.setChecked(True)
+        og.addRow("", self._xlsx_at_end)
+
+        outer.addWidget(opts_group)
+
+        # ---- Bottom action bar ----
+        bar = QHBoxLayout()
+        bar.setSpacing(SPACE_S)
+
+        self._count_label = QLabel("0 PDFs queued")
+        self._count_label.setObjectName("metric")
+        bar.addWidget(self._count_label)
+
+        bar.addStretch(1)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        bar.addWidget(cancel_btn)
+
+        start_btn = QPushButton("▶  Start batch")
+        start_btn.setObjectName("primary")
+        start_btn.clicked.connect(self._on_start)
+        bar.addWidget(start_btn)
+
+        outer.addLayout(bar)
+
+    # ------------------------------------------------------------------
+    # Drag & drop
+    # ------------------------------------------------------------------
+    def _drag_enter(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def _drop_files(self, event) -> None:
+        for url in event.mimeData().urls():
+            if url.isLocalFile():
+                p = Path(url.toLocalFile())
+                if p.is_file() and p.suffix.lower() == ".pdf":
+                    self._add_pdf(p)
+                elif p.is_dir():
+                    for sub in sorted(p.glob("*.pdf")):
+                        self._add_pdf(sub)
+
+    # ------------------------------------------------------------------
+    # File management
+    # ------------------------------------------------------------------
+    def _add_pdf(self, path: Path) -> None:
+        if not path.exists():
+            return
+        if path in self._pdfs:
+            return
+        self._pdfs.append(path)
+        item = QListWidgetItem(f"{path.name}  ·  {file_size_human(path)}")
+        item.setData(Qt.UserRole, str(path))
+        item.setToolTip(str(path))
+        self._file_list.addItem(item)
+        self._count_label.setText(f"{len(self._pdfs)} PDFs queued")
+
+    def _on_add(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Add PDFs",
+            self._settings.get("last_pdf_dir", str(Path.home())),
+            "PDF files (*.pdf)",
+        )
+        for p in paths:
+            self._add_pdf(Path(p))
+
+    def _on_add_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Choose a directory of PDFs", self._settings.get("last_pdf_dir", str(Path.home())))
+        if not path:
+            return
+        for sub in sorted(Path(path).glob("*.pdf")):
+            self._add_pdf(sub)
+
+    def _on_remove(self) -> None:
+        for item in self._file_list.selectedItems():
+            row = self._file_list.row(item)
+            path = Path(item.data(Qt.UserRole))
+            if path in self._pdfs:
+                self._pdfs.remove(path)
+            self._file_list.takeItem(row)
+        self._count_label.setText(f"{len(self._pdfs)} PDFs queued")
+
+    def _on_pick_out(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Choose batch output directory", self._out_dir_edit.text() or str(Path.home()))
+        if path:
+            self._out_dir_edit.setText(path)
+
+    # ------------------------------------------------------------------
+    # Start
+    # ------------------------------------------------------------------
+    def _on_start(self) -> None:
+        if not self._pdfs:
+            QMessageBox.information(self, "Batch", "No PDFs queued.")
+            return
+        out_dir = self._out_dir_edit.text().strip()
+        if not out_dir:
+            QMessageBox.warning(self, "Batch", "Please choose an output directory.")
+            return
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        self._settings["last_export_dir"] = out_dir
+        # Settings to pass to each PipelineWorker
+        batch_settings = dict(self._settings)
+        batch_settings["last_export_dir"] = out_dir
+        batch_settings["_stop_on_error"] = self._stop_on_error.isChecked()
+        batch_settings["_xlsx_at_end"] = self._xlsx_at_end.isChecked()
+        self.batch_started.emit(list(self._pdfs), batch_settings)
+        self.accept()
+
+
+def _wrap(layout) -> QWidget:
+    """Wrap a layout in a QWidget so it can be used as a form-row child."""
+    w = QWidget()
+    w.setLayout(layout)
+    return w

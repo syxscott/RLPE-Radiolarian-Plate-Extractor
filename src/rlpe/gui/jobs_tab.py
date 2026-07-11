@@ -1,0 +1,504 @@
+"""Jobs tab — job queue, history, per-job controls.
+
+A "job" is a single ``PipelineWorker`` invocation. The Jobs tab
+shows:
+* Currently running jobs (status=running, with live progress bar)
+* Recently completed jobs (status=done, with row count + export link)
+* Failed jobs (status=failed, with error preview)
+* A button-bar: Cancel | Retry | Open output dir | Remove
+
+We keep the job state in-process (no QSettings persistence yet
+— that's a Phase 32+ candidate). Restarting the GUI clears the
+list, which matches the Web UI's behaviour (jobs are in-memory).
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QStyledItemDelegate,
+    QStyleOptionProgressBar,
+    QStyleOptionViewItem,
+    QTableWidget,
+    QTableWidgetItem,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+    QApplication,
+)
+
+from .constants import (
+    MAX_RECENT_JOBS_IN_LIST,
+    STATUS_CANCELLED,
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+)
+from .styles import SPACE_M, SPACE_S
+from .utils import (
+    file_size_human,
+    fmt_count,
+    fmt_duration,
+    get_gui_logger,
+    short_path,
+)
+
+
+# ============================================================
+# Job dataclass
+# ============================================================
+@dataclass
+class JobRecord:
+    """In-memory representation of a single pipeline run."""
+
+    job_id: str
+    pdf_path: str
+    output_dir: str
+    status: str = STATUS_QUEUED
+    progress_current: int = 0
+    progress_total: int = 0
+    progress_msg: str = ""
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    error: str = ""
+    started_at: float = field(default_factory=time.time)
+    finished_at: float = 0.0
+    settings: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def elapsed(self) -> float:
+        end = self.finished_at if self.finished_at > 0 else time.time()
+        return max(0.0, end - self.started_at)
+
+    def to_summary(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "pdf": self.pdf_path,
+            "out": self.output_dir,
+            "status": self.status,
+            "rows": len(self.rows),
+            "elapsed": self.elapsed,
+        }
+
+
+# ============================================================
+# Inline progress bar delegate (renders progress in a table cell)
+# ============================================================
+class _ProgressCellDelegate(QStyledItemDelegate):
+    """Paints a small QProgressBar inside the progress column."""
+
+    def paint(self, painter, option, index) -> None:  # type: ignore[override]
+        progress_bar_option = QStyleOptionProgressBar()
+        progress_bar_option.rect = option.rect
+        progress_bar_option.state = option.state
+        progress_bar_option.palette = option.palette
+        progress_bar_option.minimum = 0
+        progress_bar_option.maximum = max(1, index.data(Qt.UserRole) or 0)
+        progress_bar_option.progress = index.data(Qt.UserRole + 1) or 0
+        progress_bar_option.text = f"{progress_bar_option.progress} / {progress_bar_option.maximum}"
+        progress_bar_option.textVisible = True
+        QApplication.style().drawControl(
+            QStyledItemDelegate.PrimitiveElement.ProgressBar,
+            progress_bar_option,
+            painter,
+        )
+
+
+# ============================================================
+# Jobs tab
+# ============================================================
+class JobsTab(QWidget):
+    """Job queue + history. Updated reactively from ``RunTab`` signals."""
+
+    open_results_requested = Signal(str)  # job_id
+    retry_requested = Signal(str, dict)  # job_id, settings
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._log = get_gui_logger()
+        self._jobs: dict[str, JobRecord] = {}
+        self._build_ui()
+
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
+    def _build_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(SPACE_M, SPACE_M, SPACE_M, SPACE_M)
+        outer.setSpacing(SPACE_S)
+
+        # ---- Toolbar ----
+        bar = QHBoxLayout()
+        bar.setSpacing(SPACE_S)
+
+        clear_done_btn = QPushButton("Clear finished")
+        clear_done_btn.clicked.connect(self._clear_finished)
+        bar.addWidget(clear_done_btn)
+
+        clear_all_btn = QPushButton("Clear all")
+        clear_all_btn.setObjectName("flat")
+        clear_all_btn.clicked.connect(self._clear_all)
+        bar.addWidget(clear_all_btn)
+
+        bar.addStretch(1)
+
+        self._count_label = QLabel("0 jobs")
+        self._count_label.setObjectName("metric")
+        bar.addWidget(self._count_label)
+
+        outer.addLayout(bar)
+
+        # ---- Table ----
+        self._table = QTableWidget(0, 7)
+        self._table.setHorizontalHeaderLabels(
+            ["Job ID", "PDF", "Status", "Progress", "Rows", "Elapsed", "Output"]
+        )
+        # Configure selection / behaviour
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSortingEnabled(False)
+        self._table.setShowGrid(False)
+        # Resize columns to fit content
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        self._table.setColumnWidth(3, 180)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.Stretch)
+        self._table.verticalHeader().setVisible(False)
+        self._table.verticalHeader().setDefaultSectionSize(26)
+        # Progress column custom delegate
+        self._progress_delegate = _ProgressCellDelegate(self._table)
+        self._table.setItemDelegateForColumn(3, self._progress_delegate)
+        # Context menu
+        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
+        self._table.doubleClicked.connect(self._on_row_double_clicked)
+        outer.addWidget(self._table, 1)
+
+        # ---- Status row ----
+        status_row = QHBoxLayout()
+        self._summary = QLabel("No jobs yet.")
+        self._summary.setObjectName("metricLabel")
+        status_row.addWidget(self._summary, 1)
+        outer.addLayout(status_row)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def add_or_update_job(self, job: JobRecord) -> None:
+        """Insert or update a job record in the table."""
+        self._jobs[job.job_id] = job
+        self._refresh_row(job)
+        self._update_summary()
+        self._trim_old_jobs()
+
+    def update_progress(self, job_id: str, current: int, total: int, msg: str) -> None:
+        if job_id not in self._jobs:
+            return
+        job = self._jobs[job_id]
+        job.progress_current = current
+        job.progress_total = total
+        job.progress_msg = msg
+        self._refresh_row(job)
+
+    def mark_done(self, job_id: str, rows: list[dict[str, Any]]) -> None:
+        if job_id not in self._jobs:
+            return
+        job = self._jobs[job_id]
+        job.status = STATUS_DONE
+        job.rows = rows
+        job.progress_current = job.progress_total
+        job.finished_at = time.time()
+        self._refresh_row(job)
+        self._update_summary()
+
+    def mark_failed(self, job_id: str, error: str) -> None:
+        if job_id not in self._jobs:
+            return
+        job = self._jobs[job_id]
+        job.status = STATUS_FAILED
+        job.error = error
+        job.finished_at = time.time()
+        self._refresh_row(job)
+        self._update_summary()
+
+    def mark_cancelled(self, job_id: str) -> None:
+        if job_id not in self._jobs:
+            return
+        job = self._jobs[job_id]
+        job.status = STATUS_CANCELLED
+        job.finished_at = time.time()
+        self._refresh_row(job)
+        self._update_summary()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _find_row(self, job_id: str) -> int:
+        for r in range(self._table.rowCount()):
+            item = self._table.item(r, 0)
+            if item and item.text() == job_id:
+                return r
+        return -1
+
+    def _refresh_row(self, job: JobRecord) -> None:
+        row = self._find_row(job.job_id)
+        if row < 0:
+            row = self._table.rowCount()
+            self._table.insertRow(row)
+            # Cap the table at MAX_RECENT_JOBS_IN_LIST rows.
+            while self._table.rowCount() > MAX_RECENT_JOBS_IN_LIST:
+                self._table.removeRow(0)
+
+        # Column 0: Job ID (monospace)
+        item_id = QTableWidgetItem(job.job_id)
+        item_id.setData(Qt.UserRole, job.job_id)
+        font = item_id.font()
+        font.setFamily("JetBrains Mono, Cascadia Code, Menlo, Consolas, monospace")
+        item_id.setFont(font)
+        self._table.setItem(row, 0, item_id)
+
+        # Column 1: PDF (short path tooltip)
+        self._table.setItem(row, 1, QTableWidgetItem(short_path(Path(job.pdf_path), 50)))
+        self._table.item(row, 1).setToolTip(job.pdf_path)
+
+        # Column 2: Status (coloured via QSS objectName)
+        status_item = QTableWidgetItem(job.status)
+        status_item.setData(Qt.UserRole, job.status)
+        # Map status → objectName for QSS colour (see styles.py).
+        object_name_map = {
+            STATUS_QUEUED: "statusQueued",
+            STATUS_RUNNING: "statusRunning",
+            STATUS_DONE: "statusDone",
+            STATUS_FAILED: "statusFailed",
+            STATUS_CANCELLED: "statusCancelled",
+        }
+        status_item.setTextAlignment(Qt.AlignCenter)
+        # Use a font weight + role for visual hierarchy
+        font = status_item.font()
+        font.setBold(True)
+        status_item.setFont(font)
+        status_item.setData(Qt.AccessibleTextRole, job.status)
+        self._table.setItem(row, 2, status_item)
+
+        # Column 3: Progress (via custom delegate)
+        progress_item = QTableWidgetItem()
+        progress_item.setData(Qt.UserRole, job.progress_total)   # max
+        progress_item.setData(Qt.UserRole + 1, job.progress_current)  # value
+        progress_item.setToolTip(job.progress_msg)
+        self._table.setItem(row, 3, progress_item)
+
+        # Column 4: Rows
+        rows_item = QTableWidgetItem(fmt_count(len(job.rows)))
+        rows_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._table.setItem(row, 4, rows_item)
+
+        # Column 5: Elapsed
+        elapsed_item = QTableWidgetItem(fmt_duration(job.elapsed))
+        elapsed_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._table.setItem(row, 5, elapsed_item)
+
+        # Column 6: Output (short path tooltip)
+        out_item = QTableWidgetItem(short_path(Path(job.output_dir), 50))
+        out_item.setToolTip(job.output_dir)
+        self._table.setItem(row, 6, out_item)
+
+        # Apply status row colour via QSS — set background colour
+        # via a per-cell role object name. We use setData with
+        # Qt.AccessibleDescriptionRole + a small CSS hack: each
+        # status column gets the matching QSS objectName set via
+        # QTreeWidget.setObjectName — but QTableWidgetItem has no
+        # setObjectName; instead we set the item background colour.
+        from PySide6.QtGui import QColor
+
+        bg_map = {
+            STATUS_RUNNING: QColor("#d6e4ff"),
+            STATUS_DONE: QColor("#d8f5d0"),
+            STATUS_FAILED: QColor("#ffe0e0"),
+            STATUS_CANCELLED: QColor("#ffe9d6"),
+            STATUS_QUEUED: QColor("#eef1f6"),
+        }
+        if job.status in bg_map:
+            for col in range(self._table.columnCount()):
+                it = self._table.item(row, col)
+                if it is not None:
+                    it.setBackground(bg_map[job.status])
+
+    def _update_summary(self) -> None:
+        total = len(self._jobs)
+        running = sum(1 for j in self._jobs.values() if j.status == STATUS_RUNNING)
+        done = sum(1 for j in self._jobs.values() if j.status == STATUS_DONE)
+        failed = sum(1 for j in self._jobs.values() if j.status == STATUS_FAILED)
+        self._count_label.setText(f"{total} jobs  ·  running {running}  ·  done {done}  ·  failed {failed}")
+        self._summary.setText(
+            f"{total} jobs · {running} running · {done} done · {failed} failed"
+        )
+
+    def _trim_old_jobs(self) -> None:
+        """Cap the table at MAX_RECENT_JOBS_IN_LIST rows."""
+        while self._table.rowCount() > MAX_RECENT_JOBS_IN_LIST:
+            # Remove the oldest row (top of table)
+            self._table.removeRow(0)
+
+    # ------------------------------------------------------------------
+    # Context menu / row interactions
+    # ------------------------------------------------------------------
+    def _selected_job(self) -> JobRecord | None:
+        rows = self._table.selectionModel().selectedRows()
+        if not rows:
+            return None
+        item = self._table.item(rows[0].row(), 0)
+        if not item:
+            return None
+        return self._jobs.get(item.text())
+
+    def _show_context_menu(self, pos) -> None:
+        job = self._selected_job()
+        if job is None:
+            return
+        menu = QMenu(self)
+        act_open_results = QAction("📊  Open in Results tab", self)
+        act_open_results.triggered.connect(lambda: self.open_results_requested.emit(job.job_id))
+        menu.addAction(act_open_results)
+        act_open_out = QAction("📁  Open output directory", self)
+        act_open_out.triggered.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(job.output_dir)))
+        menu.addAction(act_open_out)
+        menu.addSeparator()
+        act_export_xlsx = QAction("📤  Export xlsx (Round 24)", self)
+        act_export_xlsx.triggered.connect(lambda: self._export_xlsx(job))
+        menu.addAction(act_export_xlsx)
+        act_export_json = QAction("📤  Export JSON", self)
+        act_export_json.triggered.connect(lambda: self._export_json(job))
+        menu.addAction(act_export_json)
+        menu.addSeparator()
+        act_remove = QAction("🗑  Remove from list", self)
+        act_remove.triggered.connect(lambda: self._remove_job(job.job_id))
+        menu.addAction(act_remove)
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    def _on_row_double_clicked(self, index) -> None:
+        job_id = self._table.item(index.row(), 0).text()
+        self.open_results_requested.emit(job_id)
+
+    def _export_xlsx(self, job: JobRecord) -> None:
+        if not job.rows:
+            QMessageBox.information(self, "Export", "No rows to export.")
+            return
+        default_path = str(Path(job.output_dir) / f"{job.job_id}.xlsx")
+        path, _ = QFileDialog.getSaveFileName(self, "Export xlsx", default_path, "Excel files (*.xlsx)")
+        if not path:
+            return
+        try:
+            from ..export import export_csv  # legacy alias if no xlsx
+
+            # Try the xlsx exporter (Round 24)
+            from ..cli_export import export_run_output_to_xlsx  # type: ignore
+        except ImportError:
+            try:
+                from ..exporters.xlsx import write_xlsx
+                # Build a RunOutput-compatible dict from the job
+                run_output = self._build_run_output(job)
+                write_xlsx(run_output, path)
+                QMessageBox.information(self, "Export", f"Saved {len(job.rows)} rows to {path}")
+                return
+            except Exception as exc:
+                QMessageBox.warning(self, "Export failed", f"{type(exc).__name__}: {exc}")
+                return
+        # Fallback: call the cli_export function if available
+        try:
+            from ..cli_export import export_run_output_to_xlsx
+            run_output = self._build_run_output(job)
+            export_run_output_to_xlsx(run_output, path)
+            QMessageBox.information(self, "Export", f"Saved {len(job.rows)} rows to {path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Export failed", f"{type(exc).__name__}: {exc}")
+
+    def _export_json(self, job: JobRecord) -> None:
+        if not job.rows:
+            return
+        default_path = str(Path(job.output_dir) / f"{job.job_id}.json")
+        path, _ = QFileDialog.getSaveFileName(self, "Export JSON", default_path, "JSON files (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(self._build_run_output(job), fh, indent=2, ensure_ascii=False, default=str)
+            QMessageBox.information(self, "Export", f"Saved {len(job.rows)} rows to {path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
+
+    def _build_run_output(self, job: JobRecord) -> dict[str, Any]:
+        """Build a RunOutput-compatible dict for the exporters."""
+        panels = job.rows
+        # Collect distinct figures / localities / geology
+        figure_ids = sorted({p.get("figure_id") for p in panels if p.get("figure_id")})
+        localities: list[dict[str, Any]] = []
+        geo: list[dict[str, Any]] = []
+        seen_loc: set[tuple] = set()
+        for p in panels:
+            for k, v in (p.get("metadata") or {}).items():
+                if k == "geology_links":
+                    for g in v or []:
+                        geo.append(g)
+            for k, v in (p.get("metadata") or {}).items():
+                if k == "paleodb":
+                    for occ in (v or {}).get("occurrences", []):
+                        key = (occ.get("country"), occ.get("locality"))
+                        if key not in seen_loc:
+                            seen_loc.add(key)
+                            localities.append({"country": occ.get("country"), "locality": occ.get("locality")})
+        return {
+            "schema_version": "1.0.0",
+            "provenance": {"job_id": job.job_id, "source": "rlpe-gui"},
+            "papers": [{"pdf_path": job.pdf_path}],
+            "figures": [{"figure_id": fid} for fid in figure_ids],
+            "panels": panels,
+            "taxa": [],
+            "samples": [],
+            "geology_contexts": geo,
+            "localities": localities,
+            "paleo_coordinates": [],
+            "warnings": [],
+        }
+
+    def _remove_job(self, job_id: str) -> None:
+        self._jobs.pop(job_id, None)
+        row = self._find_row(job_id)
+        if row >= 0:
+            self._table.removeRow(row)
+        self._update_summary()
+
+    def _clear_finished(self) -> None:
+        # Remove all jobs whose status is done / failed / cancelled
+        for status in (STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED):
+            to_remove = [j for j, job in self._jobs.items() if job.status == status]
+            for jid in to_remove:
+                self._remove_job(jid)
+
+    def _clear_all(self) -> None:
+        for jid in list(self._jobs.keys()):
+            self._remove_job(jid)

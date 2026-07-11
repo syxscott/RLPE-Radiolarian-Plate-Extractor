@@ -24,6 +24,9 @@ taxon = ["taxonerd", "spacy"]
 sam = ["sam2"]
 gemma = ["transformers", "accelerate", "bitsandbytes", "pillow"]
 service = ["fastapi", "uvicorn", "pydantic"]
+# Phase 32+: PySide6 desktop GUI (Qt6 native widgets, ~400MB install).
+# Pin >=6.6 to ensure Qt6 ABI (Qt5 wheels are still common on Linux).
+desktop = ["PySide6>=6.6", "Pillow>=10.0"]
 queue = ["celery", "redis"]
 train = ["torch", "transformers", "datasets", "scikit-learn", "scipy"]
 opendataloader = ["opendataloader-pdf>=0.0.0"]
@@ -32,6 +35,7 @@ dev = ["hypothesis>=6.0"]
 
 [project.scripts]
 rlpe = "rlpe.cli:main"
+rlpe-gui = "rlpe.gui.app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
