@@ -70,7 +70,7 @@ from .constants import (
     THEME_LIGHT,
     THEME_SYSTEM,
 )
-from .i18n_widgets import (normalise_input_height, tr_button, tr_checkbox, tr_combobox, tr_form_row, tr_groupbox, tr_label, tr_lineedit, tr_spinbox)
+from .i18n_widgets import (_ensure_size_hint, normalise_input_height, tr_button, tr_checkbox, tr_combobox, tr_form_row, tr_groupbox, tr_label, tr_lineedit, tr_spinbox)
 from .styles import SPACE_L, SPACE_M, SPACE_S, apply_theme
 from . import i18n
 from .utils import get_gui_logger
@@ -94,11 +94,36 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
+        # Phase 36: Settings tab is dense (7 group boxes × 4-8 rows).
+        # Wrap the body in a QScrollArea so on short / 150% DPI
+        # windows the user can scroll instead of having the Save
+        # button clipped off the bottom.
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea(self)
+        scroll.setObjectName("settab.scroll")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        body = QWidget()
+        body.setObjectName("settab.body")
+        # Phase 36: the body's sizeHint defaults to its children's
+        # cumulative widths, which underestimates when the scroll
+        # area viewport is wide. Force a minimum width matching the
+        # viewport so groupboxes expand to fill the visible space
+        # rather than getting squashed into half-width.
+        from PySide6.QtWidgets import QSizePolicy
+        body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        body.setMinimumWidth(700)  # matches main window min width - margins
+        body_layout = QVBoxLayout(body)
         # Phase 34: normalise all input heights so the QSS dark theme
         # and 150% DPI don't clip QSpinBox / QComboBox value text.
         # Called at the end of _build_ui via _normalise_input_heights().
-        outer.setContentsMargins(SPACE_L, SPACE_L, SPACE_L, SPACE_L)
-        outer.setSpacing(SPACE_M)
+        body_layout.setContentsMargins(SPACE_L, SPACE_L, SPACE_L, SPACE_L)
+        body_layout.setSpacing(SPACE_M)
 
         # Title
         # Phase 34: title is a translated template with {app}/{version}.
@@ -112,7 +137,7 @@ class SettingsTab(QWidget):
         title.setObjectName("settab.title")
         title.setProperty("class", "sectionTitle")
         self._title_label = title
-        outer.addWidget(title)
+        body_layout.addWidget(title)
 
         # ---- Appearance ----
         appearance = tr_groupbox("settab.appearance")
@@ -144,8 +169,8 @@ class SettingsTab(QWidget):
         # top of the settings tab. (Previously the title QLabel was
         # created but never inserted, so it was invisible — which is
         # also why the i18n refresh never reached it.)
-        outer.addWidget(self._title_label)
-        outer.addWidget(appearance)
+        body_layout.addWidget(self._title_label)
+        body_layout.addWidget(appearance)
 
         # ---- Default directories ----
         dirs_group = tr_groupbox("settab.dirs")
@@ -161,7 +186,7 @@ class SettingsTab(QWidget):
         self._out_dir_edit.setReadOnly(True)
         dlayout.addRow(tr_label("settab.dir.out"), self._build_file_row(self._out_dir_edit, "output_dir"))
 
-        outer.addWidget(dirs_group)
+        body_layout.addWidget(dirs_group)
 
         # ---- GROBID defaults ----
         grobid = tr_groupbox("settab.grobid")
@@ -182,7 +207,7 @@ class SettingsTab(QWidget):
         self._grobid_timeout.setValue(DEFAULT_GROBID_TIMEOUT)
         glayout.addRow(tr_label("settab.grobid.timeout"), self._grobid_timeout)
 
-        outer.addWidget(grobid)
+        body_layout.addWidget(grobid)
 
         # ---- OCR defaults ----
         ocr = tr_groupbox("settab.ocr")
@@ -208,7 +233,7 @@ class SettingsTab(QWidget):
         self._od_caption_window.setValue(5)
         olayout.addRow(tr_label("settab.ocr.od_caption_window"), self._od_caption_window)
 
-        outer.addWidget(ocr)
+        body_layout.addWidget(ocr)
 
         # ---- LLM defaults ----
         llm = tr_groupbox("settab.llm")
@@ -248,7 +273,7 @@ class SettingsTab(QWidget):
         self._m3_max_retries.setValue(3)
         llayout.addRow(tr_label("settab.m3.max_retries"), self._m3_max_retries)
 
-        outer.addWidget(llm)
+        body_layout.addWidget(llm)
 
         # ---- PBDB defaults ----
         pbdb = tr_groupbox("settab.pbdb")
@@ -268,7 +293,7 @@ class SettingsTab(QWidget):
         self._pbdb_endpoint.setPlaceholderText("(leave blank for default)")
         playout.addRow(tr_label("settab.pbdb.endpoint"), self._pbdb_endpoint)
 
-        outer.addWidget(pbdb)
+        body_layout.addWidget(pbdb)
 
         # ---- Diagnostics ----
         diag = tr_groupbox("settab.diag")
@@ -288,9 +313,7 @@ class SettingsTab(QWidget):
         self._open_log_btn.clicked.connect(self._open_log_file)
         dlayout.addRow(tr_label("settab.diag.log_label"), self._open_log_btn)
 
-        outer.addWidget(diag)
-
-        outer.addStretch(1)
+        body_layout.addWidget(diag)
 
         # ---- Action bar ----
         actions = QHBoxLayout()
@@ -307,7 +330,13 @@ class SettingsTab(QWidget):
         save_btn.clicked.connect(self._save)
         actions.addWidget(save_btn)
 
-        outer.addLayout(actions)
+        body_layout.addLayout(actions)
+
+        # Phase 36: glue the scroll area into the outer layout so the
+        # body fills the tab and becomes scrollable when the window
+        # is shorter than the body.
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
 
         # Phase 34: ensure every input widget has a 30-px
         # minimum height so the value is visible. This runs once
@@ -464,6 +493,11 @@ class SettingsTab(QWidget):
         if not lang:
             return
         i18n.set_language(lang)
+        # Phase 36: persist language choice so the next launch
+        # uses the same language. This is a live preference (no
+        # Save button click needed).
+        self._qsettings.setValue("ui/language", lang)
+        self._qsettings.sync()
         # Refresh all tabs in the main window
         main_window = self.parent()
         while main_window is not None and not isinstance(main_window, type(self.parent()).__mro__[0]):
@@ -493,8 +527,8 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------
     # Public API used by the parent MainWindow
     # ------------------------------------------------------------------
-    def _normalise_input_heights(self, min_height: int = 30) -> None:
-        """Phase 34/35: clamp every input widget's minimum height.
+    def _normalise_input_heights(self, min_height: int = 32) -> None:
+        """Phase 34/35/36: clamp every input widget's minimum height.
 
         QFormLayout collapses a row to the height of its smallest
         child, so a QSpinBox with default 22-px height clips the value
@@ -507,6 +541,12 @@ class SettingsTab(QWidget):
         "Enable PBDB enrichment (taxonomy + occurrences)" or
         "Save intermediate panels (large disk usage)" would otherwise
         wrap / clip at the QSS-imposed 22-px checkbox height.
+
+        Phase 36 also patches ``sizeHint()`` so QFormLayout's row
+        calculation uses ``min_height`` rather than the widget's
+        intrinsic 22-26 px height. Without this, ``setMinimumHeight(30)``
+        is ignored when computing row heights because Qt layouts read
+        ``sizeHint()`` first.
         """
         for w in self.findChildren(QWidget):
             if isinstance(
@@ -515,6 +555,7 @@ class SettingsTab(QWidget):
             ):
                 if w.minimumHeight() < min_height:
                     w.setMinimumHeight(min_height)
+                _ensure_size_hint(w, min_height)
 
     def _refresh_texts(self) -> None:
         # Re-translate the appearance + section labels.

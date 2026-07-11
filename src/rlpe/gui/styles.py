@@ -128,19 +128,22 @@ QGroupBox {{
     background-color: #ffffff;
     border: 1px solid #cdd5e0;
     border-radius: {RADIUS_M}px;
-    margin-top: 14px;
-    padding: 12px 8px 8px 8px;
+    margin-top: 16px;
+    padding: 18px 10px 10px 10px;
     font-weight: 600;
     color: #1f2933;
 }}
+/* Phase 36: drop the blue "title badge" subcontrol — it was
+   clipping the title text to its first 4 characters when the
+   subcontrol's geometry was computed before QGroupBox had its
+   final width. Instead use a plain title above the border. */
 QGroupBox::title {{
-    subcontrol-origin: margin;
+    subcontrol-origin: padding;
     subcontrol-position: top left;
-    padding: 2px 10px;
-    left: 10px;
-    background-color: #1f77b4;
-    color: #ffffff;
-    border-radius: 3px;
+    padding: 0 4px;
+    left: 8px;
+    color: #1f2933;
+    background-color: transparent;
 }}
 
 /* --- Inputs --- */
@@ -149,7 +152,11 @@ QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     color: #1f2933;
     border: 1px solid #cdd5e0;
     border-radius: {RADIUS_S}px;
-    padding: 4px 8px;
+    /* Phase 36: vertical padding 2px (was 4) so a 30-px tall row
+       leaves 26 px for the inner lineedit / arrows. The previous
+       4px padding stole 8 px and pushed the spinbox arrows OUTSIDE
+       the widget rectangle. */
+    padding: 2px 8px;
     selection-background-color: #1f77b4;
     selection-color: #ffffff;
 }}
@@ -171,6 +178,16 @@ QComboBox::drop-down {{
     width: 18px;
     border-left: 1px solid #cdd5e0;
 }}
+/* Phase 36: keep spinbox up/down buttons inside the widget rect. */
+QSpinBox::up-button, QSpinBox::down-button,
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+    width: 16px;
+    subcontrol-origin: border;
+}}
+QSpinBox::up-button {{ subcontrol-position: top right; }}
+QSpinBox::down-button {{ subcontrol-position: bottom right; }}
+QDoubleSpinBox::up-button {{ subcontrol-position: top right; }}
+QDoubleSpinBox::down-button {{ subcontrol-position: bottom right; }}
 
 /* --- Buttons --- */
 QPushButton {{
@@ -504,26 +521,30 @@ QGroupBox {{
     background-color: #1f2937;
     border: 1px solid #2d3748;
     border-radius: {RADIUS_M}px;
-    margin-top: 14px;
-    padding: 12px 8px 8px 8px;
+    margin-top: 16px;
+    padding: 18px 10px 10px 10px;
     font-weight: 600;
     color: #e2e8f0;
 }}
+/* Phase 36: drop the blue "title badge" subcontrol (same as
+   light theme) — it was clipping the title text. Plain title
+   above the border. */
 QGroupBox::title {{
-    subcontrol-origin: margin;
+    subcontrol-origin: padding;
     subcontrol-position: top left;
-    padding: 2px 10px;
-    left: 10px;
-    background-color: #3182ce;
-    color: #ffffff;
-    border-radius: 3px;
+    padding: 0 4px;
+    left: 8px;
+    color: #e2e8f0;
+    background-color: transparent;
 }}
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     background-color: #0f1419;
     color: #e2e8f0;
     border: 1px solid #2d3748;
     border-radius: {RADIUS_S}px;
-    padding: 4px 8px;
+    /* Phase 36: same fix as light theme — vertical padding 2px so
+       the spinbox up/down arrows fit inside the 30-px row. */
+    padding: 2px 8px;
     selection-background-color: #3182ce;
 }}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus,
@@ -534,6 +555,15 @@ QPlainTextEdit, QTextEdit {{
     font-family: {FONT_FAMILY_MONO};
     font-size: 12px;
 }}
+QSpinBox::up-button, QSpinBox::down-button,
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+    width: 16px;
+    subcontrol-origin: border;
+}}
+QSpinBox::up-button {{ subcontrol-position: top right; }}
+QSpinBox::down-button {{ subcontrol-position: bottom right; }}
+QDoubleSpinBox::up-button {{ subcontrol-position: top right; }}
+QDoubleSpinBox::down-button {{ subcontrol-position: bottom right; }}
 QPushButton {{
     background-color: #1f2937;
     color: #e2e8f0;

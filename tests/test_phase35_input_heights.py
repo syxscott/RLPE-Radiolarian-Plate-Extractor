@@ -73,9 +73,9 @@ def test_settings_tab_all_checkboxes_have_min_height_30():
     from rlpe.gui.settings_tab import SettingsTab
     st = SettingsTab({})
     for cb in st.findChildren(QCheckBox):
-        assert cb.minimumHeight() >= 30, (
+        assert cb.minimumHeight() >= 32, (
             f"Settings QCheckBox {cb.text()!r} has minHeight="
-            f"{cb.minimumHeight()}, needs >= 30"
+            f"{cb.minimumHeight()}, needs >= 32"
         )
 
 
@@ -100,8 +100,8 @@ def test_settings_tab_input_widgets_min_height_30():
     from rlpe.gui.settings_tab import SettingsTab
     st = SettingsTab({})
     for le in _user_visible_lineedits(st):
-        assert le.minimumHeight() >= 30, (
-            f"Settings QLineEdit minHeight={le.minimumHeight()}, needs >= 30"
+        assert le.minimumHeight() >= 32, (
+            f"Settings QLineEdit minHeight={le.minimumHeight()}, needs >= 32"
         )
 
 
@@ -113,9 +113,9 @@ def test_run_tab_all_checkboxes_have_min_height_30():
     from rlpe.gui.run_tab import RunTab
     rt = RunTab({})
     for cb in rt.findChildren(QCheckBox):
-        assert cb.minimumHeight() >= 30, (
+        assert cb.minimumHeight() >= 32, (
             f"Run QCheckBox {cb.text()!r} has minHeight="
-            f"{cb.minimumHeight()}, needs >= 30"
+            f"{cb.minimumHeight()}, needs >= 32"
         )
 
 
@@ -124,8 +124,8 @@ def test_run_tab_spinboxes_have_min_height_30():
     from rlpe.gui.run_tab import RunTab
     rt = RunTab({})
     for sb in rt.findChildren(QSpinBox):
-        assert sb.minimumHeight() >= 30, (
-            f"Run QSpinBox minHeight={sb.minimumHeight()}, needs >= 30"
+        assert sb.minimumHeight() >= 32, (
+            f"Run QSpinBox minHeight={sb.minimumHeight()}, needs >= 32"
         )
 
 
@@ -134,8 +134,8 @@ def test_run_tab_comboboxes_have_min_height_30():
     from rlpe.gui.run_tab import RunTab
     rt = RunTab({})
     for cb in rt.findChildren(QComboBox):
-        assert cb.minimumHeight() >= 30, (
-            f"Run QComboBox minHeight={cb.minimumHeight()}, needs >= 30"
+        assert cb.minimumHeight() >= 32, (
+            f"Run QComboBox minHeight={cb.minimumHeight()}, needs >= 32"
         )
 
 
@@ -143,8 +143,8 @@ def test_run_tab_lineedits_have_min_height_30():
     from rlpe.gui.run_tab import RunTab
     rt = RunTab({})
     for le in _user_visible_lineedits(rt):
-        assert le.minimumHeight() >= 30, (
-            f"Run QLineEdit minHeight={le.minimumHeight()}, needs >= 30"
+        assert le.minimumHeight() >= 32, (
+            f"Run QLineEdit minHeight={le.minimumHeight()}, needs >= 32"
         )
 
 
@@ -153,9 +153,9 @@ def test_run_tab_buttons_have_min_height_30():
     from rlpe.gui.run_tab import RunTab
     rt = RunTab({})
     for btn in rt.findChildren(QPushButton):
-        assert btn.minimumHeight() >= 30, (
+        assert btn.minimumHeight() >= 32, (
             f"Run QPushButton {btn.text()!r} minHeight="
-            f"{btn.minimumHeight()}, needs >= 30"
+            f"{btn.minimumHeight()}, needs >= 32"
         )
 
 
@@ -167,8 +167,8 @@ def test_tr_checkbox_factory_sets_min_height_30():
     from PySide6.QtWidgets import QCheckBox
     cb = tr_checkbox("dummy.checkbox.key")
     assert isinstance(cb, QCheckBox)
-    assert cb.minimumHeight() == 30, (
-        f"tr_checkbox default minHeight={cb.minimumHeight()}, expected 30"
+    assert cb.minimumHeight() == 32, (
+        f"tr_checkbox default minHeight={cb.minimumHeight()}, expected 32"
     )
 
 
@@ -177,7 +177,7 @@ def test_tr_spinbox_factory_sets_min_height_30():
     from PySide6.QtWidgets import QSpinBox
     sb = tr_spinbox("dummy.spinbox.key")
     assert isinstance(sb, QSpinBox)
-    assert sb.minimumHeight() == 30
+    assert sb.minimumHeight() == 32
 
 
 def test_tr_combobox_factory_sets_min_height_30():
@@ -185,7 +185,7 @@ def test_tr_combobox_factory_sets_min_height_30():
     from PySide6.QtWidgets import QComboBox
     cb = tr_combobox("dummy.combobox.key")
     assert isinstance(cb, QComboBox)
-    assert cb.minimumHeight() == 30
+    assert cb.minimumHeight() == 32
 
 
 def test_tr_lineedit_factory_sets_min_height_30():
@@ -193,7 +193,7 @@ def test_tr_lineedit_factory_sets_min_height_30():
     from PySide6.QtWidgets import QLineEdit
     le = tr_lineedit("dummy.lineedit.key")
     assert isinstance(le, QLineEdit)
-    assert le.minimumHeight() == 30
+    assert le.minimumHeight() == 32
 
 
 def test_tr_button_factory_sets_min_height_30():
@@ -201,7 +201,7 @@ def test_tr_button_factory_sets_min_height_30():
     from PySide6.QtWidgets import QPushButton
     btn = tr_button("dummy.button.key")
     assert isinstance(btn, QPushButton)
-    assert btn.minimumHeight() == 30
+    assert btn.minimumHeight() == 32
 
 
 # ============================================================

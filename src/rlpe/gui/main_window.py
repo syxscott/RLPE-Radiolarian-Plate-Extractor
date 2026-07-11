@@ -184,6 +184,13 @@ class MainWindow(QMainWindow):
     # UI assembly
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
+        # Phase 36: load persisted language preference (default zh_CN).
+        # The i18n module defaults to zh_CN at import time; the user's
+        # last choice overrides it here.
+        saved_lang = self._qsettings.value("ui/language", "zh_CN")
+        if saved_lang in ("en", "zh_CN"):
+            i18n.set_language(saved_lang)
+
         self.setWindowTitle(f"{APP_NAME}  v{APP_VERSION}")
         self.setWindowIcon(_make_app_icon())
         self.resize(*MAIN_WINDOW_DEFAULT_SIZE)

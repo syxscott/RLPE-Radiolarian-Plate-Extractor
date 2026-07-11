@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 
-_CURRENT_LANG: str = "en"
+_CURRENT_LANG: str = "zh_CN"
 _LISTENERS: list[Callable[[str], None]] = []
 
 

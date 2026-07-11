@@ -28,14 +28,52 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
+    QAbstractSpinBox, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox,
     QVBoxLayout, QWidget,
 )
 
 from . import i18n
+
+
+# ============================================================
+# Phase 36: row-height helpers (QFormLayout / QGridLayout)
+# ============================================================
+# Note: we do NOT monkey-patch ``sizeHint()`` on Qt widgets because
+# overriding a C++ virtual slot on a QObject subclass segfaults under
+# PySide6 6.11 when Qt's layout code calls the wrapper. Instead we
+# set a robust size policy + bump the QSS to ensure each widget
+# reports a height >= 30 px in its layout row.
+def _ensure_size_hint(widget: QWidget, patched_height: int) -> None:
+    """Phase 36: force a widget to report a row height of at least
+    ``patched_height`` in a layout.
+
+    Strategy: set ``QSizePolicy.Fixed`` on the vertical axis and
+    bump the widget's minimum height (preserving any explicit
+    minimum width the caller already set). Layouts will then use
+    ``patched_height`` for the row (Qt treats ``Fixed`` height as
+    the canonical row height) without overriding ``sizeHint``.
+
+    Idempotent — multiple calls don't accumulate.
+    """
+    if getattr(widget, "_phase36_ensured", False):
+        return
+    try:
+        from PySide6.QtWidgets import QSizePolicy
+        sp = widget.sizePolicy()
+        sp.setVerticalPolicy(QSizePolicy.Policy.Fixed)
+        sp.setHorizontalPolicy(QSizePolicy.Policy.Preferred)
+        widget.setSizePolicy(sp)
+        # Preserve any caller-set minimumWidth, only override the height.
+        existing_min_w = widget.minimumWidth()
+        existing_min_h = widget.minimumHeight()
+        new_min_h = max(existing_min_h, patched_height)
+        widget.setMinimumSize(max(existing_min_w, 0), new_min_h)
+        widget._phase36_ensured = True
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -99,7 +137,7 @@ def tr_button(
     object_name: Optional[str] = None,
     parent: Optional[QWidget] = None,
     object_name_attr: str = "default",
-    min_height: int = 30,
+    min_height: int = 32,
 ) -> QPushButton:
     btn = QPushButton(parent)
     key = object_name or text_key
@@ -119,7 +157,7 @@ def tr_checkbox(
     object_name: Optional[str] = None,
     parent: Optional[QWidget] = None,
     checked: bool = False,
-    min_height: int = 30,
+    min_height: int = 32,
 ) -> QCheckBox:
     """Create a QCheckBox with translated text.
 
@@ -153,7 +191,7 @@ def tr_lineedit(
     parent: Optional[QWidget] = None,
     min_width: int = 180,
     text: str = "",
-    min_height: int = 30,
+    min_height: int = 32,
 ) -> QLineEdit:
     """Create a QLineEdit with a translated placeholder.
 
@@ -161,14 +199,15 @@ def tr_lineedit(
     not (and should not be) re-translated when the language changes
     — that would clobber what the user is typing.
 
-    Phase 35: default ``min_height=30`` so the row in any layout
-    matches the 30-px QSpinBox / QComboBox row height and the
-    value text isn't clipped.
+    Phase 36: default ``min_height=32`` (was 30) so a QSpinBox on
+    the same row has room for its up/down arrows (16 px each) and
+    still looks balanced with adjacent widgets.
     """
     le = QLineEdit(text, parent)
     key = object_name or placeholder_key
     le.setMinimumWidth(min_width)
     le.setMinimumHeight(min_height)
+    _ensure_size_hint(le, min_height)
     le.setObjectName(key)
     i18n.register_widget_text(key, "placeholderText", key)
     le.setPlaceholderText(i18n._tr(key))
@@ -184,18 +223,20 @@ def tr_spinbox(
     min_val: int = 0,
     max_val: int = 1000,
     value: int = 0,
-    min_height: int = 30,
+    min_height: int = 32,
 ) -> QSpinBox:
     """Create a QSpinBox. The label above / beside the spinbox is
     a separate ``tr_label`` call — this factory only creates the
     numeric input. We still register a translation key for the
     spinbox's prefix / suffix via the surrounding label.
 
-    Phase 35: default ``min_height=30`` for visual parity with the
-    row heights in QFormLayout."""
+    Phase 36: default ``min_height=32`` to fit the up/down arrows
+    inside the widget rect (each arrow is 16 px, container must
+    be 32+ px or arrows escape and overlap adjacent widgets)."""
     sb = QSpinBox(parent)
     sb.setMinimumWidth(min_width)
     sb.setMinimumHeight(min_height)
+    _ensure_size_hint(sb, min_height)
     sb.setRange(min_val, max_val)
     sb.setValue(value)
     if object_name:
@@ -212,11 +253,12 @@ def tr_doublespinbox(
     max_val: float = 1.0,
     value: float = 0.5,
     step: float = 0.05,
-    min_height: int = 30,
+    min_height: int = 32,
 ) -> QDoubleSpinBox:
     sb = QDoubleSpinBox(parent)
     sb.setMinimumWidth(min_width)
     sb.setMinimumHeight(min_height)
+    _ensure_size_hint(sb, min_height)
     sb.setRange(min_val, max_val)
     sb.setSingleStep(step)
     sb.setValue(value)
@@ -233,7 +275,7 @@ def tr_combobox(
     min_width: int = 130,
     items: Optional[list[str]] = None,
     current: Optional[str] = None,
-    min_height: int = 30,
+    min_height: int = 32,
 ) -> QComboBox:
     """Create a QComboBox with a translated list of items.
 
@@ -247,6 +289,7 @@ def tr_combobox(
     key = object_name or text_key
     cb.setMinimumWidth(min_width)
     cb.setMinimumHeight(min_height)
+    _ensure_size_hint(cb, min_height)
     if items:
         cb.addItems(items)
     if current:
@@ -269,18 +312,22 @@ def tr_form_row(
     widget: QWidget,
     *,
     label_align: Qt.AlignmentFlag = Qt.AlignRight | Qt.AlignVCenter,
-    min_height: int = 30,
+    min_height: int = 32,
 ) -> tuple[QLabel, QWidget]:
     """Create a (label, widget) pair ready to be passed to
     ``QFormLayout.addRow``. The label is translated via
     ``label_key``; the widget's height is forced to ``min_height``
     so a QSpinBox / QComboBox value isn't visually clipped at
     high DPI or under the QSS dark theme.
-    """
+
+    Phase 36: also override the widget's ``sizeHint()`` so the
+    QFormLayout row uses ``min_height`` rather than the widget's
+    intrinsic 22-26 px height."""
     lbl = tr_label(label_key)
     lbl.setAlignment(label_align)
     lbl.setMinimumHeight(min_height)
     widget.setMinimumHeight(min_height)
+    _ensure_size_hint(widget, min_height)
     return lbl, widget
 
 
