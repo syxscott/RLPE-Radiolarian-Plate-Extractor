@@ -44,9 +44,10 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import BATCH_DIALOG_DEFAULT_SIZE
-from .i18n_widgets import tr_button, tr_label
+from .i18n_widgets import tr_button, tr_checkbox, tr_label
 from .styles import SPACE_M, SPACE_S
 from .utils import file_size_human, get_gui_logger, short_path
+from . import i18n
 
 
 class BatchDialog(QDialog):
@@ -82,22 +83,22 @@ class BatchDialog(QDialog):
         list_row.addWidget(self._file_list, 1)
 
         file_btns = QVBoxLayout()
-        add_btn = QPushButton("➕ Add PDFs…")
+        add_btn = tr_button("batch.add")
         add_btn.clicked.connect(self._on_add)
         file_btns.addWidget(add_btn)
 
-        add_dir_btn = QPushButton("📁 Add directory…")
+        add_dir_btn = tr_button("batch.add_dir")
         add_dir_btn.clicked.connect(self._on_add_dir)
         file_btns.addWidget(add_dir_btn)
 
         file_btns.addSpacing(SPACE_S)
 
-        remove_btn = QPushButton("➖ Remove selected")
+        remove_btn = tr_button("batch.remove")
         remove_btn.clicked.connect(self._on_remove)
         file_btns.addWidget(remove_btn)
 
-        clear_btn = QPushButton("🗑 Clear all")
-        clear_btn.clicked.connect(lambda: self._file_list.clear())
+        clear_btn = tr_button("batch.clear")
+        clear_btn.clicked.connect(self._on_clear_all)
         file_btns.addWidget(clear_btn)
 
         file_btns.addStretch(1)
@@ -121,20 +122,20 @@ class BatchDialog(QDialog):
         og.setVerticalSpacing(SPACE_S)
 
         self._out_dir_edit = QLineEdit(self._settings.get("last_export_dir", str(Path.home() / "rlpe_batch_out")))
-        og.addRow("Output directory:", self._out_dir_edit)
+        og.addRow(tr_label("batch.outdir"), self._out_dir_edit)
 
         out_row = QHBoxLayout()
         out_row.addWidget(self._out_dir_edit, 1)
-        out_btn = QPushButton("Browse…")
+        out_btn = tr_button("common.browse")
         out_btn.clicked.connect(self._on_pick_out)
         out_row.addWidget(out_btn)
         og.addRow("", _wrap(out_row))
 
-        self._stop_on_error = QCheckBox("Stop batch on first error")
+        self._stop_on_error = tr_checkbox("batch.stop_on_error")
         self._stop_on_error.setChecked(False)
         og.addRow("", self._stop_on_error)
 
-        self._xlsx_at_end = QCheckBox("Export combined xlsx when all jobs finish")
+        self._xlsx_at_end = tr_checkbox("batch.xlsx_at_end")
         self._xlsx_at_end.setChecked(True)
         og.addRow("", self._xlsx_at_end)
 
@@ -144,17 +145,17 @@ class BatchDialog(QDialog):
         bar = QHBoxLayout()
         bar.setSpacing(SPACE_S)
 
-        self._count_label = QLabel("0 PDFs queued")
+        self._count_label = tr_label("batch.count.zero")
         self._count_label.setObjectName("metric")
         bar.addWidget(self._count_label)
 
         bar.addStretch(1)
 
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = tr_button("batch.cancel")
         cancel_btn.clicked.connect(self.reject)
         bar.addWidget(cancel_btn)
 
-        start_btn = QPushButton("▶  Start batch")
+        start_btn = tr_button("batch.start")
         start_btn.setObjectName("primary")
         start_btn.clicked.connect(self._on_start)
         bar.addWidget(start_btn)
@@ -219,7 +220,16 @@ class BatchDialog(QDialog):
             if path in self._pdfs:
                 self._pdfs.remove(path)
             self._file_list.takeItem(row)
-        self._count_label.setText(f"{len(self._pdfs)} PDFs queued")
+        self._count_label.setText(i18n._tr("batch.count").format(n=len(self._pdfs)))
+
+    def _on_clear_all(self) -> None:
+        """Phase 41: Clear All button now also empties the internal
+        ``_pdfs`` list — previously the lambda ``self._file_list.clear()``
+        only cleared the QListWidget but left self._pdfs populated,
+        so the next Start would still try to process them."""
+        self._file_list.clear()
+        self._pdfs.clear()
+        self._count_label.setText(i18n._tr("batch.count").format(n=0))
 
     def _on_pick_out(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Choose batch output directory", self._out_dir_edit.text() or str(Path.home()))
@@ -231,13 +241,29 @@ class BatchDialog(QDialog):
     # ------------------------------------------------------------------
     def _on_start(self) -> None:
         if not self._pdfs:
-            QMessageBox.information(self, "Batch", "No PDFs queued.")
+            QMessageBox.information(
+                self,
+                i18n._tr("batch.title"),
+                i18n._tr("batch.no_pdfs"),
+            )
             return
         out_dir = self._out_dir_edit.text().strip()
         if not out_dir:
-            QMessageBox.warning(self, "Batch", "Please choose an output directory.")
+            QMessageBox.warning(
+                self,
+                i18n._tr("batch.no_outdir.title"),
+                i18n._tr("batch.no_outdir.body"),
+            )
             return
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        try:
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                i18n._tr("batch.no_outdir.title"),
+                f"{i18n._tr('batch.no_outdir.body')}\n\n{type(exc).__name__}: {exc}",
+            )
+            return
         self._settings["last_export_dir"] = out_dir
         # Settings to pass to each PipelineWorker
         batch_settings = dict(self._settings)

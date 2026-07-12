@@ -33,6 +33,10 @@ RADIUS_S = 3
 RADIUS_M = 6
 RADIUS_L = 10
 
+# Phase 41: import the progress-bar height constant so the
+# ``if False else 18`` dead-code branch can be removed below.
+from .constants import PROGRESS_BAR_MIN_HEIGHT_PX
+
 # ============================================================
 # Light theme (default)
 # ============================================================
@@ -332,7 +336,7 @@ QProgressBar {{
     border: 1px solid #cdd5e0;
     border-radius: {RADIUS_S}px;
     text-align: center;
-    min-height: {PROGRESS_BAR_MIN_HEIGHT_PX if False else 18}px;
+    min-height: {PROGRESS_BAR_MIN_HEIGHT_PX}px;
 }}
 QProgressBar::chunk {{
     background-color: #1f77b4;

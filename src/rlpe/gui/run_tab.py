@@ -377,7 +377,7 @@ class RunTab(QWidget):
         self._progress.setMinimumHeight(20)
         outer.addWidget(self._progress)
 
-        self._progress_msg = QLabel("Pick a PDF above to begin.")
+        self._progress_msg = tr_label("runtab.prompt.no_pdf.body")  # default empty-state hint
         self._progress_msg.setWordWrap(True)
         outer.addWidget(self._progress_msg)
 
@@ -541,16 +541,43 @@ class RunTab(QWidget):
             self._out_edit.setText(str(default_out))
 
     def _on_start(self) -> None:
+        # Phase 41 audit fix (BLOCKER): guard against double-click on
+        # Start. Without this guard, two PipelineWorker threads could
+        # be created, the second overwriting self._worker and leaking
+        # the first. QThread can only be started() once; re-starting
+        # raises RuntimeError which we surface to the user.
+        if self._worker is not None and self._worker.isRunning():
+            self._log.warning(
+                "Start clicked while another job is running; ignored."
+            )
+            return
         pdf = self._path_edit.text().strip()
         out_dir = self._out_edit.text().strip()
         if not pdf or not Path(pdf).exists():
-            QMessageBox.warning(self, "Missing PDF", "Please choose a valid PDF file first.")
+            QMessageBox.warning(
+                self,
+                i18n._tr("runtab.prompt.no_pdf.title"),
+                i18n._tr("runtab.prompt.no_pdf.body"),
+            )
             return
         if not out_dir:
-            QMessageBox.warning(self, "Missing output dir", "Please choose an output directory.")
+            QMessageBox.warning(
+                self,
+                i18n._tr("runtab.prompt.no_outdir.title"),
+                i18n._tr("runtab.prompt.no_outdir.body"),
+            )
             return
         out_path = Path(out_dir)
-        out_path.mkdir(parents=True, exist_ok=True)
+        try:
+            out_path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                i18n._tr("runtab.prompt.no_outdir.title"),
+                i18n._tr("runtab.prompt.no_outdir.body")
+                + f"\n\n{type(exc).__name__}: {exc}",
+            )
+            return
         work_dir = out_path / "work"
         work_dir.mkdir(parents=True, exist_ok=True)
         self._settings["last_export_dir"] = str(out_path)
@@ -570,9 +597,9 @@ class RunTab(QWidget):
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._progress.setRange(0, 0)
-        self._progress.setFormat("Starting…")
-        self._progress_msg.setText("Pipeline initialising…")
-        self._status_label.setText("Starting")
+        self._progress.setFormat(i18n._tr("runtab.progress.starting"))
+        self._progress_msg.setText(i18n._tr("runtab.progress.init"))
+        self._status_label.setText(i18n._tr("runtab.status.starting"))
         self._status_label.setProperty("status", "running")
         self._log.info("Starting job %s on %s", self._current_job_id, pdf)
         self.job_started.emit(self._current_job_id, pdf)
@@ -584,7 +611,7 @@ class RunTab(QWidget):
         self._log.info("Cancellation requested for %s", self._current_job_id)
         self._worker.requestInterruption()
         self._cancel_btn.setEnabled(False)
-        self._status_label.setText("Cancelling…")
+        self._status_label.setText(i18n._tr("runtab.status.cancelling"))
 
     @staticmethod
     def _make_job_id(pdf_path: str | Path) -> str:
@@ -636,5 +663,5 @@ class RunTab(QWidget):
         self._cancel_btn.setEnabled(False)
         self._progress.setRange(0, 1)
         self._progress.setValue(1)
-        self._progress.setFormat("Done")
-        self._progress_msg.setText("Pipeline finished. See Results tab.")
+        self._progress.setFormat(i18n._tr("runtab.status.done"))
+        self._progress_msg.setText(i18n._tr("runtab.progress.done"))

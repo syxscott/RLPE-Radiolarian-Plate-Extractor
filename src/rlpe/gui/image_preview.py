@@ -63,6 +63,10 @@ class ImagePreviewWidget(QWidget):
         self._log = get_gui_logger()
         self._current_path: Path | None = None
         self._bboxes: list[dict[str, Any]] = []
+        # Phase 41: track QGraphicsRectItem references for bbox
+        # overlays so we can remove them on set_image() and avoid
+        # the leak where old bboxes pile up across image swaps.
+        self._bbox_items: list[QGraphicsRectItem] = []
         self._zoom: float = 1.0
         self._build_ui()
 
@@ -123,20 +127,26 @@ class ImagePreviewWidget(QWidget):
         if image_path is None:
             self._current_path = None
             self._scene.clear()
+            self._bbox_items.clear()  # Phase 41: clear bbox items too
             self._path_label.setText("(no image)")
             return
         path = Path(image_path)
         self._current_path = path
         if not path.exists():
             self._scene.clear()
+            self._bbox_items.clear()  # Phase 41: clear bbox items too
             self._path_label.setText(f"(missing) {path.name}")
             return
         pix = self._load_pixmap(path)
         if pix is None:
             self._scene.clear()
+            self._bbox_items.clear()  # Phase 41: clear bbox items too
             self._path_label.setText(f"(failed to load) {path.name}")
             return
         self._scene.clear()
+        # Phase 41: also clear our explicit bbox item list so old
+        # overlays don't survive a set_image() call.
+        self._bbox_items.clear()
         item = QGraphicsPixmapItem(pix)
         self._scene.addItem(item)
         self._scene.setSceneRect(QRectF(pix.rect()))
@@ -188,6 +198,16 @@ class ImagePreviewWidget(QWidget):
 
     def _overlay_bboxes(self) -> None:
         """Draw bounding boxes as QGraphicsRectItem overlays."""
+        # Phase 41: remove any existing bbox items first so successive
+        # set_bboxes / set_image calls don't pile up overlays.
+        for item in self._bbox_items:
+            try:
+                self._scene.removeItem(item)
+            except RuntimeError:
+                # Item may have been deleted by Qt already
+                pass
+        self._bbox_items.clear()
+
         if not self._current_path or not self._bboxes:
             return
         # Ensure scene still has the pixmap item
@@ -218,6 +238,7 @@ class ImagePreviewWidget(QWidget):
             rect_item.setData(0, bbox)
             rect_item.setToolTip(_bbox_tooltip(bbox))
             self._scene.addItem(rect_item)
+            self._bbox_items.append(rect_item)
             # Label with species name (if any)
             species = bbox.get("species") or bbox.get("label_text") or ""
             confidence = bbox.get("confidence")
