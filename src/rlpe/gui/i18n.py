@@ -136,8 +136,15 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
     app = QApplication.instance()
     if app is None:
         return
+    # Phase 37: for ``comboItem`` attr the registered objectName is
+    # ``<combo_objectName>:item:<index>`` but the actual widget's
+    # objectName is just ``<combo_objectName>``. Strip the suffix
+    # so we can find the right QComboBox in the allWidgets() walk.
+    lookup_name = object_name
+    if attr == "comboItem" and ":item:" in object_name:
+        lookup_name = object_name.rsplit(":item:", 1)[0]
     for w in app.allWidgets():
-        if w.objectName() != object_name:
+        if w.objectName() != lookup_name:
             continue
         text = _tr(key)
         # Phase 34: apply .format() so translated templates
@@ -163,6 +170,22 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
                 w.setStatusTip(text)
             elif attr == "tabText":
                 w.setTabText(int(object_name.split(":")[1]), text)
+            elif attr == "comboItem":
+                # Phase 37: tr_combobox item translation. The
+                # objectName looks like "<combo>:item:<index>".
+                # We split on ":" and update the item at index N.
+                try:
+                    parts = object_name.split(":")
+                    idx = int(parts[-1])
+                    combo = w
+                    # Preserve userData when re-setting text
+                    user_data = combo.itemData(idx)
+                    combo.setItemText(idx, text)
+                    # setItemText may clear userData in some Qt versions
+                    if user_data is not None and combo.itemData(idx) is None:
+                        combo.setItemData(idx, user_data)
+                except (ValueError, IndexError, AttributeError):
+                    pass
             else:
                 setattr(w, attr, text)
         except Exception:

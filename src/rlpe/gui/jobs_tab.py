@@ -138,6 +138,17 @@ class JobsTab(QWidget):
         self._log = get_gui_logger()
         self._jobs: dict[str, JobRecord] = {}
         self._build_ui()
+        # Phase 37 audit fix: register as an i18n listener so
+        # column headers, context menu items, and status labels
+        # auto-translate when the language switches (was: the
+        # MainWindow had to walk every tab and manually call
+        # _refresh_texts, which it didn't).
+        # The listener signature is ``Callable[[str], None]`` so
+        # we wrap with a lambda to discard the lang argument —
+        # without this, ``fn(lang)`` would TypeError on _refresh_texts
+        # (which takes no args) and set_language's ``except: pass``
+        # would silently swallow the error.
+        i18n.add_listener(lambda _lang: self._refresh_texts())
 
     # ------------------------------------------------------------------
     # UI
@@ -151,18 +162,23 @@ class JobsTab(QWidget):
         bar = QHBoxLayout()
         bar.setSpacing(SPACE_S)
 
-        clear_done_btn = QPushButton("Clear finished")
+        clear_done_btn = tr_button("jobstab.clear_finished")
         clear_done_btn.clicked.connect(self._clear_finished)
         bar.addWidget(clear_done_btn)
 
-        clear_all_btn = QPushButton("Clear all")
-        clear_all_btn.setObjectName("flat")
+        # Phase 37 audit fix: use setProperty("class", ...) instead
+        # of setObjectName("flat") so the i18n registry's objectName
+        # key isn't clobbered (QSS still styles the button via the
+        # class property).
+        clear_all_btn = tr_button("jobstab.clear_all")
+        clear_all_btn.setProperty("class", "flat")
         clear_all_btn.clicked.connect(self._clear_all)
         bar.addWidget(clear_all_btn)
 
         bar.addStretch(1)
 
-        self._count_label = QLabel("0 jobs")
+        # Phase 37: translated count label, default text from i18n.
+        self._count_label = tr_label("jobstab.no_jobs")
         self._count_label.setObjectName("metric")
         bar.addWidget(self._count_label)
 
@@ -170,9 +186,19 @@ class JobsTab(QWidget):
 
         # ---- Table ----
         self._table = QTableWidget(0, 7)
-        self._table.setHorizontalHeaderLabels(
-            ["Job ID", "PDF", "Status", "Progress", "Rows", "Elapsed", "Output"]
-        )
+        # Phase 37 audit fix: use i18n keys for column headers so
+        # they translate on language switch. ``_refresh_texts``
+        # (called via the i18n listener registered in __init__)
+        # re-applies them when set_language() runs.
+        self._table.setHorizontalHeaderLabels([
+            i18n._tr("jobstab.col.id"),
+            i18n._tr("jobstab.col.pdf"),
+            i18n._tr("jobstab.col.status"),
+            i18n._tr("jobstab.col.progress"),
+            i18n._tr("jobstab.col.rows"),
+            i18n._tr("jobstab.col.elapsed"),
+            i18n._tr("jobstab.col.out"),
+        ])
         # Configure selection / behaviour
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -203,7 +229,8 @@ class JobsTab(QWidget):
 
         # ---- Status row ----
         status_row = QHBoxLayout()
-        self._summary = QLabel("No jobs yet.")
+        # Phase 37: translated status label.
+        self._summary = tr_label("jobstab.no_jobs")
         self._summary.setObjectName("metricLabel")
         status_row.addWidget(self._summary, 1)
         outer.addLayout(status_row)
@@ -383,23 +410,38 @@ class JobsTab(QWidget):
         if job is None:
             return
         menu = QMenu(self)
-        act_open_results = QAction("📊  Open in Results tab", self)
+        # Phase 37 audit fix: register i18n keys for each QAction
+        # so the menu items translate on language switch. We
+        # store the actions on ``self`` so _refresh_texts can
+        # update their text later.
+        self._ctx_actions: list[tuple[QAction, str]] = []
+
+        def _add_action(key: str) -> QAction:
+            act = QAction(i18n._tr(key), self)
+            i18n.register_widget_text(f"jobstab.action.{key}", "text", key)
+            self._ctx_actions.append((act, key))
+            menu.addAction(act)
+            return act
+
+        act_open_results = _add_action("jobstab.menu.open_results")
         act_open_results.triggered.connect(lambda: self.open_results_requested.emit(job.job_id))
-        menu.addAction(act_open_results)
-        act_open_out = QAction("📁  Open output directory", self)
+
+        act_open_out = _add_action("jobstab.menu.open_out")
         act_open_out.triggered.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(job.output_dir)))
-        menu.addAction(act_open_out)
+
         menu.addSeparator()
-        act_export_xlsx = QAction("📤  Export xlsx (Round 24)", self)
+
+        act_export_xlsx = _add_action("jobstab.menu.export_xlsx")
         act_export_xlsx.triggered.connect(lambda: self._export_xlsx(job))
-        menu.addAction(act_export_xlsx)
-        act_export_json = QAction("📤  Export JSON", self)
+
+        act_export_json = _add_action("jobstab.menu.export_json")
         act_export_json.triggered.connect(lambda: self._export_json(job))
-        menu.addAction(act_export_json)
+
         menu.addSeparator()
-        act_remove = QAction("🗑  Remove from list", self)
+
+        act_remove = _add_action("jobstab.menu.remove")
         act_remove.triggered.connect(lambda: self._remove_job(job.job_id))
-        menu.addAction(act_remove)
+
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _on_row_double_clicked(self, index) -> None:
@@ -506,7 +548,10 @@ class JobsTab(QWidget):
             self._remove_job(jid)
 
     def _refresh_texts(self) -> None:
-        """Re-apply column headers / buttons after language switch."""
+        """Re-apply column headers / buttons / context-menu actions
+        after language switch. Phase 37 audit fix: also walks
+        ``self._ctx_actions`` (set by _show_context_menu) so the
+        right-click menu items translate too."""
         headers = [
             i18n._tr("jobstab.col.id"),
             i18n._tr("jobstab.col.pdf"),
@@ -517,4 +562,15 @@ class JobsTab(QWidget):
             i18n._tr("jobstab.col.out"),
         ]
         for i, h in enumerate(headers):
-            self._table.horizontalHeaderItem(i).setText(h)
+            item = self._table.horizontalHeaderItem(i)
+            if item is not None:
+                item.setText(h)
+        # Translate any active context menu actions (QAction isn't
+        # a QWidget so the i18n registry's allWidgets() loop misses
+        # them — we update them here explicitly).
+        for action, key in getattr(self, "_ctx_actions", []):
+            try:
+                action.setText(i18n._tr(key))
+            except RuntimeError:
+                # Action may have been destroyed if the menu closed
+                self._ctx_actions.remove((action, key))

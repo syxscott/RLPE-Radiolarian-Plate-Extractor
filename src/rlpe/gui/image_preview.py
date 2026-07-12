@@ -80,13 +80,18 @@ class ImagePreviewWidget(QWidget):
         self._path_label.setObjectName("metricLabel")
         bar.addWidget(self._path_label, 1)
 
-        for label, slot in (
-            ("🔍+", self._zoom_in),
-            ("🔍−", self._zoom_out),
-            ("⛶",   self._fit_window),
-            ("1:1",  self._zoom_actual),
+        # Phase 37 audit fix: use i18n keys for the toolbar buttons so
+        # the labels translate on language switch. (Emoji characters
+        # have inconsistent width on offscreen renderers, so we set
+        # an explicit max width to keep the toolbar from reflowing.)
+        from .i18n_widgets import tr_button
+        for key, slot in (
+            ("preview.zoom_in", self._zoom_in),
+            ("preview.zoom_out", self._zoom_out),
+            ("preview.fit", self._fit_window),
+            ("preview.actual", self._zoom_actual),
         ):
-            btn = QPushButton(label)
+            btn = tr_button(key)
             btn.setMaximumWidth(BUTTON_MIN_WIDTH + 30)  # emoji + cn label
             btn.clicked.connect(slot)
             bar.addWidget(btn)

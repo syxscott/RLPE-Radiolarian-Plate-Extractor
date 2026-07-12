@@ -19,10 +19,11 @@ Why a wrapper instead of a mixin or QObject subclass?
 The wrappers are functions, not classes, so we don't need to
 register Qt meta-types.
 
-Each wrapper takes ``parent_layout`` (optional) — when supplied
-the widget is added to the layout automatically. When None, the
-caller is responsible for adding the widget (e.g. for nested
-splitter / scrollarea placements).
+Note: the caller is always responsible for adding the returned
+widget to a layout (``layout.addWidget(w)``). The factories only
+construct + configure the widget — they don't attach it to a layout
+because that would couple widget construction to layout ownership,
+which complicates re-parenting and tab switching.
 """
 from __future__ import annotations
 
@@ -275,29 +276,53 @@ def tr_combobox(
     min_width: int = 130,
     items: Optional[list[str]] = None,
     current: Optional[str] = None,
+    item_keys: Optional[list[str]] = None,
     min_height: int = 32,
 ) -> QComboBox:
     """Create a QComboBox with a translated list of items.
 
-    The ``text_key`` is the registry key. The *items* themselves
-    are pulled from a separate per-key item list (not all keys
-    have items — only the ones that need translation). If
-    ``items`` is provided, those literal strings are inserted.
+    The ``text_key`` is the registry key for the *placeholder text*.
+    The items themselves are inserted in one of two modes:
 
-    Phase 35: default ``min_height=30`` for visual parity."""
+      * ``items=[str, ...]``  — literal strings, NOT translated.
+        Use this for short technical tokens ("en", "ja", "ch_sim")
+        that are the same in every language.
+      * ``item_keys=[key, ...]`` — each entry is an i18n key whose
+        translation is the displayed item. The raw ``items`` are
+        stored as ``userData`` so callers can ``currentData()`` to
+        get the original token even after language switches.
+
+    Phase 37 audit fix: previously items were literal and never
+    translated; now callers can pass either literal items or
+    translation keys (or both — ``items`` becomes the fallback
+    if ``item_keys`` is not provided).
+    """
     cb = QComboBox(parent)
     key = object_name or text_key
     cb.setMinimumWidth(min_width)
     cb.setMinimumHeight(min_height)
     _ensure_size_hint(cb, min_height)
-    if items:
+    if item_keys:
+        # Translate each item via i18n._tr; store raw token as userData.
+        for ix, k in enumerate(item_keys):
+            label = i18n._tr(k)
+            raw = items[ix] if items and ix < len(items) else label
+            cb.addItem(label, userData=raw)
+    elif items:
         cb.addItems(items)
     if current:
-        idx = cb.findText(current)
-        if idx >= 0:
-            cb.setCurrentIndex(idx)
+        # Look up by userData (preferred) or by text (fallback)
+        ix = cb.findData(current)
+        if ix < 0:
+            ix = cb.findText(current)
+        if ix >= 0:
+            cb.setCurrentIndex(ix)
     cb.setObjectName(key)
-    # Placeholder text + items both registered
+    # Phase 37: also register each item_key so the registry re-applies
+    # them on language switch.
+    if item_keys:
+        for ix, k in enumerate(item_keys):
+            i18n.register_widget_text(f"{key}:item:{ix}", "comboItem", k)
     if text_key:
         i18n.register_widget_text(key, "placeholderText", text_key)
         cb.setPlaceholderText(i18n._tr(text_key))

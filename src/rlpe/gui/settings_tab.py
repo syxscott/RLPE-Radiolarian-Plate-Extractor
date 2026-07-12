@@ -362,19 +362,28 @@ class SettingsTab(QWidget):
     def _open_log_file(self) -> None:
         import os
         import subprocess
+        import sys
         from .utils import LOG_FILE_NAME
         log_path = os.path.expanduser(f"~/.cache/rlpe/gui/{LOG_FILE_NAME}")
         try:
-            if hasattr(subprocess, "Popen"):
-                if sys.platform == "darwin":
-                    subprocess.Popen(["open", log_path])
-                elif sys.platform.startswith("win"):
-                    os.startfile(log_path)  # type: ignore[attr-defined]
-                else:
-                    subprocess.Popen(["xdg-open", log_path])
-            QMessageBox.information(self, "Log file", f"Log file: {log_path}")
+            # subprocess.Popen is always available — no hasattr check.
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", log_path])
+            elif sys.platform.startswith("win"):
+                os.startfile(log_path)  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["xdg-open", log_path])
+            QMessageBox.information(
+                self,
+                i18n._tr("settab.diag.log_btn"),
+                i18n._tr("settab.log.path").format(path=log_path),
+            )
         except Exception as exc:
-            QMessageBox.warning(self, "Log file", f"Could not open: {exc}")
+            QMessageBox.warning(
+                self,
+                i18n._tr("settab.diag.log_btn"),
+                i18n._tr("settab.log.open_fail").format(error=exc, path=log_path),
+            )
 
     # ------------------------------------------------------------------
     # Persistence
@@ -466,24 +475,52 @@ class SettingsTab(QWidget):
         self._qsettings.setValue("save_intermediate", self._save_intermediate.isChecked())
 
         self._qsettings.sync()
+        # Phase 37 audit fix: refresh in-memory cache so Run tab
+        # picks up the saved values immediately (was: cache stale
+        # until app restart).
+        self.apply_to_run_settings()
         # Apply theme live
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, theme)
         self.settings_changed.emit()
-        QMessageBox.information(self, "Settings", "Settings saved.")
+        QMessageBox.information(
+            self,
+            i18n._tr("settab.save"),
+            i18n._tr("settab.save.done"),
+        )
 
     def _reset_defaults(self) -> None:
         if QMessageBox.question(
             self,
-            "Reset settings?",
-            "This will reset all settings to their defaults. Continue?",
+            i18n._tr("settab.reset.confirm.title"),
+            i18n._tr("settab.reset.confirm.body"),
         ) != QMessageBox.Yes:
             return
         self._qsettings.clear()
-        self._load()
-        QMessageBox.information(self, "Settings", "Settings reset to defaults.")
+        # Phase 37 audit fix: block theme/lang combos from firing
+        # _on_theme_change / _on_lang_change while we programmatically
+        # load defaults — otherwise the user sees a "Settings reset"
+        # dialog on top of a momentarily-repainted window.
+        from PySide6.QtCore import QSignalBlocker
+        with QSignalBlocker(self._theme_combo), QSignalBlocker(self._lang_combo):
+            self._load()
+        # Phase 37: refresh the in-memory cache so the Run tab picks
+        # up the freshly-reset defaults immediately (was: only QSettings
+        # was reset, Run tab kept stale values until app restart).
+        self.apply_to_run_settings()
+        # Re-apply default theme now that signals are unblocked.
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, DEFAULT_THEME)
+        self.settings_changed.emit()
+        QMessageBox.information(
+            self,
+            i18n._tr("settab.reset.confirm.title"),
+            i18n._tr("settab.reset.done"),
+        )
 
     # ------------------------------------------------------------------
     # Live theme change
@@ -495,27 +532,35 @@ class SettingsTab(QWidget):
         i18n.set_language(lang)
         # Phase 36: persist language choice so the next launch
         # uses the same language. This is a live preference (no
-        # Save button click needed).
+        # Save button click required).
         self._qsettings.setValue("ui/language", lang)
         self._qsettings.sync()
-        # Refresh all tabs in the main window
-        main_window = self.parent()
-        while main_window is not None and not isinstance(main_window, type(self.parent()).__mro__[0]):
-            main_window = main_window.parent()
-        # Walk all tabs and call their _refresh_texts() if they have it
-        if hasattr(self.parent(), "_tabs"):
-            for i in range(self.parent()._tabs.count()):
-                w = self.parent()._tabs.widget(i)
+        # Phase 37 audit fix: ``self.parent()`` is the QTabWidget's
+        # tab page wrapper, NOT the MainWindow. The MainWindow owns
+        # ``_tabs``. Walk up the parent chain with ``self.window()``
+        # (returns the top-level QWidget) which is always the
+        # MainWindow for a normal QMainWindow GUI.
+        win = self.window()
+        if win is not None and hasattr(win, "_tabs"):
+            for i in range(win._tabs.count()):
+                w = win._tabs.widget(i)
+                # Phase 37: ALL tabs (Run / Jobs / Results / Settings)
+                # already register an i18n listener that calls their
+                # own _refresh_texts via i18n.set_language listeners —
+                # so we don't need to manually walk and call. But
+                # call _refresh_texts() explicitly here as a belt-and-
+                # suspenders fallback in case a tab hasn't registered
+                # a listener yet.
                 if hasattr(w, "_refresh_texts"):
                     try:
                         w._refresh_texts()
                     except Exception:
                         pass
-        # Re-apply theme to refresh status bar / menu colours
+        # No-op theme refresh (keep current theme).
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
-        if app is not None:
-            apply_theme(app, i18n.current_language() and "light" or "light")  # keep light
+        if app is not None and hasattr(self, "_theme_combo"):
+            apply_theme(app, self._theme_combo.currentText())
 
     def _on_theme_change(self, theme: str) -> None:
         from PySide6.QtWidgets import QApplication
@@ -579,8 +624,17 @@ class SettingsTab(QWidget):
 
     def apply_to_run_settings(self) -> None:
         """When the Run tab starts, push current Settings-tab values
-        into the in-memory run defaults so new jobs use them."""
+        into the in-memory run defaults so new jobs use them.
+
+        Phase 37 audit fix: was missing ``last_pdf_dir``,
+        ``last_export_dir``, ``theme``, and ``m3_multi_plate_enrich``,
+        so a fresh Run tab would still read the values the user had
+        at first launch even after Settings changed them.
+        """
         self._settings.update({
+            "theme": self._theme_combo.currentText(),
+            "last_pdf_dir": self._pdf_dir_edit.text(),
+            "last_export_dir": self._out_dir_edit.text(),
             "grobid_url": self._grobid_url.text(),
             "grobid_max_retries": self._grobid_retries.value(),
             "grobid_timeout": self._grobid_timeout.value(),

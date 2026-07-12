@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import INPUT_WIDTH_LONG, RESULT_COLUMNS
+from .i18n_widgets import tr_button, tr_combobox, tr_label
 from .styles import SPACE_M, SPACE_S
 from . import i18n
 from .image_preview import ImagePreviewWidget
@@ -66,6 +67,11 @@ class ResultsTab(QWidget):
         self._current_job_id: str | None = None
         self._current_job_dir: str | None = None
         self._build_ui()
+        # Phase 37 audit fix: register as an i18n listener so column
+        # headers + filter labels + count label auto-translate on
+        # language switch (was: MainWindow had to manually walk every
+        # tab and call _refresh_texts, which it didn't).
+        i18n.add_listener(lambda _lang: self._refresh_texts())
 
     # ------------------------------------------------------------------
     # UI
@@ -79,13 +85,17 @@ class ResultsTab(QWidget):
         header = QHBoxLayout()
         header.setSpacing(SPACE_S)
 
-        self._title = QLabel("No job loaded")
+        self._title = tr_label("restab.no_job")
         self._title.setObjectName("sectionTitle")
         header.addWidget(self._title, 1)
 
-        header.addWidget(QLabel("Search:"))
+        header.addWidget(tr_label("restab.search.label"))
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("Filter rows by species / caption / panel id / family…")
+        self._search_edit.setObjectName("restab.search.placeholder")
+        i18n.register_widget_text(
+            "restab.search.placeholder", "placeholderText", "restab.search.placeholder"
+        )
+        self._search_edit.setPlaceholderText(i18n._tr("restab.search.placeholder"))
         self._search_edit.setMaximumWidth(INPUT_WIDTH_LONG + 80)  # was 360, +80 for CN text
         self._search_edit.textChanged.connect(self._refresh_view)
         header.addWidget(self._search_edit)
@@ -93,30 +103,56 @@ class ResultsTab(QWidget):
         outer.addLayout(header)
 
         # ---- Filter row ----
+        # Phase 37 audit fix: each filter combo's "all/any" item
+        # stores a sentinel ``userData`` token ("__ALL__", "__ANY__",
+        # "yes", "no") so the filter logic compares against the
+        # sentinel, not the translated text. Previously the code
+        # compared against the literal "(all)"/"(any)" string,
+        # which silently dropped every row after a language switch
+        # because the translated label differs from the English
+        # sentinel.
+        from .i18n_widgets import tr_combobox
         filter_row = QHBoxLayout()
         filter_row.setSpacing(SPACE_S)
 
-        filter_row.addWidget(QLabel("Species:"))
-        self._species_filter = QComboBox()
-        self._species_filter.addItem("(all)")
+        self._species_filter = tr_combobox(
+            "restab.filter.species",
+            min_width=160,
+        )
+        self._species_filter.addItem(i18n._tr("restab.filter.all"), userData="__ALL__")
+        # Phase 37: setCurrentIndex(0) so the default filter is the
+        # "(all)" item (otherwise currentIndex=-1 and currentText=""
+        # which breaks our sentinel-comparison logic).
+        self._species_filter.setCurrentIndex(0)
         self._species_filter.currentIndexChanged.connect(self._refresh_view)
+        filter_row.addWidget(tr_label("restab.filter.species"))
         filter_row.addWidget(self._species_filter)
 
-        filter_row.addWidget(QLabel("PBDB family:"))
-        self._family_filter = QComboBox()
-        self._family_filter.addItem("(all)")
+        self._family_filter = tr_combobox(
+            "restab.filter.family",
+            min_width=160,
+        )
+        self._family_filter.addItem(i18n._tr("restab.filter.all"), userData="__ALL__")
+        self._family_filter.setCurrentIndex(0)
         self._family_filter.currentIndexChanged.connect(self._refresh_view)
+        filter_row.addWidget(tr_label("restab.filter.family"))
         filter_row.addWidget(self._family_filter)
 
-        filter_row.addWidget(QLabel("Has PBDB:"))
-        self._has_pbdb = QComboBox()
-        self._has_pbdb.addItems(["(any)", "yes", "no"])
+        self._has_pbdb = tr_combobox(
+            "restab.filter.has_pbdb",
+            min_width=110,
+        )
+        self._has_pbdb.addItem(i18n._tr("restab.filter.any"), userData="__ANY__")
+        self._has_pbdb.addItem(i18n._tr("restab.filter.yes"), userData="yes")
+        self._has_pbdb.addItem(i18n._tr("restab.filter.no"), userData="no")
+        self._has_pbdb.setCurrentIndex(0)
         self._has_pbdb.currentIndexChanged.connect(self._refresh_view)
+        filter_row.addWidget(tr_label("restab.filter.has_pbdb"))
         filter_row.addWidget(self._has_pbdb)
 
         filter_row.addStretch(1)
 
-        self._count_label = QLabel("0 rows")
+        self._count_label = tr_label("restab.count")  # default text comes from i18n
         self._count_label.setObjectName("metric")
         filter_row.addWidget(self._count_label)
 
@@ -159,7 +195,7 @@ class ResultsTab(QWidget):
         right_layout.setContentsMargins(SPACE_M, 0, 0, 0)
         right_layout.setSpacing(SPACE_S)
 
-        right_layout.addWidget(QLabel("Row detail"))
+        right_layout.addWidget(tr_label("restab.detail.title"))
         self._detail_browser = QTextBrowser()
         self._detail_browser.setOpenExternalLinks(False)
         right_layout.addWidget(self._detail_browser, 1)
@@ -171,20 +207,24 @@ class ResultsTab(QWidget):
         footer = QHBoxLayout()
         footer.setSpacing(SPACE_S)
 
-        export_xlsx_btn = QPushButton("📤 Export xlsx")
-        export_xlsx_btn.setObjectName("primary")
+        # Phase 37 audit fix: use tr_button so these translate on
+        # language switch. Use ``setProperty("class", ...)`` rather
+        # than ``setObjectName`` for the primary button so the
+        # i18n registry's objectName key isn't clobbered.
+        export_xlsx_btn = tr_button("restab.export.xlsx")
+        export_xlsx_btn.setProperty("class", "primary")
         export_xlsx_btn.clicked.connect(self._export_xlsx)
         footer.addWidget(export_xlsx_btn)
 
-        export_json_btn = QPushButton("📤 Export JSON")
+        export_json_btn = tr_button("restab.export.json")
         export_json_btn.clicked.connect(self._export_json)
         footer.addWidget(export_json_btn)
 
-        export_csv_btn = QPushButton("📤 Export CSV")
+        export_csv_btn = tr_button("restab.export.csv")
         export_csv_btn.clicked.connect(self._export_csv)
         footer.addWidget(export_csv_btn)
 
-        export_dwca_btn = QPushButton("📤 Export DwCA")
+        export_dwca_btn = tr_button("restab.export.dwca")
         export_dwca_btn.clicked.connect(self._export_dwca)
         footer.addWidget(export_dwca_btn)
 
@@ -221,29 +261,39 @@ class ResultsTab(QWidget):
         """Re-translate column headers + filter labels."""
         for i, col in enumerate(RESULT_COLUMNS):
             self._table.horizontalHeaderItem(i).setText(i18n._tr(f"restab.col.{col.key}"))
-        # Filter dropdown placeholders
-        for combo, key in (
-            (self._species_filter, "restab.filter.all"),
-            (self._family_filter,   "restab.filter.all"),
-            (self._has_pbdb,        "restab.filter.any"),
+        # Phase 37 audit fix: preserve userData when re-setting the
+        # "all"/"any" labels. We update only the *displayed text*
+        # at the existing index rather than clearing + rebuilding,
+        # which would lose the per-species / per-family items.
+        for combo, key, sentinel in (
+            (self._species_filter, "restab.filter.all", "__ALL__"),
+            (self._family_filter,   "restab.filter.all", "__ALL__"),
+            (self._has_pbdb,        "restab.filter.any", "__ANY__"),
         ):
-            current = combo.currentText()
-            combo.clear()
-            combo.addItem(i18n._tr(key))
-            if key == "restab.filter.any":
-                combo.addItems([i18n._tr("restab.filter.yes"), i18n._tr("restab.filter.no")])
-            combo.setCurrentText(current)
+            for i in range(combo.count()):
+                ud = combo.itemData(i)
+                if ud == sentinel:
+                    combo.setItemText(i, i18n._tr(key))
+                elif ud == "yes":
+                    combo.setItemText(i, i18n._tr("restab.filter.yes"))
+                elif ud == "no":
+                    combo.setItemText(i, i18n._tr("restab.filter.no"))
 
     def clear(self) -> None:
         self._all_rows = []
         self._filtered_rows = []
         self._current_job_id = None
         self._current_job_dir = None
-        self._title.setText("No job loaded")
+        # Phase 37: use i18n keys for the reset state text.
+        self._title.setText(i18n._tr("restab.no_job"))
         self._table.setRowCount(0)
         self._preview.clear()
         self._detail_browser.clear()
-        self._count_label.setText("0 rows")
+        # Format with {shown=0, total=0} so the empty-state shows
+        # "0 / 0 rows" / "0 / 0 行" in the right language.
+        self._count_label.setText(
+            i18n._tr("restab.count").format(shown=0, total=0)
+        )
 
     # ------------------------------------------------------------------
     # Internal — filter + view refresh
@@ -259,25 +309,36 @@ class ResultsTab(QWidget):
         families = [f for f in families if f]
         self._species_filter.blockSignals(True)
         self._species_filter.clear()
-        self._species_filter.addItem("(all)")
+        # Phase 37 audit fix: store sentinel userData so the
+        # filter logic compares against "__ALL__" instead of
+        # the translated label text.
+        self._species_filter.addItem(i18n._tr("restab.filter.all"), userData="__ALL__")
         self._species_filter.addItems(species)
+        self._species_filter.setCurrentIndex(0)
         self._species_filter.blockSignals(False)
 
         self._family_filter.blockSignals(True)
         self._family_filter.clear()
-        self._family_filter.addItem("(all)")
+        self._family_filter.addItem(i18n._tr("restab.filter.all"), userData="__ALL__")
         self._family_filter.addItems(families)
+        self._family_filter.setCurrentIndex(0)
         self._family_filter.blockSignals(False)
 
     def _filter_rows(self) -> list[dict[str, Any]]:
         search = self._search_edit.text().lower().strip()
-        species_filter = self._species_filter.currentText()
-        if species_filter == "(all)":
+        # Phase 37 audit fix: compare against sentinel userData
+        # ("__ALL__", "__ANY__", "yes", "no") instead of the
+        # translated label text. Previously the comparison was
+        # against the literal English "(all)"/"(any)"/"yes"/"no"
+        # strings, which silently dropped every row after a
+        # language switch.
+        species_filter = self._species_filter.currentData() or ""
+        if species_filter == "__ALL__":
             species_filter = ""
-        family_filter = self._family_filter.currentText()
-        if family_filter == "(all)":
+        family_filter = self._family_filter.currentData() or ""
+        if family_filter == "__ALL__":
             family_filter = ""
-        has_pbdb = self._has_pbdb.currentText()
+        has_pbdb = self._has_pbdb.currentData() or "__ANY__"
         out: list[dict[str, Any]] = []
         for r in self._all_rows:
             if search:
