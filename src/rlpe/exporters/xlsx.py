@@ -32,6 +32,7 @@ they start with ``=``/``+``/``-``/``@``/TAB to defeat CWE-1236.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook
@@ -390,5 +391,21 @@ def write_xlsx(
         buf = BytesIO()
         wb.save(buf)
         return buf.getvalue()
-    wb.save(path)
+    # Phase 38: atomic write — openpyxl writes directly to ``path``,
+    # so a crash mid-write leaves a corrupt xlsx that's unrecoverable.
+    # Write to ``path + ".tmp"``, fsync, then ``os.replace`` (atomic on
+    # POSIX and Windows).
+    import os
+    path_obj = Path(path)
+    tmp = path_obj.with_suffix(path_obj.suffix + ".tmp")
+    try:
+        wb.save(tmp)
+        os.replace(tmp, path_obj)
+    except Exception:
+        # Clean up partial tmp file on failure
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
     return None

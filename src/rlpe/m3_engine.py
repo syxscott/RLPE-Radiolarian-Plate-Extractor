@@ -1710,11 +1710,15 @@ class M3Engine:
                 PanelBox(
                     panel_id=str(item.get("panel_id") or f"P{len(panels) + 1}"),
                     bbox=bbox,
-                    visible_label=(
-                        str(item.get("visible_label")).strip()
-                        if item.get("visible_label") is not None
-                        else None
-                    ),
+                    # Phase 38: visible_label may be a list (e.g. M3
+                    # returns ["A", "B"] when it sees two labels).
+                    # Previously ``str(item.get("visible_label")).strip()``
+                    # would produce the Python repr ``"['A', 'B']"``
+                    # which then broke panel_id assignment downstream
+                    # because every panel ended up with a list-repr
+                    # "label". Join list values with a comma; coerce
+                    # numbers / None to a clean string.
+                    visible_label=_coerce_label(item.get("visible_label")),
                     morphology=str(item.get("morphology") or "").strip(),
                     confidence=max(0.0, min(1.0, conf)),
                 )
@@ -2377,6 +2381,29 @@ def _safe_int(v: Any) -> int | None:
         return int(v)
     except Exception:
         return None
+
+
+def _coerce_label(value: Any) -> str | None:
+    """Phase 38: M3 sometimes returns visible_label as a list (e.g.
+    ``["A", "B"]``) when it sees two labels on the same panel. The
+    old code did ``str(value).strip()`` which produced the Python
+    repr ``"['A', 'B']"`` and broke downstream panel_id assignment.
+    Join list values; coerce numbers / None to a clean string."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        s = value.strip()
+        return s or None
+    if isinstance(value, (list, tuple)):
+        parts = [_coerce_label(v) for v in value]
+        joined = ", ".join(p for p in parts if p)
+        return joined or None
+    if isinstance(value, (int, float)):
+        s = str(value).strip()
+        return s or None
+    # Last resort: stringify but avoid the "['x', 'y']" repr trap.
+    s = str(value).strip()
+    return s or None
 
 
 def _coerce_bbox(v: Any, img_w: int, img_h: int) -> tuple[int, int, int, int] | None:

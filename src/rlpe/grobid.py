@@ -77,6 +77,30 @@ class GrobidClient:
         self.max_retries = max(1, int(max_retries))
         self.retry_backoff = max(0.0, float(retry_backoff))
 
+    def is_available(self, probe_timeout: float = 5.0) -> bool:
+        """Phase 38: fast ``/api/isalive`` probe.
+
+        Returns True if the GROBID server responds with HTTP 200 to
+        its well-known health-check endpoint within ``probe_timeout``
+        seconds. False on any error (timeout, connection refused, 4xx,
+        5xx). Use this before calling ``process_pdf`` to fail-fast
+        when GROBID is offline, rather than spending ``max_retries *
+        timeout`` seconds (up to 900s by default) on a dead server.
+        """
+        import urllib.request
+        import urllib.error
+        try:
+            req = urllib.request.Request(
+                f"{self.server_url}/api/isalive",
+                headers={"User-Agent": "RLPE/1.0 (+probe)"},
+            )
+            with urllib.request.urlopen(req, timeout=probe_timeout) as resp:
+                return 200 <= resp.status < 300
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+            return False
+        except Exception:
+            return False
+
     @staticmethod
     def _classify_exception(exc: BaseException) -> str:
         """Map a requests/IO exception to a coarse error_type bucket.

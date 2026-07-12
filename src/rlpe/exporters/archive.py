@@ -88,7 +88,11 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         "eventDate": str(pm.year) if pm and pm.year else "",
         "year": str(pm.year) if pm and pm.year else "",
         "locality": (geo.locality if geo and geo.locality else ""),
-        "country": "",
+        # Phase 38: read country from geo (set by paleodb's
+        # _iso_to_country resolution) instead of hard-coded "".
+        # Previously every DwCA export had an empty country column
+        # even when the PBDB occurrence record had country data.
+        "country": (geo.country if geo and geo.country else ""),
         "decimalLatitude": (str(geo.latitude) if geo and geo.latitude is not None else ""),
         "decimalLongitude": (str(geo.longitude) if geo and geo.longitude is not None else ""),
         "geologicalContextID": (geo.age if geo and geo.age else ""),

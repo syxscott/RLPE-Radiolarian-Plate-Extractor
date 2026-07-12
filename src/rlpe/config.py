@@ -137,9 +137,79 @@ class PipelineConfig:
     extra: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        # Phase 38: type coercion for fields that come in as strings
+        # from YAML / JSON configs. Without this, ``PipelineConfig(
+        # num_workers="4")`` (string from yaml.safe_load) bypasses the
+        # type hint and crashes ``ThreadPoolExecutor(max_workers="4")``
+        # later with a confusing TypeError.
+        try:
+            self.num_workers = int(self.num_workers)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"num_workers must be an integer, got {self.num_workers!r} ({exc})"
+            ) from exc
+        try:
+            self.render_dpi = int(self.render_dpi)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"render_dpi must be an integer, got {self.render_dpi!r} ({exc})"
+            ) from exc
+        try:
+            self.min_panel_score = float(self.min_panel_score)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"min_panel_score must be a float, got {self.min_panel_score!r} ({exc})"
+            ) from exc
+        try:
+            self.caption_window = int(self.caption_window)
+            self.od_caption_window = int(self.od_caption_window)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"caption_window / od_caption_window must be integers ({exc})"
+            ) from exc
+
+        # Phase 38: validation. Bad config values used to silently
+        # produce zero-panel runs (min_panel_score out of range) or
+        # cryptic PyMuPDF crashes (render_dpi ≤ 0).
+        if self.num_workers < 1:
+            raise ValueError(f"num_workers must be >= 1, got {self.num_workers}")
+        if not (50 <= self.render_dpi <= 600):
+            raise ValueError(
+                f"render_dpi must be in [50, 600], got {self.render_dpi}"
+            )
+        if not (0.0 <= self.min_panel_score <= 1.0):
+            raise ValueError(
+                f"min_panel_score must be in [0.0, 1.0], got {self.min_panel_score}"
+            )
+        if self.caption_window < 1 or self.caption_window > 50:
+            raise ValueError(
+                f"caption_window must be in [1, 50], got {self.caption_window}"
+            )
+        if self.od_caption_window < 1 or self.od_caption_window > 50:
+            raise ValueError(
+                f"od_caption_window must be in [1, 50], got {self.od_caption_window}"
+            )
+
+        # Phase 38: warn (don't raise) for unknown extra-config keys.
+        # A typo like ``minimax_api_key`` (lowercase) silently produces
+        # a config that ignores the value.
         unknown = set(self.extra.keys()) - _KNOWN_EXTRA_KEYS
         if unknown:
-            logger.warning("Unknown extra config keys (typo?): %s", sorted(unknown))
+            # Phase 38: offer Levenshtein-style suggestions so users
+            # can spot typos.
+            from difflib import get_close_matches
+            suggestions = []
+            for u in sorted(unknown):
+                matches = get_close_matches(u, _KNOWN_EXTRA_KEYS, n=1, cutoff=0.6)
+                if matches:
+                    suggestions.append(f"{u!r} → did you mean {matches[0]!r}?")
+                else:
+                    suggestions.append(repr(u))
+            logger.warning(
+                "Unknown extra config keys (typo?): %s%s",
+                sorted(unknown),
+                f"  hints: {'; '.join(suggestions)}" if suggestions else "",
+            )
 
     def resolved_output_dir(self) -> Path:
         return self.output_dir or (self.work_dir / "output")

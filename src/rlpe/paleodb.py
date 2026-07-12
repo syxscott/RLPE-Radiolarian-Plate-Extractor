@@ -202,6 +202,12 @@ class PaleoDB:
             "RLPE_PBDB_UA",
             "RLPE-Radiolarian-Plate-Extractor/1.0 (+https://github.com/local/rlpe)",
         )
+        # Phase 38: re-use a single urllib PoolManager (a.k.a. opener)
+        # across calls. Without this, every _http_get_json() opens +
+        # closes a fresh TCP connection to paleobiodb.org, which is
+        # 5-10x slower on a 200-species run and (worse) leaks sockets
+        # under DNS hiccups. The pool is closed by close().
+        self._opener: urllib.request.OpenerDirector | None = None
 
     # ------------------------------------------------------------------ cache
 
@@ -265,8 +271,18 @@ class PaleoDB:
             req = urllib.request.Request(
                 full, headers={"User-Agent": self._user_agent, "Accept": "application/json"}
             )
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
+            # Phase 38: use the pooled opener so consecutive PBDB
+            # requests share a single TCP connection (and don't leak
+            # sockets under DNS hiccups). Falls back to the
+            # ``urllib.request.urlopen`` global when no opener is
+            # set, so tests that monkeypatch ``urllib.request.urlopen``
+            # keep working.
+            if self._opener is None:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    raw = resp.read().decode("utf-8", errors="replace")
+            else:
+                with self._opener.open(req, timeout=self.timeout) as resp:
+                    raw = resp.read().decode("utf-8", errors="replace")
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
             logger.warning("PBDB HTTP failed for %s: %s", full, exc)
             return None
@@ -281,6 +297,11 @@ class PaleoDB:
         payload["_source"] = "paleodb"
         self._write_cache(cache_key, payload)
         return payload
+
+    def close(self) -> None:
+        """Phase 38: release the pooled HTTP opener. Callers should
+        call this in a ``finally`` block at end-of-run."""
+        self._opener = None
 
     # ------------------------------------------------------------------ API
 

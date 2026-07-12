@@ -170,8 +170,18 @@ class OCRBackend:
         try:
             if self.backend == "paddleocr":
                 result = engine.ocr(image, cls=True)
-                for line in result[0] if result and result[0] else []:
-                    box, (text, conf) = line
+                # Phase 38: paddleocr 2.x returns [ [box, (text, conf)], ... ]
+                # but paddleocr 3.x returns a different structure (a list
+                # of dicts with 'rec_texts', 'rec_scores', 'dt_polys').
+                # Handle both so the pipeline doesn't break when the
+                # operator upgrades paddleocr.
+                lines = self._normalize_paddle_result(result)
+                for entry in lines:
+                    box, text, conf = entry
+                    if not text:
+                        continue
+                    if not box:
+                        continue
                     x = min(p[0] for p in box)
                     y = min(p[1] for p in box)
                     w = max(p[0] for p in box) - x
@@ -196,6 +206,87 @@ class OCRBackend:
         except Exception:
             return []
         return tokens
+
+    @staticmethod
+
+    @staticmethod
+    def _normalize_paddle_result(result: Any) -> list[tuple[list, str, float]]:
+        """Phase 38: paddleocr 2.x vs 3.x compatibility.
+
+        Paddleocr 2.x returns a tuple ``(list_of_lines, None)`` where
+        each line is ``[box, (text, conf)]``:
+
+            result = ([
+                [[x1, y1], [x2, y2], [x3, y3], [x4, y4]], ("hello", 0.99)],
+                ...,
+            ], None)
+
+        Paddleocr 3.x changed the return shape to a list of dicts
+        (or a single dict):
+
+            result = {
+                "rec_texts": ["hello", "world"],
+                "rec_scores": [0.99, 0.95],
+                "dt_polys": [[[x1,y1],...], [[x1,y1],...]],
+            }
+
+        This helper unifies the two into a flat list of
+        ``(box, text, conf)`` tuples. Empty / malformed entries are
+        dropped.
+        """
+        out: list[tuple[list, str, float]] = []
+        if not result:
+            return out
+        # Paddleocr 2.x: result is a tuple/list whose first element
+        # is the lines list.
+        if isinstance(result, (tuple, list)) and len(result) >= 1 and isinstance(result[0], list):
+            for line in result[0]:
+                try:
+                    if isinstance(line, (list, tuple)) and len(line) == 2:
+                        box, payload = line
+                        if isinstance(payload, (list, tuple)) and len(payload) == 2:
+                            text, conf = payload
+                        else:
+                            # Newer 2.x sometimes returns dict
+                            text = payload.get("text", "")
+                            conf = payload.get("score", 0.0)
+                        out.append((box, str(text), float(conf)))
+                except (ValueError, TypeError, AttributeError):
+                    continue
+            return out
+        # Paddleocr 3.x: result is a dict (or list of dicts) with
+        # 'rec_texts', 'rec_scores', 'dt_polys' / 'rec_boxes'.
+        if isinstance(result, dict):
+            rec_texts = result.get("rec_texts") or result.get("texts") or []
+            rec_scores = result.get("rec_scores") or result.get("scores") or []
+            polys = (
+                result.get("dt_polys")
+                or result.get("rec_boxes")
+                or result.get("boxes")
+                or []
+            )
+            for i, text in enumerate(rec_texts):
+                if i >= len(polys):
+                    break
+                box = polys[i]
+                # rec_boxes is a 4-corner flat list [x1,y1,x2,y2,...]
+                # dt_polys is a list of 4 points [[x,y], ...].
+                # Normalize to 4-point list-of-lists.
+                if box and isinstance(box[0], (int, float)):
+                    coords = list(box)
+                    if len(coords) == 4:
+                        box = [[coords[0], coords[1]], [coords[2], coords[1]],
+                               [coords[2], coords[3]], [coords[0], coords[3]]]
+                conf = float(rec_scores[i]) if i < len(rec_scores) else 0.0
+                out.append((box, str(text), conf))
+            return out
+        # List of dicts
+        if isinstance(result, list):
+            for d in result:
+                if isinstance(d, dict):
+                    out.extend(OCREngine._normalize_paddle_result(d))
+            return out
+        return out
 
     def recognize_panel(
         self,
