@@ -222,6 +222,17 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self._tabs)
 
+        # Phase 40: register _refresh_texts as an i18n listener so
+        # tab labels (▶ Run / 📋 Jobs / 📊 Results / ⚙️ Settings)
+        # and the window title translate on language switch. Without
+        # this the tabs are stuck in the language they were first
+        # created in. Also call _refresh_texts() once at the end of
+        # _build_ui so the FIRST PAINT shows the labels in the
+        # current language (zh_CN by default), not the bare English
+        # strings we passed to addTab().
+        i18n.add_listener(lambda _lang: self._refresh_texts())
+        self._refresh_texts()
+
     def _build_menu(self) -> None:
         menubar = self.menuBar()
 
@@ -629,11 +640,23 @@ class MainWindow(QMainWindow):
 
     # Patch into the run tab to advance the batch on each completion
     def _refresh_texts(self) -> None:
-        """Re-apply all menu / tab labels after a language switch."""
+        """Re-apply all menu / tab labels after a language switch.
+
+        Phase 40: also refresh the window title — the old code
+        concatenated ``i18n._tr("app.title")`` twice (once directly,
+        once in an f-string ``v{i18n._tr('app.title')}`` whose
+        ``.replace("RLPE - Radiolarian Plate Extractor", "")`` was
+        meant to strip the EN title to leave just "v1.1.0", but in
+        zh_CN the title was different so the replace did nothing and
+        the window title became e.g.
+        ``"RLPE - 放射虫图版提取系统  vRLPE - 放射虫图版提取系统"``.
+        Fixed: use APP_VERSION constant directly (it's a number, not
+        translated).
+        """
         for i in range(self._tabs.count()):
             key = ("tab.run", "tab.jobs", "tab.results", "tab.settings")[i]
             self._tabs.setTabText(i, i18n._tr(key))
-        self.setWindowTitle(i18n._tr("app.title") + f"  v{i18n._tr('app.title')}".replace("RLPE - Radiolarian Plate Extractor", "").strip())
+        self.setWindowTitle(f"{i18n._tr('app.title')}  v{APP_VERSION}")
         # Re-render the tab bar widget tree (objects registered via
         # setObjectName are retexted by i18n._apply_registry)
         # (already done by set_language in i18n.py)

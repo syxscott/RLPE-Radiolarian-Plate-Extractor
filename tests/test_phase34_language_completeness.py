@@ -152,11 +152,14 @@ def test_settings_tab_lineedits_have_min_height_28():
 def test_main_window_tab_labels_translate():
     from rlpe.gui import i18n
     from rlpe.gui.main_window import MainWindow
-    w = MainWindow()
-    en_tabs = [w._tabs.tabText(i) for i in range(w._tabs.count())]
+    # Phase 36: zh_CN is now the default. Capture ZH first, then
+    # switch to EN, capture EN, then switch back to ZH to confirm
+    # the round-trip works.
     i18n.set_language("zh_CN")
-    w._refresh_texts()
+    w = MainWindow()
     zh_tabs = [w._tabs.tabText(i) for i in range(w._tabs.count())]
+    i18n.set_language("en")
+    en_tabs = [w._tabs.tabText(i) for i in range(w._tabs.count())]
     # Tab labels must differ between en and zh
     assert en_tabs != zh_tabs, (
         f"Main window tab labels did NOT change: en={en_tabs!r} zh={zh_tabs!r}"
@@ -164,6 +167,12 @@ def test_main_window_tab_labels_translate():
     # ZH must contain run/jobs/results/settings in Chinese
     joined = " ".join(zh_tabs)
     assert "运行" in joined, f"ZH tabs missing '运行': {zh_tabs!r}"
+    # Round-trip: back to ZH should still be Chinese
+    i18n.set_language("zh_CN")
+    zh2_tabs = [w._tabs.tabText(i) for i in range(w._tabs.count())]
+    assert zh2_tabs == zh_tabs, (
+        f"Tab labels did not round-trip back to zh: {zh2_tabs!r} != {zh_tabs!r}"
+    )
     assert "任务" in joined, f"ZH tabs missing '任务': {zh_tabs!r}"
 
 

@@ -100,6 +100,14 @@ def run_app(argv: list[str] | None = None) -> int:
 
     app = QApplication.instance() or QApplication(argv)
 
+    # Phase 40: install a global wheel-event filter so scrolling
+    # over a QSpinBox / QComboBox / QLineEdit doesn't accidentally
+    # change the value. The filter is no-op unless the widget has
+    # focus, so users can still scroll the spinbox they explicitly
+    # clicked.
+    from .i18n_widgets import install_wheel_filter
+    install_wheel_filter(app)
+
     # ---- Install exception hook ----
     _install_exception_hook(log)
 

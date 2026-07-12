@@ -430,3 +430,59 @@ def normalise_input_height(widget: QWidget, min_height: int = 30) -> None:
     and the row visually balanced with the QGroupBox title.
     """
     widget.setMinimumHeight(min_height)
+
+
+# ============================================================
+# Phase 40: wheel-scroll protection on input widgets
+# ============================================================
+# Qt's default behaviour: when a QSpinBox / QDoubleSpinBox /
+# QComboBox / QAbstractSpinBox / QLineEdit is under the mouse
+# cursor, the scroll wheel increments/decrements the value or
+# changes the combo selection. This is annoying for the user —
+# scrolling over a form to read a tooltip accidentally mutates
+# settings. Phase 40 disables wheel events unless the widget has
+# keyboard focus.
+#
+# Implementation: install a global event filter on QApplication
+# that filters QEvent::Wheel on QAbstractSpinBox + QComboBox +
+# QLineEdit, and consumes the event unless the widget has focus.
+
+def install_wheel_filter(app: QApplication) -> None:
+    """Install a global wheel-event filter on ``app``.
+
+    Phase 40: scroll wheels no longer mutate QSpinBox /
+    QDoubleSpinBox / QComboBox values unless the widget has
+    keyboard focus. Prevents the "I scrolled past a setting and
+    it silently changed" footgun.
+
+    Idempotent — calling twice is a no-op.
+    """
+    from PySide6.QtCore import QObject, QEvent
+    if getattr(app, "_phase40_wheel_filter", False):
+        return
+
+    class _WheelFilter(QObject):
+        def eventFilter(self, obj, event):  # noqa: N802 - Qt naming
+            if event.type() != QEvent.Type.Wheel:
+                return False
+            # Only filter numeric / combo / line-edit widgets
+            from PySide6.QtWidgets import (
+                QAbstractSpinBox, QComboBox, QLineEdit,
+            )
+            if not isinstance(obj, (QAbstractSpinBox, QComboBox, QLineEdit)):
+                return False
+            # If the widget has focus, let the user use the wheel
+            # to adjust the value (intentional — they clicked it).
+            if obj.hasFocus():
+                return False
+            # Otherwise, eat the wheel event so the value doesn't
+            # change. The wheel scroll still works for parent
+            # widgets (e.g. scrolling a QScrollArea).
+            event.accept()
+            return True
+
+    flt = _WheelFilter(app)
+    app.installEventFilter(flt)
+    app._phase40_wheel_filter = True
+    app._phase40_wheel_filter_obj = flt
+
