@@ -72,6 +72,7 @@ STRINGS = {
     'jobstab.status.queued': '排队中',
     'jobstab.status.running': '运行中',
     'main.batch_complete': '批处理完成。',
+    'main.batch_stopped_on_error': '批处理因错误停止：{failed}（剩余 {remaining} 个）。',
     'main.done': '任务 {id} 完成 — {rows} 行',
     'main.failed': '任务 {id} 失败',
     'main.idle': '就绪',

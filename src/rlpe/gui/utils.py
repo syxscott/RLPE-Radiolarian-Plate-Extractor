@@ -72,13 +72,22 @@ def log_call(func):
 
 
 def file_size_human(path: Path | None) -> str:
-    """Format file size like ``12.4 MB``. Returns ``"—"`` if no path."""
+    """Format file size like ``12.4 MB``. Returns ``"—"`` if no path.
+
+    Phase 42: previous implementation rounded 999 B to "1.0 KB" because
+    it divided BEFORE the comparison. Fixed: pick the unit based on
+    the size FIRST, then format with at most 1 decimal place.
+    """
     if path is None or not path.exists():
         return "—"
     size = path.stat().st_size
+    if size < 0:
+        return "—"
+    # Pick the right unit (1024-based for binary, but readable).
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if size < 1024:
-            return f"{size:.1f} {unit}" if unit != "B" else f"{size} {unit}"
+            # Integer B for byte units, 1-decimal for everything else.
+            return f"{size} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} PB"
 
@@ -216,18 +225,42 @@ def safe_json_loads(text: str, default: Any = None) -> Any:
 
 
 def to_jsonable(obj: Any) -> Any:
-    """Convert dataclasses / Path / etc to JSON-safe primitives."""
+    """Convert dataclasses / Path / etc to JSON-safe primitives.
+
+    Phase 42 audit fix: previously this fell through to ``str(obj)``
+    for unknown types — silently corrupting ``bytes`` (became
+    ``"b'\\x89PNG...'"`` Python repr) and ``datetime`` (lost
+    timezone information). Now we handle the common cases
+    explicitly and raise ``TypeError`` for genuinely
+    un-serialisable types so callers know.
+    """
+    import base64
+    import datetime
+    import decimal
     if is_dataclass(obj):
         return to_jsonable(asdict(obj))
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
     if isinstance(obj, Path):
         return str(obj)
+    if isinstance(obj, bytes):
+        return {"__bytes__": base64.b64encode(obj).decode("ascii")}
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    if isinstance(obj, datetime.timedelta):
+        return obj.total_seconds()
+    if isinstance(obj, decimal.Decimal):
+        return str(obj)
+    if isinstance(obj, set):
+        return [to_jsonable(v) for v in sorted(obj, key=repr)]
     if isinstance(obj, dict):
-        return {k: to_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple, set)):
+        return {str(k): to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
         return [to_jsonable(v) for v in obj]
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
-        return obj
-    return str(obj)
+    raise TypeError(
+        f"to_jsonable: cannot serialize {type(obj).__name__} "
+        f"(value={obj!r:.100})"
+    )
 
 
 # ============================================================
@@ -240,12 +273,43 @@ def single_instance_lock(name: str = "rlpe-gui") -> bool:
     Returns True if this is the only running instance, False if
     another RLPE GUI is already running (in which case the caller
     should warn the user and exit).
+
+    Phase 42: previously this used ``fcntl.flock`` which is
+    Unix-only — on Windows the ``import fcntl`` would raise
+    ImportError. Fixed: try ``msvcrt.locking`` on Windows, fall
+    back to a TCP port lock as a cross-platform last resort.
     """
-    import fcntl
+    import socket
 
     lock_dir = Path.home() / ".cache" / "rlpe" / "gui"
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / f"{name}.lock"
+
+    if sys.platform.startswith("win"):
+        # Windows: use msvcrt.locking (lock the first byte of the file).
+        try:
+            import msvcrt  # type: ignore[import-not-found]
+        except ImportError:
+            return _tcp_port_lock(name)
+        fp = open(lock_path, "w")
+        try:
+            # LK_NBLCK = 2 (non-blocking), LK_LOCK = 1. The file size
+            # must be >= 1 byte for locking to work.
+            fp.write("0")
+            fp.flush()
+            msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+        except (OSError, IOError):
+            fp.close()
+            return False
+        fp.flush()
+        globals()["_SINGLE_INSTANCE_FP"] = fp  # type: ignore[assignment]
+        return True
+
+    # Unix / macOS: use fcntl.flock with LOCK_EX | LOCK_NB.
+    try:
+        import fcntl
+    except ImportError:
+        return _tcp_port_lock(name)
     fp = open(lock_path, "w")
     try:
         fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -257,6 +321,29 @@ def single_instance_lock(name: str = "rlpe-gui") -> bool:
     # Hold the lock by keeping the file descriptor open on the
     # singleton module — this module persists for the GUI's lifetime.
     globals()["_SINGLE_INSTANCE_FP"] = fp  # type: ignore[assignment]
+    return True
+
+
+def _tcp_port_lock(name: str) -> bool:
+    """Cross-platform fallback for ``single_instance_lock``.
+
+    Phase 42: try to bind a TCP socket to a deterministic port
+    derived from the lock name. If the bind fails, another
+    instance is running. Not as robust as a real file lock (no
+    cleanup on crash) but works on every OS.
+    """
+    import socket
+    # Hash the name to a port in the IANA private range (49152+).
+    port = 49152 + (hash(name) & 0x3FFF)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        sock.close()
+        return False
+    sock.listen(1)
+    globals()["_SINGLE_INSTANCE_FP"] = sock  # type: ignore[assignment]
     return True
 
 

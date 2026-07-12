@@ -292,6 +292,7 @@ STRINGS = {
     "main.done": "Job {id} done — {rows} rows",
     "main.failed": "Job {id} failed",
     "main.batch_complete": "Batch complete.",
+    "main.batch_stopped_on_error": "Batch stopped on error: {failed} ({remaining} remaining).",
 
     # ============================================================
     # Common dialogs

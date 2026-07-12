@@ -791,3 +791,19 @@ def apply_theme(app, theme: str) -> None:
     else:
         # ``system`` = pick based on Qt's palette hint
         app.setStyleSheet(DARK_QSS if app.palette().window().color().lightness() < 128 else LIGHT_QSS)
+
+    # Phase 42: re-polish all widgets so any cached QSS styles are
+    # refreshed. Without this, widgets that had setProperty() /
+    # setStyle() overrides applied BEFORE the theme switch keep
+    # stale colours (especially dynamic / hidden tabs that haven't
+    # been shown since the switch). This walks all widgets and
+    # forces Qt to re-evaluate their stylesheet.
+    style = app.style()
+    for w in app.allWidgets():
+        try:
+            w.style().unpolish(w)
+            w.style().polish(w)
+            w.update()
+        except (RuntimeError, AttributeError):
+            # Widget may have been deleted, or have no style().
+            pass

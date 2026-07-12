@@ -63,13 +63,25 @@ from .utils import ensure_dir, slugify, stable_id, write_json, write_jsonl
 
 
 class RadiolarianPipeline:
-    def __init__(self, config: PipelineConfig, progress_callback=None) -> None:
+    def __init__(
+        self,
+        config: PipelineConfig,
+        progress_callback=None,
+        cancel_event: "threading.Event | None" = None,
+    ) -> None:
         self.config = config
         # Optional progress callback: ``cb(current, total, message)``.
         # ``current`` and ``total`` are 0-indexed ints; the API uses
         # ``current/total`` to map a real pipeline position onto the 30-90%
         # band of the job progress.
         self._progress_cb = progress_callback
+        # Phase 42: cooperative cancellation. When set, ``run()`` polls
+        # this event between PDFs and between progress ticks; if the
+        # event is set (e.g. the GUI's Cancel button), ``run()`` cancels
+        # in-flight futures and returns the rows processed so far
+        # instead of raising KeyboardInterrupt. This lets the GUI
+        # show a clean "cancelled" state and free the worker thread.
+        self._cancel_event = cancel_event
         # Phase 29: forward retry + timeout knobs from the config
         # ``extra`` dict. Defaults match legacy behaviour (3 retries,
         # 300s timeout) — only operators who pass ``--grobid-max-retries``
@@ -322,6 +334,13 @@ class RadiolarianPipeline:
         if not pdf_files:
             return []
 
+        # Phase 42: cooperative cancellation. If the caller passes
+        # a ``cancel_event`` (threading.Event), we check it between
+        # PDFs. Setting the event causes us to cancel all in-flight
+        # futures and return the rows processed so far — much
+        # friendlier than raising KeyboardInterrupt.
+        cancel_event = self._cancel_event
+
         rows: list[dict[str, Any]] = []
         total = len(pdf_files)
         completed = 0
@@ -331,7 +350,20 @@ class RadiolarianPipeline:
         with ThreadPoolExecutor(max_workers=max(1, self.config.num_workers)) as pool:
             futures = {pool.submit(self._process_one_pdf, p): p for p in pdf_files}
             try:
+                # Phase 42: also check cancel_event at the top of the
+                # loop so a Cancel that arrives BEFORE any PDF
+                # completes still short-circuits the run.
                 for fut in as_completed(futures):
+                    if cancel_event is not None and cancel_event.is_set():
+                        # Cancel all in-flight futures; return what
+                        # we've processed so far.
+                        for f in futures:
+                            f.cancel()
+                        self._emit_progress(
+                            completed, total,
+                            f"Cancelled by user after {completed}/{total} PDFs",
+                        )
+                        return rows
                     pdf = futures[fut]
                     if fut.cancelled():
                         # Future was cancelled (e.g. the API sent a cancel

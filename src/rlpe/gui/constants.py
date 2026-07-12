@@ -158,3 +158,52 @@ BUTTON_PRIMARY_HEIGHT: Final[int] = 34     # Main action button (e.g. Start)
 
 # QComboBox
 COMBO_MIN_WIDTH: Final[int] = 130
+
+
+# ============================================================
+# Phase 42: range / constant validation
+# ============================================================
+# All RANGE_* tuples must satisfy (min < max) and both bounds must
+# be non-negative. Validate at import time so a typo in a constant
+# (e.g. swapping (1, 10) to (10, 1)) fails loudly here instead of
+# producing a silent zero-row run later.
+def _validate_ranges() -> None:
+    import sys as _sys
+    for _name, _val in list(globals().items()):
+        if not _name.startswith("RANGE_"):
+            continue
+        if not isinstance(_val, tuple) or len(_val) != 2:
+            raise ValueError(
+                f"constants.{_name} must be a 2-tuple, got {_val!r}"
+            )
+        _lo, _hi = _val
+        if not isinstance(_lo, (int, float)) or not isinstance(_hi, (int, float)):
+            raise ValueError(
+                f"constants.{_name} bounds must be numeric, got {_val!r}"
+            )
+        if type(_lo) is not type(_hi):
+            raise ValueError(
+                f"constants.{_name} bounds must be same type, got {_val!r}"
+            )
+        if _lo >= _hi:
+            raise ValueError(
+                f"constants.{_name} must satisfy min < max, got {_val!r}"
+            )
+
+
+_validate_ranges()
+
+# Phase 42: also validate that DEFAULT_LLM_BACKEND matches what
+# pipeline_worker._build_config defaults to (the bug: the constant
+# was "minimax" but the worker defaulted to "rules"). We can only
+# check at import time that the constant is one of the known
+# backends, not that pipeline_worker actually uses it.
+_KNOWN_LLM_BACKENDS: Final[tuple[str, ...]] = (
+    "minimax", "minimax-m3", "minimax_api", "rules",
+    "transformers", "ollama", "llamacpp",
+)
+if DEFAULT_LLM_BACKEND not in _KNOWN_LLM_BACKENDS:
+    raise ValueError(
+        f"DEFAULT_LLM_BACKEND={DEFAULT_LLM_BACKEND!r} is not in the "
+        f"known backends list: {_KNOWN_LLM_BACKENDS}"
+    )

@@ -69,10 +69,32 @@ class PipelineWorker(QThread):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
+        import threading
         self._settings = settings
         self._pdf_path = Path(pdf_path)
         self._work_dir = Path(work_dir)
         self._logger = get_gui_logger()
+        # Phase 42: cooperative cancellation. The GUI's Cancel
+        # button sets this event; the pipeline polls it between
+        # PDFs and short-circuits the run with the rows collected
+        # so far. ``requestInterruption`` (the QThread method) is
+        # still wired for callers that check ``isInterruptionRequested``,
+        # but the cancel_event is the primary mechanism.
+        self._cancel_event = threading.Event()
+
+    # ------------------------------------------------------------------
+    # Cancellation
+    # ------------------------------------------------------------------
+    def request_cancel(self) -> None:
+        """Phase 42: cooperatively cancel the running pipeline.
+
+        Sets the cancel event AND calls QThread.requestInterruption
+        (for any code paths that still check the latter). The
+        pipeline polls ``cancel_event`` between PDFs and short-
+        circuits the run; rows collected so far are emitted via
+        ``failed`` with a "cancelled" status."""
+        self._cancel_event.set()
+        self.requestInterruption()
 
     # ------------------------------------------------------------------
     # Helpers exposed to the GUI
@@ -118,9 +140,23 @@ class PipelineWorker(QThread):
             pipeline = RadiolarianPipeline(
                 cfg,
                 progress_callback=self._on_progress,
+                cancel_event=self._cancel_event,  # Phase 42
             )
             self._emit_log("Pipeline instantiated; running on PDF...")
             results = pipeline.run()
+
+            # Phase 42: distinguish "cancelled" from "failed" in the
+            # status message. If the cancel event is set, treat the
+            # run as cancelled (not failed).
+            if self._cancel_event.is_set():
+                self._emit_log(
+                    f"Pipeline cancelled; {len(results)} row(s) collected"
+                )
+                self.status_changed.emit("cancelled")
+                self.failed.emit(
+                    f"cancelled ({len(results)} rows collected so far)"
+                )
+                return
 
             # Convert each result row to a plain dict (QVariant friendly).
             out = [self._row_to_dict(r) for r in results]

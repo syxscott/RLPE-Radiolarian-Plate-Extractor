@@ -314,14 +314,24 @@ class _PreviewGraphicsView(QGraphicsView):
             self.centerOn(centre_scene)
         else:
             self.scale(factor, factor)
-        # Clamp zoom to a sane range
+        # Phase 42: clamp zoom WITHOUT resetting the transform.
+        # The old code did ``self.resetTransform()`` when the
+        # accumulated zoom exceeded ZOOM_MAX / ZOOM_MIN, which threw
+        # away the pan offset and reset the centre to the origin.
+        # Fixed: scale incrementally UP to the limit, not from
+        # the original baseline. After this, the accumulated scale
+        # is at most ZOOM_MAX / ZOOM_MIN but the pan offset is
+        # preserved.
         current = self.transform().m11()
         if current > self.ZOOM_MAX:
-            self.resetTransform()
-            self.scale(self.ZOOM_MAX, self.ZOOM_MAX)
+            # We overshot ZOOM_MAX. Compute the inverse-scale factor
+            # needed to bring us back to ZOOM_MAX, and apply it
+            # relative to the current scale (not via resetTransform).
+            correction = self.ZOOM_MAX / current
+            self.scale(correction, correction)
         elif current < self.ZOOM_MIN:
-            self.resetTransform()
-            self.scale(self.ZOOM_MIN, self.ZOOM_MIN)
+            correction = self.ZOOM_MIN / current
+            self.scale(correction, correction)
 
     # ------------------------------------------------------------------
     # Drag-pan with middle / right mouse button

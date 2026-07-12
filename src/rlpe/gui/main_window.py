@@ -559,6 +559,17 @@ class MainWindow(QMainWindow):
         self._jobs_tab.mark_failed(job_id, error)
         self._set_status("main.failed", id=job_id)
         self._mini_progress.setVisible(False)
+        # Phase 42: if a batch is running and the operator asked
+        # for "stop on first error", halt the batch here. The
+        # _batch_pdfs list is reset so the next _start_next_batch_job
+        # call returns immediately.
+        if (
+            getattr(self, "_batch_pdfs", None)
+            and self._batch_settings.get("_stop_on_error", False)
+        ):
+            remaining = len(self._batch_pdfs) - self._batch_index
+            self._batch_pdfs = []  # halt
+            self._set_status("main.batch_stopped_on_error", failed=job_id, remaining=remaining)
         QMessageBox.critical(self, "Pipeline error", f"Job {job_id} failed:\n\n{error[:1000]}")
 
     # ------------------------------------------------------------------

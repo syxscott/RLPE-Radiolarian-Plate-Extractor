@@ -609,7 +609,11 @@ class RunTab(QWidget):
         if self._worker is None:
             return
         self._log.info("Cancellation requested for %s", self._current_job_id)
-        self._worker.requestInterruption()
+        # Phase 42: the worker's request_cancel() sets the cooperative
+        # cancel event AND calls requestInterruption. The pipeline
+        # polls cancel_event between PDFs and short-circuits the
+        # run; previously this only stopped progress forwarding.
+        self._worker.request_cancel()
         self._cancel_btn.setEnabled(False)
         self._status_label.setText(i18n._tr("runtab.status.cancelling"))
 
