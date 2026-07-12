@@ -59,6 +59,15 @@ def set_language(lang: str) -> None:
             fn(lang)
         except Exception:
             pass
+    # Phase 39: re-text menu / toolbar QAction + QMenu objects
+    # (they're not QWidgets so the registry's allWidgets() loop
+    # misses them). Lazy import to avoid circular dependency with
+    # i18n_widgets.
+    try:
+        from .i18n_widgets import refresh_all_menu_actions
+        refresh_all_menu_actions(lang)
+    except Exception:
+        pass
 
 
 def add_listener(fn: Callable[[str], None]) -> None:

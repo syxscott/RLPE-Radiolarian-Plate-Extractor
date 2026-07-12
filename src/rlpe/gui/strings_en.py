@@ -46,6 +46,7 @@ STRINGS = {
     "menu.view.results": "&Results tab",
     "menu.view.settings": "&Settings tab",
 
+    "toolbar.title": "Main toolbar",
     "toolbar.open": "📂  Open PDF",
     "toolbar.batch": "📚  Batch…",
     "toolbar.about": "ℹ️  About",

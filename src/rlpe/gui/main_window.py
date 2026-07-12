@@ -225,42 +225,51 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         menubar = self.menuBar()
 
-        # File menu
-        file_menu = menubar.addMenu("&File")
+        # Phase 39: use tr_menu / tr_action so all menu labels
+        # translate on language switch. The QAction objects are
+        # registered in the i18n._MENU_ACTIONS list (i18n_widgets)
+        # because they aren't QWidgets, so the registry's
+        # allWidgets() sweep can't find them.
+        from .i18n_widgets import tr_action, tr_menu
 
-        open_act = QAction("📂  &Open PDF…", self)
+        # File menu
+        file_menu = tr_menu("menu.file", parent=menubar)
+        menubar.addAction(file_menu.menuAction())
+
+        open_act = tr_action("menu.file.open", parent=self)
         open_act.setShortcut(QKeySequence.Open)
         open_act.triggered.connect(self._on_open_pdf)
         file_menu.addAction(open_act)
 
-        batch_act = QAction("📚  &Batch…", self)
+        batch_act = tr_action("menu.file.batch", parent=self)
         batch_act.setShortcut(QKeySequence("Ctrl+B"))
         batch_act.triggered.connect(self._on_open_batch)
         file_menu.addAction(batch_act)
 
         file_menu.addSeparator()
 
-        out_act = QAction("📁  Open output &directory…", self)
+        out_act = tr_action("menu.file.outdir", parent=self)
         out_act.triggered.connect(self._on_open_outdir)
         file_menu.addAction(out_act)
 
         file_menu.addSeparator()
 
-        quit_act = QAction("&Quit", self)
+        quit_act = tr_action("menu.file.quit", parent=self)
         quit_act.setShortcut(QKeySequence.Quit)
         quit_act.triggered.connect(self.close)
         file_menu.addAction(quit_act)
 
         # View menu
-        view_menu = menubar.addMenu("&View")
+        view_menu = tr_menu("menu.view", parent=menubar)
+        menubar.addAction(view_menu.menuAction())
 
-        for label, tab_idx in (
-            ("&Run tab",      TAB_RUN),
-            ("&Jobs tab",     TAB_JOBS),
-            ("&Results tab",  TAB_RESULTS),
-            ("&Settings tab", TAB_SETTINGS),
+        for key, tab_idx in (
+            ("menu.view.run",      TAB_RUN),
+            ("menu.view.jobs",     TAB_JOBS),
+            ("menu.view.results",  TAB_RESULTS),
+            ("menu.view.settings", TAB_SETTINGS),
         ):
-            act = QAction(label, self)
+            act = tr_action(key, parent=self)
             act.setShortcut(QKeySequence(f"Ctrl+{tab_idx + 1}"))
             act.triggered.connect(lambda _=False, i=tab_idx: self._tabs.setCurrentIndex(i))
             view_menu.addAction(act)
@@ -268,58 +277,70 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
 
         # Theme switcher
-        theme_menu = view_menu.addMenu("🎨  &Theme")
-        for theme in (THEME_LIGHT, "dark", "system"):
-            act = QAction(theme.title() if theme != "system" else "System default", self)
+        theme_menu = tr_menu("menu.theme", parent=view_menu)
+        view_menu.addAction(theme_menu.menuAction())
+        for theme_key, theme in (
+            ("menu.theme.light",  THEME_LIGHT),
+            ("menu.theme.dark",   "dark"),
+            ("menu.theme.system", "system"),
+        ):
+            act = tr_action(theme_key, parent=self)
             act.triggered.connect(lambda _=False, t=theme: self._apply_theme(t))
             theme_menu.addAction(act)
 
         # Tools menu
-        tools_menu = menubar.addMenu("&Tools")
+        tools_menu = tr_menu("menu.tools", parent=menubar)
+        menubar.addAction(tools_menu.menuAction())
 
         # Open log file
-        log_act = QAction("📂  Open &log file", self)
+        log_act = tr_action("menu.tools.log", parent=self)
         log_act.triggered.connect(self._open_log_file)
         tools_menu.addAction(log_act)
 
         # Help menu
-        help_menu = menubar.addMenu("&Help")
+        help_menu = tr_menu("menu.help", parent=menubar)
+        menubar.addAction(help_menu.menuAction())
 
-        about_act = QAction("&About RLPE", self)
+        about_act = tr_action("menu.help.about", parent=self)
         about_act.triggered.connect(self._on_about)
         help_menu.addAction(about_act)
 
     def _build_toolbar(self) -> None:
-        toolbar = QToolBar("Main toolbar")
+        # Phase 39: use tr_action so toolbar labels translate on
+        # language switch. The QToolBar widget itself is a QWidget
+        # so its title can be retexted via the i18n registry.
+        from .i18n_widgets import tr_action
+        toolbar = QToolBar(i18n._tr("toolbar.title"))
         toolbar.setObjectName("mainToolBar")
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         self.addToolBar(toolbar)
+        i18n.register_widget_text("mainToolBar", "windowTitle", "toolbar.title")
 
         # Quick actions
-        open_act = QAction("📂  Open PDF", self)
+        open_act = tr_action("toolbar.open", parent=self)
         open_act.triggered.connect(self._on_open_pdf)
         toolbar.addAction(open_act)
 
-        batch_act = QAction("📚  Batch…", self)
+        batch_act = tr_action("toolbar.batch", parent=self)
         batch_act.triggered.connect(self._on_open_batch)
         toolbar.addAction(batch_act)
 
         toolbar.addSeparator()
 
-        for label, tab_idx, shortcut in (
-            ("▶  Run",      TAB_RUN,      "Ctrl+1"),
-            ("📋  Jobs",    TAB_JOBS,     "Ctrl+2"),
-            ("📊  Results", TAB_RESULTS,  "Ctrl+3"),
-            ("⚙️  Settings", TAB_SETTINGS, "Ctrl+4"),
+        for key, tab_idx, shortcut in (
+            ("toolbar.run",      TAB_RUN,      "Ctrl+1"),
+            ("toolbar.jobs",     TAB_JOBS,     "Ctrl+2"),
+            ("toolbar.results",  TAB_RESULTS,  "Ctrl+3"),
+            ("toolbar.settings", TAB_SETTINGS, "Ctrl+4"),
         ):
-            act = QAction(label, self)
+            act = tr_action(key, parent=self)
             act.setShortcut(QKeySequence(shortcut))
             act.triggered.connect(lambda _=False, i=tab_idx: self._tabs.setCurrentIndex(i))
             toolbar.addAction(act)
 
         toolbar.addSeparator()
-        about_act = QAction("ℹ️  About", self)
+        about_act = tr_action("toolbar.about", parent=self)
         about_act.triggered.connect(self._on_about)
         toolbar.addAction(about_act)
 
@@ -327,8 +348,19 @@ class MainWindow(QMainWindow):
         sb = QStatusBar()
         self.setStatusBar(sb)
 
-        # Permanent status indicator
-        self._status_perm = QLabel("Ready")
+        # Phase 39: use a plain QLabel + i18n registry so the status
+        # text translates on language switch. We track which i18n key
+        # the status bar is currently displaying in ``_status_key``
+        # so a language switch can re-render the right key.
+        self._status_perm = QLabel()
+        self._status_perm.setObjectName("statusBar.main")
+        self._status_key = "main.idle"
+        self._status_kwargs: dict = {}
+        self._status_perm.setText(i18n._tr(self._status_key))
+        i18n.register_widget_text("statusBar.main", "text", "main.idle")
+        # Register a listener so the status bar re-renders on language
+        # switch using the current key.
+        i18n.add_listener(self._refresh_status_text)
         sb.addPermanentWidget(self._status_perm, 1)
 
         # Mini progress bar
@@ -343,6 +375,28 @@ class MainWindow(QMainWindow):
         ver = QLabel(f"v{APP_VERSION}")
         ver.setObjectName("metricLabel")
         sb.addPermanentWidget(ver)
+
+    def _refresh_status_text(self, _lang: str) -> None:
+        """Phase 39: re-render the status bar with the current i18n key
+        when the language switches."""
+        try:
+            self._status_perm.setText(
+                i18n._tr(self._status_key).format(**self._status_kwargs)
+            )
+        except Exception:
+            pass
+
+    def _set_status(self, key: str, **kwargs) -> None:
+        """Phase 39: set the status bar text via an i18n key + kwargs.
+        Replaces direct setText calls so the language switch can
+        re-render via _refresh_status_text."""
+        self._status_key = key
+        self._status_kwargs = kwargs
+        try:
+            self._status_perm.setText(i18n._tr(key).format(**kwargs))
+        except Exception:
+            # Fallback: set without format if template has unexpected keys
+            self._status_perm.setText(i18n._tr(key))
 
     def _wire_signals(self) -> None:
         # Run tab → Jobs tab + Results tab + status bar
@@ -418,16 +472,16 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _on_about(self) -> None:
+        # Phase 39: use i18n keys for the About dialog so it
+        # translates on language switch. The body uses {fmt} placeholders
+        # for the version / author / app name.
         QMessageBox.about(
             self,
-            "About RLPE",
-            f"<h3>{APP_NAME}</h3>"
-            f"<p><b>Version:</b> {APP_VERSION}<br>"
-            f"<b>Author:</b> {APP_AUTHOR}</p>"
-            f"<p>Native Qt6 desktop GUI for radiolarian plate extraction. "
-            f"Powered by PySide6, the RLPE pipeline, FastAPI, and PBDB.</p>"
-            f"<p>Phase 32 (MVP) — full feature parity with the Web UI plus "
-            f"native image preview with bbox overlay.</p>"
+            i18n._tr("app.about.title"),
+            i18n._tr("app.about.body").format(
+                version=APP_VERSION,
+                author=APP_AUTHOR,
+            ),
         )
 
     def _apply_theme(self, theme: str) -> None:
@@ -463,7 +517,7 @@ class MainWindow(QMainWindow):
             settings=self._run_tab.collect_settings(),
         )
         self._jobs_tab.add_or_update_job(job)
-        self._status_perm.setText(f"Job {job_id} running…")
+        self._set_status("main.running", id=job_id)
         self._mini_progress.setRange(0, 0)  # indeterminate
         self._mini_progress.setVisible(True)
         # Auto-switch to Jobs tab
@@ -483,7 +537,7 @@ class MainWindow(QMainWindow):
         job_dir = self._settings.get("last_export_dir", "")
         self._results_tab.load_job(job_id, rows, job_dir)
         # Status
-        self._status_perm.setText(f"Job {job_id} done — {len(rows):,} rows")
+        self._set_status("main.done", id=job_id, rows=f"{len(rows):,}")
         self._mini_progress.setRange(0, 1)
         self._mini_progress.setValue(1)
         QTimer.singleShot(2000, lambda: self._mini_progress.setVisible(False))
@@ -492,7 +546,7 @@ class MainWindow(QMainWindow):
 
     def _on_job_failed(self, job_id: str, error: str) -> None:
         self._jobs_tab.mark_failed(job_id, error)
-        self._status_perm.setText(f"Job {job_id} failed")
+        self._set_status("main.failed", id=job_id)
         self._mini_progress.setVisible(False)
         QMessageBox.critical(self, "Pipeline error", f"Job {job_id} failed:\n\n{error[:1000]}")
 
@@ -560,7 +614,7 @@ class MainWindow(QMainWindow):
 
     def _start_next_batch_job(self) -> None:
         if self._batch_index >= len(self._batch_pdfs):
-            self._status_perm.setText("Batch complete.")
+            self._set_status("main.batch_complete")
             return
         pdf = self._batch_pdfs[self._batch_index]
         self._batch_index += 1

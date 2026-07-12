@@ -111,6 +111,70 @@ def _set_text(widget: QWidget, attr: str, key: str) -> None:
 # ============================================================
 # Widget factories
 # ============================================================
+
+# Phase 39: registry of QAction objects whose text is translated
+# by i18n. QAction is NOT a QWidget so the global allWidgets() loop
+# in i18n._apply_registry misses it — we keep an explicit list and
+# update each action's text on language change. See i18n.add_listener
+# wiring in main_window._refresh_texts().
+_MENU_ACTIONS: list[tuple[Any, str]] = []  # list of (QAction, key)
+
+
+def tr_action(
+    text_key: str,
+    *,
+    parent: Optional[QWidget] = None,
+) -> "QAction":
+    """Create a QAction translated by ``text_key``.
+
+    QAction is not a QWidget, so it doesn't show up in
+    QApplication.allWidgets() and the i18n registry's auto-rewalk
+    won't find it. We register it explicitly via _MENU_ACTIONS so
+    the i18n.add_listener(sweep) can update its text on language
+    switch.
+    """
+    from PySide6.QtGui import QAction
+    act = QAction(i18n._tr(text_key), parent)
+    act.setObjectName(text_key)
+    _MENU_ACTIONS.append((act, text_key))
+    return act
+
+
+def tr_menu(
+    title_key: str,
+    parent: Optional[QWidget] = None,
+) -> "QMenu":
+    """Create a QMenu translated by ``title_key``.
+
+    Like tr_action, the menu title is registered so it translates
+    on language switch.
+    """
+    from PySide6.QtWidgets import QMenu
+    menu = QMenu(i18n._tr(title_key), parent)
+    menu.setObjectName(title_key)
+    _MENU_ACTIONS.append((menu, title_key))
+    return menu
+
+
+def refresh_all_menu_actions(lang: str) -> None:
+    """Phase 39: called by the i18n listener when language changes.
+
+    Walks _MENU_ACTIONS and re-texts each one. QMenu uses
+    ``setTitle()`` (not setText), so we dispatch on type. Idempotent
+    — items already translated are skipped via the registry.
+    """
+    from PySide6.QtWidgets import QMenu
+    for item, key in _MENU_ACTIONS:
+        try:
+            text = i18n._tr(key)
+            if isinstance(item, QMenu):
+                item.setTitle(text)
+            else:
+                item.setText(text)
+        except Exception:
+            pass
+
+
 def tr_label(
     text_key: str,
     *,
