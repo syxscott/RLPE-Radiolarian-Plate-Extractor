@@ -105,9 +105,23 @@ class JobRecord:
 # Inline progress bar delegate (renders progress in a table cell)
 # ============================================================
 class _ProgressCellDelegate(QStyledItemDelegate):
-    """Paints a small QProgressBar inside the progress column."""
+    """Paints a small QProgressBar inside the progress column.
+
+    Phase 43 audit fix: the previous implementation skipped calling
+    ``QStyledItemDelegate.paint`` for the cell background, leaving
+    the painter in a state where Qt's BackingStore still had an
+    active painter when endPaint() was called, producing
+    "QBackingStore::endPaint() called with active painter" warnings
+    on every refresh. Fixed: call the base class first to draw the
+    cell, then draw the progress bar on top.
+    """
 
     def paint(self, painter, option, index) -> None:  # type: ignore[override]
+        # Delegate to the base class for the cell background +
+        # selection state. This is what Qt's docs say is required
+        # for custom delegates.
+        super().paint(painter, option, index)
+        # Now overlay a progress bar.
         progress_bar_option = QStyleOptionProgressBar()
         progress_bar_option.rect = option.rect
         progress_bar_option.state = option.state

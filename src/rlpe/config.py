@@ -62,6 +62,7 @@ _KNOWN_EXTRA_KEYS = {
     # GROBID failure, no OD retry).
     "grobid_max_retries",
     "grobid_timeout",
+    "grobid_no_probe",  # Phase 43: skip is_available() probe
     "disable_od_fallback",
     # M3 5-stage semantic engine
     "m3_enhanced_mode",

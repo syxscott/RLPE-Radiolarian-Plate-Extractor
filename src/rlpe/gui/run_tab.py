@@ -661,6 +661,22 @@ class RunTab(QWidget):
             self.job_failed.emit(self._current_job_id, error)
 
     def _on_thread_done(self) -> None:
+        # Phase 43: QThread cleanup. The previous code just set
+        # ``self._worker = None`` which left the worker object alive
+        # until Python's GC ran. If the user closed the window (or
+        # hit Ctrl-C) before Python GC, the QThread's C++ object
+        # was still running and the RuntimeError "QThread: Destroyed
+        # while thread is still running" was raised at process exit.
+        # Fixed: call quit() (asks the thread's event loop to stop)
+        # and wait() (block until the thread actually exits) before
+        # dropping the reference.
+        worker = self._worker
+        if worker is not None and worker.isRunning():
+            worker.quit()
+            if not worker.wait(2000):  # 2s timeout
+                # Thread didn't exit cleanly; ask it to terminate.
+                worker.terminate()
+                worker.wait(500)
         self._worker = None
         self._current_job_id = None
         self._start_btn.setEnabled(bool(self._path_edit.text().strip()))

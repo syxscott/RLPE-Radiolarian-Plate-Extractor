@@ -2046,6 +2046,27 @@ class RadiolarianPipeline:
     # -----------------------------------------------------------------------
 
     def _process_one_pdf_grobid(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+        # Phase 43: fast-fail when GROBID is offline. The GrobidClient
+        # retry loop burns ``max_retries * timeout`` seconds (up to
+        # 900s by default) hammering a closed port. Probe first; if
+        # the server doesn't respond to /api/isalive, skip GROBID
+        # entirely and go straight to the OD fallback. The user
+        # can disable this via ``--grobid-no-probe`` for tests.
+        if not self.config.extra.get("grobid_no_probe", False):
+            try:
+                if not self.grobid.is_available(probe_timeout=2.0):
+                    logger.warning(
+                        "GROBID server unavailable at %s; skipping retries, "
+                        "falling back to OpenDataLoader for %s",
+                        self.config.grobid_url, paper_id,
+                    )
+                    if not self.config.extra.get("disable_od_fallback", False):
+                        return self._process_one_pdf_od(paper_id, pdf_path)
+                    return []
+            except Exception as exc:
+                # is_available() shouldn't raise, but if it does,
+                # fall through to the regular retry path.
+                logger.debug("GROBID is_available probe raised: %s", exc)
         # Phase 29: mark this paper as currently in the GROBID code
         # path so the OD-fallback path can detect re-entry and break
         # the GROBID↔OD cycle. Cleared in the finally block.
