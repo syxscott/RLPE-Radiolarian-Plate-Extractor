@@ -199,7 +199,7 @@ class BatchDialog(QDialog):
     def _on_add(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Add PDFs",
+            i18n._tr("batch.add.title"),
             self._settings.get("last_pdf_dir", str(Path.home())),
             "PDF files (*.pdf)",
         )
@@ -207,7 +207,11 @@ class BatchDialog(QDialog):
             self._add_pdf(Path(p))
 
     def _on_add_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Choose a directory of PDFs", self._settings.get("last_pdf_dir", str(Path.home())))
+        path = QFileDialog.getExistingDirectory(
+            self,
+            i18n._tr("batch.add_dir.title"),
+            self._settings.get("last_pdf_dir", str(Path.home())),
+        )
         if not path:
             return
         for sub in sorted(Path(path).glob("*.pdf")):
@@ -232,7 +236,11 @@ class BatchDialog(QDialog):
         self._count_label.setText(i18n._tr("batch.count").format(n=0))
 
     def _on_pick_out(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Choose batch output directory", self._out_dir_edit.text() or str(Path.home()))
+        path = QFileDialog.getExistingDirectory(
+            self,
+            i18n._tr("batch.outdir.title"),
+            self._out_dir_edit.text() or str(Path.home()),
+        )
         if path:
             self._out_dir_edit.setText(path)
 

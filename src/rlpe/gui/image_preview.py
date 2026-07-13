@@ -134,20 +134,20 @@ class ImagePreviewWidget(QWidget):
             self._current_path = None
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
-            self._path_label.setText("(no image)")
+            self._path_label.setText(i18n._tr("preview.no_image"))
             return
         path = Path(image_path)
         self._current_path = path
         if not path.exists():
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
-            self._path_label.setText(f"(missing) {path.name}")
+            self._path_label.setText(i18n._tr("preview.missing").format(name=path.name))
             return
         pix = self._load_pixmap(path)
         if pix is None:
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
-            self._path_label.setText(f"(failed to load) {path.name}")
+            self._path_label.setText(i18n._tr("preview.failed").format(name=path.name))
             return
         self._scene.clear()
         # Phase 41: also clear our explicit bbox item list so old
@@ -177,7 +177,7 @@ class ImagePreviewWidget(QWidget):
     def clear(self) -> None:
         self._scene.clear()
         self._bboxes = []
-        self._path_label.setText("(no image)")
+        self._path_label.setText(i18n._tr("preview.no_image"))
 
     # ------------------------------------------------------------------
     # Internal

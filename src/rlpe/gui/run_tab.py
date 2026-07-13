@@ -164,14 +164,27 @@ class RunTab(QWidget):
         basic_layout.setVerticalSpacing(SPACE_S)
         row = 0
 
-        # OCR backend
+        # OCR backend — Phase 48: friendly names (PaddleOCR (推荐) /
+        # EasyOCR (多语言)) instead of raw "paddleocr"/"easyocr". The
+        # backend still receives the raw ISO code via currentData()
+        # (or currentText() fallback).
+        from .constants import ocr_backend_friendly_options
+        from PySide6.QtWidgets import QSizePolicy
         basic_layout.addWidget(tr_label("runtab.label.ocr_backend"), row, 0)
-        self._ocr_combo = tr_combobox(
-            "runtab.label.ocr_backend",
-            min_width=COMBO_MIN_WIDTH,
-            items=["paddleocr", "easyocr"],
-            current=DEFAULT_OCR_BACKEND,
-        )
+        self._ocr_combo = QComboBox()
+        self._ocr_combo.setObjectName("runtab.ocr_backend")
+        self._ocr_combo.setMinimumHeight(32)
+        self._ocr_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._ocr_combo.blockSignals(True)
+        try:
+            for code, friendly in ocr_backend_friendly_options():
+                self._ocr_combo.addItem(friendly, userData=code)
+            for i in range(self._ocr_combo.count()):
+                if self._ocr_combo.itemData(i) == DEFAULT_OCR_BACKEND:
+                    self._ocr_combo.setCurrentIndex(i)
+                    break
+        finally:
+            self._ocr_combo.blockSignals(False)
         basic_layout.addWidget(self._ocr_combo, row, 1)
 
         basic_layout.addWidget(tr_label("runtab.label.ocr_lang"), row, 2)
@@ -462,7 +475,7 @@ class RunTab(QWidget):
         else:
             ocr_lang = self._ocr_lang_edit.currentText().strip() or "en"
         return {
-            "ocr_backend": self._ocr_combo.currentText(),
+            "ocr_backend": self._ocr_combo.currentData() or self._ocr_combo.currentText(),
             "ocr_lang": ocr_lang,
             "grobid_url": self._grobid_edit.text().strip(),
             "grobid_max_retries": self._grobid_retries.value(),
@@ -493,7 +506,14 @@ class RunTab(QWidget):
         """Restore settings from the QSettings tab on startup."""
         s = dict(settings)
         if "ocr_backend" in s:
-            ix = self._ocr_combo.findText(str(s["ocr_backend"]))
+            # Phase 48: ocr_backend combo has friendly names as text
+            # and ISO codes ("paddleocr" / "easyocr") in userData.
+            # Use findData first, fall back to findText for legacy
+            # configs that stored the friendly name.
+            backend = str(s["ocr_backend"])
+            ix = self._ocr_combo.findData(backend)
+            if ix < 0:
+                ix = self._ocr_combo.findText(backend)
             if ix >= 0:
                 self._ocr_combo.setCurrentIndex(ix)
         if "ocr_lang" in s:
@@ -578,7 +598,7 @@ class RunTab(QWidget):
         last_dir = settings.get("last_pdf_dir", str(Path.home()))
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Choose a radiolarian paper PDF",
+            i18n._tr("runtab.browse.title"),
             last_dir,
             "PDF files (*.pdf);;All files (*)",
         )
@@ -596,7 +616,7 @@ class RunTab(QWidget):
         last_dir = settings.get("last_export_dir", str(Path.home()))
         path = QFileDialog.getExistingDirectory(
             self,
-            "Choose an output directory",
+            i18n._tr("runtab.out.choose.title"),
             last_dir,
         )
         if not path:
@@ -607,7 +627,11 @@ class RunTab(QWidget):
     def _on_open_outdir(self) -> None:
         path = self._out_edit.text().strip()
         if not path:
-            QMessageBox.information(self, "Output", "No output directory set yet.")
+            QMessageBox.information(
+                self,
+                i18n._tr("runtab.out.no_outdir.title"),
+                i18n._tr("runtab.out.no_outdir.body"),
+            )
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
@@ -735,7 +759,11 @@ class RunTab(QWidget):
 
     def _on_failed(self, error: str) -> None:
         self._log.error("Job %s failed: %s", self._current_job_id, error)
-        QMessageBox.critical(self, "Pipeline error", error)
+        QMessageBox.critical(
+            self,
+            i18n._tr("runtab.prompt.error.title"),
+            error,
+        )
         if self._current_job_id:
             self.job_failed.emit(self._current_job_id, error)
 

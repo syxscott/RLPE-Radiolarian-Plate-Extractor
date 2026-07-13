@@ -321,6 +321,31 @@ STRINGS = {
     "filter.csv": "CSV files (*.csv)",
     "filter.zip": "Zip files (*.zip)",
     "filter.dir": "Directories",
+
+    # ============================================================
+    # Phase 48: file-dialog titles + export dialogs + summary labels
+    # ============================================================
+    # Run tab file dialogs
+    "runtab.browse.title": "Choose a radiolarian paper PDF",
+    "runtab.out.choose.title": "Choose an output directory",
+    "runtab.out.no_outdir.title": "Output",
+    "runtab.out.no_outdir.body": "No output directory set yet.",
+    # Batch dialog file dialogs
+    "batch.add.title": "Add PDFs",
+    "batch.add_dir.title": "Choose a directory of PDFs",
+    "batch.outdir.title": "Choose batch output directory",
+    # Jobs tab exports
+    "jobstab.export.xlsx_title": "Export xlsx",
+    "jobstab.export.json_title": "Export JSON",
+    # Results tab exports
+    "restab.export.xlsx_title": "Export xlsx",
+    "restab.export.json_title": "Export JSON",
+    "restab.export.csv_title": "Export CSV",
+    "restab.export.dwca_title": "Export DwCA",
+    # Jobs tab summary
+    "jobstab.summary.count": "{total} jobs · running {running} · done {done} · failed {failed}",
+    "jobstab.summary.count_label": "{total} jobs  ·  running {running}  ·  done {done}  ·  failed {failed}",
+
     # Added in Phase 34 for language switcher
     "settab.lang": "Language:",
     "app.name": "RLPE - Radiolarian Plate Extractor",

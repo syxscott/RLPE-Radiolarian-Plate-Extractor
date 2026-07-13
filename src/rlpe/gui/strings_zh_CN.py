@@ -260,4 +260,27 @@ STRINGS = {
     'settab.lang': '语言：',
     'app.name': 'RLPE - 放射虫图版提取系统',
     'app.version': '0.1.0',
+    # ============================================================
+    # Phase 48: file-dialog titles + export dialogs + summary labels
+    # ============================================================
+    # Run tab file dialogs
+    'runtab.browse.title': '选择放射虫论文 PDF',
+    'runtab.out.choose.title': '选择输出目录',
+    'runtab.out.no_outdir.title': '输出目录',
+    'runtab.out.no_outdir.body': '尚未选择输出目录。',
+    # Batch dialog file dialogs
+    'batch.add.title': '添加 PDF',
+    'batch.add_dir.title': '选择 PDF 所在目录',
+    'batch.outdir.title': '选择批处理输出目录',
+    # Jobs tab exports
+    'jobstab.export.xlsx_title': '导出 xlsx',
+    'jobstab.export.json_title': '导出 JSON',
+    # Results tab exports
+    'restab.export.xlsx_title': '导出 xlsx',
+    'restab.export.json_title': '导出 JSON',
+    'restab.export.csv_title': '导出 CSV',
+    'restab.export.dwca_title': '导出 DwCA',
+    # Jobs tab summary
+    'jobstab.summary.count': '{total} 个任务 · 运行中 {running} · 已完成 {done} · 失败 {failed}',
+    'jobstab.summary.count_label': '{total} 个任务  ·  运行中 {running}  ·  已完成 {done}  ·  失败 {failed}',
 }

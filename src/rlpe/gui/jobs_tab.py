@@ -402,9 +402,15 @@ class JobsTab(QWidget):
         running = sum(1 for j in self._jobs.values() if j.status == STATUS_RUNNING)
         done = sum(1 for j in self._jobs.values() if j.status == STATUS_DONE)
         failed = sum(1 for j in self._jobs.values() if j.status == STATUS_FAILED)
-        self._count_label.setText(f"{total} jobs  ·  running {running}  ·  done {done}  ·  failed {failed}")
+        self._count_label.setText(
+            i18n._tr("jobstab.summary.count_label").format(
+                total=total, running=running, done=done, failed=failed,
+            )
+        )
         self._summary.setText(
-            f"{total} jobs · {running} running · {done} done · {failed} failed"
+            i18n._tr("jobstab.summary.count").format(
+                total=total, running=running, done=done, failed=failed,
+            )
         )
 
     def _trim_old_jobs(self) -> None:
@@ -470,10 +476,19 @@ class JobsTab(QWidget):
 
     def _export_xlsx(self, job: JobRecord) -> None:
         if not job.rows:
-            QMessageBox.information(self, "Export", "No rows to export.")
+            QMessageBox.information(
+                self,
+                i18n._tr("jobstab.menu.export_xlsx"),
+                i18n._tr("jobstab.export.no_rows"),
+            )
             return
         default_path = str(Path(job.output_dir) / f"{job.job_id}.xlsx")
-        path, _ = QFileDialog.getSaveFileName(self, "Export xlsx", default_path, "Excel files (*.xlsx)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            i18n._tr("jobstab.export.xlsx_title"),
+            default_path,
+            "Excel files (*.xlsx)",
+        )
         if not path:
             return
         try:
@@ -487,33 +502,72 @@ class JobsTab(QWidget):
                 # Build a RunOutput-compatible dict from the job
                 run_output = self._build_run_output(job)
                 write_xlsx(run_output, path)
-                QMessageBox.information(self, "Export", f"Saved {len(job.rows)} rows to {path}")
+                QMessageBox.information(
+                    self,
+                    i18n._tr("jobstab.menu.export_xlsx"),
+                    i18n._tr("jobstab.export.saved").format(
+                        count=len(job.rows), path=path,
+                    ),
+                )
                 return
             except Exception as exc:
-                QMessageBox.warning(self, "Export failed", f"{type(exc).__name__}: {exc}")
+                QMessageBox.warning(
+                    self,
+                    i18n._tr("jobstab.menu.export_xlsx"),
+                    i18n._tr("jobstab.export.failed").format(
+                        error=f"{type(exc).__name__}: {exc}",
+                    ),
+                )
                 return
         # Fallback: call the cli_export function if available
         try:
             from ..cli_export import export_run_output_to_xlsx
             run_output = self._build_run_output(job)
             export_run_output_to_xlsx(run_output, path)
-            QMessageBox.information(self, "Export", f"Saved {len(job.rows)} rows to {path}")
+            QMessageBox.information(
+                self,
+                i18n._tr("jobstab.menu.export_xlsx"),
+                i18n._tr("jobstab.export.saved").format(
+                    count=len(job.rows), path=path,
+                ),
+            )
         except Exception as exc:
-            QMessageBox.warning(self, "Export failed", f"{type(exc).__name__}: {exc}")
+            QMessageBox.warning(
+                self,
+                i18n._tr("jobstab.menu.export_xlsx"),
+                i18n._tr("jobstab.export.failed").format(
+                    error=f"{type(exc).__name__}: {exc}",
+                ),
+            )
 
     def _export_json(self, job: JobRecord) -> None:
         if not job.rows:
             return
         default_path = str(Path(job.output_dir) / f"{job.job_id}.json")
-        path, _ = QFileDialog.getSaveFileName(self, "Export JSON", default_path, "JSON files (*.json)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            i18n._tr("jobstab.export.json_title"),
+            default_path,
+            "JSON files (*.json)",
+        )
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(self._build_run_output(job), fh, indent=2, ensure_ascii=False, default=str)
-            QMessageBox.information(self, "Export", f"Saved {len(job.rows)} rows to {path}")
+            QMessageBox.information(
+                self,
+                i18n._tr("jobstab.menu.export_json"),
+                i18n._tr("jobstab.export.saved").format(
+                    count=len(job.rows), path=path,
+                ),
+            )
         except Exception as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            QMessageBox.warning(
+                self,
+                i18n._tr("jobstab.menu.export_json"),
+                i18n._tr("jobstab.export.failed").format(error=str(exc)),
+            )
 
     def _build_run_output(self, job: JobRecord) -> dict[str, Any]:
         """Build a RunOutput-compatible dict for the exporters."""

@@ -531,39 +531,70 @@ class ResultsTab(QWidget):
     # ------------------------------------------------------------------
     def _export_xlsx(self) -> None:
         if not self._filtered_rows:
-            QMessageBox.information(self, "Export", "No rows to export.")
+            QMessageBox.information(
+                self,
+                i18n._tr("restab.export.xlsx"),
+                i18n._tr("jobstab.export.no_rows"),
+            )
             return
         default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.xlsx")
-        path, _ = QFileDialog.getSaveFileName(self, "Export xlsx", default_path, "Excel files (*.xlsx)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            i18n._tr("restab.export.xlsx_title"),
+            default_path,
+            "Excel files (*.xlsx)",
+        )
         if not path:
             return
         try:
             from ..exporters.xlsx import write_xlsx
             run_output = self._build_run_output()
             write_xlsx(run_output, path)
-            self._set_status(f"Saved {len(self._filtered_rows):,} rows → {Path(path).name}")
+            self._set_status(i18n._tr("jobstab.export.saved").format(
+                count=len(self._filtered_rows), path=Path(path).name,
+            ))
         except Exception as exc:
-            QMessageBox.warning(self, "Export failed", f"{type(exc).__name__}: {exc}")
+            QMessageBox.warning(
+                self,
+                i18n._tr("restab.export.xlsx"),
+                i18n._tr("jobstab.export.failed").format(
+                    error=f"{type(exc).__name__}: {exc}",
+                ),
+            )
 
     def _export_json(self) -> None:
         if not self._filtered_rows:
             return
         default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.json")
-        path, _ = QFileDialog.getSaveFileName(self, "Export JSON", default_path, "JSON files (*.json)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            i18n._tr("restab.export.json_title"),
+            default_path,
+            "JSON files (*.json)",
+        )
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(self._build_run_output(), fh, indent=2, ensure_ascii=False, default=str)
-            self._set_status(f"Saved → {Path(path).name}")
+            self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
         except Exception as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            QMessageBox.warning(
+                self,
+                i18n._tr("restab.export.json"),
+                i18n._tr("jobstab.export.failed").format(error=str(exc)),
+            )
 
     def _export_csv(self) -> None:
         if not self._filtered_rows:
             return
         default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.csv")
-        path, _ = QFileDialog.getSaveFileName(self, "Export CSV", default_path, "CSV files (*.csv)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            i18n._tr("restab.export.csv_title"),
+            default_path,
+            "CSV files (*.csv)",
+        )
         if not path:
             return
         try:
@@ -573,24 +604,39 @@ class ResultsTab(QWidget):
                 w.writeheader()
                 for r in self._filtered_rows:
                     w.writerow({k: self._extract_column(r, k) for k in (c.key for c in RESULT_COLUMNS)})
-            self._set_status(f"Saved → {Path(path).name}")
+            self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
         except Exception as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            QMessageBox.warning(
+                self,
+                i18n._tr("restab.export.csv"),
+                i18n._tr("jobstab.export.failed").format(error=str(exc)),
+            )
 
     def _export_dwca(self) -> None:
         if not self._filtered_rows:
             return
         default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.zip")
-        path, _ = QFileDialog.getSaveFileName(self, "Export DwCA", default_path, "Zip files (*.zip)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            i18n._tr("restab.export.dwca_title"),
+            default_path,
+            "Zip files (*.zip)",
+        )
         if not path:
             return
         try:
             from ..exporters.archive import write_dwca_zip
             run_output = self._build_run_output()
             write_dwca_zip(run_output, path)
-            self._set_status(f"Saved → {Path(path).name}")
+            self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
         except Exception as exc:
-            QMessageBox.warning(self, "Export failed", f"{type(exc).__name__}: {exc}")
+            QMessageBox.warning(
+                self,
+                i18n._tr("restab.export.dwca"),
+                i18n._tr("jobstab.export.failed").format(
+                    error=f"{type(exc).__name__}: {exc}",
+                ),
+            )
 
     def _build_run_output(self) -> dict[str, Any]:
         panels = self._filtered_rows
