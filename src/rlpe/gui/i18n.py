@@ -71,7 +71,12 @@ def set_language(lang: str) -> None:
 
 
 def add_listener(fn: Callable[[str], None]) -> None:
-    _LISTENERS.append(fn)
+    # Phase 44: dedupe. Previously re-creating a widget (e.g. after
+    # theme rebuild) would append the same listener twice, doubling
+    # the work in set_language. Now we check by identity (==) and
+    # skip if already registered.
+    if fn not in _LISTENERS:
+        _LISTENERS.append(fn)
 
 
 def remove_listener(fn: Callable[[str], None]) -> None:

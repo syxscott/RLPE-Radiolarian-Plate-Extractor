@@ -67,6 +67,12 @@ class ImagePreviewWidget(QWidget):
         # overlays so we can remove them on set_image() and avoid
         # the leak where old bboxes pile up across image swaps.
         self._bbox_items: list[QGraphicsRectItem] = []
+        # Phase 44: also track QGraphicsTextItem labels (species
+        # name + confidence). Without this, text labels pile up
+        # across set_image() / set_bboxes() calls because the
+        # text items aren't QGraphicsRectItem and were never
+        # removed in _overlay_bboxes().
+        self._text_items: list[QGraphicsTextItem] = []
         self._zoom: float = 1.0
         self._build_ui()
 
@@ -207,6 +213,17 @@ class ImagePreviewWidget(QWidget):
                 # Item may have been deleted by Qt already
                 pass
         self._bbox_items.clear()
+        # Phase 44: also remove QGraphicsTextItem labels. Previously
+        # these leaked across set_image() / set_bboxes() calls
+        # because the text items weren't tracked in _bbox_items
+        # (they're a different Qt class). Result: species name
+        # labels piled up at the top-left of the preview.
+        for item in self._text_items:
+            try:
+                self._scene.removeItem(item)
+            except RuntimeError:
+                pass
+        self._text_items.clear()
 
         if not self._current_path or not self._bboxes:
             return
@@ -250,6 +267,9 @@ class ImagePreviewWidget(QWidget):
             text_item.setPos(x + 4, y + 4)
             text_item.setData(0, bbox)
             text_item.setToolTip(_bbox_tooltip(bbox))
+            # Phase 44: track the text item so _overlay_bboxes can
+            # remove it on the next set_bboxes / set_image call.
+            self._text_items.append(text_item)
 
     # ------------------------------------------------------------------
     # Toolbar slots
@@ -304,6 +324,10 @@ class _PreviewGraphicsView(QGraphicsView):
             return
         factor = 1.15 if delta > 0 else 1 / 1.15
         self.zoom_by(factor)
+        # Phase 44: accept the event so it doesn't propagate to
+        # the parent QScrollArea (which would scroll the panel
+        # while the user is trying to zoom the image).
+        event.accept()
 
     def zoom_by(self, factor: float, anchor_view_center: bool = False) -> None:
         if anchor_view_center:
@@ -347,7 +371,11 @@ class _PreviewGraphicsView(QGraphicsView):
         if event.button() == Qt.LeftButton and self.scene():
             scene_pos = self.mapToScene(event.pos())
             for item in self.scene().items(scene_pos):
-                if isinstance(item, (QGraphicsRectItem,)):
+                # Phase 44: also accept clicks on QGraphicsTextItem
+                # labels (species name + confidence). Previously the
+                # check skipped text items, so clicking a label did
+                # nothing (the cursor changed but no signal fired).
+                if isinstance(item, (QGraphicsRectItem, QGraphicsTextItem)):
                     bbox_data = item.data(0)
                     if bbox_data:
                         # Bubble up via parent widget

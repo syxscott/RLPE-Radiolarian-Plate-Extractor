@@ -443,14 +443,34 @@ class MainWindow(QMainWindow):
         self._qsettings.sync()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        # Phase 44: robust shutdown order. The previous code
+        # just saved window state and called super().closeEvent(),
+        # which could leave the PipelineWorker QThread running
+        # with the parent widget destroyed → RuntimeError.
         self._save_window_state()
-        # If a job is running, confirm.
-        # (The worker is a QThread; it will keep running but Qt
-        # will mark it for deletion once we close. The user is
-        # warned so they can cancel the job first.)
-        # NOTE: We don't currently track "any thread running"; the
-        # worker checks itself. For the MVP we just let the OS
-        # clean up. Future: prompt the user to confirm.
+        # 1) Stop the worker if it's running. The Run tab's
+        #    _on_thread_done handles quit() + wait() but it only
+        #    fires on the worker's `finished` signal, which we
+        #    may not see if we're closing mid-job. So we wait
+        #    synchronously here.
+        worker = getattr(self._run_tab, "_worker", None)
+        if worker is not None and worker.isRunning():
+            try:
+                worker.request_cancel()
+            except RuntimeError:
+                pass
+            # Wait up to 5s for the thread to honour the cancel.
+            if not worker.wait(5000):
+                worker.terminate()
+                worker.wait(500)
+        # 2) Flush QSettings so any unsaved state survives the
+        #    process exit (especially important on Windows where
+        #    QSettings is backed by the registry and changes
+        #    are only flushed on app exit, not on every setValue).
+        from PySide6.QtCore import QSettings
+        QSettings(APP_DOMAIN, APP_NAME).sync()
+        # 3) Accept the event (window closes).
+        event.accept()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
