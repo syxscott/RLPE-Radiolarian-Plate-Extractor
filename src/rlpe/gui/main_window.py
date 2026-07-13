@@ -145,6 +145,28 @@ class MainWindow(QMainWindow):
         self._build_statusbar()
         self._wire_signals()
         self._restore_window_state()
+        # Phase 49: scan disk for previously completed jobs (mirrors
+        # what the Web API does at startup) and populate the JobsTab.
+        # Without this, restarting the GUI loses visibility into jobs
+        # completed via the CLI / Web UI / a prior GUI session.
+        self._load_recent_jobs()
+
+    def _load_recent_jobs(self) -> None:
+        """Phase 49: scan service_work/ and work/ for completed jobs.
+
+        Logs a status-bar message summarising how many were loaded.
+        """
+        try:
+            n = self._jobs_tab.load_recent_jobs_from_disk()
+        except Exception as exc:  # never let startup scan block the GUI
+            self._log.warning("Phase 49 startup scan failed: %s", exc)
+            return
+        if n:
+            self._log.info("Loaded %d recent job(s) from disk", n)
+            # Show a transient status bar message in the user's language.
+            self.statusBar().showMessage(
+                i18n._tr("main.recent_loaded").format(n=n), 5000
+            )
 
     # ------------------------------------------------------------------
     # Settings cache

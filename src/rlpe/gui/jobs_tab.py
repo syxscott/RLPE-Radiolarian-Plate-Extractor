@@ -258,6 +258,92 @@ class JobsTab(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    def load_recent_jobs_from_disk(self) -> int:
+        """Scan disk for completed jobs and populate ``_jobs``.
+
+        Mirrors what the Web API does at startup (``_load_existing_jobs_from_disk``
+        in ``api/app.py``): walks ``service_work/<job_id>/output/manifests/matches.jsonl``
+        and ``work/output/manifests/matches.jsonl`` (CLI runs), and turns each
+        ``matches.jsonl`` into a ``JobRecord(status=STATUS_DONE)`` with the rows
+        loaded from disk.
+
+        Before Phase 49, the GUI kept jobs purely in-memory in ``_jobs`` —
+        restarting the GUI (or running an extraction via the CLI / web) made
+        the results invisible until the user re-ran the same PDF inside the
+        GUI session. This scan fixes that.
+
+        Returns the number of jobs loaded.
+        """
+        from .constants import PROJECT_ROOT
+        loaded = 0
+
+        # Candidate roots: <root>/service_work/<job_id>/output/manifests/matches.jsonl
+        # and the dev work/ directory at project root.
+        roots: list[tuple[Path, str]] = []
+        service_work = PROJECT_ROOT / "service_work"
+        if service_work.exists():
+            for child in sorted(service_work.iterdir()):
+                if child.is_dir():
+                    roots.append((child, child.name))
+        # Also scan project root work/ for ad-hoc CLI runs.
+        cli_work = PROJECT_ROOT / "work"
+        if cli_work.exists() and cli_work.resolve() != service_work.resolve():
+            import hashlib
+            jid = "cli_" + hashlib.md5(
+                str(cli_work.resolve()).encode()
+            ).hexdigest()[:12]
+            roots.append((cli_work, jid))
+
+        for root, jid in roots:
+            matches_path = root / "output" / "manifests" / "matches.jsonl"
+            if not matches_path.exists():
+                continue
+            try:
+                rows: list[dict[str, Any]] = []
+                with matches_path.open(encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if line:
+                            rows.append(json.loads(line))
+            except (OSError, json.JSONDecodeError):
+                # Corrupt or partial file — skip silently. Logged at
+                # the GUI logger for the curious.
+                self._log.warning(
+                    "load_recent_jobs: skipping %s (read/parse error)",
+                    matches_path,
+                )
+                continue
+            if not rows:
+                continue
+            # Locate the original PDF (best-effort).
+            pdf_path = ""
+            pdfs_dir = root / "pdfs"
+            if pdfs_dir.exists():
+                pdfs = list(pdfs_dir.glob("*.pdf"))
+                if pdfs:
+                    pdf_path = str(pdfs[0])
+            # Try to get a creation timestamp from filesystem.
+            try:
+                finished_at = matches_path.stat().st_mtime
+            except OSError:
+                finished_at = time.time()
+            job = JobRecord(
+                job_id=jid,
+                pdf_path=pdf_path,
+                output_dir=str(root / "output"),
+                status=STATUS_DONE,
+                progress_current=1,
+                progress_total=1,
+                progress_msg=i18n._tr("jobstab.loaded_from_disk"),
+                rows=rows,
+                started_at=finished_at,
+                finished_at=finished_at,
+            )
+            self.add_or_update_job(job)
+            loaded += 1
+        return loaded
+
+    # ------------------------------------------------------------------
     def add_or_update_job(self, job: JobRecord) -> None:
         """Insert or update a job record in the table."""
         self._jobs[job.job_id] = job

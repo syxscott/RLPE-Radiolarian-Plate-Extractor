@@ -153,6 +153,7 @@ STRINGS = {
     "jobstab.menu.remove": "🗑  Remove from list",
     "jobstab.export.no_rows": "No rows to export.",
     "jobstab.export.failed": "Export failed: {error}",
+    "jobstab.loaded_from_disk": "Loaded from disk",
     "jobstab.export.saved": "Saved {count} rows → {path}",
     "jobstab.export.saved_short": "Saved → {path}",
 
@@ -293,6 +294,7 @@ STRINGS = {
     "main.failed": "Job {id} failed",
     "main.batch_complete": "Batch complete.",
     "main.batch_stopped_on_error": "Batch stopped on error: {failed} ({remaining} remaining).",
+    "main.recent_loaded": "Loaded {n} recent job(s) from disk.",
 
     # ============================================================
     # Common dialogs

@@ -8,7 +8,15 @@ Centralised so:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
+
+
+# Project root (parent of src/). Used by Phase 49 to scan
+# ``service_work/`` and ``work/`` for completed jobs to repopulate
+# the JobsTab on GUI startup — same scan the Web API does in
+# ``api/app.py:_load_existing_jobs_from_disk``.
+PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 
 
 # Application metadata
