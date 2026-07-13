@@ -175,12 +175,35 @@ class RunTab(QWidget):
         basic_layout.addWidget(self._ocr_combo, row, 1)
 
         basic_layout.addWidget(tr_label("runtab.label.ocr_lang"), row, 2)
-        self._ocr_lang_edit = tr_lineedit(
-            "runtab.ocr_lang.placeholder",
-            min_width=INPUT_WIDTH_OCR_LANG,
-            text=DEFAULT_OCR_LANG,
+        # Phase 46: a QComboBox with friendly language names
+        # ("English" / "中文 (简体)" / "日本語") instead of the
+        # unfriendly ISO codes ("en" / "ch_sim" / "ja"). The ISO
+        # codes are still stored in the userData so the OCR backend
+        # still receives the right value. setEditable(True) lets
+        # power users still type a custom comma-separated list
+        # (e.g. "en,ja,ch_sim") for advanced use cases.
+        from .constants import ocr_lang_friendly_options
+        self._ocr_lang_edit = QComboBox()
+        self._ocr_lang_edit.setObjectName("runtab.ocr_lang")
+        self._ocr_lang_edit.setEditable(True)
+        # Phase 46: block signals during populate so the slot
+        # doesn't fire on a half-built combo.
+        self._ocr_lang_edit.blockSignals(True)
+        try:
+            for iso_code, friendly_name in ocr_lang_friendly_options():
+                self._ocr_lang_edit.addItem(friendly_name, userData=iso_code)
+            # Set default to English
+            for i in range(self._ocr_lang_edit.count()):
+                if self._ocr_lang_edit.itemData(i) == DEFAULT_OCR_LANG:
+                    self._ocr_lang_edit.setCurrentIndex(i)
+                    break
+        finally:
+            self._ocr_lang_edit.blockSignals(False)
+        self._ocr_lang_edit.setMinimumWidth(INPUT_WIDTH_OCR_LANG)
+        self._ocr_lang_edit.setToolTip(
+            "OCR language (e.g. English, 中文, 日本語). "
+            "Editable — power users can type 'en,ja' for multi-lang."
         )
-        self._ocr_lang_edit.setToolTip("Comma-separated language list (EasyOCR accepts multi-lang)")
         basic_layout.addWidget(self._ocr_lang_edit, row, 3)
         row += 1
 
@@ -391,9 +414,18 @@ class RunTab(QWidget):
 
     def collect_settings(self) -> dict[str, Any]:
         """Return the current settings as a flat dict (worker-ready)."""
+        # Phase 46: ocr_lang is now a QComboBox with friendly names
+        # but ISO codes in userData. Prefer currentData() (the ISO
+        # code the user selected). Fall back to currentText() if the
+        # user typed a custom comma-separated list (e.g. "en,ja").
+        ocr_lang_data = self._ocr_lang_edit.currentData()
+        if ocr_lang_data:
+            ocr_lang = ocr_lang_data
+        else:
+            ocr_lang = self._ocr_lang_edit.currentText().strip() or "en"
         return {
             "ocr_backend": self._ocr_combo.currentText(),
-            "ocr_lang": self._ocr_lang_edit.text().strip() or "en",
+            "ocr_lang": ocr_lang,
             "grobid_url": self._grobid_edit.text().strip(),
             "grobid_max_retries": self._grobid_retries.value(),
             "grobid_timeout": self._grobid_timeout.value(),
@@ -427,7 +459,16 @@ class RunTab(QWidget):
             if ix >= 0:
                 self._ocr_combo.setCurrentIndex(ix)
         if "ocr_lang" in s:
-            self._ocr_lang_edit.setText(str(s["ocr_lang"]))
+            # Phase 46: try to find the ISO code in the combo's
+            # userData first (e.g. "en", "ch_sim"). If not found
+            # (e.g. legacy config with comma-separated "en,ja"),
+            # setText so the user sees their custom string.
+            lang_str = str(s["ocr_lang"])
+            ix = self._ocr_lang_edit.findData(lang_str)
+            if ix >= 0:
+                self._ocr_lang_edit.setCurrentIndex(ix)
+            else:
+                self._ocr_lang_edit.setCurrentText(lang_str)
         if "grobid_url" in s:
             self._grobid_edit.setText(str(s["grobid_url"]))
         if "grobid_max_retries" in s:

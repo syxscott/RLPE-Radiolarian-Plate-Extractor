@@ -89,7 +89,7 @@ STRINGS = {
     "runtab.label.panel_score": "Panel score:",
     "runtab.label.use_gpu": "Use GPU:",
     "runtab.gpu_check": "Auto-detect CUDA at startup",
-    "runtab.ocr_lang.placeholder": "e.g. en, ja, ch_sim",
+    "runtab.ocr_lang.placeholder": "e.g. English, 中文 (简体), 日本語",
 
     "runtab.label.llm_backend": "LLM backend:",
     "runtab.label.m3_lang": "M3 prompt lang:",
@@ -220,7 +220,7 @@ STRINGS = {
     "settab.ocr": "OCR",
     "settab.ocr.backend": "OCR backend:",
     "settab.ocr.lang": "OCR language(s):",
-    "settab.ocr.lang.placeholder": "en, en,ja, en,ch_sim…",
+    "settab.ocr.lang.placeholder": "English, 中文 (简体), 日本語…",
     "settab.ocr.caption_window": "Caption window (GROBID):",
     "settab.ocr.od_caption_window": "OD caption window:",
     "settab.llm": "LLM / M3",

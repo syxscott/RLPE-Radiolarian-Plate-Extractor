@@ -207,3 +207,49 @@ if DEFAULT_LLM_BACKEND not in _KNOWN_LLM_BACKENDS:
         f"DEFAULT_LLM_BACKEND={DEFAULT_LLM_BACKEND!r} is not in the "
         f"known backends list: {_KNOWN_LLM_BACKENDS}"
     )
+
+
+# Phase 46: OCR language friendly names.
+# The OCR backend accepts ISO codes (en, ja, ch_sim, ch_tra, ...) but
+# these are unfriendly for end users. We map them to human-readable
+# labels and let the user pick from a QComboBox. The ISO code is
+# stored in the userData so the worker still receives the right
+# value.
+#
+# Each entry: (iso_code, english_name, chinese_name)
+OCR_LANGUAGE_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("en", "English", "英语"),
+    ("ch_sim", "Chinese (Simplified)", "中文 (简体)"),
+    ("ch_tra", "Chinese (Traditional)", "中文 (繁體)"),
+    ("ja", "Japanese", "日语"),
+    ("ko", "Korean", "韩语"),
+    ("fr", "French", "法语"),
+    ("de", "German", "德语"),
+    ("ru", "Russian", "俄语"),
+)
+
+
+def ocr_lang_to_friendly_name(iso_code: str) -> str:
+    """Convert an ISO OCR code (e.g. ``"ch_sim"``) to a human-readable
+    name. Falls back to the ISO code if it's not in the table."""
+    for code, en_name, zh_name in OCR_LANGUAGE_OPTIONS:
+        if code == iso_code:
+            # Use the current language to pick the right name.
+            from . import i18n as _i18n
+            lang = _i18n.current_language()
+            return zh_name if lang == "zh_CN" else en_name
+    return iso_code
+
+
+def ocr_lang_friendly_options() -> list[tuple[str, str]]:
+    """Return ``[(iso_code, friendly_name), ...]`` in the current
+    language. Used by the GUI to populate the OCR language
+    QComboBox so users see ``"English"`` / ``"中文 (简体)"`` instead
+    of ``"en"`` / ``"ch_sim"``.
+    """
+    from . import i18n as _i18n
+    lang = _i18n.current_language()
+    return [
+        (code, zh_name if lang == "zh_CN" else en_name)
+        for code, en_name, zh_name in OCR_LANGUAGE_OPTIONS
+    ]
