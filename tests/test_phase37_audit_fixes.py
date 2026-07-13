@@ -126,14 +126,26 @@ def test_apply_to_run_settings_writes_all_keys():
     from rlpe.gui.settings_tab import SettingsTab
     cache: dict = {}
     st = SettingsTab(cache)
-    # Set some non-default values
-    st._theme_combo.setCurrentText("dark")
+    # Set some non-default values. Phase 47: the theme combo
+    # stores friendly names as itemText and ISO codes in
+    # userData. setCurrentText("dark") doesn't match the
+    # friendly label (e.g. "深色") so we use setCurrentIndex
+    # by finding the row with the right userData.
+    for i in range(st._theme_combo.count()):
+        if st._theme_combo.itemData(i) == "dark":
+            st._theme_combo.setCurrentIndex(i)
+            break
+    else:
+        pytest.fail("dark theme not found in combo")
     st._pdf_dir_edit.setText("/tmp/some_pdf_dir")
     st._out_dir_edit.setText("/tmp/some_out_dir")
     st._grobid_url.setText("http://example.com:8070")
     # Now flush
     st.apply_to_run_settings()
-    assert cache.get("theme") == "dark"
+    assert cache.get("theme") == "dark", (
+        f"theme cache should be 'dark', got {cache.get('theme')!r} (Phase 47: "
+        "the friendly-name combo must return the ISO code, not the text)"
+    )
     assert cache.get("last_pdf_dir") == "/tmp/some_pdf_dir"
     assert cache.get("last_export_dir") == "/tmp/some_out_dir"
     assert cache.get("grobid_url") == "http://example.com:8070"

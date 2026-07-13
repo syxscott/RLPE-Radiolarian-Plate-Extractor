@@ -146,8 +146,18 @@ class SettingsTab(QWidget):
         alayout.setVerticalSpacing(SPACE_S)
 
         self._theme_combo = QComboBox()
-        self._theme_combo.addItems([THEME_LIGHT, THEME_DARK, THEME_SYSTEM])
-        self._theme_combo.currentTextChanged.connect(self._on_theme_change)
+        from PySide6.QtWidgets import QSizePolicy
+        self._theme_combo.setMinimumHeight(32)
+        self._theme_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        # Phase 47: friendly theme names (浅色 / 深色 / 跟随系统).
+        from .constants import theme_friendly_options
+        self._theme_combo.blockSignals(True)
+        try:
+            for code, friendly in theme_friendly_options():
+                self._theme_combo.addItem(friendly, userData=code)
+        finally:
+            self._theme_combo.blockSignals(False)
+        self._theme_combo.currentIndexChanged.connect(self._on_theme_change)
         alayout.addRow(tr_label("settab.theme"), self._theme_combo)
 
         # Language picker (Phase 33 — bilingual UI)
@@ -216,7 +226,16 @@ class SettingsTab(QWidget):
         olayout.setVerticalSpacing(SPACE_S)
 
         self._ocr_backend = QComboBox()
-        self._ocr_backend.addItems(["paddleocr", "easyocr"])
+        self._ocr_backend.setMinimumHeight(32)
+        self._ocr_backend.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        # Phase 47: friendly backend names instead of raw codes.
+        from .constants import ocr_backend_friendly_options
+        self._ocr_backend.blockSignals(True)
+        try:
+            for code, friendly in ocr_backend_friendly_options():
+                self._ocr_backend.addItem(friendly, userData=code)
+        finally:
+            self._ocr_backend.blockSignals(False)
         olayout.addRow(tr_label("settab.ocr.backend"), self._ocr_backend)
 
         self._ocr_lang = QLineEdit(DEFAULT_OCR_LANG)
@@ -242,15 +261,32 @@ class SettingsTab(QWidget):
         llayout.setVerticalSpacing(SPACE_S)
 
         self._llm_backend = QComboBox()
-        self._llm_backend.addItems(["minimax", "minimax-m3", "minimax_api", "transformers", "ollama", "llamacpp"])
+        self._llm_backend.setMinimumHeight(32)
+        self._llm_backend.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        # Phase 47: friendly LLM backend names.
+        from .constants import llm_backend_friendly_options
+        self._llm_backend.blockSignals(True)
+        try:
+            for code, friendly in llm_backend_friendly_options():
+                self._llm_backend.addItem(friendly, userData=code)
+        finally:
+            self._llm_backend.blockSignals(False)
         llayout.addRow(tr_label("settab.llm.backend"), self._llm_backend)
 
         self._m3_model = QLineEdit(DEFAULT_MINIMAX_MODEL)
         llayout.addRow(tr_label("settab.m3.model"), self._m3_model)
 
         self._m3_prompt_lang = QComboBox()
-        self._m3_prompt_lang.addItems(["auto", "zh", "en", "ja"])
-        self._m3_prompt_lang.setCurrentText(DEFAULT_M3_PROMPT_LANG)
+        self._m3_prompt_lang.setMinimumHeight(32)
+        self._m3_prompt_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        # Phase 47: friendly M3 prompt language names.
+        from .constants import m3_prompt_lang_friendly_options
+        self._m3_prompt_lang.blockSignals(True)
+        try:
+            for code, friendly in m3_prompt_lang_friendly_options():
+                self._m3_prompt_lang.addItem(friendly, userData=code)
+        finally:
+            self._m3_prompt_lang.blockSignals(False)
         llayout.addRow(tr_label("settab.m3.lang"), self._m3_prompt_lang)
 
         self._m3_budget = QSpinBox()
@@ -390,11 +426,19 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------
     def _load(self) -> None:
         """Load settings from QSettings + in-memory cache."""
-        # Theme
+        # Theme — Phase 47: the combo stores friendly names as text
+        # and ISO codes ("light", "dark", "system") in userData.
         theme = self._qsettings.value(QS_KEY_THEME, DEFAULT_THEME)
         if theme not in (THEME_LIGHT, THEME_DARK, THEME_SYSTEM):
             theme = DEFAULT_THEME
-        self._theme_combo.setCurrentText(theme)
+        # Find the row whose userData == theme
+        theme_ix = -1
+        for i in range(self._theme_combo.count()):
+            if self._theme_combo.itemData(i) == theme:
+                theme_ix = i
+                break
+        if theme_ix >= 0:
+            self._theme_combo.setCurrentIndex(theme_ix)
 
         # Default directories
         self._pdf_dir_edit.setText(self._qsettings.value(QS_KEY_LAST_DIR, ""))
@@ -405,19 +449,27 @@ class SettingsTab(QWidget):
         self._grobid_retries.setValue(int(self._qsettings.value("grobid_max_retries", DEFAULT_GROBID_MAX_RETRIES)))
         self._grobid_timeout.setValue(int(self._qsettings.value("grobid_timeout", DEFAULT_GROBID_TIMEOUT)))
 
-        # OCR
-        self._ocr_backend.setCurrentText(self._qsettings.value("ocr_backend", "paddleocr"))
+        # OCR — Phase 47: the combo stores ISO codes in userData.
+        ocr_backend = self._qsettings.value("ocr_backend", "paddleocr")
+        ocr_ix = self._ocr_backend.findData(ocr_backend)
+        if ocr_ix >= 0:
+            self._ocr_backend.setCurrentIndex(ocr_ix)
         self._ocr_lang.setText(self._qsettings.value("ocr_lang", DEFAULT_OCR_LANG))
         self._caption_window.setValue(int(self._qsettings.value("caption_window", 2)))
         self._od_caption_window.setValue(int(self._qsettings.value("od_caption_window", 5)))
 
         # LLM
         llm_backend = self._qsettings.value("llm_backend", "minimax")
-        ix = self._llm_backend.findText(llm_backend)
+        ix = self._llm_backend.findData(llm_backend)
         if ix >= 0:
             self._llm_backend.setCurrentIndex(ix)
         self._m3_model.setText(self._qsettings.value("m3_model", DEFAULT_MINIMAX_MODEL))
-        self._m3_prompt_lang.setCurrentText(self._qsettings.value("m3_prompt_lang", DEFAULT_M3_PROMPT_LANG))
+        # Phase 47: use findData to map the saved ISO code back to
+        # the friendly display.
+        m3_lang = self._qsettings.value("m3_prompt_lang", DEFAULT_M3_PROMPT_LANG)
+        m3_lang_ix = self._m3_prompt_lang.findData(m3_lang)
+        if m3_lang_ix >= 0:
+            self._m3_prompt_lang.setCurrentIndex(m3_lang_ix)
         self._m3_budget.setValue(int(self._qsettings.value("MiniMax_thinking_budget", DEFAULT_M3_BUDGET)))
         self._m3_output.setValue(int(self._qsettings.value("MiniMax_max_output_tokens", 2048)))
         self._m3_timeout.setValue(int(self._qsettings.value("MiniMax_timeout_sec", DEFAULT_M3_TIMEOUT)))
@@ -434,8 +486,8 @@ class SettingsTab(QWidget):
 
     def _save(self) -> None:
         """Write the current settings to QSettings + in-memory cache."""
-        # Theme
-        theme = self._theme_combo.currentText()
+        # Theme — Phase 47: use the ISO code, not the friendly name.
+        theme = self._theme_combo.currentData() or self._theme_combo.currentText()
         self._qsettings.setValue(QS_KEY_THEME, theme)
         self._settings["theme"] = theme
 
@@ -450,16 +502,20 @@ class SettingsTab(QWidget):
         self._qsettings.setValue("grobid_max_retries", self._grobid_retries.value())
         self._qsettings.setValue("grobid_timeout", self._grobid_timeout.value())
 
-        # OCR
-        self._qsettings.setValue("ocr_backend", self._ocr_backend.currentText())
+        # OCR — Phase 47: use the ISO code (userData), not the
+        # friendly name (currentText).
+        ocr_backend_code = self._ocr_backend.currentData() or self._ocr_backend.currentText()
+        self._qsettings.setValue("ocr_backend", ocr_backend_code)
         self._qsettings.setValue("ocr_lang", self._ocr_lang.text())
         self._qsettings.setValue("caption_window", self._caption_window.value())
         self._qsettings.setValue("od_caption_window", self._od_caption_window.value())
 
         # LLM
-        self._qsettings.setValue("llm_backend", self._llm_backend.currentText())
+        llm_backend_code = self._llm_backend.currentData() or self._llm_backend.currentText()
+        self._qsettings.setValue("llm_backend", llm_backend_code)
         self._qsettings.setValue("m3_model", self._m3_model.text())
-        self._qsettings.setValue("m3_prompt_lang", self._m3_prompt_lang.currentText())
+        m3_lang_code = self._m3_prompt_lang.currentData() or self._m3_prompt_lang.currentText()
+        self._qsettings.setValue("m3_prompt_lang", m3_lang_code)
         self._qsettings.setValue("MiniMax_thinking_budget", self._m3_budget.value())
         self._qsettings.setValue("MiniMax_max_output_tokens", self._m3_output.value())
         self._qsettings.setValue("MiniMax_timeout_sec", self._m3_timeout.value())
@@ -560,7 +616,11 @@ class SettingsTab(QWidget):
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         if app is not None and hasattr(self, "_theme_combo"):
-            apply_theme(app, self._theme_combo.currentText())
+            # Phase 47: use the userData (ISO code) not the friendly
+            # name; apply_theme() needs "light" / "dark" / "system",
+            # not "浅色" / "深色" / "跟随系统".
+            theme_code = self._theme_combo.currentData() or self._theme_combo.currentText()
+            apply_theme(app, theme_code)
 
     def _on_theme_change(self, theme: str) -> None:
         from PySide6.QtWidgets import QApplication
@@ -632,18 +692,20 @@ class SettingsTab(QWidget):
         at first launch even after Settings changed them.
         """
         self._settings.update({
-            "theme": self._theme_combo.currentText(),
+            # Phase 47: use currentData (ISO code) not currentText
+            # (friendly name) so the Run tab receives the right value.
+            "theme": self._theme_combo.currentData() or self._theme_combo.currentText(),
             "last_pdf_dir": self._pdf_dir_edit.text(),
             "last_export_dir": self._out_dir_edit.text(),
             "grobid_url": self._grobid_url.text(),
             "grobid_max_retries": self._grobid_retries.value(),
             "grobid_timeout": self._grobid_timeout.value(),
-            "ocr_backend": self._ocr_backend.currentText(),
+            "ocr_backend": self._ocr_backend.currentData() or self._ocr_backend.currentText(),
             "ocr_lang": self._ocr_lang.text() or DEFAULT_OCR_LANG,
             "caption_window": self._caption_window.value(),
             "od_caption_window": self._od_caption_window.value(),
-            "llm_backend": self._llm_backend.currentText(),
-            "m3_prompt_lang": self._m3_prompt_lang.currentText(),
+            "llm_backend": self._llm_backend.currentData() or self._llm_backend.currentText(),
+            "m3_prompt_lang": self._m3_prompt_lang.currentData() or self._m3_prompt_lang.currentText(),
             "m3_model": self._m3_model.text() or DEFAULT_MINIMAX_MODEL,
             "MiniMax_thinking_budget": self._m3_budget.value(),
             "MiniMax_max_output_tokens": self._m3_output.value(),

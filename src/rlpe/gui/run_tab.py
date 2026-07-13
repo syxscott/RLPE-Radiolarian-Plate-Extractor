@@ -186,6 +186,17 @@ class RunTab(QWidget):
         self._ocr_lang_edit = QComboBox()
         self._ocr_lang_edit.setObjectName("runtab.ocr_lang")
         self._ocr_lang_edit.setEditable(True)
+        # Phase 36: ensure input row height is 32 (matches tr_form_row).
+        # Phase 46 + 47: tr_combobox factory does this for combos
+        # created via the factory, but we're constructing the QComboBox
+        # directly to use friendly names. Set min_height manually.
+        from PySide6.QtWidgets import QSizePolicy
+        self._ocr_lang_edit.setMinimumHeight(32)
+        self._ocr_lang_edit.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        # Also fix the internal QLineEdit (the editable text field
+        # inside the combo) — Phase 35 tests walk all QLineEdits
+        # and expect min_height >= 30.
+        self._ocr_lang_edit.lineEdit().setMinimumHeight(32)
         # Phase 46: block signals during populate so the slot
         # doesn't fire on a half-built combo.
         self._ocr_lang_edit.blockSignals(True)
@@ -291,14 +302,41 @@ class RunTab(QWidget):
         adv_layout.setVerticalSpacing(SPACE_S)
 
         self._llm_combo = QComboBox()
-        self._llm_combo.addItems(["minimax", "minimax-m3", "minimax_api", "transformers", "ollama", "llamacpp"])
-        self._llm_combo.setCurrentText(DEFAULT_LLM_BACKEND)
+        # Phase 47: friendly backend names instead of raw tokens.
+        from .constants import llm_backend_friendly_options
+        from PySide6.QtWidgets import QSizePolicy
+        self._llm_combo.setMinimumHeight(32)
+        self._llm_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._llm_combo.blockSignals(True)
+        try:
+            for code, friendly in llm_backend_friendly_options():
+                self._llm_combo.addItem(friendly, userData=code)
+            # Set default to DEFAULT_LLM_BACKEND
+            for i in range(self._llm_combo.count()):
+                if self._llm_combo.itemData(i) == DEFAULT_LLM_BACKEND:
+                    self._llm_combo.setCurrentIndex(i)
+                    break
+        finally:
+            self._llm_combo.blockSignals(False)
         lbl, w = tr_form_row("runtab.label.llm_backend", self._llm_combo)
         adv_layout.addRow(lbl, w)
 
         self._m3_lang = QComboBox()
-        self._m3_lang.addItems(["auto", "zh", "en", "ja"])
-        self._m3_lang.setCurrentText(DEFAULT_M3_PROMPT_LANG)
+        # Phase 47: friendly M3 prompt language names.
+        from .constants import m3_prompt_lang_friendly_options
+        from PySide6.QtWidgets import QSizePolicy
+        self._m3_lang.setMinimumHeight(32)
+        self._m3_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._m3_lang.blockSignals(True)
+        try:
+            for code, friendly in m3_prompt_lang_friendly_options():
+                self._m3_lang.addItem(friendly, userData=code)
+            for i in range(self._m3_lang.count()):
+                if self._m3_lang.itemData(i) == DEFAULT_M3_PROMPT_LANG:
+                    self._m3_lang.setCurrentIndex(i)
+                    break
+        finally:
+            self._m3_lang.blockSignals(False)
         lbl, w = tr_form_row("runtab.label.m3_lang", self._m3_lang)
         adv_layout.addRow(lbl, w)
 
@@ -434,8 +472,8 @@ class RunTab(QWidget):
             "num_workers": self._workers.value(),
             "min_panel_score": self._panel_score.value(),
             "use_gpu": self._gpu_check.isChecked(),
-            "llm_backend": self._llm_combo.currentText(),
-            "m3_prompt_lang": self._m3_lang.currentText(),
+            "llm_backend": self._llm_combo.currentData() or self._llm_combo.currentText(),
+            "m3_prompt_lang": self._m3_lang.currentData() or self._m3_lang.currentText(),
             "m3_model": self._m3_model_edit.text().strip() or DEFAULT_MINIMAX_MODEL,
             "MiniMax_thinking_budget": self._m3_budget.value(),
             "MiniMax_max_output_tokens": self._m3_output.value(),

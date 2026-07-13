@@ -253,3 +253,100 @@ def ocr_lang_friendly_options() -> list[tuple[str, str]]:
         (code, zh_name if lang == "zh_CN" else en_name)
         for code, en_name, zh_name in OCR_LANGUAGE_OPTIONS
     ]
+
+
+# ============================================================
+# Phase 47: friendly-name mappings for other technical tokens
+# ============================================================
+# OCR backend, LLM backend, M3 prompt language, and theme all show
+# raw technical strings to the user (e.g. "paddleocr",
+# "minimax", "auto", "dark"). Phase 47 maps them to friendly
+# Chinese / English names. Each entry: (raw_code, en_name, zh_name)
+
+# OCR backend options
+OCR_BACKEND_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("paddleocr", "PaddleOCR (Recommended)", "PaddleOCR (推荐)"),
+    ("easyocr", "EasyOCR (Multi-language)", "EasyOCR (多语言)"),
+)
+
+
+def ocr_backend_friendly_options() -> list[tuple[str, str]]:
+    """``[(code, friendly_name), ...]`` in the current language."""
+    from . import i18n as _i18n
+    lang = _i18n.current_language()
+    return [
+        (code, zh_name if lang == "zh_CN" else en_name)
+        for code, en_name, zh_name in OCR_BACKEND_OPTIONS
+    ]
+
+
+# LLM backend options
+LLM_BACKEND_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("minimax", "MiniMax-M3 (Recommended)", "MiniMax-M3 (推荐)"),
+    ("minimax-m3", "MiniMax-M3 (alt endpoint)", "MiniMax-M3 (备用接入点)"),
+    ("minimax_api", "MiniMax API (legacy)", "MiniMax API (旧版)"),
+    ("transformers", "Local Transformers", "本地 Transformers"),
+    ("ollama", "Ollama (Local Server)", "Ollama (本地服务器)"),
+    ("llamacpp", "llama.cpp (Local)", "llama.cpp (本地)"),
+    ("rules", "Rules only (no LLM)", "仅规则匹配 (无 LLM)"),
+)
+
+
+def llm_backend_friendly_options() -> list[tuple[str, str]]:
+    """``[(code, friendly_name), ...]`` in the current language."""
+    from . import i18n as _i18n
+    lang = _i18n.current_language()
+    return [
+        (code, zh_name if lang == "zh_CN" else en_name)
+        for code, en_name, zh_name in LLM_BACKEND_OPTIONS
+    ]
+
+
+# M3 prompt language options
+M3_PROMPT_LANG_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("auto", "Auto-detect", "自动检测"),
+    ("zh", "Chinese (中文)", "中文 (中文)"),
+    ("en", "English", "英语"),
+    ("ja", "Japanese (日本語)", "日语 (日本語)"),
+)
+
+
+def m3_prompt_lang_friendly_options() -> list[tuple[str, str]]:
+    """``[(code, friendly_name), ...]`` in the current language."""
+    from . import i18n as _i18n
+    lang = _i18n.current_language()
+    return [
+        (code, zh_name if lang == "zh_CN" else en_name)
+        for code, en_name, zh_name in M3_PROMPT_LANG_OPTIONS
+    ]
+
+
+# Theme options (already uses THEME_LIGHT/THEME_DARK/THEME_SYSTEM)
+THEME_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("light", "Light", "浅色"),
+    ("dark", "Dark", "深色"),
+    ("system", "System default", "跟随系统"),
+)
+
+
+def theme_friendly_options() -> list[tuple[str, str]]:
+    """``[(code, friendly_name), ...]`` in the current language."""
+    from . import i18n as _i18n
+    lang = _i18n.current_language()
+    return [
+        (code, zh_name if lang == "zh_CN" else en_name)
+        for code, en_name, zh_name in THEME_OPTIONS
+    ]
+
+
+def friendly_name_for(code: str, options) -> str:
+    """Generic helper: find ``code`` in ``options`` and return the
+    friendly name in the current language. Falls back to the
+    raw code if not found."""
+    for entry in options:
+        if len(entry) == 3:
+            raw, en_name, zh_name = entry
+            if raw == code:
+                from . import i18n as _i18n
+                return zh_name if _i18n.current_language() == "zh_CN" else en_name
+    return code
