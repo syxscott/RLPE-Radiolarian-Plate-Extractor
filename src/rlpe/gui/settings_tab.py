@@ -83,7 +83,7 @@ class SettingsTab(QWidget):
 
     def __init__(self, settings: dict[str, Any], parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._qsettings = QSettings(APP_DOMAIN, APP_NAME)
+        self._qsettings = QSettings(APP_AUTHOR, APP_NAME)
         self._settings = settings  # in-memory cache (Run tab reads/writes this)
         self._log = get_gui_logger()
         self._build_ui()

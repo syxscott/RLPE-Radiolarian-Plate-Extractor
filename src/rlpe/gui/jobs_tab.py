@@ -121,21 +121,27 @@ class _ProgressCellDelegate(QStyledItemDelegate):
         # selection state. This is what Qt's docs say is required
         # for custom delegates.
         super().paint(painter, option, index)
-        # Now overlay a progress bar.
-        progress_bar_option = QStyleOptionProgressBar()
-        progress_bar_option.rect = option.rect
-        progress_bar_option.state = option.state
-        progress_bar_option.palette = option.palette
-        progress_bar_option.minimum = 0
-        progress_bar_option.maximum = max(1, index.data(Qt.UserRole) or 0)
-        progress_bar_option.progress = index.data(Qt.UserRole + 1) or 0
-        progress_bar_option.text = f"{progress_bar_option.progress} / {progress_bar_option.maximum}"
-        progress_bar_option.textVisible = True
-        QApplication.style().drawControl(
-            QStyledItemDelegate.PrimitiveElement.ProgressBar,
-            progress_bar_option,
-            painter,
-        )
+        # Now overlay a progress bar. Phase 45: wrap in painter.save()
+        # / painter.restore() so the drawControl's pen / brush changes
+        # don't leak into the next delegate's paint call.
+        painter.save()
+        try:
+            progress_bar_option = QStyleOptionProgressBar()
+            progress_bar_option.rect = option.rect
+            progress_bar_option.state = option.state
+            progress_bar_option.palette = option.palette
+            progress_bar_option.minimum = 0
+            progress_bar_option.maximum = max(1, index.data(Qt.UserRole) or 0)
+            progress_bar_option.progress = index.data(Qt.UserRole + 1) or 0
+            progress_bar_option.text = f"{progress_bar_option.progress} / {progress_bar_option.maximum}"
+            progress_bar_option.textVisible = True
+            QApplication.style().drawControl(
+                QStyledItemDelegate.PrimitiveElement.ProgressBar,
+                progress_bar_option,
+                painter,
+            )
+        finally:
+            painter.restore()
 
 
 # ============================================================

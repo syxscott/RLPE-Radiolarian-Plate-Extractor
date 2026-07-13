@@ -112,7 +112,7 @@ def run_app(argv: list[str] | None = None) -> int:
     _install_exception_hook(log)
 
     # ---- Apply theme from QSettings ----
-    qsettings = QSettings(APP_DOMAIN, APP_NAME)
+    qsettings = QSettings(APP_AUTHOR, APP_NAME)
     theme = qsettings.value("ui/theme", "light")
     if theme not in ("light", "dark", "system"):
         theme = "light"

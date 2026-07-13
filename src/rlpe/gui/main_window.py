@@ -137,7 +137,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._log = get_gui_logger()
-        self._qsettings = QSettings(APP_DOMAIN, APP_NAME)
+        self._qsettings = QSettings(APP_AUTHOR, APP_NAME)
         self._settings = self._load_settings_cache()
         self._build_ui()
         self._build_menu()
@@ -468,7 +468,7 @@ class MainWindow(QMainWindow):
         #    QSettings is backed by the registry and changes
         #    are only flushed on app exit, not on every setValue).
         from PySide6.QtCore import QSettings
-        QSettings(APP_DOMAIN, APP_NAME).sync()
+        QSettings(APP_AUTHOR, APP_NAME).sync()
         # 3) Accept the event (window closes).
         event.accept()
         super().closeEvent(event)

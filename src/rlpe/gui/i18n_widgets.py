@@ -366,27 +366,36 @@ def tr_combobox(
     cb.setMinimumWidth(min_width)
     cb.setMinimumHeight(min_height)
     _ensure_size_hint(cb, min_height)
-    if item_keys:
-        # Translate each item via i18n._tr; store raw token as userData.
-        for ix, k in enumerate(item_keys):
-            label = i18n._tr(k)
-            raw = items[ix] if items and ix < len(items) else label
-            cb.addItem(label, userData=raw)
-    elif items:
-        cb.addItems(items)
-    if current:
-        # Look up by userData (preferred) or by text (fallback)
-        ix = cb.findData(current)
-        if ix < 0:
-            ix = cb.findText(current)
-        if ix >= 0:
-            cb.setCurrentIndex(ix)
-    cb.setObjectName(key)
-    # Phase 37: also register each item_key so the registry re-applies
-    # them on language switch.
-    if item_keys:
-        for ix, k in enumerate(item_keys):
-            i18n.register_widget_text(f"{key}:item:{ix}", "comboItem", k)
+    # Phase 45: block signals during construction so the
+    # currentIndexChanged slot doesn't fire on a half-built widget.
+    # The slot may try to access other widgets (e.g. _refresh_view
+    # in results_tab) that haven't been parented yet, causing
+    # AttributeError or worse (segfault on deleted C++ objects).
+    cb.blockSignals(True)
+    try:
+        if item_keys:
+            # Translate each item via i18n._tr; store raw token as userData.
+            for ix, k in enumerate(item_keys):
+                label = i18n._tr(k)
+                raw = items[ix] if items and ix < len(items) else label
+                cb.addItem(label, userData=raw)
+        elif items:
+            cb.addItems(items)
+        if current:
+            # Look up by userData (preferred) or by text (fallback)
+            ix = cb.findData(current)
+            if ix < 0:
+                ix = cb.findText(current)
+            if ix >= 0:
+                cb.setCurrentIndex(ix)
+        cb.setObjectName(key)
+        # Phase 37: also register each item_key so the registry re-applies
+        # them on language switch.
+        if item_keys:
+            for ix, k in enumerate(item_keys):
+                i18n.register_widget_text(f"{key}:item:{ix}", "comboItem", k)
+    finally:
+        cb.blockSignals(False)
     if text_key:
         i18n.register_widget_text(key, "placeholderText", text_key)
         cb.setPlaceholderText(i18n._tr(text_key))

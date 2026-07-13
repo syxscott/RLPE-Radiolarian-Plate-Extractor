@@ -129,10 +129,10 @@ def test_lang_picker_persists_choice_to_qsettings():
     from rlpe.gui.settings_tab import SettingsTab
     from rlpe.gui import i18n
     from PySide6.QtCore import QSettings
-    from rlpe.gui.constants import APP_DOMAIN, APP_NAME
+    from rlpe.gui.constants import APP_AUTHOR, APP_NAME
 
     # Clear any prior setting
-    qs = QSettings(APP_DOMAIN, APP_NAME)
+    qs = QSettings(APP_AUTHOR, APP_NAME)
     qs.remove("ui/language")
     qs.sync()
 
@@ -144,7 +144,9 @@ def test_lang_picker_persists_choice_to_qsettings():
             break
 
     # Now QSettings should have ui/language = "en"
-    qs2 = QSettings(APP_DOMAIN, APP_NAME)
+    # Phase 45: QSettings uses APP_AUTHOR (not APP_DOMAIN) so the
+    # Windows registry hive matches setOrganizationName().
+    qs2 = QSettings(APP_AUTHOR, APP_NAME)
     saved = qs2.value("ui/language", "")
     assert saved == "en", (
         f"Switching lang picker must persist ui/language='en', got {saved!r}"
@@ -159,9 +161,9 @@ def test_main_window_loads_persisted_language():
     from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
     from PySide6.QtCore import QSettings
-    from rlpe.gui.constants import APP_DOMAIN, APP_NAME
+    from rlpe.gui.constants import APP_AUTHOR, APP_NAME
 
-    qs = QSettings(APP_DOMAIN, APP_NAME)
+    qs = QSettings(APP_AUTHOR, APP_NAME)
     qs.setValue("ui/language", "en")
     qs.sync()
 
