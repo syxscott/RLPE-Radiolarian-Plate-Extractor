@@ -457,9 +457,28 @@ class RunTab(QWidget):
         self._progress.setMinimumHeight(20)
         outer.addWidget(self._progress)
 
-        self._progress_msg = tr_label("runtab.prompt.no_pdf.body")  # default empty-state hint
+        # Phase 55 audit B3 — split the live status line from the
+        # static empty-state hint. The live status is rewritten on
+        # every progress tick and on the worker's `status_changed`
+        # signal; registering it in the i18n registry (via tr_label)
+        # would cause the next ``set_language`` call to overwrite
+        # the live text with the "no PDF selected" hint translation
+        # mid-job, even though the pipeline is happily running.
+        #
+        # Instead we keep TWO labels stacked:
+        #   * ``_hint_label``  — static empty-state hint (translatable)
+        #   * ``_progress_msg`` — live status (NOT in i18n registry)
+        self._hint_label = tr_label("runtab.prompt.no_pdf.body")
+        self._hint_label.setWordWrap(True)
+        outer.addWidget(self._hint_label)
+
+        self._progress_msg = QLabel("")
         self._progress_msg.setWordWrap(True)
+        self._progress_msg.setObjectName("runtab_progress_msg")
         outer.addWidget(self._progress_msg)
+        # The live status starts hidden — once the pipeline emits its
+        # first status_changed we show it and hide the hint.
+        self._progress_msg.hide()
 
     def _connect_signals(self) -> None:
         """Wire file picker path → enable start button."""
@@ -720,7 +739,7 @@ class RunTab(QWidget):
         self._cancel_btn.setEnabled(True)
         self._progress.setRange(0, 0)
         self._progress.setFormat(i18n._tr("runtab.progress.starting"))
-        self._progress_msg.setText(i18n._tr("runtab.progress.init"))
+        self._show_live_progress(i18n._tr("runtab.progress.init"))
         self._status_label.setText(i18n._tr("runtab.status.starting"))
         self._status_label.setProperty("status", "running")
         self._log.info("Starting job %s on %s", self._current_job_id, pdf)
@@ -763,7 +782,7 @@ class RunTab(QWidget):
             self._progress.setFormat(f"{{value}} / {{maxValue}}  ·  {{message}}".replace("{value}", "%v").replace("{maxValue}", "%m").replace("{message}", safe_message))
         else:
             self._progress.setRange(0, 0)
-        self._progress_msg.setText(message or "Working…")
+        self._show_live_progress(message or "Working…")
         if self._current_job_id:
             self.job_progress.emit(self._current_job_id, current, total, message)
 
@@ -772,6 +791,33 @@ class RunTab(QWidget):
         existing = self._status_label.text()
         new = (existing + "  »  " + line)[-200:]
         self._status_label.setText(new)
+
+    def _show_live_progress(self, message: str) -> None:
+        """Write a live status message to ``_progress_msg`` and hide
+        the static empty-state hint.
+
+        Phase 55 audit B3 — live status is intentionally NOT in the
+        i18n registry. Only the static hint at the bottom of the tab
+        is translated. As soon as the pipeline emits its first
+        progress/status event we hide the hint and show the live
+        label so the user sees what the pipeline is doing right
+        now. Once the job is done we keep showing the live label
+        (so the user can see "completed in 38s" etc.); the hint
+        re-appears when ``_reset_to_idle`` is called below.
+        """
+        self._hint_label.hide()
+        self._progress_msg.setText(message or "")
+        self._progress_msg.show()
+
+    def _reset_to_idle(self) -> None:
+        """Restore the empty-state hint and hide the live label.
+
+        Called from ``_on_thread_done`` (the worker is gone) and
+        from ``_clear_form`` (the user picked a new PDF).
+        """
+        self._progress_msg.clear()
+        self._progress_msg.hide()
+        self._hint_label.show()
 
     def _on_status(self, status: str) -> None:
         self._status_label.setText(status)
@@ -816,4 +862,7 @@ class RunTab(QWidget):
         self._progress.setRange(0, 1)
         self._progress.setValue(1)
         self._progress.setFormat(i18n._tr("runtab.status.done"))
+        # Phase 55 audit B3 — keep the final status visible (don't
+        # reset to the empty-state hint) so the user can read the
+        # completion message.
         self._progress_msg.setText(i18n._tr("runtab.progress.done"))

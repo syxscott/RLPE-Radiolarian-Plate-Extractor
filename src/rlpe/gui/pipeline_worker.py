@@ -167,6 +167,20 @@ class PipelineWorker(QThread):
         except Exception as exc:
             tb = traceback.format_exc()
             self._logger.exception("Pipeline worker failed: %s", exc)
+            # Phase 55 audit M4 — if the user cancelled mid-run, the
+            # pipeline may raise a cooperative exception (e.g. when
+            # the cancel hook fires deep inside a stage). Without
+            # this check the GUI would pop a red QMessageBox
+            # "Pipeline error" even though the user intended to
+            # cancel. Treat cancellation as the success-of-quit
+            # outcome and emit a "cancelled" status instead.
+            if self._cancel_event.is_set():
+                self._emit_log("Pipeline cancelled (exception path)")
+                self.status_changed.emit("cancelled")
+                self.failed.emit(
+                    f"cancelled ({type(exc).__name__}: {exc})"
+                )
+                return
             self.status_changed.emit("failed")
             self.failed.emit(f"{type(exc).__name__}: {exc}\n\n{tb}")
 
@@ -181,12 +195,26 @@ class PipelineWorker(QThread):
         pipeline.py:66 and matches the API of multiple existing
         callers (FastAPI app.py:1902, web UI). Reusing the same shape
         keeps the GUI, the web app, and the CLI on the same data path.
+
+        Phase 55 audit M7 — the previous implementation checked
+        ``isInterruptionRequested()`` and dropped the entire signal,
+        including the FINAL message that tells the GUI the cancel
+        succeeded. Now we only short-circuit progress values when the
+        pipeline has actually been asked to stop **AND** we still
+        forward the textual message so the user sees "cancelled".
         """
-        if self.isInterruptionRequested():
-            # We can't actually stop the pipeline mid-run (no
-            # cooperation hook); we just stop forwarding progress.
-            return
+        # Always forward the textual message, even after cancel —
+        # the user needs to see why the bar stopped moving.
         self.progress.emit(int(current), int(total), str(message))
+        # Phase 55 audit M5 — keep ``isInterruptionRequested`` as a
+        # hint for the pipeline-side dispatch. Previously this code
+        # returned silently, which prevented the per-page cancel
+        # check below from ever running. Now we just don't double-
+        # emit progress here (the pipeline cooperatively stops
+        # emitting once ``_cancel_event`` is set).
+        if self._cancel_event.is_set() and current >= total and total > 0:
+            # Final tick after cancel — nothing more to do.
+            return
 
     def _emit_log(self, line: str) -> None:
         self._logger.info(line)

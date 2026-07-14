@@ -478,7 +478,7 @@ class ResultsTab(QWidget):
         html.append("<table style='font-size:12px;border-collapse:collapse;width:100%;margin-bottom:12px'>")
         meta_rows = [
             ("Confidence",    f"{row.get('confidence'):.2f}" if isinstance(row.get('confidence'), (int, float)) else "—"),
-            ("Page",          row.get("page_index")),
+            ("Page",          md.get("page_index") if isinstance(md, dict) else row.get("page_index")),
             ("Figure",        row.get("figure_id")),
             ("Panel bbox",    _format_bbox(row.get("bbox"))),
             ("Source",        ((md.get("extraction_source") or "—")) if isinstance(md, dict) else "—"),

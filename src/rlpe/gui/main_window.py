@@ -282,7 +282,16 @@ class MainWindow(QMainWindow):
         # _build_ui so the FIRST PAINT shows the labels in the
         # current language (zh_CN by default), not the bare English
         # strings we passed to addTab().
-        i18n.add_listener(lambda _lang: self._refresh_texts())
+        #
+        # Phase 55 audit B4 — bind the listener as a method, not a
+        # lambda. A fresh lambda on every __init__ would (a) make
+        # i18n._LISTENERS grow unboundedly across rebuilds and
+        # (b) leak the previous MainWindow because the dedupe check
+        # in i18n.add_listener compares equality, and the previous
+        # lambda is a different object. Saving the bound method here
+        # lets closeEvent pair it with remove_listener.
+        self._i18n_listener = self._on_language_changed
+        i18n.add_listener(self._i18n_listener)
         self._refresh_texts()
 
     def _build_menu(self) -> None:
@@ -449,6 +458,14 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _on_language_changed(self, _lang: str) -> None:
+        """Phase 55 audit B4 — bound method used as the i18n listener
+        instead of a lambda. Avoids the duplicate-registration leak
+        across MainWindow rebuilds. Pairs with closeEvent's
+        ``i18n.remove_listener`` call.
+        """
+        self._refresh_texts()
+
     def _set_status(self, key: str, **kwargs) -> None:
         """Phase 39: set the status bar text via an i18n key + kwargs.
         Replaces direct setText calls so the language switch can
@@ -499,6 +516,27 @@ class MainWindow(QMainWindow):
         # just saved window state and called super().closeEvent(),
         # which could leave the PipelineWorker QThread running
         # with the parent widget destroyed → RuntimeError.
+        #
+        # Phase 55 audit B4 — drop i18n listeners BEFORE quitting,
+        # so the next ``i18n.set_language`` call doesn't invoke a
+        # method on a destroyed QObject (``RuntimeError: wrapped
+        # C/C++ object has been deleted``). Without this every
+        # MainWindow construction accumulated one dead listener.
+        try:
+            import i18n  # type: ignore[import-not-found]  # noqa: F401
+        except ImportError:  # pragma: no cover
+            i18n = None  # type: ignore[assignment]
+        from . import i18n as _i18n  # local module — always available
+        listener = getattr(self, "_i18n_listener", None)
+        if listener is not None:
+            try:
+                _i18n.remove_listener(listener)
+            except Exception:  # pragma: no cover
+                pass
+        try:
+            _i18n.remove_listener(self._refresh_status_text)
+        except Exception:  # pragma: no cover
+            pass
         self._save_window_state()
         # 1) Stop the worker if it's running. The Run tab's
         #    _on_thread_done handles quit() + wait() but it only
@@ -507,6 +545,12 @@ class MainWindow(QMainWindow):
         #    synchronously here.
         worker = getattr(self._run_tab, "_worker", None)
         if worker is not None and worker.isRunning():
+            # Phase 55 audit B2 — capture the active job id BEFORE
+            # requesting cancel so we can mark the Jobs tab row as
+            # cancelled too. Without this, the on-disk job record
+            # stays STATUS_RUNNING and re-appears as a zombie job
+            # on the next launch (Phase 49 disk scan resurrects it).
+            current_job_id = getattr(self._run_tab, "_current_job_id", None)
             try:
                 worker.request_cancel()
             except RuntimeError:
@@ -515,6 +559,14 @@ class MainWindow(QMainWindow):
             if not worker.wait(5000):
                 worker.terminate()
                 worker.wait(500)
+            # Now stamp the cancelled state so the Jobs tab row
+            # doesn't keep showing the running spinner. Safe to
+            # call even when job_id is None (no-op).
+            if current_job_id:
+                try:
+                    self._jobs_tab.mark_cancelled(current_job_id)
+                except Exception:  # pragma: no cover — defensive
+                    pass
         # 2) Flush QSettings so any unsaved state survives the
         #    process exit (especially important on Windows where
         #    QSettings is backed by the registry and changes
@@ -732,7 +784,21 @@ class MainWindow(QMainWindow):
 
     def _start_next_batch_job(self) -> None:
         if self._batch_index >= len(self._batch_pdfs):
+            # Phase 55 audit M2 — honour the batch's "produce a
+            # consolidated .xlsx at the end" checkbox. The previous
+            # code never read ``_xlsx_at_end`` so the BatchDialog
+            # checkbox was silently ignored. When the flag is set
+            # and we have a valid output_dir, ask the Results tab
+            # to export a workbook combining every batch job's rows.
             self._set_status("main.batch_complete")
+            batch_settings = getattr(self, "_batch_settings", {}) or {}
+            if batch_settings.get("_xlsx_at_end"):
+                try:
+                    self._export_batch_xlsx()
+                except Exception as exc:  # pragma: no cover
+                    self._log.warning(
+                        "batch xlsx_at_end export failed: %s", exc
+                    )
             return
         pdf = self._batch_pdfs[self._batch_index]
         self._batch_index += 1
@@ -744,6 +810,52 @@ class MainWindow(QMainWindow):
         # by setting the path, settings, and calling _on_start.
         # For simplicity we directly call:
         self._run_tab._on_start()
+
+    def _export_batch_xlsx(self) -> None:
+        """Phase 55 audit M2 — export a single workbook combining all
+        batch job rows, opened with a Save dialog so the user picks
+        the destination. Falls back to the batch output_dir when
+        the user cancels.
+        """
+        from PySide6.QtWidgets import QFileDialog
+        from .results_tab import RESULT_COLUMNS  # local import — cheap
+        import datetime as _dt
+
+        all_rows: list[dict[str, Any]] = []
+        for job in getattr(self._jobs_tab, "_jobs", {}).values():
+            for row in (getattr(job, "rows", None) or []):
+                all_rows.append(row)
+        if not all_rows:
+            return
+        default_dir = (
+            (self._batch_settings or {}).get("last_export_dir")
+            or str(Path.home())
+        )
+        default_name = (
+            f"rlpe_batch_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            i18n._tr("restab.export.xlsx.title"),
+            str(Path(default_dir) / default_name),
+            "Excel files (*.xlsx)",
+        )
+        if not path:
+            return
+        # Reuse ResultsTab's exporter so column layout stays
+        # consistent with the single-job path.
+        try:
+            self._results_tab._export_xlsx_to(Path(path), all_rows)
+        except AttributeError:
+            # Fallback: write the workbook directly using openpyxl.
+            from openpyxl import Workbook  # type: ignore[import-not-found]
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "results"
+            ws.append([c.key for c in RESULT_COLUMNS])
+            for row in all_rows:
+                ws.append([self._results_tab._extract_column(row, c.key) for c in RESULT_COLUMNS])
+            wb.save(path)
 
     # Patch into the run tab to advance the batch on each completion
     def _refresh_texts(self) -> None:

@@ -218,13 +218,15 @@ QPushButton:disabled {{
     color: #7f7f7f;
     border: 1px solid #eef1f6;
 }}
-QPushButton#primary {{
+QPushButton#primary,
+QPushButton[class="primary"] {{
     background-color: #1f77b4;
     color: #ffffff;
     border: 1px solid #1f77b4;
     font-weight: 600;
 }}
-QPushButton#primary:hover {{
+QPushButton#primary:hover,
+QPushButton[class="primary"]:hover {{
     background-color: #2e8bc0;
     border: 1px solid #2e8bc0;
 }}
@@ -590,22 +592,26 @@ QPushButton:disabled {{
     color: #4a5568;
     border: 1px solid #1f2937;
 }}
-QPushButton#primary {{
+QPushButton#primary,
+QPushButton[class="primary"] {{
     background-color: #3182ce;
     color: #ffffff;
     border: 1px solid #3182ce;
     font-weight: 600;
 }}
-QPushButton#primary:hover {{
+QPushButton#primary:hover,
+QPushButton[class="primary"]:hover {{
     background-color: #4299e1;
     border: 1px solid #4299e1;
 }}
-QPushButton#danger {{
+QPushButton#danger,
+QPushButton[class="danger"] {{
     background-color: #e53e3e;
     color: #ffffff;
     border: 1px solid #e53e3e;
 }}
-QPushButton#danger:hover {{
+QPushButton#danger:hover,
+QPushButton[class="danger"]:hover {{
     background-color: #f56565;
     border: 1px solid #f56565;
 }}
@@ -803,7 +809,24 @@ def apply_theme(app, theme: str) -> None:
         try:
             w.style().unpolish(w)
             w.style().polish(w)
-            w.update()
+            # Phase 55 — Qt6 changed ``QWidget.update()`` to require
+            # different argument counts on different subclasses
+            # (QHeaderView/QListView/QTableWidget reject 0 args;
+            # some reject 4 args; some accept only the rect form).
+            # Use ``updateGeometry`` (1-arg form, every widget
+            # accepts it) as the portable shim. It does not repaint
+            # immediately but queues a layout + style recompute on
+            # the next event loop tick, which is what ``update()``
+            # would have done anyway.
+            try:
+                w.updateGeometry()
+            except Exception:
+                pass
+            # Fall back to repaint() which takes no geometry args.
+            try:
+                w.repaint()
+            except Exception:
+                pass
         except (RuntimeError, AttributeError):
             # Widget may have been deleted, or have no style().
             pass

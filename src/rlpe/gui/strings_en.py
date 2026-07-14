@@ -353,3 +353,20 @@ STRINGS = {
     "app.name": "RLPE - Radiolarian Plate Extractor",
     "app.version": "0.1.0",
 }
+
+
+# Phase 55 audit M3 — fail loudly on duplicate keys (same guard as
+# strings_zh_CN). Python silently keeps the LAST duplicate in a
+# dict literal, masking upstream bugs in the translation generator.
+import re as _re_dup_en
+_src_dup_en = _re_dup_en.sub(r"\"\"\".*?\"\"\"", "", open(__file__, encoding="utf-8").read(), flags=_re_dup_en.S)
+_keys_dup_en = _re_dup_en.findall(r"^\s*['\"]([a-zA-Z][\w.]*)['\"]\s*:", _src_dup_en, flags=_re_dup_en.M)
+import collections as _coll_dup_en
+_dup_counts_en = _coll_dup_en.Counter(_keys_dup_en)
+_dup_check_en = [k for k, n in _dup_counts_en.items() if n > 1]
+if _dup_check_en:
+    raise RuntimeError(
+        f"strings_en has duplicate keys: {_dup_check_en!r}. "
+        "Each English key MUST map to exactly one translation."
+    )
+del _dup_check_en, _dup_counts_en, _keys_dup_en, _src_dup_en

@@ -464,10 +464,24 @@ class SettingsTab(QWidget):
         self._pdf_dir_edit.setText(self._qsettings.value(QS_KEY_LAST_DIR, ""))
         self._out_dir_edit.setText(self._qsettings.value(QS_KEY_LAST_EXPORT_DIR, ""))
 
+        # Phase 55 audit M6 — wrap every ``int(qsettings.value(...))`` in
+        # a helper that falls back to the supplied default on parse
+        # failure. On Linux the INI backend returns stored ints as
+        # strings; if a stray empty / corrupted value slips in,
+        # ``int("")`` raises ValueError and the spinbox would crash
+        # the whole ``_load`` path. The helper also clamps to the
+        # spinbox range to handle hand-edited INI files.
+        def _qint(key: str, default: int) -> int:
+            raw = self._qsettings.value(key, default)
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return default
+
         # GROBID
         self._grobid_url.setText(self._qsettings.value("grobid_url", DEFAULT_GROBID_URL))
-        self._grobid_retries.setValue(int(self._qsettings.value("grobid_max_retries", DEFAULT_GROBID_MAX_RETRIES)))
-        self._grobid_timeout.setValue(int(self._qsettings.value("grobid_timeout", DEFAULT_GROBID_TIMEOUT)))
+        self._grobid_retries.setValue(_qint("grobid_max_retries", DEFAULT_GROBID_MAX_RETRIES))
+        self._grobid_timeout.setValue(_qint("grobid_timeout", DEFAULT_GROBID_TIMEOUT))
 
         # OCR — Phase 47: the combo stores ISO codes in userData.
         ocr_backend = self._qsettings.value("ocr_backend", "paddleocr")
@@ -475,8 +489,8 @@ class SettingsTab(QWidget):
         if ocr_ix >= 0:
             self._ocr_backend.setCurrentIndex(ocr_ix)
         self._ocr_lang.setText(self._qsettings.value("ocr_lang", DEFAULT_OCR_LANG))
-        self._caption_window.setValue(int(self._qsettings.value("caption_window", 2)))
-        self._od_caption_window.setValue(int(self._qsettings.value("od_caption_window", 5)))
+        self._caption_window.setValue(_qint("caption_window", 2))
+        self._od_caption_window.setValue(_qint("od_caption_window", 5))
 
         # LLM
         llm_backend = self._qsettings.value("llm_backend", "minimax")
@@ -490,18 +504,18 @@ class SettingsTab(QWidget):
         m3_lang_ix = self._m3_prompt_lang.findData(m3_lang)
         if m3_lang_ix >= 0:
             self._m3_prompt_lang.setCurrentIndex(m3_lang_ix)
-        self._m3_budget.setValue(int(self._qsettings.value("MiniMax_thinking_budget", DEFAULT_M3_BUDGET)))
-        self._m3_output.setValue(int(self._qsettings.value("MiniMax_max_output_tokens", 2048)))
-        self._m3_timeout.setValue(int(self._qsettings.value("MiniMax_timeout_sec", DEFAULT_M3_TIMEOUT)))
-        self._m3_max_retries.setValue(int(self._qsettings.value("MiniMax_max_retries", DEFAULT_M3_MAX_RETRIES)))
+        self._m3_budget.setValue(_qint("MiniMax_thinking_budget", DEFAULT_M3_BUDGET))
+        self._m3_output.setValue(_qint("MiniMax_max_output_tokens", 2048))
+        self._m3_timeout.setValue(_qint("MiniMax_timeout_sec", DEFAULT_M3_TIMEOUT))
+        self._m3_max_retries.setValue(_qint("MiniMax_max_retries", DEFAULT_M3_MAX_RETRIES))
 
         # PBDB
         self._use_pbdb.setChecked(self._qsettings.value("use_paleodb", True, type=bool))
-        self._pbdb_max_occ.setValue(int(self._qsettings.value("paleodb_max_occurrences", DEFAULT_PALEO_MAX_OCC)))
+        self._pbdb_max_occ.setValue(_qint("paleodb_max_occurrences", DEFAULT_PALEO_MAX_OCC))
         self._pbdb_endpoint.setText(self._qsettings.value("paleodb_endpoint", "https://paleobiodb.org/data1.2"))
 
         # Diagnostics
-        self._dpi.setValue(int(self._qsettings.value("render_dpi", DEFAULT_RENDER_DPI)))
+        self._dpi.setValue(_qint("render_dpi", DEFAULT_RENDER_DPI))
         self._save_intermediate.setChecked(self._qsettings.value("save_intermediate", False, type=bool))
 
     def _save(self) -> None:

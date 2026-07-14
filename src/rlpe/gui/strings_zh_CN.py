@@ -250,7 +250,6 @@ STRINGS = {
     'tab.run': '▶  运行',
     'tab.settings': '⚙️  设置',
     'toolbar.about': 'ℹ️  关于',
-    'toolbar.about': 'ℹ️  关于',
     'toolbar.batch': '📚  批处理…',
     'toolbar.jobs': '📋  任务',
     'toolbar.open': '📂  打开 PDF',
@@ -286,3 +285,31 @@ STRINGS = {
     'jobstab.summary.count': '{total} 个任务 · 运行中 {running} · 已完成 {done} · 失败 {failed}',
     'jobstab.summary.count_label': '{total} 个任务  ·  运行中 {running}  ·  已完成 {done}  ·  失败 {failed}',
 }
+
+
+# Phase 55 audit M3 — fail loudly if the auto-translate script ever
+# emits a duplicate key. Python silently keeps the LAST duplicate
+# in a dict literal, masking upstream bugs in the translation
+# generator. Walking ``STRINGS.items()`` and reporting collisions
+# here surfaces them at import time (which runs at GUI startup)
+# instead of letting them silently shadow each other.
+# Phase 55 audit M3 — fail loudly if the auto-translate script ever
+# emits a duplicate key. Python silently keeps the LAST duplicate
+# in a dict literal, masking upstream bugs in the translation
+# generator. We re-parse the source file (this very module) and
+# count key occurrences, since ``dict[key]`` after a duplicate
+# only sees the last value and gives no signal.
+import re as _re_dup
+_src_dup = _re_dup.sub(r"\"\"\".*?\"\"\"", "", open(__file__, encoding="utf-8").read(), flags=_re_dup.S)
+_keys_dup = _re_dup.findall(r"^\s*['\"]([a-zA-Z][\w.]*)['\"]\s*:", _src_dup, flags=_re_dup.M)
+import collections as _coll_dup
+_dup_counts = _coll_dup.Counter(_keys_dup)
+_dup_check = [k for k, n in _dup_counts.items() if n > 1]
+if _dup_check:
+    raise RuntimeError(
+        f"strings_zh_CN has duplicate keys: {_dup_check!r}. "
+        "Re-run /tmp/zh_translate.py after fixing the upstream "
+        "generator (each English key MUST map to exactly one "
+        "Chinese translation)."
+    )
+del _dup_check, _dup_counts, _keys_dup, _src_dup
