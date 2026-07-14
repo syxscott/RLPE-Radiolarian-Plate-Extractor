@@ -825,19 +825,24 @@ def _regex_expand_label_list(s: str) -> list[str]:
                 # the post-swap ``hi``. The user's "5-3b" means
                 # ``3b``; the suffix belongs to the value 3, not the
                 # numerically-largest label of the expanded range.
-                suffix_on_lo = suffix and lo > hi
+                suffix_on_lo = bool(suffix) and lo > hi
                 if lo > hi:
                     lo, hi = hi, lo
-                expanded = [str(x) for x in range(lo, hi)]
-                # m16: put the suffix on whichever endpoint the user
-                # attached it to, not unconditionally on the new
-                # ``hi`` (the higher numeric value). For a non-
-                # reversed range like "12-14b" the suffix still
-                # lands on ``hi`` because ``suffix_on_lo`` is False.
-                if suffix_on_lo:
-                    expanded[0] = str(lo) + suffix
-                last = str(hi) + suffix
-                expanded.append(last)
+                # Phase 55 audit HIGH-5 fix: the previous code appended
+                # str(hi)+suffix unconditionally AND, for reversed ranges,
+                # also replaced expanded[0] with lo+suffix. This produced
+                # "5-3b" → ['3b','4','5b'] (suffix appeared TWICE).
+                # The fix: attach the suffix to exactly ONE endpoint.
+                expanded = [str(x) for x in range(lo, hi + 1)]
+                if suffix:
+                    if suffix_on_lo:
+                        # Suffix on original lo (smaller value after swap).
+                        # Replace the first element.
+                        expanded = [str(lo) + suffix] + expanded[1:]
+                    else:
+                        # Suffix on original hi (larger value).
+                        # Replace the last element.
+                        expanded = expanded[:-1] + [str(hi) + suffix]
                 out.extend(expanded)
             except Exception:
                 out.append(chunk)
@@ -1858,22 +1863,40 @@ class M3Engine:
                 if last_raw_kept is None:
                     last_raw_kept = dict(raw)
                 else:
+                    # Phase 55 audit HIGH-6 fix: handle mixed-type usage values.
+                    # The old code assumed merged[k] is always the same type as v,
+                    # but a previous sample may have written a float/int while
+                    # the new sample writes a list, or vice-versa. We now check
+                    # both existing and new types before merging, and overwrite
+                    # rather than crash when types mismatch.
                     try:
-                        last_raw_kept["cost_cny"] = float(
-                            last_raw_kept.get("cost_cny") or 0.0
-                        ) + float(raw.get("cost_cny") or 0.0)
+                        old_cost = last_raw_kept.get("cost_cny")
+                        new_cost = raw.get("cost_cny")
+                        last_raw_kept["cost_cny"] = (
+                            (float(old_cost) if old_cost is not None else 0.0)
+                            + (float(new_cost) if new_cost is not None else 0.0)
+                        )
                     except (TypeError, ValueError):
+                        # One side is not numeric — give up on accumulating cost.
+                        # Don't silently overwrite with 0 which would hide the field.
                         pass
                     prev_usage = last_raw_kept.get("usage")
                     new_usage = raw.get("usage")
                     if isinstance(prev_usage, dict) and isinstance(new_usage, dict):
                         merged: dict[str, Any] = dict(prev_usage)
                         for k, v in new_usage.items():
-                            if isinstance(v, list):
-                                merged[k] = list(merged.get(k) or []) + v
-                            elif isinstance(v, (int, float)):
-                                merged[k] = (merged.get(k) or 0) + v
+                            existing = merged.get(k)
+                            if isinstance(v, list) and isinstance(existing, list):
+                                # Both are lists — concatenate per-call breakdowns.
+                                merged[k] = existing + v
+                            elif isinstance(v, (int, float)) and isinstance(existing, (int, float)):
+                                # Both are numeric — sum token counts.
+                                merged[k] = existing + v
                             else:
+                                # Type mismatch: don't crash, just take the newer value.
+                                # This is defensible because mixed-type usage keys
+                                # indicate a backend change mid-self-consistency run,
+                                # which is not a supported configuration.
                                 merged[k] = v
                         last_raw_kept["usage"] = merged
                     elif isinstance(new_usage, dict):
@@ -2115,19 +2138,24 @@ class M3Engine:
     def _infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         if self.backend is None:
             return {"fallback_used": True, "error": "no backend"}
-        # M19: ``enable_thinking`` is shared mutable state on
-        # ``self.backend``. The first call below reads it without
-        # holding ``_thinking_retry_lock`` (only the retry path does),
-        # so two concurrent workers can race: thread A flips the flag
+        # KNOWN RACE CONDITION — ``enable_thinking`` on ``self.backend``
+        # is shared mutable state. The first call below reads it WITHOUT
+        # holding ``_thinking_retry_lock`` (only the retry path holds
+        # it), so two concurrent workers can race: thread A flips the flag
         # to False to retry while thread B is mid-first-call and ends
-        # up running with the wrong setting. The robust fix is a
-        # per-call ``enable_thinking`` parameter plumbed through
-        # ``infer_text``/``infer_panel`` (not done here — too large
-        # a refactor). Until that lands, callers should not invoke
-        # ``_infer_text``/``_infer_vision`` from multiple threads
-        # against a backend whose ``enable_thinking`` is being
-        # mutated. The retry path below is at least atomic via the
-        # RLock so the race is bounded to first-call vs. retry.
+        # up running with the wrong setting. Consequence: a worker's
+        # request goes out with thinking=False even though the user
+        # configured thinking=True, silently degrading quality or doubling
+        # cost depending on the direction of the race.
+        #
+        # The robust fix is a per-call ``enable_thinking`` parameter
+        # plumbed through ``infer_text``/``infer_panel`` (not done here —
+        # too large a refactor for a patch). Until that lands, callers
+        # MUST NOT invoke ``_infer_text``/``_infer_vision`` concurrently
+        # against a backend whose ``enable_thinking`` is being mutated.
+        # The retry path below is atomic via the RLock, so the race is
+        # bounded to first-call vs. retry. Known unsafe: multi-worker
+        # pipeline batches that share a single MiniMaxBackend instance.
         try:
             res = self.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
         except Exception as exc:

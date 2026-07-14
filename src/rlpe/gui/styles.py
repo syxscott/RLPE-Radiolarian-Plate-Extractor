@@ -809,24 +809,24 @@ def apply_theme(app, theme: str) -> None:
         try:
             w.style().unpolish(w)
             w.style().polish(w)
-            # Phase 55 — Qt6 changed ``QWidget.update()`` to require
-            # different argument counts on different subclasses
-            # (QHeaderView/QListView/QTableWidget reject 0 args;
-            # some reject 4 args; some accept only the rect form).
-            # Use ``updateGeometry`` (1-arg form, every widget
-            # accepts it) as the portable shim. It does not repaint
-            # immediately but queues a layout + style recompute on
-            # the next event loop tick, which is what ``update()``
-            # would have done anyway.
-            try:
-                w.updateGeometry()
-            except Exception:
-                pass
-            # Fall back to repaint() which takes no geometry args.
-            try:
-                w.repaint()
-            except Exception:
-                pass
         except (RuntimeError, AttributeError):
             # Widget may have been deleted, or have no style().
+            continue
+        # Phase 55 audit MEDIUM-4 fix: Qt6 changed ``QWidget.update()`` to
+        # require different argument counts on different subclasses.
+        # ``updateGeometry()`` is the most portable shim (1-arg, exists on
+        # every widget) — it queues a layout recompute on the next tick.
+        # We use a narrow TypeError guard (not bare Exception) so a
+        # genuine error in an overridden updateGeometry still surfaces.
+        try:
+            w.updateGeometry()
+        except TypeError:
+            # Subclass doesn't accept updateGeometry() — skip.
+            pass
+        # repaint() is synchronous and immediate; use it only as
+        # fallback when updateGeometry failed. The TypeError here catches
+        # widgets that override repaint() with an incompatible signature.
+        try:
+            w.repaint()
+        except TypeError:
             pass

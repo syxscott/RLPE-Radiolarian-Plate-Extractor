@@ -627,6 +627,12 @@ def match_panels(
                     caption_snippet=caption.caption[:240] if caption.caption else None,
                     ocr_text=None,
                     paper_metadata=paper_metadata,
+                    # Phase 55 audit fix: propagate panel.panel_index so the
+                    # published pipeline_panel_index is no longer permanently
+                    # None. getattr guards against PanelCandidates that never
+                    # had panel_index set (e.g. callers other than the
+                    # classical pipeline path).
+                    panel_index=getattr(panel, "panel_index", None),
                     metadata=_panel_metadata(
                         panel,
                         panel_score=panel.score,
@@ -784,6 +790,9 @@ def match_panels(
                 caption_snippet=caption.caption[:240] if caption.caption else None,
                 ocr_text=ocr_text or None,
                 paper_metadata=paper_metadata,
+                # Phase 55 audit fix: propagate panel.panel_index so
+                # pipeline_panel_index is no longer permanently None.
+                panel_index=getattr(panel, "panel_index", None),
                 metadata=_panel_metadata(
                     panel,
                     panel_score=panel.score,
@@ -823,6 +832,10 @@ def match_panels(
                 bbox=None,
                 confidence=0.35,
                 caption_snippet=caption.caption[:240] if caption.caption else None,
+                # Phase 55 audit fix: no PanelCandidate exists in this path
+                # (it is a pure fallback when match_panels produced no
+                # results), so panel_index stays None — but the field must
+                # still be present so MatchResult.to_dict() is consistent.
             )
         )
     return matches

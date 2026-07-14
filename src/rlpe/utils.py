@@ -73,7 +73,11 @@ def _json_default(obj: Any) -> Any:
     # Path
     if isinstance(obj, Path):
         return str(obj)
-    # numpy
+    # numpy — guard specifically against import failure (no numpy installed)
+    # and AttributeError (object has an attribute that raises during isinstance
+    # checks, e.g. a lazy numpy wrapper that proxies attribute access).
+    # NOT bare Exception: we explicitly want RecursionError and
+    # MemoryError to propagate so the caller knows the encoding failed.
     try:
         import numpy as _np  # type: ignore[import-not-found]
 
@@ -85,32 +89,39 @@ def _json_default(obj: Any) -> Any:
             return bool(obj)
         if isinstance(obj, _np.ndarray):
             return obj.tolist()
-    except Exception:
+    except (ImportError, ModuleNotFoundError, AttributeError):
         pass
-    # to_dict / dataclass
+    # to_dict / dataclass — guard against to_dict raising (e.g. a
+    # malformed dataclass with a broken to_dict method). AttributeError
+    # covers the case where the object has a to_dict attribute that
+    # isn't callable. NOT bare Exception: a real bug in to_dict should
+    # surface, not silently produce wrong JSON.
     if hasattr(obj, "to_dict") and callable(obj.to_dict):
         try:
             return obj.to_dict()
-        except Exception:
+        except (AttributeError, TypeError):
             pass
     # collections
     if isinstance(obj, (set, frozenset)):
         return sorted(obj, key=lambda x: str(x))
     if isinstance(obj, tuple):
         return list(obj)
-    # datetime
+    # datetime — guard against datetime module import failure (already
+    # imported above but guard against it not being available) and
+    # AttributeError from the isinstance check.
     try:
         import datetime as _dt
 
         if isinstance(obj, (_dt.datetime, _dt.date)):
             return obj.isoformat()
-    except Exception:
+    except (ImportError, ModuleNotFoundError, AttributeError):
         pass
-    # bytes
+    # bytes — decode with replacement, falling back to repr only if
+    # the decode itself fails (e.g. a bytes subclass that raises on decode).
     if isinstance(obj, (bytes, bytearray)):
         try:
             return obj.decode("utf-8", errors="replace")
-        except Exception:
+        except (UnicodeDecodeError, TypeError):
             return repr(obj)
     # last resort
     try:

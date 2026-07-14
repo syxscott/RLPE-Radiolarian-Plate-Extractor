@@ -372,6 +372,12 @@ class RangeChartResult:
             "biozones": [b.to_dict() for b in self.biozones],
             "other_fossils": list(self.other_fossils),
             "confidence": self.confidence,
+            # Phase 55 audit: M21 — status and error were added to the dataclass
+            # but to_dict() was hand-written and missed them. Without these,
+            # callers cannot distinguish 'API returned 200 with no data' from
+            # 'HTTP 500 / JSON decode error'.
+            "status": self.status,
+            "error": self.error,
         }
 
 

@@ -421,12 +421,25 @@ def populate_friendly_combo(
     i18n listener that re-invokes the factory on every ``set_language``
     call. The current selection is preserved (looked up by userData).
 
-    Returns the bound listener so the caller can pair it with
-    ``i18n.remove_listener`` in its own teardown path if needed.
+    Phase 55 audit BLOCKER-4 fix: stores the listener on the combo via
+    setProperty so a subsequent call on the same combo can find and
+    remove the old listener before registering a new one. Without this,
+    every SettingsTab/RunTab rebuild accumulated a new closure over the
+    old (deleted) QComboBox, causing memory growth and PySide6 segfaults
+    when set_language fired on the dangling wrapper.
     """
     from . import i18n as _i18n
 
     def _rebuild(_lang: str) -> None:
+        # Guard: if the combo has been deleted by Qt (e.g. tab was
+        # destroyed and this listener fires on a subsequent language
+        # change), skip the rebuild to avoid accessing a dangling
+        # C++ wrapper.
+        if not combo.signalsBlocked():
+            try:
+                combo.count()
+            except RuntimeError:
+                return
         # Remember the current selection by userData so we can
         # restore it after rebuilding the items.
         prev_code = combo.currentData()
@@ -444,19 +457,37 @@ def populate_friendly_combo(
                 ix = combo.findData(prev_code)
                 if ix >= 0:
                     combo.setCurrentIndex(ix)
+                else:
+                    # Phase 55 audit MEDIUM-1: prev_code no longer exists
+                    # in the rebuilt list (e.g. a backend plugin was
+                    # uninstalled). Fall back to the first item so the
+                    # combo is never left with no valid selection.
+                    combo.setCurrentIndex(0)
         finally:
             combo.blockSignals(False)
+
+    # BLOCKER-4 fix: if this combo already had a listener from a
+    # previous populate_friendly_combo call (e.g. tab rebuild), remove
+    # it first so we don't accumulate stale closures in _LISTENERS.
+    old_listener = combo.property("_i18n_listener")
+    if old_listener is not None:
+        try:
+            _i18n.remove_listener(old_listener)
+        except Exception:
+            pass
 
     # Initial population (don't go through the listener wrapper
     # because we want the default_code to win even if the user
     # hasn't picked anything yet).
     _rebuild(_i18n.current_language())
-    # Register the language switch handler. Use a bound method to
-    # match the Phase 55 B4 dedup pattern (no fresh lambda per
-    # instance).
-    listener = _rebuild
-    _i18n.add_listener(listener)
-    return listener
+
+    # Store the listener on the combo so a future call can find and
+    # remove it. This is the anchor that enables the removal above.
+    combo.setProperty("_i18n_listener", _rebuild)
+
+    # Register the language switch handler.
+    _i18n.add_listener(_rebuild)
+    return _rebuild
 
 
 # ============================================================

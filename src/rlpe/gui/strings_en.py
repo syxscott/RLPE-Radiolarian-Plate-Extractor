@@ -182,7 +182,9 @@ STRINGS = {
     "restab.col.species": "Species (Latin)",
     "restab.col.panel_id": "Panel ID",
     "restab.col.confidence": "Confidence",
-    "restab.col.caption_snip": "Caption snippet",
+    # Phase 55 audit fix: key renamed from caption_snip → caption_snippet
+    # to match the pipeline's field name (constants.py:66).
+    "restab.col.caption_snippet": "Caption snippet",
     "restab.col.page_index": "Page",
     "restab.col.family": "PBDB Family",
     "restab.col.country": "Country",
@@ -312,6 +314,9 @@ STRINGS = {
     "common.warning": "Warning",
     "common.info": "Information",
     "common.browse": "Browse…",
+    # Phase 55 audit HIGH-7 fix: used as the directory-chooser dialog title
+    # in settings_tab._pick_dir. Previously undefined → ⟦sentinel⟧.
+    "common.choose_dir": "Choose {kind}",
     "common.confirm": "Confirm",
     "common.settings_saved": "Settings saved.",
     "common.retry.title": "Retry",

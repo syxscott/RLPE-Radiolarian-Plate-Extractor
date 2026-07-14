@@ -42,9 +42,13 @@ RESULT_CACHE: dict[str, dict[str, Any]] = {}
 # do read-check-write sequences on the same per-job dict; without
 # the lock, a status flip from cancel can race a progress callback
 # and the job can end up in a state the API can't reason about
-# (e.g. status=cancelled but progress=80%). Single lock keeps the
-# invariants simple — the job-state machine is small enough that
-# contention isn't a real cost.
+# (e.g. status=cancelled but progress=80%). Single GLOBAL lock keeps
+# the invariants simple — the job-state machine is small enough that
+# contention isn't a real cost. NOTE: this is a single ``threading.Lock()``
+# shared across ALL job_ids, not per-job. Phase 54 wrapped _purge_job's
+# rmtree call inside this lock, so deleting a large job directory
+# (e.g. 80k files, 20 GB) blocks ALL other concurrent
+# /jobs/{any_id}/* endpoints globally for the rmtree duration.
 RESULT_LOCK = threading.Lock()
 
 # Cached GROBID URL — read from the GROBID_URL env var once at
@@ -1026,11 +1030,20 @@ class BatchDeleteRequest(BaseModel):
     @field_validator("job_ids")
     @classmethod
     def _validate_job_ids(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
         for jid in v:
             if not isinstance(jid, str) or len(jid) > 64 or len(jid) == 0:
                 raise ValueError(
                     f"job_id must be a non-empty string ≤ 64 chars, got {jid!r}"
                 )
+            # Phase 55 audit MEDIUM-2 fix: reject duplicate job_ids.
+            # Previously duplicates passed validation, causing _purge_job to be
+            # called twice with the same id — the second call would return
+            # 'not_found', making aggregate metrics misleading and the per-id
+            # results list show inconsistent states for the same job_id.
+            if jid in seen:
+                raise ValueError(f"duplicate job_id: {jid!r}")
+            seen.add(jid)
         return v
 
 

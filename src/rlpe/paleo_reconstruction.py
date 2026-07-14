@@ -436,5 +436,18 @@ def enrich_geology_record(record: dict[str, Any]) -> None:
         record["modern_longitude"] = round(float(lon), 4)
         record["reconstruction_model"] = "Seton 2012 (simplified)"
         record["reconstruction_age_ma"] = round(float(age_ma), 2)
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("enrich_geology_record failed: %s", exc)
+    except (TypeError, ValueError, AttributeError, KeyError) as exc:
+        # Phase 55 audit MEDIUM-3 fix: narrow to the exceptions that a
+        # data-access bug (wrong key name, bad type coercion, missing field)
+        # would raise. Arithmetic errors (e.g. math domain from Rodrigues
+        # rotation) are also worth surfacing since they indicate wrong
+        # Euler poles or coordinates. Only suppress ImportError (missing
+        # optional dependency) which is a deployment issue, not a data bug.
+        # NOT bare Exception: let RecursionError, MemoryError propagate so
+        # a real crash doesn't silently produce wrong coordinates.
+        logger.warning(
+            "enrich_geology_record failed for record %s: %s — "
+            "check Euler pole table / coordinate values",
+            record.get("paper_id", "?"),
+            exc,
+        )

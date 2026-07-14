@@ -1261,5 +1261,17 @@ def _coerce_bool(value: Any, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
-        return value.strip().lower() in ("true", "1", "yes", "on")
+        lowered = value.strip().lower()
+        # Phase 55 audit HIGH-2 fix: the previous guard only recognised
+        # ('true', '1', 'yes', 'on') as True, but user config often uses
+        # 'false', '0', 'no', 'off' to explicitly disable a feature.
+        # Without this fix, _coerce_bool('off') → bool('off') → True,
+        # silently enabling the very feature the user tried to disable.
+        if lowered in ("true", "1", "yes", "on"):
+            return True
+        if lowered in ("false", "0", "no", "off", ""):
+            return False
+        # Unknown string — fall through to treating it as truthy, matching
+        # the old behaviour (a future typo like 'enaable' will still enable).
+        return bool(value)
     return bool(value)

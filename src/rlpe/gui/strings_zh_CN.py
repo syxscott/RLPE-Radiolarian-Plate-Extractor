@@ -29,6 +29,9 @@ STRINGS = {
     'batch.title': '批处理 — 队列多个 PDF',
     'batch.xlsx_at_end': '所有任务完成后导出合并 xlsx',
     'common.browse': '浏览…',
+    # Phase 55 audit HIGH-7 fix: used as the directory-chooser dialog title
+    # in settings_tab._pick_dir. Previously undefined → ⟦sentinel⟧.
+    'common.choose_dir': '选择 {kind}',
     'common.cancel': '取消',
     'common.confirm': '确认',
     'common.error': '错误',
@@ -107,7 +110,9 @@ STRINGS = {
     'preview.zoom_in': '🔍+',
     'preview.zoom_out': '🔍−',
     'restab.col.biozone': '生物带',
-    'restab.col.caption_snip': 'Caption 摘要',
+    # Phase 55 audit fix: key renamed from caption_snip → caption_snippet
+    # to match the pipeline's field name (constants.py:66).
+    'restab.col.caption_snippet': 'Caption 摘要',
     'restab.col.confidence': '置信度',
     'restab.col.coord': '经纬度',
     'restab.col.country': '国家',
