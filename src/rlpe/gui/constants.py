@@ -12,11 +12,17 @@ from pathlib import Path
 from typing import Final
 
 
-# Project root (parent of src/). Used by Phase 49 to scan
+# Project root (parent of src/). Used by Phase 49/50 to scan
 # ``service_work/`` and ``work/`` for completed jobs to repopulate
 # the JobsTab on GUI startup — same scan the Web API does in
 # ``api/app.py:_load_existing_jobs_from_disk``.
-PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
+#
+# Phase 50 FIX: this used to be ``parents[2]`` (= the ``src/``
+# directory itself), which caused the GUI startup scan to look at
+# ``src/service_work`` — which doesn't exist. The real ``service_work/``
+# lives at the project root, which is ``parents[3]`` from this file
+# (``src/rlpe/gui/constants.py``).
+PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
 
 
 # Application metadata

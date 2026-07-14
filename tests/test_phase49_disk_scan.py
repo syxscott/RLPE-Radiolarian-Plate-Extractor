@@ -287,11 +287,51 @@ def test_main_recent_loaded_i18n_key_exists():
 
 
 # ============================================================
-# 9. PROJECT_ROOT points to a Path
+# 9. PROJECT_ROOT points to a Path AND to the actual project root
 # ============================================================
 def test_project_root_is_path():
     from rlpe.gui.constants import PROJECT_ROOT
     from pathlib import Path as _Path
     assert isinstance(PROJECT_ROOT, _Path), (
         f"PROJECT_ROOT must be a Path, got {type(PROJECT_ROOT).__name__}"
+    )
+
+
+def test_project_root_is_actual_project_root():
+    """Phase 50 regression: PROJECT_ROOT must point to the actual
+    project root (the directory containing ``src/``, ``tests/``,
+    ``service_work/``, ``work/``), NOT the ``src/`` directory itself.
+
+    Previously the constant was ``parents[2]`` (= ``src/``) which
+    made the GUI startup scan look at ``src/service_work`` — a
+    nonexistent path. The disk scan returned 0 jobs and the user
+    saw an empty Jobs tab even though web showed many.
+    """
+    from rlpe.gui.constants import PROJECT_ROOT
+    from pathlib import Path as _Path
+    # PROJECT_ROOT must be the directory containing ``src/`` (i.e.
+    # the project root, not the src/ subdirectory).
+    assert (PROJECT_ROOT / "src").is_dir(), (
+        f"PROJECT_ROOT={PROJECT_ROOT} should contain a 'src/' subdir "
+        f"(i.e. it must be the project root, not src/ itself). "
+        f"This was the Phase 50 bug: parents[2] points to src/, not the "
+        f"project root."
+    )
+    assert (PROJECT_ROOT / "service_work").exists() or (
+        PROJECT_ROOT / "work"
+    ).exists(), (
+        f"PROJECT_ROOT={PROJECT_ROOT} should be the project root where "
+        f"the pipeline writes service_work/ or work/ (Phase 49/50)."
+    )
+
+
+def test_project_root_matches_web_api_app_py():
+    """Phase 50: the GUI's PROJECT_ROOT must resolve to the SAME
+    directory as the Web API's APP_ROOT, otherwise the GUI scan
+    won't find what the Web scan already loaded."""
+    from rlpe.gui.constants import PROJECT_ROOT
+    from rlpe.api.app import APP_ROOT
+    assert PROJECT_ROOT.resolve() == APP_ROOT.resolve(), (
+        f"GUI PROJECT_ROOT={PROJECT_ROOT} != Web APP_ROOT={APP_ROOT}. "
+        f"GUI disk scan would look at a different directory than Web."
     )
