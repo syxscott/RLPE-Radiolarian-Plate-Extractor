@@ -285,6 +285,29 @@ class BatchDialog(QDialog):
                 f"{i18n._tr('batch.no_outdir.body')}\n\n{type(exc).__name__}: {exc}",
             )
             return
+        # Phase 55 audit m4 — verify the chosen directory is actually
+        # writable BEFORE the batch starts. ``mkdir`` succeeds on a
+        # read-only mount or a directory where the user lacks write
+        # permission; the failure would surface only when the first
+        # job tries to write a JSON, which is harder to recover from.
+        import tempfile as _tf_probe
+        try:
+            with _tf_probe.NamedTemporaryFile(
+                prefix=".rlpe_probe_", dir=out_dir, delete=True,
+            ) as _probe:
+                _probe.write(b"ok")
+            import os as _os_probe
+            if not _os_probe.access(out_dir, _os_probe.W_OK):
+                raise OSError(f"Directory is not writable: {out_dir}")
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                i18n._tr("batch.no_outdir.title"),
+                i18n._tr("batch.outdir.not_writable").format(
+                    path=out_dir, error=f"{type(exc).__name__}: {exc}",
+                ),
+            )
+            return
         self._settings["last_export_dir"] = out_dir
         # Settings to pass to each PipelineWorker
         batch_settings = dict(self._settings)

@@ -45,17 +45,12 @@ from PySide6.QtWidgets import (
 
 from .batch_dialog import BatchDialog
 from . import i18n
-from .i18n_widgets import tr_label
 from .styles import apply_theme
 from .utils import (
-    fmt_count,
-    fmt_duration,
     get_gui_logger,
     is_linux,
     is_macos,
     is_windows,
-    short_path,
-    single_instance_lock,
 )
 
 
@@ -110,22 +105,11 @@ from .constants import (
     TAB_SETTINGS,
     THEME_LIGHT,
 )
-from .styles import SPACE_M, SPACE_S, apply_theme
+from .styles import SPACE_M, SPACE_S
 from .jobs_tab import JobRecord, JobsTab
 from .results_tab import ResultsTab
 from .run_tab import RunTab
 from .settings_tab import SettingsTab
-from .styles import apply_theme
-from .utils import (
-    fmt_count,
-    fmt_duration,
-    get_gui_logger,
-    is_linux,
-    is_macos,
-    is_windows,
-    short_path,
-    single_instance_lock,
-)
 
 
 # ============================================================
@@ -628,16 +612,35 @@ class MainWindow(QMainWindow):
         import os
         import subprocess
         from .utils import LOG_FILE_NAME
-        log_path = os.path.expanduser(f"~/.cache/rlpe/gui/{LOG_FILE_NAME}")
+        from PySide6.QtCore import QFileInfo
+        log_path = Path(os.path.expanduser(f"~/.cache/rlpe/gui/{LOG_FILE_NAME}"))
+        # Phase 55 audit — on a fresh install the log file does not
+        # exist yet, so the previous ``xdg-open``/``open`` call would
+        # raise FileNotFoundError and pop a confusing yellow warning.
+        # Show a friendly info dialog instead — the file will appear
+        # after the first pipeline run.
+        if not log_path.exists():
+            QMessageBox.information(
+                self,
+                i18n._tr("settab.log.title"),
+                i18n._tr("settab.log.not_yet").format(path=str(log_path)),
+            )
+            return
         try:
             if is_macos():
-                subprocess.Popen(["open", log_path])
+                subprocess.Popen(["open", str(log_path)])
             elif is_windows():
-                os.startfile(log_path)  # type: ignore[attr-defined]
+                os.startfile(str(log_path))  # type: ignore[attr-defined]
             else:
-                subprocess.Popen(["xdg-open", log_path])
+                subprocess.Popen(["xdg-open", str(log_path)])
         except Exception as exc:
-            QMessageBox.warning(self, "Log file", f"Could not open: {exc}\n\nPath: {log_path}")
+            QMessageBox.warning(
+                self,
+                i18n._tr("settab.log.title"),
+                i18n._tr("settab.log.open_fail").format(
+                    error=f"{type(exc).__name__}: {exc}", path=str(log_path),
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Job lifecycle

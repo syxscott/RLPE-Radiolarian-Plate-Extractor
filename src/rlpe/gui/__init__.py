@@ -7,5 +7,5 @@ it is a parallel interface that uses the same underlying
 
 Entry point: ``python main.py`` (or ``rlpe-gui`` script).
 """
+from .constants import APP_VERSION as __version__
 __all__ = ["main", "run_app"]
-__version__ = "0.1.0"

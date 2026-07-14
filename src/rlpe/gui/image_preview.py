@@ -381,21 +381,31 @@ class _PreviewGraphicsView(QGraphicsView):
         # Bbox click on left-button → emit signal
         if event.button() == Qt.LeftButton and self.scene():
             scene_pos = self.mapToScene(event.pos())
-            for item in self.scene().items(scene_pos):
-                # Phase 44: also accept clicks on QGraphicsTextItem
-                # labels (species name + confidence). Previously the
-                # check skipped text items, so clicking a label did
-                # nothing (the cursor changed but no signal fired).
-                if isinstance(item, (QGraphicsRectItem, QGraphicsTextItem)):
+            # Phase 55 audit F-8 — when bboxes overlap, Qt's
+            # ``scene.items(pos)`` returns items in stacking order
+            # (most-recently-added last). Because the label
+            # (QGraphicsTextItem) is added AFTER the rect it sits
+            # on top, the user clicking a label belonging to bbox
+            # #1 could land on bbox #2's label if the labels
+            # visually overlap. We prefer rect hits and only fall
+            # back to labels if no rect was directly under the
+            # cursor, matching the user's spatial expectation.
+            items = self.scene().items(scene_pos)
+            # Pass 1: try the rect first (the more "solid" target).
+            for item in items:
+                if isinstance(item, QGraphicsRectItem):
                     bbox_data = item.data(0)
                     if bbox_data:
-                        # Bubble up via parent widget
-                        w = self.parentWidget()
-                        while w is not None and not isinstance(w, ImagePreviewWidget):
-                            w = w.parentWidget()
-                        if w is not None:
-                            w.bbox_clicked.emit(bbox_data)
-                    break
+                        _emit_bbox_clicked(self, bbox_data)
+                        return
+            # Pass 2: fall back to labels so a click on a species
+            # name that has no rect underneath still works.
+            for item in items:
+                if isinstance(item, QGraphicsTextItem):
+                    bbox_data = item.data(0)
+                    if bbox_data:
+                        _emit_bbox_clicked(self, bbox_data)
+                        return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
@@ -430,6 +440,21 @@ class _PreviewGraphicsView(QGraphicsView):
 # ============================================================
 # Helpers
 # ============================================================
+def _emit_bbox_clicked(view: "QGraphicsView", bbox_data: dict[str, Any]) -> None:
+    """Bubble a bbox-click signal up to the enclosing ImagePreviewWidget.
+
+    Walks the parent chain because the view is a nested child of the
+    preview widget (which owns the ``bbox_clicked`` signal). Extracted
+    from the inline click handler in Phase 55 audit F-8 so the rect
+    and label pass loops can share it.
+    """
+    w = view.parentWidget()
+    while w is not None and not isinstance(w, ImagePreviewWidget):
+        w = w.parentWidget()
+    if w is not None:
+        w.bbox_clicked.emit(bbox_data)
+
+
 def _bbox_tooltip(bbox: dict[str, Any]) -> str:
     """Render a bbox dict as a multi-line tooltip."""
     parts = []

@@ -221,9 +221,16 @@ class RunTab(QWidget):
             default_code=DEFAULT_OCR_LANG,
         )
         self._ocr_lang_edit.setMinimumWidth(INPUT_WIDTH_OCR_LANG)
+        # Phase 55 audit F-4 — the tooltip used to be hardcoded
+        # English. Translate it via the i18n registry so the tooltip
+        # follows the language switch.
+        from . import i18n as _i18n_tooltip
+        self._ocr_lang_edit.setObjectName("runtab.ocr_lang")
+        _i18n_tooltip.register_widget_text(
+            "runtab.ocr_lang", "toolTip", "runtab.ocr_lang.tooltip",
+        )
         self._ocr_lang_edit.setToolTip(
-            "OCR language (e.g. English, 中文, 日本語). "
-            "Editable — power users can type 'en,ja' for multi-lang."
+            _i18n_tooltip._tr("runtab.ocr_lang.tooltip")
         )
         basic_layout.addWidget(self._ocr_lang_edit, row, 3)
         row += 1

@@ -90,6 +90,7 @@ STRINGS = {
     "runtab.label.use_gpu": "Use GPU:",
     "runtab.gpu_check": "Auto-detect CUDA at startup",
     "runtab.ocr_lang.placeholder": "e.g. English, 中文 (简体), 日本語",
+    "runtab.ocr_lang.tooltip": "OCR language (e.g. English, 中文, 日本語).\nEditable — power users can type 'en,ja' for multi-lang.",
 
     "runtab.label.llm_backend": "LLM backend:",
     "runtab.label.m3_lang": "M3 prompt lang:",
@@ -248,8 +249,10 @@ STRINGS = {
     "settab.reset.confirm.title": "Reset settings?",
     "settab.reset.confirm.body": "This will reset all settings to their defaults. Continue?",
     "settab.reset.done": "Settings reset to defaults.",
-    "settab.log.open_fail": "Could not open: {error}\\n\\nPath: {path}",
+    "settab.log.open_fail": "Could not open: {error}\n\nPath: {path}",
     "settab.log.path": "Log file: {path}",
+    "settab.log.not_yet": "No log file yet.\n\nThe log file is created on the first pipeline run.\n\nExpected path:\n{path}",
+    "settab.log.title": "Log file",
 
     # ============================================================
     # Batch dialog
@@ -272,6 +275,7 @@ STRINGS = {
     "batch.no_pdfs": "No PDFs queued.",
     "batch.no_outdir.title": "Batch",
     "batch.no_outdir.body": "Please choose an output directory.",
+    "batch.outdir.not_writable": "Output directory is not writable.\n\n{path}\n\n{error}",
 
     # ============================================================
     # Image preview
@@ -311,7 +315,7 @@ STRINGS = {
     "common.confirm": "Confirm",
     "common.settings_saved": "Settings saved.",
     "common.retry.title": "Retry",
-    "common.retry.body": "Original file no longer exists:\\n{path}",
+    "common.retry.body": "Original file no longer exists:\n{path}",
 
     # ============================================================
     # Open-file / save-file dialog filters
