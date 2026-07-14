@@ -402,6 +402,63 @@ def tr_combobox(
     return cb
 
 
+def populate_friendly_combo(
+    combo: QComboBox,
+    factory: "Callable[[], list[tuple[str, str]]]",
+    default_code: Optional[str] = None,
+) -> Callable[[str], None]:
+    """Populate ``combo`` from a ``*_friendly_options()`` factory and
+    automatically rebuild the displayed items when the language changes.
+
+    The factory must return a list of ``(code, friendly_name)`` tuples
+    where ``friendly_name`` is rendered using the language active when
+    ``factory()`` is called. Each item is added with ``userData=code``
+    so callers can read the raw code via ``currentData()``.
+
+    Phase 55 audit M8 — the previous code only called the factory once
+    at construction time, so after a language switch the combo kept
+    showing the labels in the old language. This helper registers an
+    i18n listener that re-invokes the factory on every ``set_language``
+    call. The current selection is preserved (looked up by userData).
+
+    Returns the bound listener so the caller can pair it with
+    ``i18n.remove_listener`` in its own teardown path if needed.
+    """
+    from . import i18n as _i18n
+
+    def _rebuild(_lang: str) -> None:
+        # Remember the current selection by userData so we can
+        # restore it after rebuilding the items.
+        prev_code = combo.currentData()
+        if prev_code is None:
+            prev_code = default_code
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            for code, friendly in factory():
+                combo.addItem(friendly, userData=code)
+            # Restore the previous selection. ``findData`` matches
+            # the userData we just stored, which is the same raw
+            # code we remembered above.
+            if prev_code is not None:
+                ix = combo.findData(prev_code)
+                if ix >= 0:
+                    combo.setCurrentIndex(ix)
+        finally:
+            combo.blockSignals(False)
+
+    # Initial population (don't go through the listener wrapper
+    # because we want the default_code to win even if the user
+    # hasn't picked anything yet).
+    _rebuild(_i18n.current_language())
+    # Register the language switch handler. Use a bound method to
+    # match the Phase 55 B4 dedup pattern (no fresh lambda per
+    # instance).
+    listener = _rebuild
+    _i18n.add_listener(listener)
+    return listener
+
+
 # ============================================================
 # Phase 34: form-row helper + input-height normalisation
 # ============================================================

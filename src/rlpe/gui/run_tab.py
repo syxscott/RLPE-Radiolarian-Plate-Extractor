@@ -181,16 +181,13 @@ class RunTab(QWidget):
         self._ocr_combo.setObjectName("runtab.ocr_backend")
         self._ocr_combo.setMinimumHeight(32)
         self._ocr_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self._ocr_combo.blockSignals(True)
-        try:
-            for code, friendly in ocr_backend_friendly_options():
-                self._ocr_combo.addItem(friendly, userData=code)
-            for i in range(self._ocr_combo.count()):
-                if self._ocr_combo.itemData(i) == DEFAULT_OCR_BACKEND:
-                    self._ocr_combo.setCurrentIndex(i)
-                    break
-        finally:
-            self._ocr_combo.blockSignals(False)
+        # Phase 55 audit M8 — populate via the i18n-aware helper so
+        # the displayed friendly names refresh on language switch.
+        from .i18n_widgets import populate_friendly_combo
+        populate_friendly_combo(
+            self._ocr_combo, ocr_backend_friendly_options,
+            default_code=DEFAULT_OCR_BACKEND,
+        )
         basic_layout.addWidget(self._ocr_combo, row, 1)
 
         basic_layout.addWidget(tr_label("runtab.label.ocr_lang"), row, 2)
@@ -216,19 +213,13 @@ class RunTab(QWidget):
         # inside the combo) — Phase 35 tests walk all QLineEdits
         # and expect min_height >= 30.
         self._ocr_lang_edit.lineEdit().setMinimumHeight(32)
-        # Phase 46: block signals during populate so the slot
-        # doesn't fire on a half-built combo.
-        self._ocr_lang_edit.blockSignals(True)
-        try:
-            for iso_code, friendly_name in ocr_lang_friendly_options():
-                self._ocr_lang_edit.addItem(friendly_name, userData=iso_code)
-            # Set default to English
-            for i in range(self._ocr_lang_edit.count()):
-                if self._ocr_lang_edit.itemData(i) == DEFAULT_OCR_LANG:
-                    self._ocr_lang_edit.setCurrentIndex(i)
-                    break
-        finally:
-            self._ocr_lang_edit.blockSignals(False)
+        # Phase 55 audit M8 — use the i18n-aware helper so the
+        # friendly names ("English" / "中文") update on language switch.
+        from .i18n_widgets import populate_friendly_combo
+        populate_friendly_combo(
+            self._ocr_lang_edit, ocr_lang_friendly_options,
+            default_code=DEFAULT_OCR_LANG,
+        )
         self._ocr_lang_edit.setMinimumWidth(INPUT_WIDTH_OCR_LANG)
         self._ocr_lang_edit.setToolTip(
             "OCR language (e.g. English, 中文, 日本語). "
@@ -326,17 +317,12 @@ class RunTab(QWidget):
         from PySide6.QtWidgets import QSizePolicy
         self._llm_combo.setMinimumHeight(32)
         self._llm_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self._llm_combo.blockSignals(True)
-        try:
-            for code, friendly in llm_backend_friendly_options():
-                self._llm_combo.addItem(friendly, userData=code)
-            # Set default to DEFAULT_LLM_BACKEND
-            for i in range(self._llm_combo.count()):
-                if self._llm_combo.itemData(i) == DEFAULT_LLM_BACKEND:
-                    self._llm_combo.setCurrentIndex(i)
-                    break
-        finally:
-            self._llm_combo.blockSignals(False)
+        # Phase 55 audit M8 — populate via the i18n-aware helper.
+        from .i18n_widgets import populate_friendly_combo
+        populate_friendly_combo(
+            self._llm_combo, llm_backend_friendly_options,
+            default_code=DEFAULT_LLM_BACKEND,
+        )
         lbl, w = tr_form_row("runtab.label.llm_backend", self._llm_combo)
         adv_layout.addRow(lbl, w)
 
@@ -346,16 +332,11 @@ class RunTab(QWidget):
         from PySide6.QtWidgets import QSizePolicy
         self._m3_lang.setMinimumHeight(32)
         self._m3_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self._m3_lang.blockSignals(True)
-        try:
-            for code, friendly in m3_prompt_lang_friendly_options():
-                self._m3_lang.addItem(friendly, userData=code)
-            for i in range(self._m3_lang.count()):
-                if self._m3_lang.itemData(i) == DEFAULT_M3_PROMPT_LANG:
-                    self._m3_lang.setCurrentIndex(i)
-                    break
-        finally:
-            self._m3_lang.blockSignals(False)
+        # Phase 55 audit M8 — populate via the i18n-aware helper.
+        populate_friendly_combo(
+            self._m3_lang, m3_prompt_lang_friendly_options,
+            default_code=DEFAULT_M3_PROMPT_LANG,
+        )
         lbl, w = tr_form_row("runtab.label.m3_lang", self._m3_lang)
         adv_layout.addRow(lbl, w)
 

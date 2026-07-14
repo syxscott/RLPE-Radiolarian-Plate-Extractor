@@ -150,13 +150,11 @@ class SettingsTab(QWidget):
         self._theme_combo.setMinimumHeight(32)
         self._theme_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         # Phase 47: friendly theme names (浅色 / 深色 / 跟随系统).
+        # Phase 55 audit M8 — use the i18n-aware helper so the
+        # labels refresh on language switch.
         from .constants import theme_friendly_options
-        self._theme_combo.blockSignals(True)
-        try:
-            for code, friendly in theme_friendly_options():
-                self._theme_combo.addItem(friendly, userData=code)
-        finally:
-            self._theme_combo.blockSignals(False)
+        from .i18n_widgets import populate_friendly_combo
+        populate_friendly_combo(self._theme_combo, theme_friendly_options)
         # Phase 54 audit: M2 — ``currentIndexChanged`` emits the
         # *index* (int), not the userData. The previous direct
         # connection passed that int to ``_on_theme_change(theme: str)``,
@@ -175,13 +173,16 @@ class SettingsTab(QWidget):
             "settab.lang",
             min_width=COMBO_MIN_WIDTH,
         )
-        for code, label in i18n.available_languages():
-            self._lang_combo.addItem(label, userData=code)
-        # Set current to current language
-        for i in range(self._lang_combo.count()):
-            if self._lang_combo.itemData(i) == i18n.current_language():
-                self._lang_combo.setCurrentIndex(i)
-                break
+        # Phase 55 audit M8 — use the i18n-aware helper so the
+        # language labels ("English" / "中文") refresh on switch.
+        # Note: this is called from the language picker itself; the
+        # helper preserves currentData() across rebuilds so picking
+        # English keeps English selected even after switching back.
+        from .i18n_widgets import populate_friendly_combo
+        populate_friendly_combo(
+            self._lang_combo, i18n.available_languages,
+            default_code=i18n.current_language(),
+        )
         self._lang_combo.currentIndexChanged.connect(self._on_lang_change)
         alayout.addRow(tr_label("settab.lang"), self._lang_combo)
 
@@ -239,13 +240,10 @@ class SettingsTab(QWidget):
         self._ocr_backend.setMinimumHeight(32)
         self._ocr_backend.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         # Phase 47: friendly backend names instead of raw codes.
+        # Phase 55 audit M8 — i18n-aware populate helper.
         from .constants import ocr_backend_friendly_options
-        self._ocr_backend.blockSignals(True)
-        try:
-            for code, friendly in ocr_backend_friendly_options():
-                self._ocr_backend.addItem(friendly, userData=code)
-        finally:
-            self._ocr_backend.blockSignals(False)
+        from .i18n_widgets import populate_friendly_combo
+        populate_friendly_combo(self._ocr_backend, ocr_backend_friendly_options)
         olayout.addRow(tr_label("settab.ocr.backend"), self._ocr_backend)
 
         self._ocr_lang = QLineEdit(DEFAULT_OCR_LANG)
@@ -274,13 +272,9 @@ class SettingsTab(QWidget):
         self._llm_backend.setMinimumHeight(32)
         self._llm_backend.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         # Phase 47: friendly LLM backend names.
+        # Phase 55 audit M8 — i18n-aware populate helper.
         from .constants import llm_backend_friendly_options
-        self._llm_backend.blockSignals(True)
-        try:
-            for code, friendly in llm_backend_friendly_options():
-                self._llm_backend.addItem(friendly, userData=code)
-        finally:
-            self._llm_backend.blockSignals(False)
+        populate_friendly_combo(self._llm_backend, llm_backend_friendly_options)
         llayout.addRow(tr_label("settab.llm.backend"), self._llm_backend)
 
         self._m3_model = QLineEdit(DEFAULT_MINIMAX_MODEL)
@@ -290,13 +284,9 @@ class SettingsTab(QWidget):
         self._m3_prompt_lang.setMinimumHeight(32)
         self._m3_prompt_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         # Phase 47: friendly M3 prompt language names.
+        # Phase 55 audit M8 — i18n-aware populate helper.
         from .constants import m3_prompt_lang_friendly_options
-        self._m3_prompt_lang.blockSignals(True)
-        try:
-            for code, friendly in m3_prompt_lang_friendly_options():
-                self._m3_prompt_lang.addItem(friendly, userData=code)
-        finally:
-            self._m3_prompt_lang.blockSignals(False)
+        populate_friendly_combo(self._m3_prompt_lang, m3_prompt_lang_friendly_options)
         llayout.addRow(tr_label("settab.m3.lang"), self._m3_prompt_lang)
 
         self._m3_budget = QSpinBox()
