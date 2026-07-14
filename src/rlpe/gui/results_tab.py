@@ -165,7 +165,16 @@ class ResultsTab(QWidget):
 
         # ---- Top: results table ----
         self._table = QTableWidget(0, len(RESULT_COLUMNS))
-        self._table.setHorizontalHeaderLabels([c.label for c in RESULT_COLUMNS])
+        # Phase 53: use the i18n key for column headers on init too.
+        # Before this fix, headers showed the hardcoded English label
+        # ("Species (Latin)", "Panel ID", etc.) regardless of locale
+        # because ``c.label`` is a constant in ``constants.py``.
+        # Translation only happened later via _refresh_texts(), but
+        # that's triggered by i18n.add_listener — first-paint users
+        # saw English even with zh_CN as their preferred language.
+        self._table.setHorizontalHeaderLabels(
+            [i18n._tr(f"restab.col.{c.key}") for c in RESULT_COLUMNS]
+        )
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -357,10 +366,18 @@ class ResultsTab(QWidget):
                 fam = ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy", {}).get("family")
                 if fam != family_filter:
                     continue
-            if has_pbdb != "(any)":
+            if has_pbdb != "__ANY__":
                 pbdb = (r.get("metadata") or {}).get("paleodb")
                 want = has_pbdb == "yes"
-                have = pbdb is not None and pbdb.get("looked_up") and pbdb.get("taxonomy")
+                # Phase 53: wrap in bool() so have is True/False, not
+                # the truthy dict from pbdb.get("taxonomy"). Without
+                # bool(), `True != {'family': 'F1'}` is True and the
+                # row is dropped even when it has PBDB data.
+                have = bool(
+                    pbdb is not None
+                    and pbdb.get("looked_up")
+                    and pbdb.get("taxonomy")
+                )
                 if want != have:
                     continue
             out.append(r)
@@ -409,6 +426,13 @@ class ResultsTab(QWidget):
                 if g.get("latitude") is not None and g.get("longitude") is not None:
                     return f"{g['latitude']:.3f}, {g['longitude']:.3f}"
             return None
+        # Phase 53: page_index lives at metadata.page_index in the
+        # pipeline output, NOT at the row top level (which is None).
+        # Before the fix, the Page column always showed "—" because
+        # the code fell through to ``row.get("page_index")`` which
+        # returned None for every pipeline-produced row.
+        if key == "page_index":
+            return (row.get("metadata") or {}).get("page_index")
         return row.get(key)
 
     # ------------------------------------------------------------------

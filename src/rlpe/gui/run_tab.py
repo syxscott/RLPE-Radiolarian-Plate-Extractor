@@ -544,11 +544,24 @@ class RunTab(QWidget):
         if "use_gpu" in s:
             self._gpu_check.setChecked(bool(s["use_gpu"]))
         if "llm_backend" in s:
-            ix = self._llm_combo.findText(str(s["llm_backend"]))
+            # Phase 53: _llm_combo stores ISO codes in userData and
+            # friendly names as itemText (Phase 47 pattern). Use
+            # findData (the ISO code) instead of findText, otherwise
+            # settings saved as e.g. "minimax" don't match the
+            # friendly label "MiniMax-M3 (推荐)".
+            backend = str(s["llm_backend"])
+            ix = self._llm_combo.findData(backend)
+            if ix < 0:
+                ix = self._llm_combo.findText(backend)
             if ix >= 0:
                 self._llm_combo.setCurrentIndex(ix)
         if "m3_prompt_lang" in s:
-            ix = self._m3_lang.findText(str(s["m3_prompt_lang"]))
+            # Phase 53: same fix as llm_backend — M3 prompt lang combo
+            # uses friendly names in itemText + ISO codes in userData.
+            lang = str(s["m3_prompt_lang"])
+            ix = self._m3_lang.findData(lang)
+            if ix < 0:
+                ix = self._m3_lang.findText(lang)
             if ix >= 0:
                 self._m3_lang.setCurrentIndex(ix)
         if "m3_model" in s:
