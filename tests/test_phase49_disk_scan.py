@@ -335,3 +335,78 @@ def test_project_root_matches_web_api_app_py():
         f"GUI PROJECT_ROOT={PROJECT_ROOT} != Web APP_ROOT={APP_ROOT}. "
         f"GUI disk scan would look at a different directory than Web."
     )
+
+
+# ============================================================
+# 10. Phase 51: GUI startup auto-switches to ResultsTab
+# ============================================================
+def test_main_window_auto_opens_results_tab_when_jobs_loaded(tmp_work_dirs):
+    """Phase 51: after Phase 49's disk scan finds jobs, the MainWindow
+    must auto-open the most recently finished job in the Results tab.
+
+    Without this, the GUI starts on the Run tab (the default empty
+    tab) and the user has to manually navigate to Jobs → double-click
+    a row → Results. Most users opening the GUI want to see the data
+    they already extracted, not run a new job.
+    """
+    from rlpe.gui.main_window import MainWindow
+    from rlpe.gui.constants import TAB_RESULTS, STATUS_DONE
+    mw = MainWindow()
+    try:
+        # The scan must have loaded jobs
+        assert len(mw._jobs_tab._jobs) > 0
+        # The Results tab must have been auto-populated
+        assert mw._results_tab._current_job_id is not None, (
+            "Phase 51: ResultsTab._current_job_id should be set after "
+            "Phase 49 loaded jobs from disk"
+        )
+        assert len(mw._results_tab._all_rows) > 0, (
+            "Phase 51: ResultsTab._all_rows should be populated"
+        )
+        # The visible tab must be Results, not Run
+        assert mw._tabs.currentIndex() == TAB_RESULTS, (
+            f"Phase 51: GUI should switch to Results tab on startup "
+            f"when jobs are loaded, but current tab is {mw._tabs.currentIndex()} "
+            f"(TAB_RUN=0, TAB_JOBS=1, TAB_RESULTS=2)"
+        )
+    finally:
+        mw.close()
+
+
+def test_main_window_no_auto_switch_when_no_jobs(tmp_path, monkeypatch):
+    """Phase 51: if no jobs are loaded (fresh install), the GUI
+    must stay on the default Run tab — not switch to an empty
+    Results tab."""
+    from rlpe.gui.main_window import MainWindow
+    from rlpe.gui.constants import TAB_RUN
+    import rlpe.gui.constants as consts
+    monkeypatch.setattr(consts, "PROJECT_ROOT", tmp_path)
+    mw = MainWindow()
+    try:
+        assert mw._jobs_tab._jobs == {}
+        assert mw._tabs.currentIndex() == TAB_RUN, (
+            f"Phase 51: GUI should stay on Run tab when no jobs "
+            f"are loaded, got tab {mw._tabs.currentIndex()}"
+        )
+    finally:
+        mw.close()
+
+
+def test_main_window_auto_open_picks_most_recent(tmp_work_dirs):
+    """Phase 51: when multiple jobs are loaded, the auto-open must
+    pick the one with the latest finished_at, not just the first
+    one returned by sorted() (alphabetical)."""
+    from rlpe.gui.main_window import MainWindow
+    mw = MainWindow()
+    try:
+        jobs = mw._jobs_tab._jobs
+        assert len(jobs) > 0
+        # Find the job with the largest finished_at
+        latest = max(jobs.values(), key=lambda j: j.finished_at)
+        # The auto-loaded job_id must match
+        assert mw._results_tab._current_job_id == latest.job_id, (
+            f"Phase 51: auto-opened {mw._results_tab._current_job_id!r} "
+            f"but most recent is {latest.job_id!r}"
+        )
+    finally:
+        mw.close()

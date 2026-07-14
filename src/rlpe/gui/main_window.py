@@ -155,18 +155,43 @@ class MainWindow(QMainWindow):
         """Phase 49: scan service_work/ and work/ for completed jobs.
 
         Logs a status-bar message summarising how many were loaded.
+
+        Phase 51: if at least one job was loaded, auto-select the most
+        recently finished one in the Results tab and switch to it. This
+        matches user expectations — when they open the GUI to "see the
+        data I extracted", the Run tab (which is the default empty tab)
+        is the wrong place to start. They want to see results.
         """
         try:
             n = self._jobs_tab.load_recent_jobs_from_disk()
         except Exception as exc:  # never let startup scan block the GUI
             self._log.warning("Phase 49 startup scan failed: %s", exc)
             return
-        if n:
-            self._log.info("Loaded %d recent job(s) from disk", n)
-            # Show a transient status bar message in the user's language.
-            self.statusBar().showMessage(
-                i18n._tr("main.recent_loaded").format(n=n), 5000
+        if not n:
+            return
+        self._log.info("Loaded %d recent job(s) from disk", n)
+        # Show a transient status bar message in the user's language.
+        self.statusBar().showMessage(
+            i18n._tr("main.recent_loaded").format(n=n), 5000
+        )
+        # Phase 51: auto-open the most recently finished job in
+        # the Results tab. Sort by finished_at (descending); fall
+        # back to job_id if finished_at is missing.
+        try:
+            jobs = self._jobs_tab._jobs
+            if not jobs:
+                return
+            latest = max(
+                jobs.values(),
+                key=lambda j: (j.finished_at, j.job_id),
             )
+            self._results_tab.load_job(
+                latest.job_id, latest.rows, latest.output_dir,
+            )
+            self._tabs.setCurrentIndex(TAB_RESULTS)
+        except Exception as exc:
+            # Never let auto-load block GUI startup.
+            self._log.warning("Phase 51 auto-open most recent failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Settings cache
