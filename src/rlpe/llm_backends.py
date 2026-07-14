@@ -281,7 +281,8 @@ class TransformersGemmaBackend(BaseLLMBackend):
                 "confidence": 0.0,
                 "reasoning": f"Transformers inference error: {type(exc).__name__}",
                 "fallback_used": True,
-                "error": str(exc),
+                # M11b: redact API keys that may appear in exception text.
+                "error": _redact_api_keys(str(exc)),
             }
 
     def infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
@@ -345,7 +346,8 @@ class OllamaGemmaBackend(BaseLLMBackend):
                 "confidence": 0.0,
                 "reasoning": f"Ollama inference error: {type(exc).__name__}",
                 "fallback_used": True,
-                "error": str(exc),
+                # M11b: redact API keys that may appear in exception text.
+                "error": _redact_api_keys(str(exc)),
             }
 
     def infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
@@ -377,7 +379,8 @@ class OllamaGemmaBackend(BaseLLMBackend):
                 "confidence": 0.0,
                 "reasoning": f"Ollama text inference error: {type(exc).__name__}",
                 "fallback_used": True,
-                "error": str(exc),
+                # M11b: redact API keys that may appear in exception text.
+                "error": _redact_api_keys(str(exc)),
             }
 
 
@@ -421,7 +424,8 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
                 "confidence": 0.0,
                 "reasoning": f"llama.cpp inference error: {type(exc).__name__}",
                 "fallback_used": True,
-                "error": str(exc),
+                # M11b: redact API keys that may appear in exception text.
+                "error": _redact_api_keys(str(exc)),
             }
 
     def infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
@@ -438,7 +442,8 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
                 "confidence": 0.0,
                 "reasoning": f"llama.cpp text inference error: {type(exc).__name__}",
                 "fallback_used": True,
-                "error": str(exc),
+                # M11b: redact API keys that may appear in exception text.
+                "error": _redact_api_keys(str(exc)),
             }
 
     def _chat_completion(self, panel_image, system_prompt: str, user_prompt: str) -> str:
@@ -625,6 +630,18 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 f"data_outbound_policy must be one of api_full/api_redacted/local_only, "
                 f"got {self.data_outbound_policy!r}"
             )
+        # Phase 54 audit: B2 — SSRF guard. Ollama / LlamaCpp both call
+        # ``_validate_llm_host`` in their ``__post_init__``; MiniMax did
+        # not, so a job with ``MiniMax_endpoint="http://169.254.169.254/..."``
+        # would ship the panel image + caption + the Authorization header
+        # (which carries the API key) to the AWS / GCP / Azure metadata
+        # endpoint. ``_validate_llm_host`` blocks link-local / unspecified /
+        # multicast addresses and non-http(s) schemes; setting
+        # ``RLPE_LLM_ALLOW_ANY_HOST=1`` overrides (for hardened networks).
+        # Skip the check for ``local_only`` because the backend never makes
+        # an outbound call in that mode.
+        if self.data_outbound_policy != "local_only":
+            self.base_url = _validate_llm_host(self.base_url)
         if not self.api_key and self.data_outbound_policy != "local_only":
             raise ValueError(
                 "MiniMax api_key is required (set ANTHROPIC_API_KEY env or pass explicitly)."
@@ -743,7 +760,11 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 last_exc = exc
                 wait = min(2**attempt, 30)
                 logger.warning(
-                    "MiniMax rate-limited (attempt %d), sleeping %ds: %s", attempt + 1, wait, exc
+                    "MiniMax rate-limited (attempt %d), sleeping %ds: %s",
+                    attempt + 1,
+                    wait,
+                    # M11: redact API keys that may appear in exception text.
+                    _redact_api_keys(str(exc)),
                 )
                 time.sleep(wait)
             except anthropic_mod.APIConnectionError as exc:
@@ -753,7 +774,8 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     "MiniMax connection error (attempt %d), sleeping %ds: %s",
                     attempt + 1,
                     wait,
-                    exc,
+                    # M11: redact API keys that may appear in exception text.
+                    _redact_api_keys(str(exc)),
                 )
                 time.sleep(wait)
             except anthropic_mod.APIStatusError as exc:
@@ -768,16 +790,31 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 #   - All other 4xx (400 / 404 / 422): fail fast, the
                 #     request is malformed or the resource doesn't
                 #     exist and retrying won't help.
-                if status >= 500 or status == 429 or status in (401, 403):
+                if status >= 500 or status == 429:
                     wait = min(2**attempt, 30)
                     logger.warning(
                         "MiniMax %d (attempt %d), sleeping %ds: %s",
                         status,
                         attempt + 1,
                         wait,
-                        exc,
+                        # M11: redact API keys that may appear in exception text.
+                        _redact_api_keys(str(exc)),
                     )
                     time.sleep(wait)
+                elif status in (401, 403):
+                    # M10: auth errors (401/403) are not transient — retrying
+                    # wastes quota and won't fix a bad/missing/expired key.
+                    # Count the error and re-raise immediately so callers
+                    # see the real failure on the first attempt.
+                    with self._lock:
+                        self.total_errors += 1
+                    logger.warning(
+                        "MiniMax %d (non-retryable auth error): %s",
+                        status,
+                        # M11: redact API keys that may appear in exception text.
+                        _redact_api_keys(str(exc)),
+                    )
+                    raise
                 else:
                     # 4xx (not retryable) -> count and re-raise immediately
                     with self._lock:
@@ -792,7 +829,8 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 "MiniMax API call failed after %d retries: %s: %s",
                 self.max_retries,
                 type(last_exc).__name__,
-                last_exc,
+                # M11: redact API keys that may appear in exception text.
+                _redact_api_keys(str(last_exc)),
             )
             raise last_exc
         raise RuntimeError("MiniMax call failed without explicit exception")
@@ -1167,7 +1205,16 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
             default=1024,
             name="MiniMax_thinking_budget_tokens",
         ),
-        enable_thinking=_coerce_bool(extra.get("MiniMax_enable_thinking"), default=True),
+        # Phase 54 audit: H4 — the dataclass field default
+        # (``enable_thinking: bool = False`` at line 587) and the env
+        # builder previously disagreed. The dataclass says "default
+        # OFF to avoid surprise API cost"; the builder said
+        # ``default=True`` for the same key, so any user who
+        # instantiated the backend through the config builder (the
+        # common path used by CLI and Web) was running with thinking
+        # ON, paying ≥1024 thinking tokens per panel call. Align the
+        # builder to the dataclass default.
+        enable_thinking=_coerce_bool(extra.get("MiniMax_enable_thinking"), default=False),
         timeout_sec=_coerce_int(
             extra.get("MiniMax_timeout_sec"), default=120, name="MiniMax_timeout_sec"
         ),

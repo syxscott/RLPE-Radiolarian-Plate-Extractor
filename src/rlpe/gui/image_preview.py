@@ -120,8 +120,10 @@ class ImagePreviewWidget(QWidget):
         outer.addWidget(self._view, 1)
 
         # Hint bar
-        self._hint = QLabel("Wheel = zoom · Drag = pan · Double-click = fit · "
-                            "Click a bbox to select")
+        # Phase 54 audit m4: hint was hardcoded English. Wrap with
+        # i18n._tr("preview.hint") so the label translates on
+        # language switch.
+        self._hint = QLabel(i18n._tr("preview.hint"))
         self._hint.setObjectName("metricLabel")
         self._hint.setAlignment(Qt.AlignCenter)
         outer.addWidget(self._hint)
@@ -176,6 +178,14 @@ class ImagePreviewWidget(QWidget):
         self._overlay_bboxes()
 
     def clear(self) -> None:
+        # Phase 54 audit m3: also drop the tracked QGraphicsRectItem
+        # and QGraphicsTextItem references. The old code only called
+        # ``self._scene.clear()`` (which detaches them from the scene
+        # but keeps the Python refs), so the next ``_overlay_bboxes``
+        # call would ``try/except RuntimeError``-swallow stale items
+        # and the user-visible overlays would briefly pile up.
+        self._bbox_items.clear()
+        self._text_items.clear()
         self._scene.clear()
         self._bboxes = []
         self._path_label.setText(i18n._tr("preview.no_image"))

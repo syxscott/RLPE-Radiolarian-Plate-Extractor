@@ -208,8 +208,6 @@ class OCRBackend:
         return tokens
 
     @staticmethod
-
-    @staticmethod
     def _normalize_paddle_result(result: Any) -> list[tuple[list, str, float]]:
         """Phase 38: paddleocr 2.x vs 3.x compatibility.
 
@@ -277,6 +275,13 @@ class OCRBackend:
                     if len(coords) == 4:
                         box = [[coords[0], coords[1]], [coords[2], coords[1]],
                                [coords[2], coords[3]], [coords[0], coords[3]]]
+                    # Phase 54 audit m2: paddleocr 2.x sometimes returns
+                    # 8-element flat lists (the 4 corner coordinates
+                    # in xy order) instead of 4-element [x, y, x+w, y+h]
+                    # bounding boxes. Reassemble into the same 4-point
+                    # shape the rest of the code expects.
+                    elif len(coords) == 8:
+                        box = [[coords[i], coords[i + 1]] for i in (0, 2, 4, 6)]
                 conf = float(rec_scores[i]) if i < len(rec_scores) else 0.0
                 out.append((box, str(text), conf))
             return out
@@ -284,7 +289,7 @@ class OCRBackend:
         if isinstance(result, list):
             for d in result:
                 if isinstance(d, dict):
-                    out.extend(OCREngine._normalize_paddle_result(d))
+                    out.extend(OCRBackend._normalize_paddle_result(d))
             return out
         return out
 

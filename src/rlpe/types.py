@@ -52,6 +52,15 @@ class MatchResult:
     ocr_text: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     paper_metadata: PaperMetadata | None = None
+    # Phase 54 audit: M6 — propagate ``PanelCandidate.panel_index`` so
+    # the published ``PanelRecord.pipeline_panel_index`` is no longer
+    # permanently None. ``PanelCandidate`` had it but the two
+    # ``MatchResult(...)`` construction sites in pipeline.py (lines
+    # ~2643 and ~2833, plus the hybrid enrichment path) never copied
+    # it across, so ``converters.panel_record_from_match`` always read
+    # ``getattr(match, "panel_index", None)`` and got None. Add the
+    # field and wire it at the construction sites.
+    panel_index: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

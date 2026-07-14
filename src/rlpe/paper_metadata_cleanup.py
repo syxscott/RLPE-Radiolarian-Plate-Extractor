@@ -31,9 +31,17 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Phase 54 audit m19 — TTL constant for the Crossref negative cache.
+# 1 hour: long enough to dedupe a single run's repeated DOI lookups
+# (one paper with 5 species of bad DOIs hits the network once instead
+# of 5 times), short enough that transient Crossref outages self-heal
+# without a process restart.
+_CROSSREF_CACHE_TTL_SEC: int = 3600
 
 
 # --- 1) Title garbage detection --------------------------------------------
@@ -146,7 +154,8 @@ def cleanup_authors(authors: list[str] | None) -> list[str]:
 # In-memory cache so repeated lookups for the same DOI don't hit
 # the network. The cache is intentionally per-process (not
 # persistent) — the journal name rarely changes once published.
-_CROSSREF_CACHE: dict[str, str | None] = {}
+# Phase 54 audit m19 — value + timestamp tuple for TTL support.
+_CROSSREF_CACHE: dict[str, tuple[str | None, float]] = {}
 
 
 def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
@@ -162,7 +171,18 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
     suspiciously short, this function provides a fallback.
     """
     if doi in _CROSSREF_CACHE:
-        return _CROSSREF_CACHE[doi]
+        cached_value, cached_at = _CROSSREF_CACHE[doi]
+        # Phase 54 audit m19 — TTL on negative (and positive) cache
+        # entries. Previously a 404 from Crossref was cached forever,
+        # so a paper with 5 species of bad DOIs hit the network 5
+        # times per process AND a previously-networked failure kept
+        # re-warning the operator on every call. 1 hour is long
+        # enough to dedupe within a single run (one paper's 5
+        # retries collapse to 1 network call) and short enough that
+        # transient Crossref outages self-heal without a process
+        # restart.
+        if (time.time() - cached_at) < _CROSSREF_CACHE_TTL_SEC:
+            return cached_value
     try:
         import requests  # local import to keep cold-import cheap
     except ImportError:
@@ -171,7 +191,7 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
         # upgrade to warning. The cached ``None`` still avoids
         # retrying on every record.
         logger.warning("requests not available; cannot call Crossref")
-        _CROSSREF_CACHE[doi] = None
+        _CROSSREF_CACHE[doi] = (None, time.time())
         return None
     url = f"https://api.crossref.org/works/{doi}"
     try:
@@ -185,12 +205,12 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
                 resp.status_code,
                 doi,
             )
-            _CROSSREF_CACHE[doi] = None
+            _CROSSREF_CACHE[doi] = (None, time.time())
             return None
         data = resp.json().get("message", {})
         container = data.get("container-title") or []
         title = container[0] if container else None
-        _CROSSREF_CACHE[doi] = title
+        _CROSSREF_CACHE[doi] = (title, time.time())
         return title
     except Exception as exc:
         # Round 23 audit: network / JSON / TLS errors should be
@@ -198,7 +218,12 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
         logger.warning(
             "Crossref lookup failed for DOI=%s: %s", doi, exc
         )
-        _CROSSREF_CACHE[doi] = None
+        # Phase 54 audit m19 — TTL the network failure too. Without
+        # the cache entry the next call would hit the network again
+        # and the operator would see the same warning in a tight
+        # loop. The TTL keeps both positive and negative entries on
+        # the same self-healing 1-hour schedule.
+        _CROSSREF_CACHE[doi] = (None, time.time())
         return None
 
 

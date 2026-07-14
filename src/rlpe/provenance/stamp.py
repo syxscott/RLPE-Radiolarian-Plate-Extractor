@@ -209,7 +209,17 @@ def build_provenance(
         repo_root: Git working directory. Defaults to the rlpe package root.
     """
     if repo_root is None:
-        repo_root = Path(__file__).resolve().parents[2]
+        # Phase 54 audit: M9 — the previous ``parents[2]`` walked up
+        # to ``src/`` (provenance/stamp.py → provenance → rlpe → src),
+        # not the repo root. ``_git_commit_and_dirty`` would then run
+        # ``git rev-parse`` in ``src/`` (not a git repo) and always
+        # return ``("unknown", False)``, silently breaking the
+        # reproducibility story in every ``run_output.json``.
+        # This is the SAME off-by-one family Phase 50 fixed in
+        # ``src/rlpe/gui/constants.py:PROJECT_ROOT``; match the
+        # depth here so the build_provenance call gets the actual
+        # git working directory.
+        repo_root = Path(__file__).resolve().parents[3]
     commit, dirty = _git_commit_and_dirty(repo_root)
     return Provenance(
         pipeline_version=PIPELINE_VERSION,

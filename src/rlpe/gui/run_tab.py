@@ -93,6 +93,12 @@ class RunTab(QWidget):
         self._current_job_id: str | None = None
         self._build_ui()
         self._connect_signals()
+        # Phase 54 audit m9: register an i18n listener so the
+        # progress format / status strings re-render on language
+        # switch. Previously the format was only refreshed when
+        # ``_refresh_formats`` was called manually, which the parent
+        # MainWindow only did on certain paths.
+        i18n.add_listener(lambda _lang: self._refresh_formats())
 
     # ------------------------------------------------------------------
     # UI
@@ -748,7 +754,13 @@ class RunTab(QWidget):
             if self._progress.maximum() != total:
                 self._progress.setRange(0, total)
             self._progress.setValue(current)
-            self._progress.setFormat(f"{{value}} / {{maxValue}}  ·  {{message}}".replace("{value}", "%v").replace("{maxValue}", "%m").replace("{message}", message))
+            # Phase 54 audit m9: QProgressBar.setFormat treats '%' as
+            # a format specifier. Progress messages can contain '%'
+            # (e.g. "matched 95% of panels") which would raise
+            # ValueError from the underlying QString formatter. Escape
+            # any literal '%' before passing the message in.
+            safe_message = (message or "").replace("%", "%%")
+            self._progress.setFormat(f"{{value}} / {{maxValue}}  ·  {{message}}".replace("{value}", "%v").replace("{maxValue}", "%m").replace("{message}", safe_message))
         else:
             self._progress.setRange(0, 0)
         self._progress_msg.setText(message or "Working…")

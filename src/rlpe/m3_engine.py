@@ -64,11 +64,34 @@ def _safe_json_loads(text: str) -> Any:
         pass
     # 2) First array match
     arr_match = _JSON_ARRAY_RE.search(text)
+    # Track whether step 2 actually *attempted* a parse (i.e. the regex
+    # matched a [...] substring) so step 4 (balanced-object recovery)
+    # only runs as a recovery for a *broken array*. Without this gate,
+    # M20 made step 4 run for every non-array input too, which turned
+    # a single-object preamble like ``"Here is the result: {\"a\": 1}
+    # Done."`` into a list ``[{"a": 1}]`` and broke the
+    # ``_safe_json_loads_with_preamble`` regression test.
+    arr_attempted_and_failed = False
     if arr_match:
         try:
             return json.loads(arr_match.group(0))
         except Exception:
-            pass
+            arr_attempted_and_failed = True
+    # M20: when the array regex matched but failed to parse (typical
+    # for LLM output like "[obj, obj, obj]" missing a comma or with
+    # trailing junk), try the balanced-objects recovery *before*
+    # falling back to the first-object regex. The first-object regex
+    # often grabs an *interior* object of the broken array (e.g. the
+    # second element), hiding the rest of the data. The balanced-
+    # objects pass returns every valid object and lets the caller
+    # decide which is the "real" answer.
+    # 4) Best-effort: find every balanced {...} block in the text and
+    #    parse them individually. Useful when the LLM emits a malformed
+    #    array (missing comma, extra brace) but each object is valid.
+    if arr_attempted_and_failed:
+        items = _extract_balanced_objects(text)
+        if items:
+            return items
     # 3) First object match
     obj_match = _JSON_OBJECT_RE.search(text)
     if obj_match:
@@ -76,12 +99,6 @@ def _safe_json_loads(text: str) -> Any:
             return json.loads(obj_match.group(0))
         except Exception:
             pass
-    # 4) Best-effort: find every balanced {...} block in the text and
-    #    parse them individually. Useful when the LLM emits a malformed
-    #    array (missing comma, extra brace) but each object is valid.
-    items = _extract_balanced_objects(text)
-    if items:
-        return items
     raise ValueError(f"No JSON object/array found in text: {text[:200]!r}")
 
 
@@ -164,7 +181,21 @@ def _telemetry_subset(raw: dict[str, Any] | None) -> dict[str, Any]:
         out["MiniMax_model_version"] = str(mv)
     usage = raw.get("usage")
     if isinstance(usage, dict):
-        out["MiniMax_usage"] = dict(usage)
+        # M12: whitelist only safe usage fields. The raw ``usage`` dict from
+        # the provider can contain PII or internal fields (cache TTL,
+        # invocation id, organization id, routing data, etc.). We only
+        # forward the well-known token accounting fields.
+        safe_usage: dict[str, Any] = {}
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+        ):
+            if key in usage:
+                safe_usage[key] = usage[key]
+        if safe_usage:
+            out["MiniMax_usage"] = safe_usage
     return out
 
 
@@ -789,24 +820,22 @@ def _regex_expand_label_list(s: str) -> list[str]:
             try:
                 lo, hi = int(m.group(1)), int(m.group(2))
                 suffix = m.group(3)
+                # Track which endpoint the user actually attached the
+                # suffix to in the original string — by value, not by
+                # the post-swap ``hi``. The user's "5-3b" means
+                # ``3b``; the suffix belongs to the value 3, not the
+                # numerically-largest label of the expanded range.
+                suffix_on_lo = suffix and lo > hi
                 if lo > hi:
-                    # Reversed range like "5-3" — semantics are
-                    # ambiguous (typo? upside-down printing?). Fall
-                    # back to the canonical low→high order. The
-                    # trailing letter suffix in the original string
-                    # was attached to ``hi``; after swapping, it
-                    # belongs to the smaller number, so we move it
-                    # there to preserve the "letter applies to the
-                    # specifically mentioned number" semantics.
                     lo, hi = hi, lo
-                    # Suffix stays attached to whatever the user
-                    # typed last; in canonical order that is now
-                    # the larger number. Keep it on `hi` (the same
-                    # behaviour as a non-reversed range) — the
-                    # alternative (move to lo) is more surprising
-                    # since a "12-14b" caption clearly means the
-                    # 'b' is on 14, not on 12.
                 expanded = [str(x) for x in range(lo, hi)]
+                # m16: put the suffix on whichever endpoint the user
+                # attached it to, not unconditionally on the new
+                # ``hi`` (the higher numeric value). For a non-
+                # reversed range like "12-14b" the suffix still
+                # lands on ``hi`` because ``suffix_on_lo`` is False.
+                if suffix_on_lo:
+                    expanded[0] = str(lo) + suffix
                 last = str(hi) + suffix
                 expanded.append(last)
                 out.extend(expanded)
@@ -1817,14 +1846,38 @@ class M3Engine:
                 continue
             if isinstance(data, dict):
                 results.append(data)
-                # Capture the last successful raw so that the winning
-                # PanelMatch can carry backend telemetry (request id, cost,
-                # usage, model version) into MatchResult metadata. Without
-                # this plumbing, M3 stage-4 calls never reach /system/llm-
-                # status because the cost only lived transiently inside
-                # ``raw``. Lossy on multi-sample self-consistency: last
-                # successful sample wins (one request's worth of cost).
-                last_raw_kept = raw
+                # Accumulate backend telemetry across all self-consistency
+                # samples so the winning PanelMatch reports the *total* cost
+                # and merged token usage, not just the last sample's worth
+                # (M13: previously ``last_raw_kept`` only took the final
+                # sample, undercounting actual spend in ``/system/llm-
+                # status`` for multi-sample self-consistency). ``cost_cny``
+                # is summed (each call is a separate request); ``usage``
+                # is merged with int fields summed and list fields
+                # concatenated so per-call breakdowns are preserved.
+                if last_raw_kept is None:
+                    last_raw_kept = dict(raw)
+                else:
+                    try:
+                        last_raw_kept["cost_cny"] = float(
+                            last_raw_kept.get("cost_cny") or 0.0
+                        ) + float(raw.get("cost_cny") or 0.0)
+                    except (TypeError, ValueError):
+                        pass
+                    prev_usage = last_raw_kept.get("usage")
+                    new_usage = raw.get("usage")
+                    if isinstance(prev_usage, dict) and isinstance(new_usage, dict):
+                        merged: dict[str, Any] = dict(prev_usage)
+                        for k, v in new_usage.items():
+                            if isinstance(v, list):
+                                merged[k] = list(merged.get(k) or []) + v
+                            elif isinstance(v, (int, float)):
+                                merged[k] = (merged.get(k) or 0) + v
+                            else:
+                                merged[k] = v
+                        last_raw_kept["usage"] = merged
+                    elif isinstance(new_usage, dict):
+                        last_raw_kept["usage"] = dict(new_usage)
         if not results:
             # Two distinct failure modes that the pipeline treats very
             # differently. The previous code conflated them by setting
@@ -1882,7 +1935,23 @@ class M3Engine:
         for r in results:
             key = (_hashable(r.get("label")), _hashable(r.get("species")))
             votes.setdefault(key, []).append(r)
-        best_key, best_group = max(votes.items(), key=lambda kv: len(kv[1]))
+        # m14: tie-break votes deterministically. ``max(..., key=len)`` alone
+        # picks the first-inserted group when two groups have the same
+        # vote count — that depends on dict insertion order (i.e. the
+        # order in which the LLM emitted samples) and is not reproducible
+        # across runs. Add a secondary key that prefers (1) the group
+        # with the most votes *and* the highest single-sample confidence
+        # within it, so the tie is broken by a stable signal.
+        best_key, best_group = max(
+            votes.items(),
+            key=lambda kv: (
+                len(kv[1]),
+                max(
+                    (float(r.get("confidence") or 0) for r in kv[1]),
+                    default=0.0,
+                ),
+            ),
+        )
         best = max(best_group, key=lambda r: float(r.get("confidence") or 0))
         try:
             conf = float(best.get("confidence", 0.0))
@@ -1966,6 +2035,13 @@ class M3Engine:
         for item in data:
             if not isinstance(item, dict):
                 continue
+            # M14: drop critiques with empty/missing panel_id. The previous
+            # ``str(item.get("panel_id") or "")`` silently turned None into
+            # "" and then matched *every* panel in downstream code — that
+            # cascade-applied the verdict to the whole plate. Skip empty
+            # ids so the critique either names a panel or is rejected.
+            if not item.get("panel_id"):
+                continue
             verdict = str(item.get("verdict") or "").strip().lower()
             if verdict not in {"agree", "disagree", "uncertain"}:
                 verdict = "uncertain"
@@ -2039,6 +2115,19 @@ class M3Engine:
     def _infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         if self.backend is None:
             return {"fallback_used": True, "error": "no backend"}
+        # M19: ``enable_thinking`` is shared mutable state on
+        # ``self.backend``. The first call below reads it without
+        # holding ``_thinking_retry_lock`` (only the retry path does),
+        # so two concurrent workers can race: thread A flips the flag
+        # to False to retry while thread B is mid-first-call and ends
+        # up running with the wrong setting. The robust fix is a
+        # per-call ``enable_thinking`` parameter plumbed through
+        # ``infer_text``/``infer_panel`` (not done here — too large
+        # a refactor). Until that lands, callers should not invoke
+        # ``_infer_text``/``_infer_vision`` from multiple threads
+        # against a backend whose ``enable_thinking`` is being
+        # mutated. The retry path below is at least atomic via the
+        # RLock so the race is bounded to first-call vs. retry.
         try:
             res = self.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
         except Exception as exc:
@@ -2073,6 +2162,16 @@ class M3Engine:
     ) -> dict[str, Any]:
         if self.backend is None:
             return {"fallback_used": True, "error": "no backend"}
+        # M19: see ``_infer_text`` for the same caveat. The first
+        # call below reads ``self.backend.enable_thinking`` without
+        # holding ``_thinking_retry_lock`` (the retry path does hold
+        # it), so concurrent workers can race: a thread retrying
+        # with thinking=False can flip the flag while another
+        # thread's first call is reading it. The robust fix is a
+        # per-call ``enable_thinking`` parameter on the backend
+        # (planned, not implemented in this round). The retry
+        # path below is atomic via the RLock; the first call's race
+        # window is small but real.
         # First attempt — with thinking enabled (the default).
         try:
             res = self.backend.infer_panel(

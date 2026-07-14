@@ -1874,7 +1874,19 @@ def _build_figures_from_plate_captions(
         for img in images:
             p = int(img.get("page number", 0) or 0)
             if page_lo <= p <= page_hi:
-                img_id = int(img.get("id", -1))
+                # Phase 54 audit: H3 — guard ``int()`` against non-numeric
+                # ``id`` values. Some OD JSON versions write ids as
+                # strings like ``"p011f1"`` (observed in Boughdiri 2007);
+                # the previous ``int(img.get("id", -1))`` raised
+                # ``ValueError`` that propagated up to ``extract()``'s
+                # outer ``except`` and turned the entire PDF into
+                # ``success=False`` with 0 figures. Round 21 fixed the
+                # same pattern in ``_extract_figures`` but missed this
+                # second call site.
+                try:
+                    img_id = int(img.get("id", -1))
+                except (TypeError, ValueError):
+                    img_id = -1
                 if img_id not in claimed_image_ids:
                     candidates.append(img)
 
@@ -1896,7 +1908,13 @@ def _build_figures_from_plate_captions(
         # Mark these image IDs as claimed so the next plate's forward search
         # doesn't re-grab them.
         for img in candidates:
-            img_id = int(img.get("id", -1))
+            # Phase 54 audit: H3 — see comment above. Skip non-numeric
+            # ids entirely; the ``claimed_image_ids`` set only exists to
+            # avoid double-grabbing, so dropping one is harmless.
+            try:
+                img_id = int(img.get("id", -1))
+            except (TypeError, ValueError):
+                continue
             if img_id >= 0:
                 claimed_image_ids.add(img_id)
 

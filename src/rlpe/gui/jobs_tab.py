@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressBar,
+    QStyle,
     QPushButton,
     QStyledItemDelegate,
     QStyleOptionProgressBar,
@@ -135,8 +136,16 @@ class _ProgressCellDelegate(QStyledItemDelegate):
             progress_bar_option.progress = index.data(Qt.UserRole + 1) or 0
             progress_bar_option.text = f"{progress_bar_option.progress} / {progress_bar_option.maximum}"
             progress_bar_option.textVisible = True
+            # Phase 54 audit: B1 — was using
+            # ``QStyledItemDelegate.PrimitiveElement.ProgressBar``, which
+            # does not exist (``QStyledItemDelegate`` has no
+            # ``PrimitiveElement`` attribute). The error fired inside
+            # ``paint()``, propagating an ``AttributeError`` out of the
+            # Qt paint call and corrupting the jobs-tab render. The
+            # correct element for ``QStyle.drawControl`` is the
+            # ``ControlElement`` ``CE_ProgressBar`` (value 10).
             QApplication.style().drawControl(
-                QStyledItemDelegate.PrimitiveElement.ProgressBar,
+                QStyle.CE_ProgressBar,
                 progress_bar_option,
                 painter,
             )

@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import BATCH_DIALOG_DEFAULT_SIZE
-from .i18n_widgets import tr_button, tr_checkbox, tr_label
+from .i18n_widgets import tr_button, tr_checkbox, tr_groupbox, tr_label
 from .styles import SPACE_M, SPACE_S
 from .utils import file_size_human, get_gui_logger, short_path
 from . import i18n
@@ -64,14 +64,20 @@ class BatchDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("Batch manager — Queue multiple PDFs")
+        # Phase 54 audit m5: window title was hardcoded English. Use
+        # the i18n key batch.title so the title translates on
+        # language switch.
+        self.setWindowTitle(i18n._tr("batch.title"))
         self.resize(*BATCH_DIALOG_DEFAULT_SIZE)
         outer = QVBoxLayout(self)
         outer.setSpacing(SPACE_M)
         outer.setContentsMargins(SPACE_M, SPACE_M, SPACE_M, SPACE_M)
 
         # ---- File list ----
-        files_group = QGroupBox("📚 PDFs to process (in serial order)")
+        # Phase 54 audit m5: group title was hardcoded English. Use
+        # tr_groupbox("batch.files") so it translates on language
+        # switch.
+        files_group = tr_groupbox("batch.files")
         fg_layout = QVBoxLayout(files_group)
         fg_layout.setSpacing(SPACE_S)
 
@@ -116,7 +122,10 @@ class BatchDialog(QDialog):
         outer.addWidget(files_group, 1)
 
         # ---- Options ----
-        opts_group = QGroupBox("⚙️ Batch options")
+        # Phase 54 audit m5: group title was hardcoded English. Use
+        # tr_groupbox("batch.options") so it translates on language
+        # switch.
+        opts_group = tr_groupbox("batch.options")
         og = QFormLayout(opts_group)
         og.setHorizontalSpacing(SPACE_M)
         og.setVerticalSpacing(SPACE_S)
@@ -156,7 +165,11 @@ class BatchDialog(QDialog):
         bar.addWidget(cancel_btn)
 
         start_btn = tr_button("batch.start")
-        start_btn.setObjectName("primary")
+        # Phase 54 audit m5: setObjectName("primary") was clobbered by
+        # tr_button which sets the object name to the i18n key. Use
+        # setProperty("class", "primary") so the stylesheet can still
+        # target the start button.
+        start_btn.setProperty("class", "primary")
         start_btn.clicked.connect(self._on_start)
         bar.addWidget(start_btn)
 

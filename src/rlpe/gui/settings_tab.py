@@ -157,7 +157,17 @@ class SettingsTab(QWidget):
                 self._theme_combo.addItem(friendly, userData=code)
         finally:
             self._theme_combo.blockSignals(False)
-        self._theme_combo.currentIndexChanged.connect(self._on_theme_change)
+        # Phase 54 audit: M2 — ``currentIndexChanged`` emits the
+        # *index* (int), not the userData. The previous direct
+        # connection passed that int to ``_on_theme_change(theme: str)``,
+        # which then compared ``theme == "dark"`` (False for any int)
+        # and silently routed every selection to the system theme.
+        # Use a lambda to forward the userData string instead. The
+        # saved value was already correct because ``_save`` reads
+        # ``currentData()``; only the live preview was broken.
+        self._theme_combo.currentIndexChanged.connect(
+            lambda _idx: self._on_theme_change(self._theme_combo.currentData())
+        )
         alayout.addRow(tr_label("settab.theme"), self._theme_combo)
 
         # Language picker (Phase 33 — bilingual UI)
@@ -175,11 +185,11 @@ class SettingsTab(QWidget):
         self._lang_combo.currentIndexChanged.connect(self._on_lang_change)
         alayout.addRow(tr_label("settab.lang"), self._lang_combo)
 
-        # Phase 34: add the title to the outer layout so it shows at the
-        # top of the settings tab. (Previously the title QLabel was
-        # created but never inserted, so it was invisible — which is
-        # also why the i18n refresh never reached it.)
-        body_layout.addWidget(self._title_label)
+        # Phase 54 audit M24: do NOT add self._title_label again
+        # here. The title QLabel is already inserted at the top of
+        # ``body_layout`` above. Re-adding it would put the title in
+        # the layout twice and crash Qt with "QLabel already has a
+        # parent / is already a child of the layout".
         body_layout.addWidget(appearance)
 
         # ---- Default directories ----
@@ -391,7 +401,17 @@ class SettingsTab(QWidget):
         return row
 
     def _pick_dir(self, line_edit: QLineEdit, kind: str) -> None:
-        path = QFileDialog.getExistingDirectory(self, f"Choose {kind}", line_edit.text() or str(__file__))
+        # Phase 54 audit m20 — ``str(__file__)`` is a .py file path
+        # inside the source tree; handing it to a directory chooser
+        # was a small bug. Fall back to the user's home directory,
+        # which is a sensible default for "where do I want to point
+        # the PDF folder" dialogs.
+        from pathlib import Path
+        path = QFileDialog.getExistingDirectory(
+            self,
+            i18n._tr("common.choose_dir").format(kind=kind),
+            line_edit.text() or str(Path.home()),
+        )
         if path:
             line_edit.setText(path)
 

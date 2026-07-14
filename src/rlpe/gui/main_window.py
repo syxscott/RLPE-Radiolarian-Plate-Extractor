@@ -204,7 +204,12 @@ class MainWindow(QMainWindow):
         Run tab doesn't have to read QSettings directly.
         """
         return {
-            "last_pdf_dir": str(self._qsettings.value(QS_KEY_LAST_DIR, str(__file__))),
+            # Phase 54 audit m6: default was str(__file__) which
+            # pointed at main_window.py inside the source tree. On
+            # first run this caused the file dialog to open inside
+            # src/rlpe/gui, which is rarely where a user's PDFs
+            # actually live. Fall back to the user's home directory.
+            "last_pdf_dir": str(self._qsettings.value(QS_KEY_LAST_DIR, str(Path.home()))),
             "last_export_dir": str(self._qsettings.value(QS_KEY_LAST_EXPORT_DIR, str(Path.home()))),
             "grobid_url": self._qsettings.value("grobid_url", "http://localhost:8070"),
             "grobid_max_retries": int(self._qsettings.value("grobid_max_retries", 3)),
@@ -612,7 +617,17 @@ class MainWindow(QMainWindow):
         # Update jobs tab
         self._jobs_tab.mark_done(job_id, rows)
         # Update results tab
-        job_dir = self._settings.get("last_export_dir", "")
+        # Phase 54 audit: M8 — prefer the per-job output_dir recorded on
+        # the JobRecord (if any) over the global ``last_export_dir``
+        # setting. The previous code always used the global setting, so
+        # a batch job with per-job output dirs opened the wrong
+        # folder's exports. Fall back to the global setting for legacy
+        # single-PDF jobs that never recorded their own output_dir.
+        job_record = self._jobs_tab._jobs.get(job_id) if hasattr(self, "_jobs_tab") else None
+        job_dir = (
+            getattr(job_record, "output_dir", None)
+            or self._settings.get("last_export_dir", "")
+        )
         self._results_tab.load_job(job_id, rows, job_dir)
         # Status
         self._set_status("main.done", id=job_id, rows=f"{len(rows):,}")
@@ -621,6 +636,20 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(2000, lambda: self._mini_progress.setVisible(False))
         # Auto-switch to results tab
         self._tabs.setCurrentIndex(TAB_RESULTS)
+        # Phase 54 audit: M3 — advance the serial batch queue. The
+        # previous version declared a batch helper at line 702-719 that
+        # started the *first* job and bumped the index, but nothing
+        # invoked ``_start_next_batch_job`` on completion. The dangling
+        # comment at line 719 ("Patch into the run tab to advance the
+        # batch on each completion") was never implemented, so a
+        # 10-PDF batch would actually only run the first one. We now
+        # re-enter the helper here whenever a batch is in flight and
+        # there are still PDFs to process.
+        if (
+            getattr(self, "_batch_pdfs", None)
+            and self._batch_index < len(self._batch_pdfs)
+        ):
+            self._start_next_batch_job()
 
     def _on_job_failed(self, job_id: str, error: str) -> None:
         self._jobs_tab.mark_failed(job_id, error)

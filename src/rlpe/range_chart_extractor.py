@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -350,6 +351,15 @@ class RangeChartResult:
     other_fossils: list[str] = field(default_factory=list)
     confidence: float = 0.0
     raw_response: str = ""
+    # M21: surface API/parse failures to callers. Previously the
+    # function returned an empty ``RangeChartResult`` for any HTTP
+    # error, JSON parse error, or transport error — downstream code
+    # couldn't distinguish "the API said no range data here" from
+    # "we never got a response". ``status`` is ``"ok"`` on success
+    # and ``"error"`` on any failure; ``error`` carries the human-
+    # readable reason.
+    status: str = "ok"
+    error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -590,13 +600,29 @@ def extract_range_chart(
                         figure_id,
                         resp.text[:200],
                     )
+                    # M21: don't return a silent empty result. Mark
+                    # the result as an error and attach a short
+                    # description so callers / the UI can surface
+                    # the actual failure mode.
+                    result.status = "error"
+                    result.error = f"HTTP {resp.status_code}: {resp.text[:200]}"
                     return result
                 try:
                     payload = resp.json()
-                except ValueError:
+                except ValueError as exc:
+                    # M21: JSON-decode failures used to be silent
+                    # (empty result, no error). Mark them as errors
+                    # with the underlying message.
+                    result.status = "error"
+                    result.error = f"JSON decode error: {exc}"
                     return result
         except requests.RequestException as exc:
             logger.warning("range_chart API call failed for %s/%s: %s", paper_id, figure_id, exc)
+            # M21: transport-level failures (DNS, connect, timeout)
+            # used to return an empty result indistinguishable from
+            # success-with-no-data. Mark as error.
+            result.status = "error"
+            result.error = str(exc)
             return result
     finally:
         # Belt-and-braces: ``with`` already closed, but if the
@@ -658,6 +684,14 @@ def extract_range_chart(
         result.confidence = float(parsed.get("confidence", 0.0))
     except (TypeError, ValueError):
         result.confidence = 0.0
+    # M21: clamp confidence into [0.0, 1.0]. The LLM occasionally
+    # emits NaN, Inf, or out-of-range floats (e.g. 1.5 or -0.1);
+    # downstream sort/display code then does the wrong thing
+    # (NaN sort order is undefined, 1.5 breaks colour-bar binning).
+    # Treat non-finite values as 0.0 and clip the rest into range.
+    if not math.isfinite(result.confidence):
+        result.confidence = 0.0
+    result.confidence = max(0.0, min(1.0, result.confidence))
 
     logger.info(
         "range_chart %s/%s: %d sections, %d species_ranges, %d biozones, conf=%.2f",

@@ -898,80 +898,106 @@ def _resolve_job_root(job_id: str) -> Path | None:
 
 def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
     """Delete a single job. Returns a per-job status dict."""
-    job = RESULT_CACHE.get(job_id)
-    if not job:
-        return {"job_id": job_id, "status": "not_found"}
-    # Refuse to delete a running OR queued job. For "running": the
-    # background thread is still alive and will keep writing to
-    # RESULT_CACHE[job_id] (heartbeat, progress, status transitions,
-    # final result). Popping the entry from under it surfaces as
-    # KeyError in the worker thread — and the except handler in
-    # _run_job also reads from RESULT_CACHE[job_id], so the failure
-    # propagates as an unhandled error. For "queued": the background
-    # task is scheduled but hasn't started yet; when it does, its
-    # first line of work is `RESULT_CACHE[job_id]["status"] =
-    # "running"`, which raises KeyError on the deleted entry, then the
-    # except handler tries the same write and raises again.
-    # For "awaiting_user_decision": the background thread is BLOCKED
-    # inside ``_web_fallback_popup`` waiting on an event. Popping the
-    # cache entry under it releases the wait (via the "if jid not in
-    # FALLBACK_PENDING" check) but the thread will then return to
-    # ``_apply_gemma_with_fallback`` and eventually try to write back
-    # to ``RESULT_CACHE[job_id]`` — KeyError. To safely delete, the
-    # user must cancel the job first (which sets status="cancelled");
-    # the worker thread sees this in its progress callback, raises
-    # _JobCancelledError, and exits cleanly.
-    if job.get("status") in {"running", "queued", "awaiting_user_decision"}:
-        return {
-            "job_id": job_id,
-            "status": "refused",
-            "error": (
-                f"Job is currently {job.get('status')}; cancel it first via "
-                f"/jobs/{job_id}/cancel, then delete."
-            ),
-        }
-    files_removed = False
-    bytes_freed = 0
-    cli_loaded = False
-    if delete_files:
-        root = _resolve_job_root(job_id)
-        if root is not None and root.exists():
-            # Refuse to delete CLI-loaded jobs' files. Those jobs were
-            # discovered by ``_load_existing_jobs_from_disk`` from a
-            # previous ``rlpe.cli`` run whose on-disk layout lives at
-            # ``APP_ROOT/work`` — a DIRECTORY SHARED ACROSS ALL CLI
-            # RUNS. The previous code allowed ``shutil.rmtree(root)``
-            # to wipe the entire dev work/ tree (including any
-            # unrelated CLI runs the user has done since the server
-            # started). For CLI-loaded jobs we drop the in-memory
-            # cache entry but leave the on-disk files alone; the user
-            # can still delete them from a normal shell.
-            job = RESULT_CACHE.get(job_id) or {}
-            if job.get("_root") and Path(job["_root"]).resolve() == (APP_ROOT / "work").resolve():
-                cli_loaded = True
-            else:
-                # Only allow deletion under known safe roots.
-                safe_roots = [WORK_DIR.resolve()]
-                if not any(_is_relative_to(root, sr) for sr in safe_roots):
-                    return {
-                        "job_id": job_id,
-                        "status": "refused",
-                        "error": f"root {root} not under safe dirs",
-                    }
-                try:
-                    # Compute size before deletion for reporting.
-                    bytes_freed = sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
-                    shutil.rmtree(root)
-                    files_removed = True
-                except Exception as exc:
-                    return {
-                        "job_id": job_id,
-                        "status": "file_error",
-                        "error": str(exc),
-                    }
-    # Always remove from in-memory caches.
-    RESULT_CACHE.pop(job_id, None)
-    FALLBACK_PENDING.pop(job_id, None)
+    # Phase 54 audit: B3 — wrap the entire status-check + cache-read +
+    # filesystem-delete + cache-pop sequence in a single critical
+    # section. The previous implementation read ``status`` at line 924
+    # without holding ``RESULT_LOCK``, then performed ``shutil.rmtree``
+    # at line 964 outside the lock. A worker thread that flipped
+    # status to ``"running"`` between the two steps (legal: the
+    # pre-flight cancel check at line 1696-1709 is the only thing
+    # preventing it, and that only covers the initial flip — later
+    # resume / re-launch paths don't re-check here) would have its
+    # ``WORK_DIR/job_id`` deleted from under it, losing partially-
+    # written ``matches.jsonl`` / ``run_output.json`` / ``llm_usage.json``.
+    #
+    # We do the filesystem work INSIDE the lock because
+    # ``shutil.rmtree`` on a large job is fast (<1s for hundreds of
+    # MB) and the lock is per-job — concurrent ``cancel`` / ``status``
+    # / ``results`` endpoints only block when THIS specific job_id is
+    # being purged. A separate, finer-grained lock would be overkill
+    # for the current traffic pattern.
+    with RESULT_LOCK:
+        job = RESULT_CACHE.get(job_id)
+        if not job:
+            return {"job_id": job_id, "status": "not_found"}
+        # Refuse to delete a running OR queued job. For "running": the
+        # background thread is still alive and will keep writing to
+        # RESULT_CACHE[job_id] (heartbeat, progress, status transitions,
+        # final result). Popping the entry from under it surfaces as
+        # KeyError in the worker thread — and the except handler in
+        # _run_job also reads from RESULT_CACHE[job_id], so the failure
+        # propagates as an unhandled error. For "queued": the background
+        # task is scheduled but hasn't started yet; when it does, its
+        # first line of work is `RESULT_CACHE[job_id]["status"] =
+        # "running"`, which raises KeyError on the deleted entry, then the
+        # except handler tries the same write and raises again.
+        # For "awaiting_user_decision": the background thread is BLOCKED
+        # inside ``_web_fallback_popup`` waiting on an event. Popping the
+        # cache entry under it releases the wait (via the "if jid not in
+        # FALLBACK_PENDING" check) but the thread will then return to
+        # ``_apply_gemma_with_fallback`` and eventually try to write back
+        # to ``RESULT_CACHE[job_id]`` — KeyError. To safely delete, the
+        # user must cancel the job first (which sets status="cancelled");
+        # the worker thread sees this in its progress callback, raises
+        # _JobCancelledError, and exits cleanly.
+        if job.get("status") in {"running", "queued", "awaiting_user_decision"}:
+            return {
+                "job_id": job_id,
+                "status": "refused",
+                "error": (
+                    f"Job is currently {job.get('status')}; cancel it first via "
+                    f"/jobs/{job_id}/cancel, then delete."
+                ),
+            }
+        # Phase 54 audit: B4 — snapshot ``_root`` once under the lock so
+        # the second lock-free ``RESULT_CACHE.get`` at the previous line
+        # 949 is no longer a race. We also use this snapshot for the
+        # ``_is_relative_to`` safety check and the rmtree itself, so the
+        # entire purge uses a single immutable view of the job's root.
+        cached_root_str = job.get("_root")
+        files_removed = False
+        bytes_freed = 0
+        cli_loaded = False
+        if delete_files and cached_root_str:
+            root = Path(cached_root_str).resolve()
+            if root.exists():
+                # Refuse to delete CLI-loaded jobs' files. Those jobs were
+                # discovered by ``_load_existing_jobs_from_disk`` from a
+                # previous ``rlpe.cli`` run whose on-disk layout lives at
+                # ``APP_ROOT/work`` — a DIRECTORY SHARED ACROSS ALL CLI
+                # RUNS. The previous code allowed ``shutil.rmtree(root)``
+                # to wipe the entire dev work/ tree (including any
+                # unrelated CLI runs the user has done since the server
+                # started). For CLI-loaded jobs we drop the in-memory
+                # cache entry but leave the on-disk files alone; the user
+                # can still delete them from a normal shell.
+                if root == (APP_ROOT / "work").resolve():
+                    cli_loaded = True
+                else:
+                    # Only allow deletion under known safe roots.
+                    safe_roots = [WORK_DIR.resolve()]
+                    if not any(_is_relative_to(root, sr) for sr in safe_roots):
+                        return {
+                            "job_id": job_id,
+                            "status": "refused",
+                            "error": f"root {root} not under safe dirs",
+                        }
+                    try:
+                        # Compute size before deletion for reporting.
+                        bytes_freed = sum(
+                            f.stat().st_size for f in root.rglob("*") if f.is_file()
+                        )
+                        shutil.rmtree(root)
+                        files_removed = True
+                    except Exception as exc:
+                        return {
+                            "job_id": job_id,
+                            "status": "file_error",
+                            "error": str(exc),
+                        }
+        # Always remove from in-memory caches.
+        RESULT_CACHE.pop(job_id, None)
+        FALLBACK_PENDING.pop(job_id, None)
     return {
         "job_id": job_id,
         # ``deleted`` = removed from cache. For CLI-loaded jobs we
@@ -987,8 +1013,25 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
 
 
 class BatchDeleteRequest(BaseModel):
-    job_ids: list[str]
+    # Phase 54 audit: M16 — cap per-id length and validate the shape.
+    # A previous version accepted up to 200 ids of any length, so a
+    # single 800 KB payload (200 × 4 KB strings) could trigger 200
+    # concurrent ``root.rglob("*")`` walks. 64 chars matches the
+    # hex/UUID lengths RLPE actually generates; the regex keeps typos
+    # from accidentally matching valid jobs in subsequent operations.
+    model_config = ConfigDict(extra="forbid")
+    job_ids: list[str] = Field(..., max_length=200)
     delete_files: bool = True
+
+    @field_validator("job_ids")
+    @classmethod
+    def _validate_job_ids(cls, v: list[str]) -> list[str]:
+        for jid in v:
+            if not isinstance(jid, str) or len(jid) > 64 or len(jid) == 0:
+                raise ValueError(
+                    f"job_id must be a non-empty string ≤ 64 chars, got {jid!r}"
+                )
+        return v
 
 
 @app.delete("/jobs/{job_id}")
@@ -1018,13 +1061,27 @@ def batch_delete_jobs(req: BatchDeleteRequest) -> dict[str, Any]:
 @app.get("/jobs/{job_id}/MiniMax-fallback")
 def get_MiniMax_fallback(job_id: str) -> dict[str, Any]:
     """Frontend polls this endpoint to detect when MiniMax API needs a user decision."""
-    pending = FALLBACK_PENDING.get(job_id)
-    if not pending:
-        return {"status": "none", "job_id": job_id}
+    # Phase 54 audit: B5 — hold ``RESULT_LOCK`` around the read so we
+    # can't race ``cancel_job`` (which pops under the same lock) or
+    # ``_web_fallback_popup`` (which inserts under the same lock).
+    # Without the lock, the dict.get is GIL-atomic for the single key,
+    # but the subsequent ``pending.get("error_info", {})`` reads other
+    # fields on the returned value — if cancel pops the entry between
+    # those two reads, the response is a mix of pre- and post-pop state.
+    # ``dict(pending)`` snapshots the values so the response is consistent
+    # even if the entry is mutated by the worker thread while we are
+    # serialising it.
+    with RESULT_LOCK:
+        pending = FALLBACK_PENDING.get(job_id)
+        if not pending:
+            return {"status": "none", "job_id": job_id}
+        snapshot = {
+            "error_info": dict(pending.get("error_info", {})),
+        }
     return {
         "status": "awaiting_decision",
         "job_id": job_id,
-        "error_info": pending.get("error_info", {}),
+        "error_info": snapshot["error_info"],
         "options": ["gemma4", "rules", "stop", "retry"],
     }
 
@@ -1181,15 +1238,28 @@ def delete_all_results() -> dict[str, int]:
     return {"removed": total_removed}
 
 
+class DeleteRowsRequest(BaseModel):
+    # Phase 54 audit: M15 — typed Pydantic request model. The previous
+    # raw ``dict[str, list[str]]`` accepted ``{"row_ids": "abc"}`` (a
+    # single string) and silently bypassed ``payload.get("row_ids") or
+    # []`` — the string flowed straight into ``set(...)`` and then
+    # ``if rid in row_ids`` did substring-style membership, producing
+    # nonsense "not_found" counts. Pydantic v2 raises 422 on type
+    # mismatch and a missing ``row_ids`` becomes a clear validation
+    # error rather than a silent no-op.
+    model_config = ConfigDict(extra="forbid")
+    row_ids: list[str] = Field(default_factory=list)
+
+
 @app.delete("/results/batch")
-def delete_results_batch(payload: dict[str, list[str]]) -> dict[str, Any]:
+def delete_results_batch(payload: DeleteRowsRequest) -> dict[str, Any]:
     """Delete specific result rows by ``row_id``.
 
     Request body: ``{"row_ids": ["job_id:paper:figure:panel", ...]}``.
     Rows whose row_id is unknown are silently skipped (idempotent).
     Returns the number of rows actually removed and the not-found count.
     """
-    row_ids = set(payload.get("row_ids") or [])
+    row_ids = set(payload.row_ids or [])
     if not row_ids:
         return {"removed": 0, "not_found": 0}
     removed = 0
@@ -1985,7 +2055,16 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
     finally:
         # Stop the heartbeat thread so it doesn't keep a reference to the
         # job entry in RESULT_CACHE forever.
+        # Phase 54 audit: B6 — join the thread instead of just setting
+        # the stop event. The previous version only flipped the event;
+        # the thread was ``daemon=True`` so the process wouldn't hang on
+        # exit, but each ``cancel`` / ``delete`` leaked one Thread
+        # object plus its closure over ``_run_job``'s frame for up to
+        # 1 second (the ``stop_hb.wait(1.0)`` tick). For batch
+        # operations processing many short-lived jobs this accumulated
+        # Thread objects and held onto per-job memory.
         try:
             stop_hb.set()
         except Exception:
             pass
+        hb_thread.join(timeout=2.0)

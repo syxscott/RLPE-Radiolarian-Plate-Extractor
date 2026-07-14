@@ -1144,6 +1144,16 @@ class RadiolarianPipeline:
                 # caption empty) and use it. Without this, the range
                 # chart is silently lost.
                 rc_image_path = primary_path
+                # DEAD BRANCH — see Phase 54 audit M14. The early
+                # ``if primary_path is None or region_img is None:
+                # continue`` above guarantees ``primary_path`` is
+                # non-None by the time we reach this block, so
+                # ``rc_image_path = primary_path`` already did the
+                # right thing. The orphan-image lookup is a
+                # historical defensive fallback from a layout where
+                # this code ran BEFORE the early return. Leaving it
+                # in place to avoid changing behaviour, but the
+                # ``if rc_image_path is None:`` guard can never fire.
                 if rc_image_path is None:
                     rc_image_path = self._find_orphan_image_for_range_chart(
                         figures, pair, od_result.json_data
@@ -1305,6 +1315,15 @@ class RadiolarianPipeline:
                 )
                 continue
             if fig_type == "map":
+                # DEAD BRANCH — see Phase 54 audit M14. As with the
+                # range_chart block above, the early ``if
+                # primary_path is None or region_img is None:
+                # continue`` at the top of the loop guarantees
+                # ``primary_path`` is non-None here. The orphan-image
+                # fallback was added in a previous layout before
+                # that early return existed. Keeping the code (out
+                # of scope for the audit) but marking it so future
+                # maintainers don't add logic that depends on it.
                 # Use the largest image on the same page (or
                 # primary_path if available).
                 map_image = primary_path
@@ -2637,6 +2656,10 @@ Rules:
             label = str(p.get("label", "")).strip()
             species = p.get("species")
             conf = float(p.get("confidence", 0.0))
+            # Phase 54 audit M8: drop panels whose label is empty/None.
+            # Without this, str(None).strip() would become "None" and
+            # survive the gate, polluting downstream stages with a fake
+            # panel id "None".
             if not label:
                 continue
             panel_id = _normalize_panel_label(label) or label
@@ -2649,7 +2672,9 @@ Rules:
                 bbox=None,
                 confidence=conf,
                 label_text=label,
-                caption_snippet=caption.caption[:240] if hasattr(caption, "caption") else "",
+                caption_snippet=(
+                    (caption.caption or "").strip()[:240] or None
+                ) if hasattr(caption, "caption") else None,
                 ocr_text=None,
                 paper_metadata=paper_metadata,
                 metadata={
@@ -2827,8 +2852,29 @@ Rules:
                             lbl_norm = _normalize_panel_label(lbl).strip().lower() if lbl else ""
                             if lbl_norm and lbl_norm in existing_labels:
                                 continue
-                            if not is_valid_panel_label(lbl):
+                            # Phase 54 audit: M7 — use the *normalised*
+                            # label for the validity check. The dedup
+                            # above runs against ``lbl_norm`` (so "00"
+                            # collides with "0"), but the validity check
+                            # used the *raw* ``lbl``, and
+                            # ``is_valid_panel_label("00")`` returns
+                            # False (the digit SHAPE regex rejects
+                            # leading zeros). A caption that lists
+                            # panel ``00`` therefore lost its species.
+                            if not is_valid_panel_label(lbl_norm):
                                 continue
+                            # Phase 54 audit: H2 — ``panel_count`` is the
+                            # *total* row count for the figure once this
+                            # row is appended. The previous code used
+                            # ``len(llm_results) + 1`` evaluated AFTER
+                            # the ``.append()`` on the line above, so
+                            # ``len(llm_results)`` already included the
+                            # new row — every new row's panel_count was
+                            # one too high. We snapshot the pre-append
+                            # length and add 1 explicitly so the value
+                            # is the post-append total, not the
+                            # post-append total + 1.
+                            pre_append_count = len(llm_results)
                             llm_results.append(
                                 MatchResult(
                                     paper_id=paper_id,
@@ -2839,7 +2885,18 @@ Rules:
                                     bbox=None,
                                     confidence=0.0,
                                     label_text=lbl,
-                                    caption_snippet=(caption.caption or "")[:240],
+                                    # Phase 54 audit m11: the
+                                    # auto-generated placeholder
+                                    # caption ("Auto-generated figure
+                                    # for page X") was being sliced
+                                    # to an empty string here, which
+                                    # looked like a real caption
+                                    # snippet to downstream stages.
+                                    # Convert the empty slice to None
+                                    # so the UI / exporters can
+                                    # distinguish "no caption" from
+                                    # "empty placeholder".
+                                    caption_snippet=(caption.caption or "").strip()[:240] or None,
                                     ocr_text=None,
                                     paper_metadata=paper_metadata,
                                     metadata={
@@ -2847,7 +2904,7 @@ Rules:
                                         "llm_backend": getattr(
                                             self.gemma_runtime, "backend_name", "unknown"
                                         ),
-                                        "panel_count": len(llm_results) + 1,
+                                        "panel_count": pre_append_count + 1,
                                         "figure_number": caption.figure_number,
                                         "page_index": caption.page_index,
                                         "species_source": (
@@ -3801,7 +3858,13 @@ Rules:
         """
         from .paleodb import PaleoDB
 
-        max_occ = int(self.config.extra.get("paleodb_max_occurrences", 25) or 25)
+        # Phase 54 audit: H1 — the previous ``... or 25`` guard treated
+        # a legitimate ``0 = disable occurrences`` as falsy and silently
+        # upgraded it to 25. That wasted PBDB quota and shipped
+        # occurrence rows the operator opted out of. The default now
+        # comes only from ``dict.get(..., 25)``; an explicit 0 is
+        # preserved.
+        max_occ = int(self.config.extra.get("paleodb_max_occurrences", 25))
         endpoint = self.config.extra.get("paleodb_endpoint")
         cache_dir = self.config.extra.get("paleodb_cache_dir")
         offline = bool(self.config.extra.get("paleodb_offline", False))

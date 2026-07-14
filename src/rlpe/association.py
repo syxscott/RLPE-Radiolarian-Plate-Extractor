@@ -755,7 +755,14 @@ def match_panels(
             label_text = panel_label_tokens[panel_id].text
         confidence = float(panel.score)
         if matcher_used:
-            confidence = max(confidence, float(neural_conf[idx]) if idx < len(neural_conf) else 0.0)
+            # Phase 54 audit m12: neural-matcher branch was missing the
+            # min(0.99, ...) clamp that the rule-based branch applies,
+            # so a perfect (1.0) neural score leaked through and
+            # polluted downstream filtering. Mirror the rule branch.
+            confidence = min(
+                0.99,
+                max(confidence, float(neural_conf[idx]) if idx < len(neural_conf) else 0.0),
+            )
         else:
             if panel_id:
                 confidence += 0.08

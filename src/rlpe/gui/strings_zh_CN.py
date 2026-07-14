@@ -100,7 +100,7 @@ STRINGS = {
     'preview.actual': '1:1',
     'preview.failed': '(加载失败) {name}',
     'preview.fit': '⛶',
-    'preview.hint': '滚轮 = 缩放 · 拖动 = 平移 · 双击 = 自适应 · 单击 bbox 可选中',
+    'preview.hint': '滚轮 = 缩放 · 拖拽 = 平移 · 双击 = 适合 · 点击 bbox 选中',
     'preview.missing': '(文件不存在) {name}',
     'preview.no_image': '(无图像)',
     'preview.zoom_in': '🔍+',

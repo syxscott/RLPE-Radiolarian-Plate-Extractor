@@ -35,8 +35,16 @@ def stable_id(path: Path | str) -> str:
     try:
         if p.is_file():
             size = p.stat().st_size
-            h = hashlib.sha1()
-            # size prefix prevents the (vanishingly rare) SHA1 collision
+            # Phase 54 audit m17 — switch from SHA1 to SHA256. SHA1 is
+            # broken for adversarial collisions (SHAttered, 2017); for
+            # paper-dedup it's harmless in practice (an attacker can't
+            # craft a colliding radiolarian PDF), but SHA256 costs
+            # ~negligible extra and removes a misleading "vanishingly
+            # rare" comment. Also widen the truncation prefix from 12
+            # to 16 hex chars (64 bits) so an accidental collision on
+            # two distinct PDFs is even more unlikely.
+            h = hashlib.sha256()
+            # size prefix prevents the (vanishingly rare) SHA256 collision
             # between two PDFs of the same content length, and makes
             # the id clearly content-derived.
             h.update(f"{size}:".encode("ascii"))
@@ -46,7 +54,8 @@ def stable_id(path: Path | str) -> str:
             return h.hexdigest()[:16]
     except OSError:
         pass
-    return hashlib.sha1(str(path).encode("utf-8", errors="ignore")).hexdigest()[:16]
+    # Phase 54 audit m17 — match the SHA256 change above.
+    return hashlib.sha256(str(path).encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
 def _json_default(obj: Any) -> Any:

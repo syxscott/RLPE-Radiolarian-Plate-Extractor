@@ -333,8 +333,12 @@ def _tcp_port_lock(name: str) -> bool:
     cleanup on crash) but works on every OS.
     """
     import socket
-    # Hash the name to a port in the IANA private range (49152+).
-    port = 49152 + (hash(name) & 0x3FFF)
+    # Phase 54 audit m10: built-in ``hash`` is randomised across
+    # Python processes (PYTHONHASHSEED). Two GUI launches could
+    # pick different ports for the same lock name and both bind
+    # successfully, defeating the single-instance check. Use
+    # SHA-256 → 2 bytes → int so the port is stable across runs.
+    port = 49152 + (int.from_bytes(hashlib.sha256(name.encode()).digest()[:2], "big") & 0x3FFF)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
     try:

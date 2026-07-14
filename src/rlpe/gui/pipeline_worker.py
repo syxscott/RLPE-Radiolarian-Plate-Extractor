@@ -29,6 +29,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from ..config import PipelineConfig
 from ..pipeline import RadiolarianPipeline
 from .utils import get_gui_logger
+from .constants import DEFAULT_LLM_BACKEND, DEFAULT_MINIMAX_MODEL
 
 
 class PipelineWorker(QThread):
@@ -232,6 +233,20 @@ class PipelineWorker(QThread):
             "od_merge_gap_pt": float(s.get("od_merge_gap_pt", 72.0)),
             "ocr_lang": str(s.get("ocr_lang", "en")),
             "m3_prompt_lang": str(s.get("m3_prompt_lang", "auto")),
+            # Phase 54 audit: M4 — forward the user's LLM backend +
+            # model choice from the Run tab into the pipeline config.
+            # The previous code collected these in ``RunTab.collect_settings``
+            # and the worker log line at line 135 even READ
+            # ``cfg.extra.get('llm_backend', 'rules')`` — but
+            # ``_build_config`` here never put either key into ``extra``,
+            # so the user's LLM choice was silently ignored. The CLI
+            # path (cli.py:418) sets ``extra["llm_backend"]`` explicitly;
+            # the GUI path missed it.
+            "llm_backend": str(s.get("llm_backend", DEFAULT_LLM_BACKEND)),
+            "MiniMax_model": str(s.get("m3_model", DEFAULT_MINIMAX_MODEL)),
+            "MiniMax_enable_thinking": bool(s.get("MiniMax_enable_thinking", False)),
+            "MiniMax_api_key": s.get("MiniMax_api_key") or None,
+            "MiniMax_endpoint": s.get("MiniMax_endpoint") or None,
             "grobid_max_retries": grobid_max_retries,
             "grobid_timeout": grobid_timeout,
             "disable_od_fallback": bool(s.get("disable_od_fallback", False)),

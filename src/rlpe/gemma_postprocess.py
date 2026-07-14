@@ -379,6 +379,13 @@ def batch_gemma_postprocess_rows(
             new_row["MiniMax_cost_cny"] = float(result.get("cost_cny"))
         if result.get("model_version"):
             new_row["MiniMax_model_version"] = str(result.get("model_version"))
+        # M22: propagate per-call ``usage`` token accounting into the
+        # row. The non-batch path already pipes it through via
+        # ``_telemetry_subset``; the batch path below was silently
+        # dropping it, so /system/llm-status under-counted tokens
+        # for any row processed by ``gemma_batch_enrich``.
+        if isinstance(result.get("usage"), dict):
+            new_row["MiniMax_usage"] = dict(result["usage"])
         if new_row["gemma_confidence"] >= conf_threshold:
             new_row["panel_id"] = result.get("label") or new_row.get("panel_id")
             new_row["species"] = result.get("species") or new_row.get("species")

@@ -58,7 +58,12 @@ RESULT_COLUMNS: Final[tuple[ResultColumn, ...]] = (
     ResultColumn("species",        "Species (Latin)",        260, "Latin binomial extracted from caption"),
     ResultColumn("panel_id",       "Panel ID",              180, "Stable panel identifier (paper/figure/panel)"),
     ResultColumn("confidence",    "Confidence",              80, "Pipeline confidence (0..1)"),
-    ResultColumn("caption_snip",   "Caption snippet",        360, "First 200 chars of figure caption"),
+    # Phase 54 audit: M1 — column key used to be ``caption_snip`` but
+    # the pipeline writes ``caption_snippet``. The mismatch silently
+    # produced an empty "Caption snippet" column (row.get("caption_snip")
+    # → None → "—") for every job. Align the column key with the
+    # pipeline's field name.
+    ResultColumn("caption_snippet", "Caption snippet",        360, "First 200 chars of figure caption"),
     ResultColumn("page_index",     "Page",                    60, "PDF page index (1-based)"),
     ResultColumn("family",         "PBDB Family",            180, "PaleoDB family (or genus fallback)"),
     ResultColumn("country",        "Country",                140, "Country / locality name (fallback)"),

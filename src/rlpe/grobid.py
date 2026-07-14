@@ -255,12 +255,35 @@ def extract_figure_caption(fig: ET.Element, ns: dict[str, str]) -> str:
     return " ".join(parts).strip()
 
 
+# Phase 54 audit m18 — common false-positive triggers in the
+# ``extract_taxon_candidates`` regex. Capitalised+lowercase two-word
+# phrases like "Cambrian Ordovician", "Atlantic Ocean", "Tethys Sea"
+# match the ``[A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+`` shape but are
+# geological periods / geography, not taxa. The association module
+# already maintains a similar stoplist; mirror it here.
+_TAXON_LIKE_NONTAXON_FIRST_WORDS: frozenset[str] = frozenset(
+    {
+        "Cambrian", "Ordovician", "Silurian", "Devonian", "Carboniferous",
+        "Permian", "Triassic", "Jurassic", "Cretaceous", "Paleogene",
+        "Neogene", "Paleocene", "Eocene", "Oligocene", "Miocene",
+        "Pliocene", "Pleistocene", "Holocene",
+        "Atlantic", "Pacific", "Indian", "Arctic", "Southern",
+        "Northern", "Western", "Eastern", "Central",
+        "Tethys", "Gondwana", "Laurasia", "Pangaea", "Panthalassa",
+        "Upper", "Lower", "Middle", "Late", "Early",
+    }
+)
+
+
 def extract_taxon_candidates(text: str) -> list[CaptionEntity]:
     if not text:
         return []
     pattern = re.compile(r"\b([A-Z][a-zA-Z-]+\s+(?:sp\.|spp\.|cf\.|aff\.|[a-z][a-zA-Z-]+))\b")
     out: list[CaptionEntity] = []
     for m in pattern.finditer(text):
+        first_word = m.group(1).split()[0]
+        if first_word in _TAXON_LIKE_NONTAXON_FIRST_WORDS:
+            continue
         out.append(
             CaptionEntity(
                 text=m.group(1), start=m.start(1), end=m.end(1), label="taxon", score=0.65
