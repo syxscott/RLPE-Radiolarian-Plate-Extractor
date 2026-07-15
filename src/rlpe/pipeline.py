@@ -2677,6 +2677,14 @@ Rules:
                 ) if hasattr(caption, "caption") else None,
                 ocr_text=None,
                 paper_metadata=paper_metadata,
+                # Phase 55 audit CRITICAL-2 fix: explicitly pass panel_index=None
+                # for this LLM-first path (no PanelCandidate exists, so None is
+                # correct). The field must be present so
+                # converters.panel_record_from_match reads getattr(match,
+                # "panel_index", None) and gets the explicit None rather than
+                # relying on the MatchResult default — this makes the None
+                # explicit and traceable in the to_dict() output.
+                panel_index=None,
                 metadata={
                     "extraction_method": "llm_first",
                     "llm_backend": getattr(backend, "backend_name", "unknown"),
@@ -2899,6 +2907,10 @@ Rules:
                                     caption_snippet=(caption.caption or "").strip()[:240] or None,
                                     ocr_text=None,
                                     paper_metadata=paper_metadata,
+                                    # Phase 55 audit CRITICAL-2 fix: same as above —
+                                    # hybrid caption-enrichment path has no
+                                    # PanelCandidate, so panel_index is None.
+                                    panel_index=None,
                                     metadata={
                                         "extraction_method": "llm_first",
                                         "llm_backend": getattr(

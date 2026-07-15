@@ -436,15 +436,19 @@ def enrich_geology_record(record: dict[str, Any]) -> None:
         record["modern_longitude"] = round(float(lon), 4)
         record["reconstruction_model"] = "Seton 2012 (simplified)"
         record["reconstruction_age_ma"] = round(float(age_ma), 2)
-    except (TypeError, ValueError, AttributeError, KeyError) as exc:
-        # Phase 55 audit MEDIUM-3 fix: narrow to the exceptions that a
-        # data-access bug (wrong key name, bad type coercion, missing field)
-        # would raise. Arithmetic errors (e.g. math domain from Rodrigues
-        # rotation) are also worth surfacing since they indicate wrong
-        # Euler poles or coordinates. Only suppress ImportError (missing
-        # optional dependency) which is a deployment issue, not a data bug.
-        # NOT bare Exception: let RecursionError, MemoryError propagate so
-        # a real crash doesn't silently produce wrong coordinates.
+    except (TypeError, ValueError, AttributeError, KeyError, ImportError) as exc:
+        # Phase 55 audit CRITICAL-3/HIGH-5 fix: narrow to the exceptions
+        # that a data-access bug (wrong key name, bad type coercion, missing
+        # field) would raise. ImportError from the lazy stratigraphy import
+        # is also suppressed here — a missing optional dependency is a
+        # deployment issue, not a data bug, and should not crash the per-row
+        # enrichment loop. Arithmetic errors (e.g. math domain from Rodrigues
+        # rotation, ZeroDivisionError from degenerate Euler poles) raise
+        # ValueError which IS in the tuple and is therefore suppressed with
+        # a WARNING — this is intentional; the telemetry pipeline degrades
+        # them to log-level rather than killing the job. NOT bare Exception:
+        # RecursionError and MemoryError propagate so a real crash does not
+        # silently produce wrong coordinates.
         logger.warning(
             "enrich_geology_record failed for record %s: %s — "
             "check Euler pole table / coordinate values",

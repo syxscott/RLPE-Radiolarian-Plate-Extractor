@@ -434,12 +434,13 @@ def populate_friendly_combo(
         # Guard: if the combo has been deleted by Qt (e.g. tab was
         # destroyed and this listener fires on a subsequent language
         # change), skip the rebuild to avoid accessing a dangling
-        # C++ wrapper.
-        if not combo.signalsBlocked():
-            try:
-                combo.count()
-            except RuntimeError:
-                return
+        # C++ wrapper. The check is unconditional — signalsBlocked()
+        # state has no relationship to object liveness; gating the
+        # guard on it would skip the check exactly when we need it.
+        try:
+            combo.count()
+        except RuntimeError:
+            return
         # Remember the current selection by userData so we can
         # restore it after rebuilding the items.
         prev_code = combo.currentData()
@@ -469,7 +470,14 @@ def populate_friendly_combo(
     # BLOCKER-4 fix: if this combo already had a listener from a
     # previous populate_friendly_combo call (e.g. tab rebuild), remove
     # it first so we don't accumulate stale closures in _LISTENERS.
-    old_listener = combo.property("_i18n_listener")
+    # Use a plain Python attribute (not setProperty) to store the
+    # listener — setProperty goes through QVariant which does not
+    # reliably round-trips arbitrary Python callables across PySide6
+    # versions; a plain attribute on the wrapper object is stable.
+    try:
+        old_listener = combo._i18n_listener
+    except AttributeError:
+        old_listener = None
     if old_listener is not None:
         try:
             _i18n.remove_listener(old_listener)
@@ -482,8 +490,9 @@ def populate_friendly_combo(
     _rebuild(_i18n.current_language())
 
     # Store the listener on the combo so a future call can find and
-    # remove it. This is the anchor that enables the removal above.
-    combo.setProperty("_i18n_listener", _rebuild)
+    # remove it. Using a plain attribute avoids the QVariant round-trip
+    # issue that setProperty has with callable closures.
+    combo._i18n_listener = _rebuild  # type: ignore[attr-defined]
 
     # Register the language switch handler.
     _i18n.add_listener(_rebuild)

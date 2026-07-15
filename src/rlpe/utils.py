@@ -89,7 +89,10 @@ def _json_default(obj: Any) -> Any:
             return bool(obj)
         if isinstance(obj, _np.ndarray):
             return obj.tolist()
-    except (ImportError, ModuleNotFoundError, AttributeError):
+    except (ImportError, ModuleNotFoundError, AttributeError, ValueError):
+        # ValueError from obj.tolist() on e.g. a structured numpy array
+        # with non-trivial Python objects — not a deployment issue, so
+        # surface it rather than silently produce wrong JSON.
         pass
     # to_dict / dataclass — guard against to_dict raising (e.g. a
     # malformed dataclass with a broken to_dict method). AttributeError
@@ -106,22 +109,24 @@ def _json_default(obj: Any) -> Any:
         return sorted(obj, key=lambda x: str(x))
     if isinstance(obj, tuple):
         return list(obj)
-    # datetime — guard against datetime module import failure (already
-    # imported above but guard against it not being available) and
-    # AttributeError from the isinstance check.
+    # datetime — guard against datetime module import failure and
+    # AttributeError from the isinstance check. ValueError covers
+    # extreme years (> 9999) that isoformat() rejects; OverflowError
+    # covers very large timedeltas.
     try:
         import datetime as _dt
 
         if isinstance(obj, (_dt.datetime, _dt.date)):
             return obj.isoformat()
-    except (ImportError, ModuleNotFoundError, AttributeError):
+    except (ImportError, ModuleNotFoundError, AttributeError, ValueError, OverflowError):
         pass
-    # bytes — decode with replacement, falling back to repr only if
-    # the decode itself fails (e.g. a bytes subclass that raises on decode).
+    # bytes — decode with replacement. errors='replace' never raises
+    # UnicodeDecodeError; TypeError covers a bytes subclass that
+    # overrides decode with an incompatible signature.
     if isinstance(obj, (bytes, bytearray)):
         try:
             return obj.decode("utf-8", errors="replace")
-        except (UnicodeDecodeError, TypeError):
+        except TypeError:
             return repr(obj)
     # last resort
     try:

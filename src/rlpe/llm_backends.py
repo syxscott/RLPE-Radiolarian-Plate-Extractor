@@ -1271,7 +1271,12 @@ def _coerce_bool(value: Any, *, default: bool) -> bool:
             return True
         if lowered in ("false", "0", "no", "off", ""):
             return False
-        # Unknown string — fall through to treating it as truthy, matching
-        # the old behaviour (a future typo like 'enaable' will still enable).
+        # Unknown string — fall through to treating it as truthy.
+        # NOTE: the old behaviour for unknown strings was False (the
+        # membership check returned False), so a typo like 'enaable'
+        # would have silently disabled the feature. The new behaviour
+        # (bool(value)=True for non-empty strings) enables it, which is
+        # a safer default for a feature flag. Callers that need a
+        # strict unknown-string policy should pass a default explicitly.
         return bool(value)
     return bool(value)

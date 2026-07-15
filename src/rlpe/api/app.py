@@ -916,10 +916,14 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
     #
     # We do the filesystem work INSIDE the lock because
     # ``shutil.rmtree`` on a large job is fast (<1s for hundreds of
-    # MB) and the lock is per-job — concurrent ``cancel`` / ``status``
-    # / ``results`` endpoints only block when THIS specific job_id is
-    # being purged. A separate, finer-grained lock would be overkill
-    # for the current traffic pattern.
+    # MB). NOTE: RESULT_LOCK is a single GLOBAL lock shared across ALL
+    # job_ids (not per-job). Deleting a large job (e.g. 80k files,
+    # 20 GB) can stall ALL other concurrent /jobs/{any_id}/*
+    # endpoints for the rmtree duration. A finer-grained lock
+    # (per-job or move-to-tmp) would fix this but is a larger
+    # refactor; this comment exists so operators understand the
+    # global-throttle behaviour rather than misreading it as
+    # per-job isolation.
     with RESULT_LOCK:
         job = RESULT_CACHE.get(job_id)
         if not job:

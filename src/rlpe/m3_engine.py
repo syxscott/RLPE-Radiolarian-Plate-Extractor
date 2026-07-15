@@ -1889,8 +1889,16 @@ class M3Engine:
                             if isinstance(v, list) and isinstance(existing, list):
                                 # Both are lists — concatenate per-call breakdowns.
                                 merged[k] = existing + v
-                            elif isinstance(v, (int, float)) and isinstance(existing, (int, float)):
-                                # Both are numeric — sum token counts.
+                            elif (
+                                isinstance(v, (int, float))
+                                and type(v) is not bool
+                                and isinstance(existing, (int, float))
+                                and type(existing) is not bool
+                            ):
+                                # Both are numeric (excluding bool) — sum token counts.
+                                # bool is a subclass of int so isinstance(True, int)
+                                # is True; we must exclude it explicitly or bool
+                                # flags get summed as integers (True+True=2).
                                 merged[k] = existing + v
                             else:
                                 # Type mismatch: don't crash, just take the newer value.
@@ -2138,24 +2146,16 @@ class M3Engine:
     def _infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         if self.backend is None:
             return {"fallback_used": True, "error": "no backend"}
-        # KNOWN RACE CONDITION — ``enable_thinking`` on ``self.backend``
-        # is shared mutable state. The first call below reads it WITHOUT
-        # holding ``_thinking_retry_lock`` (only the retry path holds
-        # it), so two concurrent workers can race: thread A flips the flag
-        # to False to retry while thread B is mid-first-call and ends
-        # up running with the wrong setting. Consequence: a worker's
-        # request goes out with thinking=False even though the user
-        # configured thinking=True, silently degrading quality or doubling
-        # cost depending on the direction of the race.
-        #
-        # The robust fix is a per-call ``enable_thinking`` parameter
-        # plumbed through ``infer_text``/``infer_panel`` (not done here —
-        # too large a refactor for a patch). Until that lands, callers
-        # MUST NOT invoke ``_infer_text``/``_infer_vision`` concurrently
-        # against a backend whose ``enable_thinking`` is being mutated.
-        # The retry path below is atomic via the RLock, so the race is
-        # bounded to first-call vs. retry. Known unsafe: multi-worker
-        # pipeline batches that share a single MiniMaxBackend instance.
+        # Phase 55 audit CRITICAL-1 fix: snapshot enable_thinking BEFORE any
+        # concurrent worker can mutate it. The previous code read
+        # ``self.backend.enable_thinking`` inside the retry condition below,
+        # which races with another thread's retry path that flips the flag
+        # to False. By capturing it now (single-threaded entry point) and
+        # using the snapshot in both the first-call and the retry decision,
+        # each call consistently uses the value that was active when the
+        # call started — no more silent quality degradation or doubled cost
+        # from a race mid-flight.
+        enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
         try:
             res = self.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
         except Exception as exc:
@@ -2165,7 +2165,7 @@ class M3Engine:
         if (
             self.config.get("m3_retry_without_thinking", True)
             and (res.get("fallback_used") or not (res.get("raw_text") or "").strip())
-            and getattr(self.backend, "enable_thinking", False)
+            and enable_thinking_snapshot
         ):
             logger.info("M3 text returned empty; retrying with thinking disabled")
             with self._thinking_retry_lock:
@@ -2190,16 +2190,12 @@ class M3Engine:
     ) -> dict[str, Any]:
         if self.backend is None:
             return {"fallback_used": True, "error": "no backend"}
-        # M19: see ``_infer_text`` for the same caveat. The first
-        # call below reads ``self.backend.enable_thinking`` without
-        # holding ``_thinking_retry_lock`` (the retry path does hold
-        # it), so concurrent workers can race: a thread retrying
-        # with thinking=False can flip the flag while another
-        # thread's first call is reading it. The robust fix is a
-        # per-call ``enable_thinking`` parameter on the backend
-        # (planned, not implemented in this round). The retry
-        # path below is atomic via the RLock; the first call's race
-        # window is small but real.
+        # Phase 55 audit CRITICAL-1 fix: snapshot enable_thinking BEFORE any
+        # concurrent worker can mutate it (same pattern as _infer_text).
+        # The snapshot is used for both the first-call decision (pass to
+        # backend) and the retry condition — ensuring consistent behaviour
+        # throughout the lifetime of this call regardless of other workers.
+        enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
         # First attempt — with thinking enabled (the default).
         try:
             res = self.backend.infer_panel(
@@ -2218,7 +2214,7 @@ class M3Engine:
         if (
             self.config.get("m3_retry_without_thinking", True)
             and (res.get("fallback_used") or not (res.get("raw_text") or "").strip())
-            and getattr(self.backend, "enable_thinking", False)
+            and enable_thinking_snapshot
         ):
             logger.info("M3 returned empty text; retrying with thinking disabled")
             # Round 9 (Bug-M3): hold the RLock for the entire
