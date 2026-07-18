@@ -242,13 +242,14 @@ class SettingsTab(QWidget):
         olayout.addRow(tr_label("settab.ocr.backend"), self._ocr_backend)
 
         self._ocr_lang = QLineEdit(DEFAULT_OCR_LANG)
-        self._ocr_lang.setPlaceholderText("en, en,ja, en,ch_sim…")
+        self._ocr_lang.setPlaceholderText("en,ch_sim,ja")
         # Phase 56 audit: validate ocr_lang to prevent arbitrary strings
         # being saved and passed to the OCR engine. Valid inputs look
         # like "en", "ch_sim", "en,ja" (comma-separated ISO codes).
         import re
         from PySide6.QtGui import QRegExpValidator
-        ocr_lang_rx = re.compile(r"^[a-zA-Z_]+(\s*,\s*[a-zA-Z_]+)*$")
+        # Digits allowed for codes like en_GB_sim (future-proofing).
+        ocr_lang_rx = re.compile(r"^[a-zA-Z0-9_]+(\s*,\s*[a-zA-Z0-9_]+)*$")
         validator = QRegExpValidator(ocr_lang_rx, self._ocr_lang)
         self._ocr_lang.setValidator(validator)
         olayout.addRow(tr_label("settab.ocr.lang"), self._ocr_lang)
@@ -721,12 +722,14 @@ class SettingsTab(QWidget):
             "grobid_max_retries": self._grobid_retries.value(),
             "grobid_timeout": self._grobid_timeout.value(),
             "ocr_backend": self._ocr_backend.currentData() or self._ocr_backend.currentText(),
-            "ocr_lang": self._ocr_lang.text() or DEFAULT_OCR_LANG,
+            # Phase 56 audit fix: use if-else instead of `or` to avoid
+            # TypeError if text() returns None (C++ integration edge case).
+            "ocr_lang": self._ocr_lang.text() if self._ocr_lang.text() else DEFAULT_OCR_LANG,
             "caption_window": self._caption_window.value(),
             "od_caption_window": self._od_caption_window.value(),
             "llm_backend": self._llm_backend.currentData() or self._llm_backend.currentText(),
             "m3_prompt_lang": self._m3_prompt_lang.currentData() or self._m3_prompt_lang.currentText(),
-            "m3_model": self._m3_model.text() or DEFAULT_MINIMAX_MODEL,
+            "m3_model": self._m3_model.text() if self._m3_model.text() else DEFAULT_MINIMAX_MODEL,
             "MiniMax_thinking_budget": self._m3_budget.value(),
             "MiniMax_max_output_tokens": self._m3_output.value(),
             "MiniMax_timeout_sec": self._m3_timeout.value(),

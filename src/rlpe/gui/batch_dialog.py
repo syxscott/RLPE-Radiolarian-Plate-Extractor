@@ -233,14 +233,23 @@ class BatchDialog(QDialog):
             self._add_pdf(sub)
 
     def _on_remove(self) -> None:
-        # Phase 56 audit: use set for O(1) removal instead of list.remove O(n)
-        for item in self._file_list.selectedItems():
-            row = self._file_list.row(item)
-            path = Path(item.data(Qt.UserRole))
-            if path in self._pdfs_set:
-                self._pdfs_set.discard(path)
+        # Phase 56 audit: collect rows first, remove bottom-to-top to avoid
+        # index shifting; also guard against None UserRole data.
+        items = self._file_list.selectedItems()
+        if not items:
+            return
+        rows = [self._file_list.row(item) for item in items]
+        for row in sorted(rows, reverse=True):
+            item = self._file_list.takeItem(row)
+            if item is None:
+                continue
+            data = item.data(Qt.UserRole)
+            if data is None:
+                continue
+            path = Path(data)
+            self._pdfs_set.discard(path)
+            if path in self._pdfs:
                 self._pdfs.remove(path)
-            self._file_list.takeItem(row)
         self._count_label.setText(i18n._tr("batch.count").format(n=len(self._pdfs)))
 
     def _on_clear_all(self) -> None:

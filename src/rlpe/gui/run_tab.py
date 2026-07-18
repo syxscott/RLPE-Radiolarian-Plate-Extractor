@@ -596,6 +596,15 @@ class RunTab(QWidget):
             except Exception:
                 pass
 
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """Phase 56 audit: stop worker and remove i18n listener on tab close."""
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.request_cancel()
+            self._worker.quit()
+            self._worker.wait(2000)
+        self._remove_i18n_listener()
+        super().closeEvent(event)
+
     def _on_path_changed(self, text: str) -> None:
         has = bool(text and Path(text).exists())
         self._start_btn.setEnabled(has and self._worker is None)
@@ -789,6 +798,11 @@ class RunTab(QWidget):
 
     def _on_failed(self, error: str) -> None:
         self._log.error("Job %s failed: %s", self._current_job_id, error)
+        # Phase 56 audit: set status QSS property to "failed" before dialog
+        # so the label colour reflects the failed state.
+        self._status_label.setProperty("status", "failed")
+        self._status_label.style().unpolish(self._status_label)
+        self._status_label.style().polish(self._status_label)
         QMessageBox.critical(
             self,
             i18n._tr("runtab.prompt.error.title"),
@@ -823,3 +837,8 @@ class RunTab(QWidget):
         # reset to the empty-state hint) so the user can read the
         # completion message.
         self._progress_msg.setText(i18n._tr("runtab.progress.done"))
+        # Phase 56 audit: reset status label QSS property to idle so colour
+        # reverts from "running" (blue) back to neutral after job completes.
+        self._status_label.setProperty("status", "idle")
+        self._status_label.style().unpolish(self._status_label)
+        self._status_label.style().polish(self._status_label)

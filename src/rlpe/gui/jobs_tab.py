@@ -684,6 +684,13 @@ class JobsTab(QWidget):
             item = self._table.horizontalHeaderItem(i)
             if item is not None:
                 item.setText(h)
+            else:
+                # Phase 56 audit fix: horizontalHeaderItem() can return None
+                # after setHorizontalHeaderLabels(). Use the header view
+                # model directly to refresh header text safely.
+                self._table.horizontalHeader().model().setHeaderData(
+                    i, Qt.Horizontal, h, Qt.DisplayRole,
+                )
         # Translate any active context menu actions (QAction isn't
         # a QWidget so the i18n registry's allWidgets() loop misses
         # them — we update them here explicitly). Iterate over a copy
@@ -710,3 +717,8 @@ class JobsTab(QWidget):
                 i18n.remove_listener(listener)
             except Exception:
                 pass
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """Phase 56 audit: remove i18n listener on widget destruction."""
+        self._remove_i18n_listener()
+        super().closeEvent(event)

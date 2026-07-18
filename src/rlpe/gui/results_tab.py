@@ -252,6 +252,10 @@ class ResultsTab(QWidget):
         self._family_filter.blockSignals(True)
         self._family_filter.setCurrentIndex(0)
         self._family_filter.blockSignals(False)
+        # Phase 56 extended: also reset _has_pbdb filter (was missing)
+        self._has_pbdb.blockSignals(True)
+        self._has_pbdb.setCurrentIndex(0)
+        self._has_pbdb.blockSignals(False)
         self._current_job_id = job_id
         self._current_job_dir = output_dir
         self._all_rows = list(rows)
@@ -308,6 +312,11 @@ class ResultsTab(QWidget):
                 i18n.remove_listener(listener)
             except Exception:
                 pass
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """Phase 56 audit: remove i18n listener on widget destruction."""
+        self._remove_i18n_listener()
+        super().closeEvent(event)
 
     def clear(self) -> None:
         self._all_rows = []
