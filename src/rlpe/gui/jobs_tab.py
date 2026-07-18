@@ -356,6 +356,8 @@ class JobsTab(QWidget):
         job.finished_at = time.time()
         self._refresh_row(job)
         self._update_summary()
+        # Phase 56 audit: trim after terminal state transition
+        self._trim_old_jobs()
 
     def mark_failed(self, job_id: str, error: str) -> None:
         if job_id not in self._jobs:
@@ -366,6 +368,8 @@ class JobsTab(QWidget):
         job.finished_at = time.time()
         self._refresh_row(job)
         self._update_summary()
+        # Phase 56 audit: trim after terminal state transition
+        self._trim_old_jobs()
 
     def mark_cancelled(self, job_id: str) -> None:
         if job_id not in self._jobs:
@@ -375,6 +379,8 @@ class JobsTab(QWidget):
         job.finished_at = time.time()
         self._refresh_row(job)
         self._update_summary()
+        # Phase 56 audit: trim after terminal state transition
+        self._trim_old_jobs()
 
     # ------------------------------------------------------------------
     # Internal helpers

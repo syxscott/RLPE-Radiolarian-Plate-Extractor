@@ -547,11 +547,18 @@ class MainWindow(QMainWindow):
     def _flush_settings(self) -> None:
         """Flush QSettings to persistent storage on shutdown.
 
+        Phase 56 audit fix: write back in-memory _settings changes to QSettings
+        before syncing. Without this, last_pdf_dir and last_export_dir changes
+        made via the Run tab are lost on restart.
+
         On Windows QSettings is registry-backed; changes are only
         flushed on process exit, not on every setValue.
         """
         from PySide6.QtCore import QSettings
-        QSettings(APP_AUTHOR, APP_NAME).sync()
+        qs = QSettings(APP_AUTHOR, APP_NAME)
+        for key, value in self._settings.items():
+            qs.setValue(key, value)
+        qs.sync()
 
     # ------------------------------------------------------------------
     # Menu / toolbar slots

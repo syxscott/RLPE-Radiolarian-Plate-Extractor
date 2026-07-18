@@ -23,6 +23,8 @@ Architecture
 """
 from __future__ import annotations
 
+from PySide6.QtWidgets import QApplication, QWidget
+
 from typing import Callable, Optional
 
 
@@ -207,8 +209,27 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
 
 
 def _apply_registry() -> None:
-    """Re-apply every registered widget for the current language."""
-    for object_name, attr, key, fmt in list(_REGISTRY):
+    """Re-apply every registered widget for the current language.
+
+    Phase 56 audit: prune dead entries periodically to prevent unbounded growth.
+    """
+    global _REGISTRY
+    app = QApplication.instance()
+    if app is None:
+        return
+    all_widgets = set(id(w) for w in app.allWidgets())
+    # Rebuild registry keeping only entries whose widgets are still alive
+    kept, removed = [], 0
+    for entry in _REGISTRY:
+        object_name = entry[0]
+        w = app.findChild(QWidget, object_name) if object_name else None
+        if w is not None and id(w) in all_widgets:
+            kept.append(entry)
+        else:
+            removed += 1
+    if removed > 0:
+        _REGISTRY = kept
+    for object_name, attr, key, fmt in _REGISTRY:
         _apply_to_one(object_name, attr, key, fmt)
 
 

@@ -212,7 +212,10 @@ class ImagePreviewWidget(QWidget):
             else:
                 arr = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
             h, w = arr.shape[:2]
-            qimg = QImage(arr.data, w, h, w * 3, QImage.Format_RGB888).copy()
+            # Phase 56 audit: copy the numpy array first so QImage owns its buffer.
+            # QImage(arr.data, ...) shares the numpy memory which can be freed
+            # when the array goes out of scope.
+            qimg = QImage(arr.copy(), w, h, w * 3, QImage.Format_RGB888)
             return QPixmap.fromImage(qimg)
         except Exception as exc:
             self._log.warning("Failed to load image %s: %s", path, exc)

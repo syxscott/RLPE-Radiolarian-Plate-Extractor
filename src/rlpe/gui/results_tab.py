@@ -242,6 +242,16 @@ class ResultsTab(QWidget):
     # ------------------------------------------------------------------
     def load_job(self, job_id: str, rows: list[dict[str, Any]], output_dir: str | None = None) -> None:
         """Replace the current results with a new job's rows."""
+        # Phase 56 audit: reset search and filters so stale state doesn't leak
+        self._search_edit.blockSignals(True)
+        self._search_edit.clear()
+        self._search_edit.blockSignals(False)
+        self._species_filter.blockSignals(True)
+        self._species_filter.setCurrentIndex(0)
+        self._species_filter.blockSignals(False)
+        self._family_filter.blockSignals(True)
+        self._family_filter.setCurrentIndex(0)
+        self._family_filter.blockSignals(False)
         self._current_job_id = job_id
         self._current_job_dir = output_dir
         self._all_rows = list(rows)
@@ -249,8 +259,15 @@ class ResultsTab(QWidget):
         self._refresh_filter_options()
         self._refresh_view()
 
-    def append_rows(self, rows: list[dict[str, Any]]) -> None:
-        """Stream-add rows from a running job (live update)."""
+    def append_rows(self, rows: list[dict[str, Any]], job_id: str | None = None) -> None:
+        """Stream-add rows from a running job (live update).
+
+        Phase 56 audit: job_id guard prevents rows from a stale job
+        accumulating under a new job's ID.
+        """
+        if job_id is not None and job_id != self._current_job_id:
+            self._log.warning("append_rows called for different job_id %s (current %s), ignoring", job_id, self._current_job_id)
+            return
         self._all_rows.extend(rows)
         self._title.setText(
             f"📊 Job {self._current_job_id or '?'}  ·  {len(self._all_rows):,} rows (live)"
