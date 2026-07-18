@@ -136,7 +136,13 @@ def _extract_balanced_objects(text: str) -> list[Any]:
                     if depth == 0:
                         break
             j += 1
-        if depth != 0 or j >= n:
+        # Check bounds BEFORE using j: when j >= n the loop exited
+        # because we ran off the end without finding a closing brace
+        # (depth != 0). In that case text[i:j+1] would be text[i:n+1]
+        # which Python slices gracefully but produces garbage.
+        if j >= n:
+            break
+        if depth != 0:
             break
         snippet = text[i : j + 1]
         try:

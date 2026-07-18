@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # the torch/gemma/paddleocr chain pulled by the full pipeline.
 
 from .association import (
+    _iou,
     _label_in_pair_lookup,
     _normalize_panel_label,
     is_valid_panel_label,
@@ -451,92 +452,6 @@ class RadiolarianPipeline:
     # OpenDataLoader-based processing
     # -----------------------------------------------------------------------
 
-    def _process_map(
-        self,
-        *,
-        paper_id: str,
-        figure_id: str,
-        caption_text: str,
-        image_path: str,
-    ) -> list[dict[str, Any]]:
-        """Process a map / paleogeographic-map figure and produce stub
-        panel records carrying the geographic context.
-
-        Maps don't have species or panel_id, so the output is a single
-        stub record (panel_id="MAP_CONTEXT") whose metadata carries:
-          - location names mentioned in the caption
-          - lat/lon coordinates extracted from the caption text
-          - the full caption as evidence
-          - the image path for downstream display
-        Downstream ``_link_range_chart_geology`` can link this stub's
-        context to other panels via the shared paper_id + section
-        name. For now we just record it as a paper-level context
-        anchor so an operator can find it.
-
-        Heuristic-only — map caption parsing is hard and the existing
-        regex-based geology_extraction already covers most of the
-        location name extraction. This method mostly ensures the
-        map figure isn't silently dropped by the pipeline.
-        """
-        loc_names: list[str] = []
-        coords: list[tuple[float, float, str]] = []
-        # Lightweight location-name extraction: capitalized
-        # multi-word tokens that aren't common English words. The
-        # full geology_extraction module handles the more complex
-        # patterns; this is a quick safety net for map-only figures
-        # that don't reach the caption parser.
-        import re as _re
-
-        for m in _re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b", caption_text or ""):
-            tok = m.group(1)
-            if tok in {"Fig", "Figure", "Scale", "Bar", "The", "This", "Map"}:
-                continue
-            loc_names.append(tok)
-        # Try to extract coordinates.
-        for m in _re.finditer(
-            r"\b(\d{1,3}(?:\.\d+)?)\s*°?\s*([NSns])?[,\s]+(\d{1,3}(?:\.\d+)?)\s*°?\s*([EWew])?\b",
-            caption_text or "",
-        ):
-            try:
-                lat = float(m.group(1))
-                lon = float(m.group(3))
-                if m.group(2) and m.group(2).upper() == "S":
-                    lat = -lat
-                if m.group(4) and m.group(4).upper() == "W":
-                    lon = -lon
-                if -90 <= lat <= 90 and -180 <= lon <= 180:
-                    coords.append((lat, lon, m.group(0)))
-            except ValueError:
-                continue
-        # Cap to a reasonable number of location names to avoid
-        # noise from generic capitalized words.
-        loc_names = loc_names[:10]
-        coords = coords[:5]
-        return [
-            {
-                "paper_id": paper_id,
-                "figure_id": figure_id,
-                "panel_id": "MAP_CONTEXT",
-                "species": None,
-                "panel_path": image_path,
-                "bbox": None,
-                "confidence": 0.0,
-                "label_text": None,
-                "caption_snippet": (caption_text or "")[:240],
-                "ocr_text": None,
-                "paper_metadata": None,
-                "metadata": {
-                    "extraction_method": "map_caption_heuristic",
-                    "extraction_source": "map",
-                    "location_names": loc_names,
-                    "coordinates": [
-                        {"lat": lat, "lon": lon, "raw": raw} for lat, lon, raw in coords
-                    ],
-                    "evidence_text": (caption_text or "")[:300],
-                },
-            }
-        ]
-
     def _cross_link_map_and_range_chart(
         self, results: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -773,7 +688,12 @@ class RadiolarianPipeline:
         # that are NOT referenced by any figure. This is the most
         # common failure mode for range charts (OD extracts the image
         # but the caption-image association falls apart).
-        unpaired: list[tuple[int, int, str]] = []  # (page_diff, size, path)
+        # (page_diff, size, path, is_referenced?)
+        # is_referenced is optional — raw OD scan paths (line ~879)
+        # Sort key only uses first two elements so the missing 4th
+        # element is safe. Named tuple not used here to avoid
+        # dragging an extra import into the pipeline module.
+        unpaired: list[tuple[int, int, str, bool | None]] = []
         logger.debug(
             "orphan search for range_chart page=%d (od_raw=%s, figures=%d)",
             target_page,
@@ -876,7 +796,7 @@ class RadiolarianPipeline:
                         # indexed). The caller will then merge these with
                         # the figure-level orphans which DO have page_diff.
                         # For now, treat them all as same-page candidates.
-                        unpaired.append((0, sz, fpath))
+                        unpaired.append((0, sz, fpath, None))
                         logger.info(
                             "raw OD unpaired image: %s (size=%d)",
                             fpath,
@@ -1144,25 +1064,6 @@ class RadiolarianPipeline:
                 # caption empty) and use it. Without this, the range
                 # chart is silently lost.
                 rc_image_path = primary_path
-                # DEAD BRANCH — see Phase 54 audit M14. The early
-                # ``if primary_path is None or region_img is None:
-                # continue`` above guarantees ``primary_path`` is
-                # non-None by the time we reach this block, so
-                # ``rc_image_path = primary_path`` already did the
-                # right thing. The orphan-image lookup is a
-                # historical defensive fallback from a layout where
-                # this code ran BEFORE the early return. Leaving it
-                # in place to avoid changing behaviour, but the
-                # ``if rc_image_path is None:`` guard can never fire.
-                if rc_image_path is None:
-                    rc_image_path = self._find_orphan_image_for_range_chart(
-                        figures, pair, od_result.json_data
-                    )
-                    logger.info(
-                        "range_chart %s: no image paired; using orphan image %s",
-                        pair.figure_id,
-                        rc_image_path,
-                    )
                 if rc_image_path is not None:
                     rc_results = self._process_range_chart(
                         paper_id=paper_id,
@@ -1312,43 +1213,6 @@ class RadiolarianPipeline:
                     "fig %s: type='other' (micro-CT/cross-section/etc); "
                     "skipping classical segmentation",
                     pair.figure_id,
-                )
-                continue
-            if fig_type == "map":
-                # DEAD BRANCH — see Phase 54 audit M14. As with the
-                # range_chart block above, the early ``if
-                # primary_path is None or region_img is None:
-                # continue`` at the top of the loop guarantees
-                # ``primary_path`` is non-None here. The orphan-image
-                # fallback was added in a previous layout before
-                # that early return existed. Keeping the code (out
-                # of scope for the audit) but marking it so future
-                # maintainers don't add logic that depends on it.
-                # Use the largest image on the same page (or
-                # primary_path if available).
-                map_image = primary_path
-                if map_image is None:
-                    map_image = self._find_orphan_image_for_range_chart(
-                        figures, pair, od_result.json_data
-                    )
-                if map_image is not None:
-                    map_results = self._process_map(
-                        paper_id=paper_id,
-                        figure_id=pair.figure_id,
-                        caption_text=pair.caption_text or "",
-                        image_path=map_image,
-                    )
-                    results.extend(map_results)
-                    logger.info(
-                        "map %s: extracted %d location names, %d coords",
-                        pair.figure_id,
-                        len(map_results[0]["metadata"]["location_names"]) if map_results else 0,
-                        len(map_results[0]["metadata"]["coordinates"]) if map_results else 0,
-                    )
-                self._emit_progress(
-                    fig_idx,
-                    n_figs,
-                    f"[{fig_idx}/{n_figs}] map → {len(map_results) if map_results else 0} context",
                 )
                 continue
 
@@ -1963,7 +1827,8 @@ class RadiolarianPipeline:
         earlier stages already wrote:
 
         * ``extraction_source == "range_chart"`` -> ``figure_type="range_chart"``
-        * ``extraction_source == "map_context"`` -> ``figure_type="map"``
+        * ``extraction_source == "map"`` (or legacy "map_caption_heuristic",
+          "map_context") -> ``figure_type="map"``
         * ``figure_type`` itself when already classified by OpenDataLoader
 
         Rows without a figure image are skipped silently — vision on a
@@ -1999,18 +1864,19 @@ class RadiolarianPipeline:
             # Backfill figure_type from extraction_source where the older
             # stages didn't already tag it.
             # Round 9 (Bug-M1): the map figure path actually writes
-            # ``extraction_source="map_caption_heuristic"`` (set by
-            # ``_process_map`` at line ~1186), not the literal "map_context"
-            # the old code expected. Without matching the real value,
-            # ``figure_type`` never gets the "map" backfill and geo
-            # vision silently skips every map figure. Also accept the
-            # legacy "map_context" string for backwards compatibility
-            # (any caller that hand-stamped metadata with the old value).
+            # ``_process_map`` (line ~530) writes
+            # ``extraction_source="map"`` (NOT "map_caption_heuristic"
+            # which is the extraction_method). Without matching "map"
+            # here, ``figure_type`` never gets the "map" backfill and
+            # geo vision silently skips every map figure. Also accept
+            # the legacy "map_caption_heuristic" / "map_context" strings
+            # for backwards compatibility with callers that hand-stamped
+            # those values before the fix.
             if not figure_type:
                 src = md.get("extraction_source")
                 if src == "range_chart":
                     figure_type = "range_chart"
-                elif src in ("map_caption_heuristic", "map_context"):
+                elif src in ("map", "map_caption_heuristic", "map_context"):
                     figure_type = "map"
             if not figure_type or figure_type not in allowed:
                 continue
@@ -2566,9 +2432,18 @@ Rules:
             return None
 
         caption_text = caption.caption or ""
-        if _looks_like_placeholder_caption(caption_text):
-            return None
-
+        # Phase 55 audit BUG-FIX: previously the LLM-first path returned
+        # None immediately for placeholder captions (e.g. "Auto-generated
+        # figure for page X"), skipping the LLM call entirely. This
+        # silently dropped papers whose GROBID/OD caption extraction
+        # failed and fell back to visual-only mode — the LLM was never
+        # given a chance to identify species from image morphology.
+        #
+        # The LLM system prompt already handles placeholder captions
+        # correctly: it tries to identify species from image morphology
+        # when the caption doesn't mention species. We must let the LLM
+        # see the image even with placeholder captions. The only early
+        # return is when the image itself cannot be loaded.
         try:
             from PIL import Image as _PILImage
 
@@ -3579,7 +3454,7 @@ Rules:
         new_matches = []
         for m in deduped_matches:
             try:
-                if not m.panel_path or not Path(m.panel_path).exists():
+                if not m.panel_path or not Path(m.panel_path).is_file():
                     new_matches.append(m)
                     continue
                 with _PILImage.open(m.panel_path) as im:
@@ -4214,20 +4089,6 @@ def _merge_panel_hints(
     if not classical_panels or not m3_panels:
         return classical_panels
 
-    def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
-        ax, ay, aw, ah = a
-        bx, by, bw, bh = b
-        ax2, ay2 = ax + aw, ay + ah
-        bx2, by2 = bx + bw, by + bh
-        ix1, iy1 = max(ax, bx), max(ay, by)
-        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-        iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
-        inter = iw * ih
-        if inter <= 0:
-            return 0.0
-        union = aw * ah + bw * bh - inter
-        return inter / max(1, union)
-
     out: list[PanelCandidate] = []
     for cp in classical_panels:
         best: tuple[float, PanelBox] | None = None
@@ -4268,20 +4129,6 @@ def _add_unmatched_m3_panels(
     """
     if not m3_panels:
         return 0
-
-    def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
-        ax, ay, aw, ah = a
-        bx, by, bw, bh = b
-        ax2, ay2 = ax + aw, ay + ah
-        bx2, by2 = bx + bw, by + bh
-        ix1, iy1 = max(ax, bx), max(ay, by)
-        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-        iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
-        inter = iw * ih
-        if inter <= 0:
-            return 0.0
-        union = aw * ah + bw * bh - inter
-        return inter / max(1, union)
 
     matched_m3: set[int] = set()
     for cp in classical_panels:

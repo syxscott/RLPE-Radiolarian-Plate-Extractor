@@ -129,7 +129,6 @@ class MainWindow(QMainWindow):
         self._build_statusbar()
         self._wire_signals()
         self._restore_window_state()
-        # Phase 49: scan disk for previously completed jobs (mirrors
         # what the Web API does at startup) and populate the JobsTab.
         # Without this, restarting the GUI loses visibility into jobs
         # completed via the CLI / Web UI / a prior GUI session.
@@ -158,7 +157,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             i18n._tr("main.recent_loaded").format(n=n), 5000
         )
-        # Phase 51: auto-open the most recently finished job in
         # the Results tab. Sort by finished_at (descending); fall
         # back to job_id if finished_at is missing.
         try:
@@ -167,7 +165,7 @@ class MainWindow(QMainWindow):
                 return
             latest = max(
                 jobs.values(),
-                key=lambda j: (j.finished_at, j.job_id),
+                key=lambda j: (j.finished_at or -1, j.job_id),
             )
             self._results_tab.load_job(
                 latest.job_id, latest.rows, latest.output_dir,
@@ -220,7 +218,6 @@ class MainWindow(QMainWindow):
     # UI assembly
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
-        # Phase 36: load persisted language preference (default zh_CN).
         # The i18n module defaults to zh_CN at import time; the user's
         # last choice overrides it here.
         saved_lang = self._qsettings.value("ui/language", "zh_CN")
@@ -258,22 +255,10 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self._tabs)
 
-        # Phase 40: register _refresh_texts as an i18n listener so
-        # tab labels (▶ Run / 📋 Jobs / 📊 Results / ⚙️ Settings)
-        # and the window title translate on language switch. Without
-        # this the tabs are stuck in the language they were first
-        # created in. Also call _refresh_texts() once at the end of
-        # _build_ui so the FIRST PAINT shows the labels in the
-        # current language (zh_CN by default), not the bare English
-        # strings we passed to addTab().
-        #
-        # Phase 55 audit B4 — bind the listener as a method, not a
-        # lambda. A fresh lambda on every __init__ would (a) make
-        # i18n._LISTENERS grow unboundedly across rebuilds and
-        # (b) leak the previous MainWindow because the dedupe check
-        # in i18n.add_listener compares equality, and the previous
-        # lambda is a different object. Saving the bound method here
-        # lets closeEvent pair it with remove_listener.
+        # Register _refresh_texts as an i18n listener so tab labels and
+        # the window title translate on language switch. Using a bound
+        # method (not a lambda) lets closeEvent remove the listener
+        # by identity without accumulating stale references.
         self._i18n_listener = self._on_language_changed
         i18n.add_listener(self._i18n_listener)
         self._refresh_texts()
@@ -281,7 +266,6 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         menubar = self.menuBar()
 
-        # Phase 39: use tr_menu / tr_action so all menu labels
         # translate on language switch. The QAction objects are
         # registered in the i18n._MENU_ACTIONS list (i18n_widgets)
         # because they aren't QWidgets, so the registry's
@@ -362,7 +346,6 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_act)
 
     def _build_toolbar(self) -> None:
-        # Phase 39: use tr_action so toolbar labels translate on
         # language switch. The QToolBar widget itself is a QWidget
         # so its title can be retexted via the i18n registry.
         from .i18n_widgets import tr_action
@@ -404,7 +387,6 @@ class MainWindow(QMainWindow):
         sb = QStatusBar()
         self.setStatusBar(sb)
 
-        # Phase 39: use a plain QLabel + i18n registry so the status
         # text translates on language switch. We track which i18n key
         # the status bar is currently displaying in ``_status_key``
         # so a language switch can re-render the right key.
@@ -414,9 +396,10 @@ class MainWindow(QMainWindow):
         self._status_kwargs: dict = {}
         self._status_perm.setText(i18n._tr(self._status_key))
         i18n.register_widget_text("statusBar.main", "text", "main.idle")
-        # Register a listener so the status bar re-renders on language
-        # switch using the current key.
-        i18n.add_listener(self._refresh_status_text)
+        # Phase 55 audit B4: store as bound method attribute so
+        # closeEvent can remove the same listener by identity.
+        self._status_i18n_listener = self._refresh_status_text
+        i18n.add_listener(self._status_i18n_listener)
         sb.addPermanentWidget(self._status_perm, 1)
 
         # Mini progress bar
@@ -433,8 +416,7 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(ver)
 
     def _refresh_status_text(self, _lang: str) -> None:
-        """Phase 39: re-render the status bar with the current i18n key
-        when the language switches."""
+        """Re-render the status bar with the current i18n key."""
         try:
             self._status_perm.setText(
                 i18n._tr(self._status_key).format(**self._status_kwargs)
@@ -443,17 +425,11 @@ class MainWindow(QMainWindow):
             pass
 
     def _on_language_changed(self, _lang: str) -> None:
-        """Phase 55 audit B4 — bound method used as the i18n listener
-        instead of a lambda. Avoids the duplicate-registration leak
-        across MainWindow rebuilds. Pairs with closeEvent's
-        ``i18n.remove_listener`` call.
-        """
+        """Rebuild menu/tab labels on language switch (i18n listener)."""
         self._refresh_texts()
 
     def _set_status(self, key: str, **kwargs) -> None:
-        """Phase 39: set the status bar text via an i18n key + kwargs.
-        Replaces direct setText calls so the language switch can
-        re-render via _refresh_status_text."""
+        """Set the status bar text via an i18n key + kwargs."""
         self._status_key = key
         self._status_kwargs = kwargs
         try:
@@ -496,70 +472,73 @@ class MainWindow(QMainWindow):
         self._qsettings.sync()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-        # Phase 44: robust shutdown order. The previous code
-        # just saved window state and called super().closeEvent(),
-        # which could leave the PipelineWorker QThread running
-        # with the parent widget destroyed → RuntimeError.
-        #
-        # Phase 55 audit B4 — drop i18n listeners BEFORE quitting,
-        # so the next ``i18n.set_language`` call doesn't invoke a
-        # method on a destroyed QObject (``RuntimeError: wrapped
-        # C/C++ object has been deleted``). Without this every
-        # MainWindow construction accumulated one dead listener.
-        try:
-            import i18n  # type: ignore[import-not-found]  # noqa: F401
-        except ImportError:  # pragma: no cover
-            i18n = None  # type: ignore[assignment]
-        from . import i18n as _i18n  # local module — always available
-        listener = getattr(self, "_i18n_listener", None)
-        if listener is not None:
-            try:
-                _i18n.remove_listener(listener)
-            except Exception:  # pragma: no cover
-                pass
-        try:
-            _i18n.remove_listener(self._refresh_status_text)
-        except Exception:  # pragma: no cover
-            pass
+        self._remove_i18n_listeners()
         self._save_window_state()
-        # 1) Stop the worker if it's running. The Run tab's
-        #    _on_thread_done handles quit() + wait() but it only
-        #    fires on the worker's `finished` signal, which we
-        #    may not see if we're closing mid-job. So we wait
-        #    synchronously here.
-        worker = getattr(self._run_tab, "_worker", None)
-        if worker is not None and worker.isRunning():
-            # Phase 55 audit B2 — capture the active job id BEFORE
-            # requesting cancel so we can mark the Jobs tab row as
-            # cancelled too. Without this, the on-disk job record
-            # stays STATUS_RUNNING and re-appears as a zombie job
-            # on the next launch (Phase 49 disk scan resurrects it).
-            current_job_id = getattr(self._run_tab, "_current_job_id", None)
-            try:
-                worker.request_cancel()
-            except RuntimeError:
-                pass
-            # Wait up to 5s for the thread to honour the cancel.
-            if not worker.wait(5000):
-                worker.terminate()
-                worker.wait(500)
-            # Now stamp the cancelled state so the Jobs tab row
-            # doesn't keep showing the running spinner. Safe to
-            # call even when job_id is None (no-op).
-            if current_job_id:
-                try:
-                    self._jobs_tab.mark_cancelled(current_job_id)
-                except Exception:  # pragma: no cover — defensive
-                    pass
-        # 2) Flush QSettings so any unsaved state survives the
-        #    process exit (especially important on Windows where
-        #    QSettings is backed by the registry and changes
-        #    are only flushed on app exit, not on every setValue).
-        from PySide6.QtCore import QSettings
-        QSettings(APP_AUTHOR, APP_NAME).sync()
-        # 3) Accept the event (window closes).
+        self._stop_pipeline_worker()
+        self._flush_settings()
         event.accept()
         super().closeEvent(event)
+
+    def _remove_i18n_listeners(self) -> None:
+        """Drop all i18n listeners registered on construction.
+
+        Phase 55 audit B4: without this, every MainWindow construction
+        accumulated one dead listener that fired on language switch after
+        the widget was destroyed (RuntimeError: wrapped C/C++ object
+        has been deleted).
+        """
+        listener = getattr(self, "_i18n_listener", None)
+        if listener is not None:
+            i18n.remove_listener(listener)
+        status_listener = getattr(self, "_status_i18n_listener", None)
+        if status_listener is not None:
+            i18n.remove_listener(status_listener)
+        jobs_remove = getattr(self._jobs_tab, "_remove_i18n_listener", None)
+        if jobs_remove:
+            jobs_remove()
+        results_remove = getattr(self._results_tab, "_remove_i18n_listener", None)
+        if results_remove:
+            results_remove()
+        run_remove = getattr(self._run_tab, "_remove_i18n_listener", None)
+        if run_remove:
+            run_remove()
+
+    def _stop_pipeline_worker(self) -> None:
+        """Stop the PipelineWorker QThread synchronously on shutdown.
+
+        Phase 44: the worker's ``finished`` signal only fires when the
+        thread exits normally; closing mid-job would leave it running
+        with the parent widget destroyed → RuntimeError.  We request
+        cancel, wait up to 5 s, then terminate if needed.
+        Phase 55 audit B2: capture the job id before requesting cancel
+        so the Jobs tab row can be stamped STATUS_CANCELLED and the
+        disk-scan zombie-job problem (Phase 49) is avoided.
+        """
+        worker = getattr(self._run_tab, "_worker", None)
+        if worker is None or not worker.isRunning():
+            return
+        current_job_id = getattr(self._run_tab, "_current_job_id", None)
+        try:
+            worker.request_cancel()
+        except RuntimeError:
+            pass
+        if not worker.wait(5000):
+            worker.terminate()
+            worker.wait(500)
+        if current_job_id:
+            try:
+                self._jobs_tab.mark_cancelled(current_job_id)
+            except Exception:  # pragma: no cover — defensive
+                pass
+
+    def _flush_settings(self) -> None:
+        """Flush QSettings to persistent storage on shutdown.
+
+        On Windows QSettings is registry-backed; changes are only
+        flushed on process exit, not on every setValue.
+        """
+        from PySide6.QtCore import QSettings
+        QSettings(APP_AUTHOR, APP_NAME).sync()
 
     # ------------------------------------------------------------------
     # Menu / toolbar slots
@@ -591,7 +570,6 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _on_about(self) -> None:
-        # Phase 39: use i18n keys for the About dialog so it
         # translates on language switch. The body uses {fmt} placeholders
         # for the version / author / app name.
         QMessageBox.about(
@@ -710,7 +688,6 @@ class MainWindow(QMainWindow):
         self._jobs_tab.mark_failed(job_id, error)
         self._set_status("main.failed", id=job_id)
         self._mini_progress.setVisible(False)
-        # Phase 42: if a batch is running and the operator asked
         # for "stop on first error", halt the batch here. The
         # _batch_pdfs list is reset so the next _start_next_batch_job
         # call returns immediately.
@@ -821,7 +798,6 @@ class MainWindow(QMainWindow):
         the user cancels.
         """
         from PySide6.QtWidgets import QFileDialog
-        from .results_tab import RESULT_COLUMNS  # local import — cheap
         import datetime as _dt
 
         all_rows: list[dict[str, Any]] = []
@@ -845,43 +821,15 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        # Reuse ResultsTab's exporter so column layout stays
-        # consistent with the single-job path.
-        try:
-            self._results_tab._export_xlsx_to(Path(path), all_rows)
-        except AttributeError:
-            # Fallback: write the workbook directly using openpyxl.
-            from openpyxl import Workbook  # type: ignore[import-not-found]
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "results"
-            ws.append([c.key for c in RESULT_COLUMNS])
-            for row in all_rows:
-                ws.append([self._results_tab._extract_column(row, c.key) for c in RESULT_COLUMNS])
-            wb.save(path)
+        self._results_tab._export_xlsx_to(Path(path), all_rows)
 
     # Patch into the run tab to advance the batch on each completion
     def _refresh_texts(self) -> None:
-        """Re-apply all menu / tab labels after a language switch.
-
-        Phase 40: also refresh the window title — the old code
-        concatenated ``i18n._tr("app.title")`` twice (once directly,
-        once in an f-string ``v{i18n._tr('app.title')}`` whose
-        ``.replace("RLPE - Radiolarian Plate Extractor", "")`` was
-        meant to strip the EN title to leave just "v1.1.0", but in
-        zh_CN the title was different so the replace did nothing and
-        the window title became e.g.
-        ``"RLPE - 放射虫图版提取系统  vRLPE - 放射虫图版提取系统"``.
-        Fixed: use APP_VERSION constant directly (it's a number, not
-        translated).
-        """
+        """Re-apply all menu / tab labels after a language switch."""
         for i in range(self._tabs.count()):
             key = ("tab.run", "tab.jobs", "tab.results", "tab.settings")[i]
             self._tabs.setTabText(i, i18n._tr(key))
         self.setWindowTitle(f"{i18n._tr('app.title')}  v{APP_VERSION}")
-        # Re-render the tab bar widget tree (objects registered via
-        # setObjectName are retexted by i18n._apply_registry)
-        # (already done by set_language in i18n.py)
 
     def _on_settings_changed(self) -> None:
         # Re-apply settings to Run tab

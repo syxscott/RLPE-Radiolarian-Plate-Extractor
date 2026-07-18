@@ -48,6 +48,11 @@ def _preload_xcb_cursor_if_available() -> None:
     Catches + swallows all exceptions — a missing xcb-cursor is a
     recoverable error (the offscreen / vnc / wayland plugins still
     work without it).
+
+    Tries all candidate paths so a failed load (e.g. incompatible .so)
+    doesn't prevent trying subsequent paths. Returns after the first
+    successful load; if all candidates fail or are absent, silently
+    continues.
     """
     candidates = [
         # Anaconda's own Qt6 / libxcb-cursor bundle (very common in
@@ -65,8 +70,12 @@ def _preload_xcb_cursor_if_available() -> None:
         try:
             ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
         except OSError:
-            pass  # Best effort — Qt's plugin loader will report a
-                  # specific error if the .so is incompatible.
+            # Best effort — Qt's plugin loader will report a
+            # specific error if the .so is incompatible.
+            # Continue to next candidate instead of early-returning
+            # so a broken anaconda .so doesn't skip the system path.
+            continue
+        # Successfully loaded — no need to try other paths.
         return
 
 

@@ -198,10 +198,12 @@ def test_m1_results_tab_detail_reads_metadata_page_index() -> None:
     """
     src = (Path(__file__).resolve().parents[1]
            / "src" / "rlpe" / "gui" / "results_tab.py").read_text(encoding="utf-8")
-    # The detail meta_rows list must reference md.get("page_index").
+    # The detail HTML rendering must reference md.get("page_index"), not
+    # row.get("page_index"), so the page number comes from panel metadata.
     import re
-    m = re.search(r'meta_rows\s*=\s*\[(.*?)\]', src, re.S)
-    assert m is not None, "Could not locate meta_rows literal"
+    # Look for the page field in the detail metadata pairs block.
+    m = re.search(r'meta_pairs\s*=\s*\[(.*?)\]', src, re.S)
+    assert m is not None, "Could not locate meta_pairs literal"
     block = m.group(1)
     assert "md.get(\"page_index\")" in block, (
         "results_tab._render_detail still reads the top-level "

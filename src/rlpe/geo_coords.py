@@ -38,21 +38,23 @@ class Coordinate:
 # ---------------------------------------------------------------------------
 
 # Decimal degrees with optional hemisphere letter
+# Latitude: N/S allowed; Longitude: E/W allowed only (N/S are for lat)
 _DECIMAL_RE = re.compile(
     r"""
     (?P<lat>\d{1,3}(?:\.\d+)?)\s*°?\s*(?P<lat_h>[NSEWnsew])?
     \s*[,;\s]\s*
-    (?P<lon>-?\d{1,3}(?:\.\d+)?)\s*°?\s*(?P<lon_h>[NSEWnsew])?
+    (?P<lon>-?\d{1,3}(?:\.\d+)?)\s*°?\s*(?P<lon_h>[EWew])?
     """,
     re.VERBOSE,
 )
 
 # DMS form: 35°42'12"N   110°18'00"E
+# Latitude: N/S allowed; Longitude: E/W allowed only
 _DMS_RE = re.compile(
     r"""
     (?P<lat_d>\d{1,3})[°]\s*(?P<lat_m>\d{1,2})['′]\s*(?P<lat_s>\d{1,2}(?:\.\d+)?)["″]?\s*(?P<lat_h>[NSEWnsew])?
     \s*[,;\s]\s*
-    (?P<lon_d>\d{1,3})[°]\s*(?P<lon_m>\d{1,2})['′]\s*(?P<lon_s>\d{1,2}(?:\.\d+)?)["″]?\s*(?P<lon_h>[NSEWnsew])?
+    (?P<lon_d>\d{1,3})[°]\s*(?P<lon_m>\d{1,2})['′]\s*(?P<lon_s>\d{1,2}(?:\.\d+)?)["″]?\s*(?P<lon_h>[EWew])?
     """,
     re.VERBOSE,
 )

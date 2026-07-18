@@ -77,8 +77,7 @@ def load_matches(matches_path: Path) -> list[dict[str, Any]]:
 
 
 def find_live_dir(prefix: str) -> Path | None:
-    """Return the best matches.jsonl under work/oa_smoke_* whose
-    path contains ``prefix``.
+    """Return the best matches.jsonl under work/ whose path contains ``prefix``.
 
     The Round 6/7 smoke driver stores results in two layouts:
 
@@ -92,6 +91,9 @@ def find_live_dir(prefix: str) -> Path | None:
     pre-Round-6 driver runs that wrote matches.jsonl under
     <paper>/output/manifests/). The newest round6 version wins.
 
+    We also search non-oa_smoke dirs (e.g. ``feng_fix_test``) so that
+    freshly run results take precedence over stale smoke-test outputs.
+
     Matching strategy: extract the paper root word(s) from ``prefix``
     (e.g. 'Feng' from 'Feng_2007') and match against PDF filenames in
     the run's pdfs/ subdir AND against any path component. The paper
@@ -103,8 +105,9 @@ def find_live_dir(prefix: str) -> Path | None:
     paper_root = prefix.split("_")[0].lower() if "_" in prefix else prefix.lower()
     candidates: list[tuple[int, Path]] = []
     for top in WORK_BASE.iterdir():
-        if not top.is_dir() or not top.name.startswith("oa_smoke"):
+        if not top.is_dir():
             continue
+        is_smoke = top.name.startswith("oa_smoke")
         for mp in top.rglob("matches.jsonl"):
             if "output" not in mp.parts or "manifests" not in mp.parts:
                 continue
@@ -123,15 +126,20 @@ def find_live_dir(prefix: str) -> Path | None:
             if not (in_path or in_pdfs):
                 continue
             is_round6 = top.name.startswith("oa_smoke_round6")
-            version_score = (
-                1
-                if "_v3" in top.name
-                else 2
-                if "_v2" in top.name
-                else 3
-                if "_v1" in top.name
-                else 4
-            )  # default (no version suffix)
+            # Version score: lower is better (wins sort).
+            # Non-oa_smoke dirs get score 0 (best) so fresh runs win.
+            if not is_smoke:
+                version_score = 0
+            else:
+                version_score = (
+                    1
+                    if "_v3" in top.name
+                    else 2
+                    if "_v2" in top.name
+                    else 3
+                    if "_v1" in top.name
+                    else 4
+                )
             # Heavily penalize oa_smoke_v2/v3 (older driver) so round6
             # always wins ties.
             round6_score = 0 if is_round6 else 1000
@@ -164,6 +172,44 @@ def main() -> int:
         gold_filtered = {
             fid: pairs for fid, pairs in gold.items() if not match_paper_id or match_paper_id in fid
         }
+        # If no gold survived the paper_id filter (e.g. the live run was
+        # re-extracted with a different PDF and got a different paper_id hash),
+        # fall back to suffix matching: extract the last two underscore-separated
+        # tokens from each figure_id (e.g. p006_pl01) so that
+        # od_plate_<hash1>_p006_pl01 matches od_plate_<hash2>_p006_pl01.
+        if not gold_filtered and matches:
+            pred_fids = {r.get("figure_id") for r in matches}
+            gold_fids = set(gold.keys())
+            # Build suffix → gold figure_ids mapping
+            suffix_to_gold: dict[str, list[str]] = {}
+            for gfid in gold_fids:
+                parts = gfid.rsplit("_", 2)
+                suffix = "_".join(parts[-2:])  # e.g. "p006_pl01"
+                suffix_to_gold.setdefault(suffix, []).append(gfid)
+            # Map each pred fid to its suffix and rewrite matches in-place
+            fid_rewrite: dict[str, str] = {}
+            for m in matches:
+                pfid = m.get("figure_id", "")
+                if pfid in fid_rewrite:
+                    continue  # already mapped this pred fid
+                parts = pfid.rsplit("_", 2)
+                suffix = "_".join(parts[-2:])
+                for gfid in suffix_to_gold.get(suffix, []):
+                    fid_rewrite[pfid] = gfid
+                    print(
+                        f"  suffix-match: pred fid={pfid} → gold fid={gfid}"
+                    )
+                    break
+            # Rewrite matches figure_ids in-place
+            if fid_rewrite:
+                for m in matches:
+                    pfid = m.get("figure_id", "")
+                    if pfid in fid_rewrite:
+                        m["figure_id"] = fid_rewrite[pfid]
+                gold_filtered = {
+                    gfid: pairs for gfid, pairs in gold.items()
+                    if gfid in fid_rewrite.values()
+                }
         if not gold_filtered:
             print(
                 f"⚠️  {prefix}: live paper_id={match_paper_id} matches no gold figure_ids; skipping"

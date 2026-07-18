@@ -286,7 +286,12 @@ class PaleoDB:
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
             logger.warning("PBDB HTTP failed for %s: %s", full, exc)
             return None
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
+            # Re-raise fatal exceptions so the caller can honour Ctrl+C /
+            # graceful shutdown.  KeyboardInterrupt and SystemExit are not
+            # HTTP errors and should not be swallowed.
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
             logger.warning("PBDB HTTP unexpected error for %s: %s", full, exc)
             return None
         try:

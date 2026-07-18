@@ -94,7 +94,6 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
-        # Phase 36: Settings tab is dense (7 group boxes × 4-8 rows).
         # Wrap the body in a QScrollArea so on short / 150% DPI
         # windows the user can scroll instead of having the Save
         # button clipped off the bottom.
@@ -110,7 +109,6 @@ class SettingsTab(QWidget):
 
         body = QWidget()
         body.setObjectName("settab.body")
-        # Phase 36: the body's sizeHint defaults to its children's
         # cumulative widths, which underestimates when the scroll
         # area viewport is wide. Force a minimum width matching the
         # viewport so groupboxes expand to fill the visible space
@@ -119,14 +117,12 @@ class SettingsTab(QWidget):
         body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         body.setMinimumWidth(700)  # matches main window min width - margins
         body_layout = QVBoxLayout(body)
-        # Phase 34: normalise all input heights so the QSS dark theme
         # and 150% DPI don't clip QSpinBox / QComboBox value text.
         # Called at the end of _build_ui via _normalise_input_heights().
         body_layout.setContentsMargins(SPACE_L, SPACE_L, SPACE_L, SPACE_L)
         body_layout.setSpacing(SPACE_M)
 
         # Title
-        # Phase 34: title is a translated template with {app}/{version}.
         # We do NOT use tr_label or i18n.register_widget_text for the
         # title because both would substitute APP_NAME (the Python
         # constant) into the template, locking the language. Instead
@@ -149,7 +145,6 @@ class SettingsTab(QWidget):
         from PySide6.QtWidgets import QSizePolicy
         self._theme_combo.setMinimumHeight(32)
         self._theme_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Phase 47: friendly theme names (浅色 / 深色 / 跟随系统).
         # Phase 55 audit M8 — use the i18n-aware helper so the
         # labels refresh on language switch.
         from .constants import theme_friendly_options
@@ -239,7 +234,6 @@ class SettingsTab(QWidget):
         self._ocr_backend = QComboBox()
         self._ocr_backend.setMinimumHeight(32)
         self._ocr_backend.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Phase 47: friendly backend names instead of raw codes.
         # Phase 55 audit M8 — i18n-aware populate helper.
         from .constants import ocr_backend_friendly_options
         from .i18n_widgets import populate_friendly_combo
@@ -271,7 +265,6 @@ class SettingsTab(QWidget):
         self._llm_backend = QComboBox()
         self._llm_backend.setMinimumHeight(32)
         self._llm_backend.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Phase 47: friendly LLM backend names.
         # Phase 55 audit M8 — i18n-aware populate helper.
         from .constants import llm_backend_friendly_options
         populate_friendly_combo(self._llm_backend, llm_backend_friendly_options)
@@ -283,7 +276,6 @@ class SettingsTab(QWidget):
         self._m3_prompt_lang = QComboBox()
         self._m3_prompt_lang.setMinimumHeight(32)
         self._m3_prompt_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Phase 47: friendly M3 prompt language names.
         # Phase 55 audit M8 — i18n-aware populate helper.
         from .constants import m3_prompt_lang_friendly_options
         populate_friendly_combo(self._m3_prompt_lang, m3_prompt_lang_friendly_options)
@@ -368,13 +360,11 @@ class SettingsTab(QWidget):
 
         body_layout.addLayout(actions)
 
-        # Phase 36: glue the scroll area into the outer layout so the
         # body fills the tab and becomes scrollable when the window
         # is shorter than the body.
         scroll.setWidget(body)
         outer.addWidget(scroll)
 
-        # Phase 34: ensure every input widget has a 30-px
         # minimum height so the value is visible. This runs once
         # at construction; for runtime dynamic widgets, call
         # ``_normalise_input_heights()`` after adding them.
@@ -397,10 +387,14 @@ class SettingsTab(QWidget):
         # which is a sensible default for "where do I want to point
         # the PDF folder" dialogs.
         from pathlib import Path
+        initial = line_edit.text()
+        # Validate the saved path still exists; fall back to home if not.
+        if not initial or not Path(initial).is_dir():
+            initial = str(Path.home())
         path = QFileDialog.getExistingDirectory(
             self,
             i18n._tr("common.choose_dir").format(kind=kind),
-            line_edit.text() or str(Path.home()),
+            initial,
         )
         if path:
             line_edit.setText(path)
@@ -488,7 +482,6 @@ class SettingsTab(QWidget):
         if ix >= 0:
             self._llm_backend.setCurrentIndex(ix)
         self._m3_model.setText(self._qsettings.value("m3_model", DEFAULT_MINIMAX_MODEL))
-        # Phase 47: use findData to map the saved ISO code back to
         # the friendly display.
         m3_lang = self._qsettings.value("m3_prompt_lang", DEFAULT_M3_PROMPT_LANG)
         m3_lang_ix = self._m3_prompt_lang.findData(m3_lang)
@@ -586,7 +579,6 @@ class SettingsTab(QWidget):
         from PySide6.QtCore import QSignalBlocker
         with QSignalBlocker(self._theme_combo), QSignalBlocker(self._lang_combo):
             self._load()
-        # Phase 37: refresh the in-memory cache so the Run tab picks
         # up the freshly-reset defaults immediately (was: only QSettings
         # was reset, Run tab kept stale values until app restart).
         self.apply_to_run_settings()
@@ -610,7 +602,6 @@ class SettingsTab(QWidget):
         if not lang:
             return
         i18n.set_language(lang)
-        # Phase 36: persist language choice so the next launch
         # uses the same language. This is a live preference (no
         # Save button click required).
         self._qsettings.setValue("ui/language", lang)
@@ -624,7 +615,6 @@ class SettingsTab(QWidget):
         if win is not None and hasattr(win, "_tabs"):
             for i in range(win._tabs.count()):
                 w = win._tabs.widget(i)
-                # Phase 37: ALL tabs (Run / Jobs / Results / Settings)
                 # already register an i18n listener that calls their
                 # own _refresh_texts via i18n.set_language listeners —
                 # so we don't need to manually walk and call. But
@@ -640,7 +630,6 @@ class SettingsTab(QWidget):
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         if app is not None and hasattr(self, "_theme_combo"):
-            # Phase 47: use the userData (ISO code) not the friendly
             # name; apply_theme() needs "light" / "dark" / "system",
             # not "浅色" / "深色" / "跟随系统".
             theme_code = self._theme_combo.currentData() or self._theme_combo.currentText()
@@ -692,7 +681,6 @@ class SettingsTab(QWidget):
         # would be retexted by the global i18n._apply_registry()
         # sweep; this method exists so the parent MainWindow can
         # call back into us after a language switch.
-        # Phase 34: re-format the title. Use the *translated* app.name
         # + app.version so the ZH title says "RLPE - 放射虫图版提取系统"
         # rather than the EN constant. ``APP_NAME`` and ``APP_VERSION``
         # are language-independent (e.g. version numbers) so we use
@@ -716,7 +704,6 @@ class SettingsTab(QWidget):
         at first launch even after Settings changed them.
         """
         self._settings.update({
-            # Phase 47: use currentData (ISO code) not currentText
             # (friendly name) so the Run tab receives the right value.
             "theme": self._theme_combo.currentData() or self._theme_combo.currentText(),
             "last_pdf_dir": self._pdf_dir_edit.text(),

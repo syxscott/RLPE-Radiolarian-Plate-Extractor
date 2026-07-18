@@ -98,8 +98,11 @@ def _set_text(widget: QWidget, attr: str, key: str) -> None:
             widget.setWindowTitle(text)
         else:
             setattr(widget, attr, text)
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging
+        logging.getLogger("rlpe.gui").warning(
+            "i18n: failed to set %s on %s (%s): %s", attr, key, type(widget).__name__, exc
+        )
     # The objectName doubles as the registry key. i18n.register_widget_text
     # keys by the object's objectName, NOT by the (widget, attr) pair,
     # because the registry's purpose is to walk allWidgets() in the
@@ -415,86 +418,42 @@ def populate_friendly_combo(
     ``factory()`` is called. Each item is added with ``userData=code``
     so callers can read the raw code via ``currentData()``.
 
-    Phase 55 audit M8 — the previous code only called the factory once
-    at construction time, so after a language switch the combo kept
-    showing the labels in the old language. This helper registers an
-    i18n listener that re-invokes the factory on every ``set_language``
-    call. The current selection is preserved (looked up by userData).
-
-    Phase 55 audit BLOCKER-4 fix: stores the listener on the combo via
-    setProperty so a subsequent call on the same combo can find and
-    remove the old listener before registering a new one. Without this,
-    every SettingsTab/RunTab rebuild accumulated a new closure over the
-    old (deleted) QComboBox, causing memory growth and PySide6 segfaults
-    when set_language fired on the dangling wrapper.
+    The current selection is preserved (looked up by userData) across
+    rebuilds. A subsequent call on the same combo removes the previous
+    listener to avoid accumulating stale closures.
     """
     from . import i18n as _i18n
 
     def _rebuild(_lang: str) -> None:
-        # Guard: if the combo has been deleted by Qt (e.g. tab was
-        # destroyed and this listener fires on a subsequent language
-        # change), skip the rebuild to avoid accessing a dangling
-        # C++ wrapper. The check is unconditional — signalsBlocked()
-        # state has no relationship to object liveness; gating the
-        # guard on it would skip the check exactly when we need it.
+        # Guard: skip if combo was deleted by Qt.
         try:
             combo.count()
         except RuntimeError:
             return
-        # Remember the current selection by userData so we can
-        # restore it after rebuilding the items.
-        prev_code = combo.currentData()
-        if prev_code is None:
-            prev_code = default_code
+        prev_code = combo.currentData() or default_code
         combo.blockSignals(True)
         try:
             combo.clear()
             for code, friendly in factory():
                 combo.addItem(friendly, userData=code)
-            # Restore the previous selection. ``findData`` matches
-            # the userData we just stored, which is the same raw
-            # code we remembered above.
             if prev_code is not None:
                 ix = combo.findData(prev_code)
-                if ix >= 0:
-                    combo.setCurrentIndex(ix)
-                else:
-                    # Phase 55 audit MEDIUM-1: prev_code no longer exists
-                    # in the rebuilt list (e.g. a backend plugin was
-                    # uninstalled). Fall back to the first item so the
-                    # combo is never left with no valid selection.
-                    combo.setCurrentIndex(0)
+                combo.setCurrentIndex(ix if ix >= 0 else 0)
         finally:
             combo.blockSignals(False)
 
-    # BLOCKER-4 fix: if this combo already had a listener from a
-    # previous populate_friendly_combo call (e.g. tab rebuild), remove
-    # it first so we don't accumulate stale closures in _LISTENERS.
-    # Use a plain Python attribute (not setProperty) to store the
-    # listener — setProperty goes through QVariant which does not
-    # reliably round-trips arbitrary Python callables across PySide6
-    # versions; a plain attribute on the wrapper object is stable.
-    try:
-        old_listener = combo._i18n_listener
-    except AttributeError:
-        old_listener = None
+    old_listener = getattr(combo, "_i18n_listener", None)
     if old_listener is not None:
         try:
             _i18n.remove_listener(old_listener)
-        except Exception:
-            pass
+        except Exception as exc:
+            import logging
+            logging.getLogger("rlpe.gui").warning(
+                "i18n: failed to remove listener from combo: %s", exc
+            )
 
-    # Initial population (don't go through the listener wrapper
-    # because we want the default_code to win even if the user
-    # hasn't picked anything yet).
     _rebuild(_i18n.current_language())
-
-    # Store the listener on the combo so a future call can find and
-    # remove it. Using a plain attribute avoids the QVariant round-trip
-    # issue that setProperty has with callable closures.
     combo._i18n_listener = _rebuild  # type: ignore[attr-defined]
-
-    # Register the language switch handler.
     _i18n.add_listener(_rebuild)
     return _rebuild
 

@@ -240,10 +240,7 @@ class BatchDialog(QDialog):
         self._count_label.setText(i18n._tr("batch.count").format(n=len(self._pdfs)))
 
     def _on_clear_all(self) -> None:
-        """Phase 41: Clear All button now also empties the internal
-        ``_pdfs`` list — previously the lambda ``self._file_list.clear()``
-        only cleared the QListWidget but left self._pdfs populated,
-        so the next Start would still try to process them."""
+        """Clear all PDFs from the list and the output directory."""
         self._file_list.clear()
         self._pdfs.clear()
         self._count_label.setText(i18n._tr("batch.count").format(n=0))

@@ -478,7 +478,7 @@ def deduplicate_panels_nms(
     for panel in sorted(panels, key=lambda p: p.score, reverse=True):
         is_dup = False
         for k in kept:
-            iou = _iou_panels(panel.bbox, k.bbox)
+            iou = _iou(panel.bbox, k.bbox)
             if iou < iou_threshold:
                 continue
             if label_match:
@@ -499,7 +499,7 @@ def deduplicate_panels_nms(
     return kept
 
 
-def _iou_panels(a, b) -> float:
+def _iou(a, b) -> float:
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
     ax2, ay2 = ax + aw, ay + ah

@@ -108,13 +108,8 @@ class JobRecord:
 class _ProgressCellDelegate(QStyledItemDelegate):
     """Paints a small QProgressBar inside the progress column.
 
-    Phase 43 audit fix: the previous implementation skipped calling
-    ``QStyledItemDelegate.paint`` for the cell background, leaving
-    the painter in a state where Qt's BackingStore still had an
-    active painter when endPaint() was called, producing
-    "QBackingStore::endPaint() called with active painter" warnings
-    on every refresh. Fixed: call the base class first to draw the
-    cell, then draw the progress bar on top.
+    Delegates to the base class for the cell background + selection
+    state, then overlays a progress bar on top.
     """
 
     def paint(self, painter, option, index) -> None:  # type: ignore[override]
@@ -122,9 +117,7 @@ class _ProgressCellDelegate(QStyledItemDelegate):
         # selection state. This is what Qt's docs say is required
         # for custom delegates.
         super().paint(painter, option, index)
-        # Now overlay a progress bar. Phase 45: wrap in painter.save()
-        # / painter.restore() so the drawControl's pen / brush changes
-        # don't leak into the next delegate's paint call.
+        # Now overlay a progress bar.
         painter.save()
         try:
             progress_bar_option = QStyleOptionProgressBar()
@@ -136,14 +129,8 @@ class _ProgressCellDelegate(QStyledItemDelegate):
             progress_bar_option.progress = index.data(Qt.UserRole + 1) or 0
             progress_bar_option.text = f"{progress_bar_option.progress} / {progress_bar_option.maximum}"
             progress_bar_option.textVisible = True
-            # Phase 54 audit: B1 — was using
-            # ``QStyledItemDelegate.PrimitiveElement.ProgressBar``, which
-            # does not exist (``QStyledItemDelegate`` has no
-            # ``PrimitiveElement`` attribute). The error fired inside
-            # ``paint()``, propagating an ``AttributeError`` out of the
-            # Qt paint call and corrupting the jobs-tab render. The
-            # correct element for ``QStyle.drawControl`` is the
-            # ``ControlElement`` ``CE_ProgressBar`` (value 10).
+            # CE_ProgressBar (value 10) is the correct ControlElement for
+            # QStyle.drawControl — not PrimitiveElement which doesn't exist.
             QApplication.style().drawControl(
                 QStyle.CE_ProgressBar,
                 progress_bar_option,
@@ -166,18 +153,14 @@ class JobsTab(QWidget):
         super().__init__(parent)
         self._log = get_gui_logger()
         self._jobs: dict[str, JobRecord] = {}
+        self._ctx_actions: list[tuple[QAction, str]] = []
         self._build_ui()
-        # Phase 37 audit fix: register as an i18n listener so
-        # column headers, context menu items, and status labels
-        # auto-translate when the language switches (was: the
-        # MainWindow had to walk every tab and manually call
-        # _refresh_texts, which it didn't).
-        # The listener signature is ``Callable[[str], None]`` so
-        # we wrap with a lambda to discard the lang argument —
-        # without this, ``fn(lang)`` would TypeError on _refresh_texts
-        # (which takes no args) and set_language's ``except: pass``
-        # would silently swallow the error.
-        i18n.add_listener(lambda _lang: self._refresh_texts())
+        # Register as an i18n listener so column headers, context menus,
+        # and status labels auto-translate on language switch. Using a bound
+        # method (not a lambda) lets closeEvent remove the listener by
+        # identity without accumulating stale references.
+        self._i18n_listener = self._on_language_changed
+        i18n.add_listener(self._i18n_listener)
 
     # ------------------------------------------------------------------
     # UI
@@ -205,8 +188,6 @@ class JobsTab(QWidget):
         bar.addWidget(clear_all_btn)
 
         bar.addStretch(1)
-
-        # Phase 37: translated count label, default text from i18n.
         self._count_label = tr_label("jobstab.no_jobs")
         self._count_label.setObjectName("metric")
         bar.addWidget(self._count_label)
@@ -215,10 +196,7 @@ class JobsTab(QWidget):
 
         # ---- Table ----
         self._table = QTableWidget(0, 7)
-        # Phase 37 audit fix: use i18n keys for column headers so
-        # they translate on language switch. ``_refresh_texts``
-        # (called via the i18n listener registered in __init__)
-        # re-applies them when set_language() runs.
+        # Column headers use i18n keys so they translate on language switch.
         self._table.setHorizontalHeaderLabels([
             i18n._tr("jobstab.col.id"),
             i18n._tr("jobstab.col.pdf"),
@@ -258,7 +236,6 @@ class JobsTab(QWidget):
 
         # ---- Status row ----
         status_row = QHBoxLayout()
-        # Phase 37: translated status label.
         self._summary = tr_label("jobstab.no_jobs")
         self._summary.setObjectName("metricLabel")
         status_row.addWidget(self._summary, 1)
@@ -531,11 +508,7 @@ class JobsTab(QWidget):
         if job is None:
             return
         menu = QMenu(self)
-        # Phase 37 audit fix: register i18n keys for each QAction
-        # so the menu items translate on language switch. We
-        # store the actions on ``self`` so _refresh_texts can
-        # update their text later.
-        self._ctx_actions: list[tuple[QAction, str]] = []
+        self._ctx_actions.clear()
 
         def _add_action(key: str) -> QAction:
             act = QAction(i18n._tr(key), self)
@@ -586,25 +559,15 @@ class JobsTab(QWidget):
         )
         if not path:
             return
+        run_output = self._build_run_output(job)
+        # Try cli_export first (Round 24), fall back to direct write_xlsx.
         try:
-            from ..export import export_csv  # legacy alias if no xlsx
-
-            # Try the xlsx exporter (Round 24)
-            from ..cli_export import export_run_output_to_xlsx  # type: ignore
+            from ..cli_export import export_run_output_to_xlsx
+            export_run_output_to_xlsx(run_output, path)
         except ImportError:
             try:
                 from ..exporters.xlsx import write_xlsx
-                # Build a RunOutput-compatible dict from the job
-                run_output = self._build_run_output(job)
                 write_xlsx(run_output, path)
-                QMessageBox.information(
-                    self,
-                    i18n._tr("jobstab.menu.export_xlsx"),
-                    i18n._tr("jobstab.export.saved").format(
-                        count=len(job.rows), path=path,
-                    ),
-                )
-                return
             except Exception as exc:
                 QMessageBox.warning(
                     self,
@@ -614,26 +577,13 @@ class JobsTab(QWidget):
                     ),
                 )
                 return
-        # Fallback: call the cli_export function if available
-        try:
-            from ..cli_export import export_run_output_to_xlsx
-            run_output = self._build_run_output(job)
-            export_run_output_to_xlsx(run_output, path)
-            QMessageBox.information(
-                self,
-                i18n._tr("jobstab.menu.export_xlsx"),
-                i18n._tr("jobstab.export.saved").format(
-                    count=len(job.rows), path=path,
-                ),
-            )
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                i18n._tr("jobstab.menu.export_xlsx"),
-                i18n._tr("jobstab.export.failed").format(
-                    error=f"{type(exc).__name__}: {exc}",
-                ),
-            )
+        QMessageBox.information(
+            self,
+            i18n._tr("jobstab.menu.export_xlsx"),
+            i18n._tr("jobstab.export.saved").format(
+                count=len(job.rows), path=path,
+            ),
+        )
 
     def _export_json(self, job: JobRecord) -> None:
         if not job.rows:
@@ -673,17 +623,14 @@ class JobsTab(QWidget):
         geo: list[dict[str, Any]] = []
         seen_loc: set[tuple] = set()
         for p in panels:
-            for k, v in (p.get("metadata") or {}).items():
-                if k == "geology_links":
-                    for g in v or []:
-                        geo.append(g)
-            for k, v in (p.get("metadata") or {}).items():
-                if k == "paleodb":
-                    for occ in (v or {}).get("occurrences", []):
-                        key = (occ.get("country"), occ.get("locality"))
-                        if key not in seen_loc:
-                            seen_loc.add(key)
-                            localities.append({"country": occ.get("country"), "locality": occ.get("locality")})
+            md = p.get("metadata") or {}
+            for g in md.get("geology_links") or []:
+                geo.append(g)
+            for occ in (md.get("paleodb") or {}).get("occurrences") or []:
+                key = (occ.get("country"), occ.get("locality"))
+                if key not in seen_loc:
+                    seen_loc.add(key)
+                    localities.append({"country": occ.get("country"), "locality": occ.get("locality")})
         return {
             "schema_version": "1.0.0",
             "provenance": {"job_id": job.job_id, "source": "rlpe-gui"},
@@ -717,10 +664,7 @@ class JobsTab(QWidget):
             self._remove_job(jid)
 
     def _refresh_texts(self) -> None:
-        """Re-apply column headers / buttons / context-menu actions
-        after language switch. Phase 37 audit fix: also walks
-        ``self._ctx_actions`` (set by _show_context_menu) so the
-        right-click menu items translate too."""
+        """Re-apply column headers and context-menu actions after language switch."""
         headers = [
             i18n._tr("jobstab.col.id"),
             i18n._tr("jobstab.col.pdf"),
@@ -743,3 +687,16 @@ class JobsTab(QWidget):
             except RuntimeError:
                 # Action may have been destroyed if the menu closed
                 self._ctx_actions.remove((action, key))
+
+    def _on_language_changed(self, _lang: str) -> None:
+        """Rebuild UI texts on language switch (i18n listener)."""
+        self._refresh_texts()
+
+    def _remove_i18n_listener(self) -> None:
+        """Remove our i18n listener when the widget is destroyed."""
+        listener = getattr(self, "_i18n_listener", None)
+        if listener is not None:
+            try:
+                i18n.remove_listener(listener)
+            except Exception:
+                pass

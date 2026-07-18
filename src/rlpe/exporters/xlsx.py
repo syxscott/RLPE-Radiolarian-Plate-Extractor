@@ -330,14 +330,21 @@ _LEGEND = [
 
 
 def write_xlsx(
-    run_output: dict[str, Any], path: str | None = None
+    run_output: dict[str, Any] | Any, path: str | None = None
 ) -> bytes | None:
     """Build a multi-sheet .xlsx from a ``RunOutput`` dict.
 
     Returns the .xlsx bytes if ``path`` is ``None`` (in-memory
     mode, used by the API endpoint), or writes to ``path`` and
     returns ``None`` (used by the CLI exporter).
+
+    Accepts either a plain ``dict`` or a Pydantic ``RunOutput``
+    model (which has ``.panels`` / ``.localities`` /
+    ``.paleo_coordinates`` as model fields, not dict keys).
     """
+    # Normalise: Pydantic BaseModel has .model_dump(); plain dict does not.
+    if hasattr(run_output, "model_dump"):
+        run_output = run_output.model_dump()
     wb = Workbook()
     # ---- Sheet 1: panels -------------------------------------------------
     ws = wb.active

@@ -35,7 +35,7 @@ APP_AUTHOR: Final[str] = "RLPE Contributors"
 # Window default sizes
 MAIN_WINDOW_DEFAULT_SIZE: Final[tuple[int, int]] = (1440, 900)
 MAIN_WINDOW_MIN_SIZE: Final[tuple[int, int]] = (1100, 720)
-IMAGE_PREVIEW_MIN_SIZE: Final[tuple[int, int]] = (640, 480)
+IMAGE_PREVIEW_MIN_SIZE: Final[tuple[int, int]] = (400, 300)
 SETTINGS_DIALOG_DEFAULT_SIZE: Final[tuple[int, int]] = (720, 600)
 BATCH_DIALOG_DEFAULT_SIZE: Final[tuple[int, int]] = (900, 600)
 

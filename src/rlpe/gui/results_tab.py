@@ -67,11 +67,12 @@ class ResultsTab(QWidget):
         self._current_job_id: str | None = None
         self._current_job_dir: str | None = None
         self._build_ui()
-        # Phase 37 audit fix: register as an i18n listener so column
         # headers + filter labels + count label auto-translate on
         # language switch (was: MainWindow had to manually walk every
         # tab and call _refresh_texts, which it didn't).
-        i18n.add_listener(lambda _lang: self._refresh_texts())
+        # closeEvent can remove the listener by identity.
+        self._i18n_listener = self._on_language_changed
+        i18n.add_listener(self._i18n_listener)
 
     # ------------------------------------------------------------------
     # UI
@@ -103,14 +104,8 @@ class ResultsTab(QWidget):
         outer.addLayout(header)
 
         # ---- Filter row ----
-        # Phase 37 audit fix: each filter combo's "all/any" item
-        # stores a sentinel ``userData`` token ("__ALL__", "__ANY__",
-        # "yes", "no") so the filter logic compares against the
-        # sentinel, not the translated text. Previously the code
-        # compared against the literal "(all)"/"(any)" string,
-        # which silently dropped every row after a language switch
-        # because the translated label differs from the English
-        # sentinel.
+        # Filter combos store sentinel userData ("__ALL__", "__ANY__", etc.)
+        # so filter logic compares against the sentinel, not translated text.
         from .i18n_widgets import tr_combobox
         filter_row = QHBoxLayout()
         filter_row.setSpacing(SPACE_S)
@@ -120,9 +115,6 @@ class ResultsTab(QWidget):
             min_width=160,
         )
         self._species_filter.addItem(i18n._tr("restab.filter.all"), userData="__ALL__")
-        # Phase 37: setCurrentIndex(0) so the default filter is the
-        # "(all)" item (otherwise currentIndex=-1 and currentText=""
-        # which breaks our sentinel-comparison logic).
         self._species_filter.setCurrentIndex(0)
         self._species_filter.currentIndexChanged.connect(self._refresh_view)
         filter_row.addWidget(tr_label("restab.filter.species"))
@@ -165,7 +157,6 @@ class ResultsTab(QWidget):
 
         # ---- Top: results table ----
         self._table = QTableWidget(0, len(RESULT_COLUMNS))
-        # Phase 53: use the i18n key for column headers on init too.
         # Before this fix, headers showed the hardcoded English label
         # ("Species (Latin)", "Panel ID", etc.) regardless of locale
         # because ``c.label`` is a constant in ``constants.py``.
@@ -190,15 +181,10 @@ class ResultsTab(QWidget):
         splitter.addWidget(self._table)
 
         # ---- Bottom: detail panel (image + caption + PBDB) ----
-        bottom = QWidget()
-        bottom_layout = QHBoxLayout(bottom)
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setSpacing(0)
-        splitter.addWidget(bottom)
-
+        # Horizontal splitter: image on the left, detail text on the right.
+        # Added directly to the outer vertical splitter (not wrapped in
+        # another layout) so it receives the full width.
         self._preview = ImagePreviewWidget()
-        bottom_layout.addWidget(self._preview, 1)
-
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(SPACE_M, 0, 0, 0)
@@ -208,7 +194,14 @@ class ResultsTab(QWidget):
         self._detail_browser = QTextBrowser()
         self._detail_browser.setOpenExternalLinks(False)
         right_layout.addWidget(self._detail_browser, 1)
-        bottom_layout.addWidget(right_panel, 1)
+
+        bottom_splitter = QSplitter(Qt.Horizontal)
+        bottom_splitter.setChildrenCollapsible(False)
+        bottom_splitter.addWidget(self._preview)
+        bottom_splitter.addWidget(right_panel)
+        bottom_splitter.setStretchFactor(0, 4)
+        bottom_splitter.setStretchFactor(1, 6)
+        splitter.addWidget(bottom_splitter)
 
         splitter.setSizes([600, 300])
 
@@ -216,7 +209,6 @@ class ResultsTab(QWidget):
         footer = QHBoxLayout()
         footer.setSpacing(SPACE_S)
 
-        # Phase 37 audit fix: use tr_button so these translate on
         # language switch. Use ``setProperty("class", ...)`` rather
         # than ``setObjectName`` for the primary button so the
         # i18n registry's objectName key isn't clobbered.
@@ -270,7 +262,6 @@ class ResultsTab(QWidget):
         """Re-translate column headers + filter labels."""
         for i, col in enumerate(RESULT_COLUMNS):
             self._table.horizontalHeaderItem(i).setText(i18n._tr(f"restab.col.{col.key}"))
-        # Phase 37 audit fix: preserve userData when re-setting the
         # "all"/"any" labels. We update only the *displayed text*
         # at the existing index rather than clearing + rebuilding,
         # which would lose the per-species / per-family items.
@@ -288,12 +279,24 @@ class ResultsTab(QWidget):
                 elif ud == "no":
                     combo.setItemText(i, i18n._tr("restab.filter.no"))
 
+    def _on_language_changed(self, _lang: str) -> None:
+        """Rebuild UI texts on language switch (i18n listener)."""
+        self._refresh_texts()
+
+    def _remove_i18n_listener(self) -> None:
+        """Remove our i18n listener when the widget is destroyed."""
+        listener = getattr(self, "_i18n_listener", None)
+        if listener is not None:
+            try:
+                i18n.remove_listener(listener)
+            except Exception:
+                pass
+
     def clear(self) -> None:
         self._all_rows = []
         self._filtered_rows = []
         self._current_job_id = None
         self._current_job_dir = None
-        # Phase 37: use i18n keys for the reset state text.
         self._title.setText(i18n._tr("restab.no_job"))
         self._table.setRowCount(0)
         self._preview.clear()
@@ -318,7 +321,6 @@ class ResultsTab(QWidget):
         families = [f for f in families if f]
         self._species_filter.blockSignals(True)
         self._species_filter.clear()
-        # Phase 37 audit fix: store sentinel userData so the
         # filter logic compares against "__ALL__" instead of
         # the translated label text.
         self._species_filter.addItem(i18n._tr("restab.filter.all"), userData="__ALL__")
@@ -335,7 +337,6 @@ class ResultsTab(QWidget):
 
     def _filter_rows(self) -> list[dict[str, Any]]:
         search = self._search_edit.text().lower().strip()
-        # Phase 37 audit fix: compare against sentinel userData
         # ("__ALL__", "__ANY__", "yes", "no") instead of the
         # translated label text. Previously the comparison was
         # against the literal English "(all)"/"(any)"/"yes"/"no"
@@ -369,7 +370,6 @@ class ResultsTab(QWidget):
             if has_pbdb != "__ANY__":
                 pbdb = (r.get("metadata") or {}).get("paleodb")
                 want = has_pbdb == "yes"
-                # Phase 53: wrap in bool() so have is True/False, not
                 # the truthy dict from pbdb.get("taxonomy"). Without
                 # bool(), `True != {'family': 'F1'}` is True and the
                 # row is dropped even when it has PBDB data.
@@ -426,7 +426,6 @@ class ResultsTab(QWidget):
                 if g.get("latitude") is not None and g.get("longitude") is not None:
                     return f"{g['latitude']:.3f}, {g['longitude']:.3f}"
             return None
-        # Phase 53: page_index lives at metadata.page_index in the
         # pipeline output, NOT at the row top level (which is None).
         # Before the fix, the Page column always showed "—" because
         # the code fell through to ``row.get("page_index")`` which
@@ -459,59 +458,145 @@ class ResultsTab(QWidget):
         self._preview.set_bboxes([])
 
     def _render_detail(self, row: dict[str, Any]) -> None:
-        """Render the right-side detail panel as HTML."""
+        """Render the right-side detail panel as HTML.
+
+        Mirrors the Web UI's openImageModal() fields as closely as possible:
+        paper_id / figure_id / panel_id / extraction_source badge /
+        species / confidence / geology_scope badge / old_panel_id record /
+        BBox / paper_metadata (journal/year/review_reasons) /
+        caption_snippet / sample IDs / geology_links with full
+        age · Ma range · lithology · formation · member · group ·
+        biozone · locality · country · modern coords · paleo coords /
+        evidence_text.
+        """
         md = row.get("metadata") or {}
         pm = row.get("paper_metadata") or {}
         paleodb = md.get("paleodb") or {}
         tax = paleodb.get("taxonomy") or {}
         geo_links = md.get("geology_links") or []
         html = []
-        html.append("<html><body style='font-family: sans-serif;'>")
-        # Heading
+        html.append("<html><head><style>"
+            ".badge-info{padding:1px 5px;border-radius:3px;font-size:11px;background:#d6e4ff;color:#1f77b4}"
+            ".badge-warn{padding:1px 5px;border-radius:3px;font-size:11px;background:#ffe0a0;color:#c07800}"
+            ".badge-muted{padding:1px 5px;border-radius:3px;font-size:11px;background:#eee;color:#888}"
+            "</style></head><body style='font-family:sans-serif;padding:0;margin:0'>")
+
+        # ── Heading ──────────────────────────────────────────────
         html.append(
-            f"<h2 style='color:#1f77b4;margin-bottom:4px'>{html_escape(row.get('species') or '(no species)')}</h2>"
+            f"<h2 style='color:#1f77b4;margin:8px 8px 2px'>"
+            f"{html_escape(row.get('species') or '(no species)')}</h2>"
         )
-        html.append(
-            f"<div style='color:#666;margin-bottom:10px'>{html_escape(row.get('panel_id') or '')}</div>"
-        )
-        # Metadata block
-        html.append("<table style='font-size:12px;border-collapse:collapse;width:100%;margin-bottom:12px'>")
-        meta_rows = [
-            ("Confidence",    f"{row.get('confidence'):.2f}" if isinstance(row.get('confidence'), (int, float)) else "—"),
-            ("Page",          md.get("page_index") if isinstance(md, dict) else row.get("page_index")),
-            ("Figure",        row.get("figure_id")),
-            ("Panel bbox",    _format_bbox(row.get("bbox"))),
-            ("Source",        ((md.get("extraction_source") or "—")) if isinstance(md, dict) else "—"),
-        ]
-        for k, v in meta_rows:
+        panel_id = row.get('panel_id') or ''
+        old_panel_id = md.get("old_panel_id")
+        if old_panel_id and old_panel_id != panel_id:
             html.append(
-                f"<tr><td style='padding:2px 8px 2px 0;color:#888;width:30%'>{k}</td>"
-                f"<td style='padding:2px 0'>{html_escape(str(v))}</td></tr>"
+                f"<div style='color:#888;font-size:11px;margin:0 8px 6px'>"
+                f"&#8594; was <code>{html_escape(str(old_panel_id))}</code></div>"
+            )
+        elif panel_id:
+            html.append(
+                f"<div style='color:#666;font-size:12px;margin:0 8px 6px'>"
+                f"{html_escape(panel_id)}</div>"
+            )
+
+        # ── ID / metadata grid ─────────────────────────────────
+        geo_scope = md.get("geology_scope") or "none"
+        scope_labels = {"panel": "Panel专属", "figure_anchor": "图级锚定", "none": "无地质"}
+        scope_cls = {"panel": "badge-info", "figure_anchor": "badge-warn", "none": "badge-muted"}
+        scope_label = scope_labels.get(geo_scope, geo_scope)
+        cls = scope_cls.get(geo_scope, "badge-muted")
+        ocr_src = md.get("extraction_source") or ""
+        ocr_badges = {
+            "image_ocr": ("OCR", "badge-info"),
+            "positional": ("位置", "badge-warn"),
+            "no_image": ("无图像", "badge-muted"),
+        }
+        ocr_label, ocr_cls = ocr_badges.get(ocr_src, (ocr_src or "—", "badge-muted"))
+        conf = row.get("confidence")
+        conf_str = f"{conf * 100:.0f}%" if isinstance(conf, (int, float)) else "—"
+
+        html.append("<table style='font-size:12px;border-collapse:collapse;width:100%;margin-bottom:8px'>")
+        meta_pairs = [
+            ("论文ID", html_escape(row.get("paper_id") or "—")),
+            ("图版ID", html_escape(row.get("figure_id") or "—")),
+            ("Panel标签", html_escape(panel_id or "—")),
+            ("Page", md.get("page_index") if md.get("page_index") is not None else "—"),
+            ("来源", f"<span class='{ocr_cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{ocr_label}</span>"),
+            ("置信度", conf_str),
+            ("地质范围", f"<span class='{cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{scope_label}</span>"),
+        ]
+        if row.get("bbox") and isinstance(row.get("bbox"), list) and any(v > 0 for v in row["bbox"]):
+            html.append(
+                f"<tr><td style='padding:2px 8px 2px 0;color:#888'>BBox</td>"
+                f"<td style='padding:2px 0;font-family:monospace;font-size:11px'>"
+                f"[{', '.join(str(v) for v in row['bbox'])}]</td></tr>"
+            )
+        for k, v in meta_pairs:
+            html.append(
+                f"<tr><td style='padding:2px 8px 2px 0;color:#888;white-space:nowrap'>{k}</td>"
+                f"<td style='padding:2px 0'>{v}</td></tr>"
             )
         html.append("</table>")
-        # Caption snippet
-        if row.get("caption_snippet"):
-            html.append("<h3 style='font-size:13px;margin:8px 0 4px'>Caption</h3>")
-            html.append(
-                f"<pre style='background:#f5f5f5;padding:8px;border-radius:4px;"
-                f"white-space:pre-wrap;font-family:monospace;font-size:11px'>"
-                f"{html_escape(row['caption_snippet'])}</pre>"
-            )
-        # Paper metadata
-        if pm.get("title"):
-            html.append("<h3 style='font-size:13px;margin:8px 0 4px'>Paper</h3>")
-            html.append(f"<div><b>{html_escape(pm['title'])}</b></div>")
-            authors = pm.get("authors")
+
+        # ── Paper metadata ──────────────────────────────────────
+        title = pm.get("title") or ""
+        authors = pm.get("authors") or []
+        journal = pm.get("journal") or ""
+        year = pm.get("year") or ""
+        doi = pm.get("doi") or ""
+        review_reasons = (pm.get("review_reasons") or [])[:3]
+        if title:
+            parts = [f"<b>{html_escape(title)}</b>"]
             if authors:
-                html.append(f"<div style='color:#666'>{html_escape(str(authors)[:200])}</div>")
-            if pm.get("doi"):
-                html.append(f"<div>DOI: <code>{html_escape(pm['doi'])}</code></div>")
-            if pm.get("year"):
-                html.append(f"<div>Year: {html_escape(str(pm['year']))}</div>")
-        # PBDB taxonomy
+                parts.append(f"<span style='color:#666'>{html_escape(str(authors)[:120])}</span>")
+            if journal:
+                parts.append(f"<span style='color:#666'>{html_escape(journal)}</span>")
+            if year:
+                parts.append(f"<span style='color:#666'>({html_escape(str(year))})</span>")
+            html.append(
+                f"<div style='padding:4px 8px;border-top:1px solid #eee'>"
+                + " ".join(parts) + "</div>"
+            )
+            if doi:
+                html.append(f"<div style='padding:0 8px 4px;font-size:11px;color:#666'>DOI: <code>{html_escape(doi)}</code></div>")
+            if review_reasons:
+                rw = "; ".join(str(r) for r in review_reasons)
+                html.append(
+                    f"<div style='padding:0 8px 4px'><span class='badge-warn' style='font-size:11px'>"
+                    f"&#9888; {html_escape(rw[:80])}</span></div>"
+                )
+
+        # ── Caption snippet ───────────────────────────────────
+        cap_snippet = row.get("caption_snippet") or ""
+        if cap_snippet:
+            display = cap_snippet[:280] + ("…" if len(cap_snippet) > 280 else "")
+            html.append(
+                f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
+                f"<b style='font-size:12px'>Caption</b>"
+                f"<pre style='background:#f5f5f5;padding:6px;border-radius:4px;margin:4px 0 0;"
+                f"white-space:pre-wrap;font-family:monospace;font-size:11px'>"
+                f"{html_escape(display)}</pre></div>"
+            )
+
+        # ── Evidence text ─────────────────────────────────────
+        ev_text = md.get("evidence_text") or ""
+        if ev_text:
+            html.append(
+                f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
+                f"<b style='font-size:12px'>提取证据</b>"
+                f"<pre style='background:#fffbe5;padding:6px;border-radius:4px;margin:4px 0 0;"
+                f"white-space:pre-wrap;font-family:monospace;font-size:11px;border:1px solid #ffeaa7'>"
+                f"{html_escape(ev_text[:500])}"
+                f"{'…' if len(ev_text) > 500 else ''}</pre></div>"
+            )
+
+        # ── PBDB taxonomy ─────────────────────────────────────
         if tax:
-            html.append("<h3 style='font-size:13px;margin:8px 0 4px'>PBDB taxonomy</h3>")
-            html.append("<table style='font-size:12px'>")
+            html.append(
+                f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
+                f"<b style='font-size:12px'>PBDB taxonomy</b>"
+                f"<table style='font-size:12px;margin-top:4px'>"
+            )
             tax_rows = [
                 ("Kingdom", tax.get("kingdom")),
                 ("Phylum",  tax.get("phylum")),
@@ -525,28 +610,92 @@ class ResultsTab(QWidget):
                 if not v:
                     continue
                 html.append(
-                    f"<tr><td style='padding:2px 8px 2px 0;color:#888;width:30%'>{k}</td>"
-                    f"<td style='padding:2px 0'>{html_escape(str(v))}</td></tr>"
+                    f"<tr><td style='padding:1px 8px 1px 0;color:#888'>{k}</td>"
+                    f"<td style='padding:1px 0'>{html_escape(str(v))}</td></tr>"
                 )
-            html.append("</table>")
-        # Geology links (first 5)
+            html.append("</table></div>")
+
+        # ── Sample IDs ─────────────────────────────────────────
+        sample_ids = list({
+            str(g.get("sample_id"))
+            for g in geo_links
+            if g.get("sample_id")
+        })
+        if sample_ids:
+            html.append(
+                f"<div style='padding:4px 8px;border-top:1px solid #eee;font-size:12px'>"
+                f"<b>Sample IDs</b>: "
+                f"<code style='font-size:11px'>{html_escape(', '.join(sample_ids[:10]))}"
+                f"{' …' if len(sample_ids) > 10 else ''}</code></div>"
+            )
+
+        # ── Geology links ────────────────────────────────────
         if geo_links:
-            html.append(f"<h3 style='font-size:13px;margin:8px 0 4px'>Geology links ({len(geo_links)})</h3>")
-            for g in geo_links[:5]:
+            html.append(
+                f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
+                f"<b style='font-size:12px'>Geology links ({len(geo_links)})</b>"
+            )
+            for g in geo_links[:8]:
                 bits = []
-                for k in ("age", "chronostratigraphy", "biozone", "country", "locality"):
-                    if g.get(k):
-                        bits.append(html_escape(f"{k}={g[k]}"))
-                if g.get("latitude") is not None:
-                    bits.append(f"lat={g['latitude']:.3f},lon={g['longitude']:.3f}")
-                html.append(
-                    f"<div style='font-family:monospace;font-size:11px;background:#f7f9fc;"
-                    f"padding:4px 8px;border-radius:3px;margin-bottom:4px'>"
-                    + " · ".join(bits)
-                    + "</div>"
-                )
-            if len(geo_links) > 5:
-                html.append(f"<div style='color:#888'>… and {len(geo_links)-5} more</div>")
+                # Age / chronostratigraphy
+                age = g.get("age") or g.get("chronostratigraphy") or ""
+                if age:
+                    bits.append(f"<strong>{html_escape(age)}</strong>")
+                # Ma range
+                ma_top = g.get("ma_top")
+                ma_base = g.get("ma_base")
+                if ma_top is not None and ma_base is not None:
+                    bits.append(f"<span style='color:#555'>{float(ma_top):.2f}–{float(ma_base):.2f} Ma</span>")
+                # Lithology / formation / member / group
+                for k in ("lithology", "formation", "member", "group"):
+                    v = g.get(k)
+                    if v:
+                        tag = f"<em>{html_escape(str(v))}</em>" if k == "formation" else html_escape(str(v))
+                        bits.append(f"<span style='font-size:11px'>{tag}</span>")
+                # Biozone
+                bz = g.get("biozone")
+                if bz:
+                    bits.append(f"<span style='font-size:11px'>{html_escape(bz)}</span>")
+                # Locality / country
+                loc = g.get("locality") or ""
+                ctry = g.get("country") or ""
+                if loc:
+                    bits.append(f"<span style='font-size:11px'>{html_escape(loc)}</span>")
+                if ctry:
+                    bits.append(f"<span style='font-size:11px;color:#666'>{html_escape(ctry)}</span>")
+                # Modern coords
+                mlat = g.get("modern_latitude")
+                mlon = g.get("modern_longitude")
+                if mlat is not None and mlon is not None:
+                    bits.append(
+                        f"<span style='font-size:11px;color:#27ae60'>now "
+                        f"{float(mlat):.3f}, {float(mlon):.3f}</span>"
+                    )
+                # Paleo coords
+                plat = g.get("paleo_latitude")
+                plon = g.get("paleo_longitude")
+                plate_id = g.get("plate_id")
+                recon_age = g.get("reconstruction_age_ma")
+                if plat is not None and plon is not None:
+                    paleo_bits = [f"<span style='color:#e67e22'>@ {float(plat):.3f}, {float(plon):.3f}</span>"]
+                    if plate_id:
+                        paleo_bits.append(f"<span style='color:#e67e22'>plate={plate_id}</span>")
+                    if recon_age is not None:
+                        paleo_bits.append(f"<span style='color:#e67e22'>{float(recon_age):.1f} Ma</span>")
+                    bits.append(" ".join(paleo_bits))
+                # Confidence
+                gc = g.get("geology_confidence") or g.get("confidence")
+                if gc is not None:
+                    bits.append(f"<span style='color:#888;font-size:10px'>({float(gc)*100:.0f}%)</span>")
+                if bits:
+                    html.append(
+                        f"<div style='font-size:11px;background:#f7f9fc;padding:4px 6px;"
+                        f"border-radius:3px;margin-top:4px'>" + " · ".join(bits) + "</div>"
+                    )
+            if len(geo_links) > 8:
+                html.append(f"<div style='color:#888;font-size:11px;margin-top:4px'>… and {len(geo_links)-8} more</div>")
+            html.append("</div>")
+
         html.append("</body></html>")
         self._detail_browser.setHtml("\n".join(html))
 
@@ -661,6 +810,31 @@ class ResultsTab(QWidget):
                     error=f"{type(exc).__name__}: {exc}",
                 ),
             )
+
+    def _export_xlsx_to(self, path: Path, rows: list[dict[str, Any]]) -> None:
+        """Export ``rows`` to ``path`` as .xlsx, reusing the standard multi-sheet layout."""
+        from ..exporters.xlsx import write_xlsx
+        panels = rows
+        run_output = {
+            "schema_version": "1.0.0",
+            "provenance": {"job_id": "batch", "source": "rlpe-gui"},
+            "papers": [],
+            "figures": [],
+            "panels": panels,
+            "taxa": [],
+            "samples": [],
+            "geology_contexts": [
+                g for r in panels for g in ((r.get("metadata") or {}).get("geology_links") or [])
+            ],
+            "localities": [
+                {"country": g.get("country"), "locality": g.get("locality")}
+                for r in panels for g in ((r.get("metadata") or {}).get("geology_links") or [])
+                if g.get("country") or g.get("locality")
+            ],
+            "paleo_coordinates": [],
+            "warnings": [],
+        }
+        write_xlsx(run_output, str(path))
 
     def _build_run_output(self) -> dict[str, Any]:
         panels = self._filtered_rows

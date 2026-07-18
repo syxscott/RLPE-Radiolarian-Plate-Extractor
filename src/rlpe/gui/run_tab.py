@@ -93,12 +93,11 @@ class RunTab(QWidget):
         self._current_job_id: str | None = None
         self._build_ui()
         self._connect_signals()
-        # Phase 54 audit m9: register an i18n listener so the
-        # progress format / status strings re-render on language
-        # switch. Previously the format was only refreshed when
-        # ``_refresh_formats`` was called manually, which the parent
-        # MainWindow only did on certain paths.
-        i18n.add_listener(lambda _lang: self._refresh_formats())
+        # Register an i18n listener so progress format strings re-render
+        # on language switch. Use a bound method so closeEvent can remove
+        # the listener by identity without accumulating stale references.
+        self._i18n_listener = self._on_language_changed
+        i18n.add_listener(self._i18n_listener)
 
     # ------------------------------------------------------------------
     # UI
@@ -170,10 +169,7 @@ class RunTab(QWidget):
         basic_layout.setVerticalSpacing(SPACE_S)
         row = 0
 
-        # OCR backend — Phase 48: friendly names (PaddleOCR (推荐) /
-        # EasyOCR (多语言)) instead of raw "paddleocr"/"easyocr". The
-        # backend still receives the raw ISO code via currentData()
-        # (or currentText() fallback).
+        # OCR backend — friendly names shown in the UI, raw code stored in userData.
         from .constants import ocr_backend_friendly_options
         from PySide6.QtWidgets import QSizePolicy
         basic_layout.addWidget(tr_label("runtab.label.ocr_backend"), row, 0)
@@ -181,8 +177,6 @@ class RunTab(QWidget):
         self._ocr_combo.setObjectName("runtab.ocr_backend")
         self._ocr_combo.setMinimumHeight(32)
         self._ocr_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Phase 55 audit M8 — populate via the i18n-aware helper so
-        # the displayed friendly names refresh on language switch.
         from .i18n_widgets import populate_friendly_combo
         populate_friendly_combo(
             self._ocr_combo, ocr_backend_friendly_options,
@@ -191,39 +185,23 @@ class RunTab(QWidget):
         basic_layout.addWidget(self._ocr_combo, row, 1)
 
         basic_layout.addWidget(tr_label("runtab.label.ocr_lang"), row, 2)
-        # Phase 46: a QComboBox with friendly language names
-        # ("English" / "中文 (简体)" / "日本語") instead of the
-        # unfriendly ISO codes ("en" / "ch_sim" / "ja"). The ISO
-        # codes are still stored in the userData so the OCR backend
-        # still receives the right value. setEditable(True) lets
-        # power users still type a custom comma-separated list
-        # (e.g. "en,ja,ch_sim") for advanced use cases.
+        # Friendly language names in the combo; ISO codes stored in userData.
+        # setEditable allows custom comma-separated lists (e.g. "en,ja").
         from .constants import ocr_lang_friendly_options
         self._ocr_lang_edit = QComboBox()
         self._ocr_lang_edit.setObjectName("runtab.ocr_lang")
         self._ocr_lang_edit.setEditable(True)
-        # Phase 36: ensure input row height is 32 (matches tr_form_row).
-        # Phase 46 + 47: tr_combobox factory does this for combos
-        # created via the factory, but we're constructing the QComboBox
-        # directly to use friendly names. Set min_height manually.
         from PySide6.QtWidgets import QSizePolicy
         self._ocr_lang_edit.setMinimumHeight(32)
         self._ocr_lang_edit.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Also fix the internal QLineEdit (the editable text field
-        # inside the combo) — Phase 35 tests walk all QLineEdits
-        # and expect min_height >= 30.
         self._ocr_lang_edit.lineEdit().setMinimumHeight(32)
-        # Phase 55 audit M8 — use the i18n-aware helper so the
-        # friendly names ("English" / "中文") update on language switch.
         from .i18n_widgets import populate_friendly_combo
         populate_friendly_combo(
             self._ocr_lang_edit, ocr_lang_friendly_options,
             default_code=DEFAULT_OCR_LANG,
         )
         self._ocr_lang_edit.setMinimumWidth(INPUT_WIDTH_OCR_LANG)
-        # Phase 55 audit F-4 — the tooltip used to be hardcoded
-        # English. Translate it via the i18n registry so the tooltip
-        # follows the language switch.
+        # Translate tooltip via the i18n registry.
         from . import i18n as _i18n_tooltip
         self._ocr_lang_edit.setObjectName("runtab.ocr_lang")
         _i18n_tooltip.register_widget_text(
@@ -272,7 +250,7 @@ class RunTab(QWidget):
             min_width=INPUT_WIDTH_SHORT,
             min_val=1, max_val=50, value=2,
         )
-        self._caption_window.setToolTip("GROBID caption→page lookup window (Phase 28)")
+        self._caption_window.setToolTip("GROBID caption→page lookup window")
         basic_layout.addWidget(self._caption_window, row, 1)
         basic_layout.addWidget(tr_label("runtab.label.od_caption_window"), row, 2)
         self._od_caption_window = tr_spinbox(
@@ -282,7 +260,7 @@ class RunTab(QWidget):
             max_val=RANGE_OD_CAPTION_WINDOW[1],
             value=5,
         )
-        self._od_caption_window.setToolTip("OpenDataLoader caption↔image cross-page window (Phase 28)")
+        self._od_caption_window.setToolTip("OpenDataLoader caption↔image cross-page window")
         basic_layout.addWidget(self._od_caption_window, row, 3)
         row += 1
 
@@ -319,12 +297,11 @@ class RunTab(QWidget):
         adv_layout.setVerticalSpacing(SPACE_S)
 
         self._llm_combo = QComboBox()
-        # Phase 47: friendly backend names instead of raw tokens.
+        # Friendly backend names — stored as userData, displayed as itemText.
         from .constants import llm_backend_friendly_options
         from PySide6.QtWidgets import QSizePolicy
         self._llm_combo.setMinimumHeight(32)
         self._llm_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Phase 55 audit M8 — populate via the i18n-aware helper.
         from .i18n_widgets import populate_friendly_combo
         populate_friendly_combo(
             self._llm_combo, llm_backend_friendly_options,
@@ -334,12 +311,10 @@ class RunTab(QWidget):
         adv_layout.addRow(lbl, w)
 
         self._m3_lang = QComboBox()
-        # Phase 47: friendly M3 prompt language names.
         from .constants import m3_prompt_lang_friendly_options
         from PySide6.QtWidgets import QSizePolicy
         self._m3_lang.setMinimumHeight(32)
         self._m3_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Phase 55 audit M8 — populate via the i18n-aware helper.
         populate_friendly_combo(
             self._m3_lang, m3_prompt_lang_friendly_options,
             default_code=DEFAULT_M3_PROMPT_LANG,
@@ -445,7 +420,6 @@ class RunTab(QWidget):
         self._progress.setMinimumHeight(20)
         outer.addWidget(self._progress)
 
-        # Phase 55 audit B3 — split the live status line from the
         # static empty-state hint. The live status is rewritten on
         # every progress tick and on the worker's `status_changed`
         # signal; registering it in the i18n registry (via tr_label)
@@ -478,7 +452,6 @@ class RunTab(QWidget):
 
     def collect_settings(self) -> dict[str, Any]:
         """Return the current settings as a flat dict (worker-ready)."""
-        # Phase 46: ocr_lang is now a QComboBox with friendly names
         # but ISO codes in userData. Prefer currentData() (the ISO
         # code the user selected). Fall back to currentText() if the
         # user typed a custom comma-separated list (e.g. "en,ja").
@@ -519,7 +492,6 @@ class RunTab(QWidget):
         """Restore settings from the QSettings tab on startup."""
         s = dict(settings)
         if "ocr_backend" in s:
-            # Phase 48: ocr_backend combo has friendly names as text
             # and ISO codes ("paddleocr" / "easyocr") in userData.
             # Use findData first, fall back to findText for legacy
             # configs that stored the friendly name.
@@ -530,7 +502,6 @@ class RunTab(QWidget):
             if ix >= 0:
                 self._ocr_combo.setCurrentIndex(ix)
         if "ocr_lang" in s:
-            # Phase 46: try to find the ISO code in the combo's
             # userData first (e.g. "en", "ch_sim"). If not found
             # (e.g. legacy config with comma-separated "en,ja"),
             # setText so the user sees their custom string.
@@ -557,8 +528,6 @@ class RunTab(QWidget):
         if "use_gpu" in s:
             self._gpu_check.setChecked(bool(s["use_gpu"]))
         if "llm_backend" in s:
-            # Phase 53: _llm_combo stores ISO codes in userData and
-            # friendly names as itemText (Phase 47 pattern). Use
             # findData (the ISO code) instead of findText, otherwise
             # settings saved as e.g. "minimax" don't match the
             # friendly label "MiniMax-M3 (推荐)".
@@ -569,7 +538,6 @@ class RunTab(QWidget):
             if ix >= 0:
                 self._llm_combo.setCurrentIndex(ix)
         if "m3_prompt_lang" in s:
-            # Phase 53: same fix as llm_backend — M3 prompt lang combo
             # uses friendly names in itemText + ISO codes in userData.
             lang = str(s["m3_prompt_lang"])
             ix = self._m3_lang.findData(lang)
@@ -614,6 +582,19 @@ class RunTab(QWidget):
         has = bool(self._path_edit.text().strip())
         if self._worker is None:
             self._start_btn.setEnabled(has)
+
+    def _on_language_changed(self, _lang: str) -> None:
+        """Rebuild format strings on language switch (i18n listener)."""
+        self._refresh_formats()
+
+    def _remove_i18n_listener(self) -> None:
+        """Remove our i18n listener when the widget is destroyed."""
+        listener = getattr(self, "_i18n_listener", None)
+        if listener is not None:
+            try:
+                i18n.remove_listener(listener)
+            except Exception:
+                pass
 
     def _on_path_changed(self, text: str) -> None:
         has = bool(text and Path(text).exists())
@@ -670,7 +651,6 @@ class RunTab(QWidget):
             self._out_edit.setText(str(default_out))
 
     def _on_start(self) -> None:
-        # Phase 41 audit fix (BLOCKER): guard against double-click on
         # Start. Without this guard, two PipelineWorker threads could
         # be created, the second overwriting self._worker and leaking
         # the first. QThread can only be started() once; re-starting
@@ -738,7 +718,6 @@ class RunTab(QWidget):
         if self._worker is None:
             return
         self._log.info("Cancellation requested for %s", self._current_job_id)
-        # Phase 42: the worker's request_cancel() sets the cooperative
         # cancel event AND calls requestInterruption. The pipeline
         # polls cancel_event between PDFs and short-circuits the
         # run; previously this only stopped progress forwarding.
@@ -761,7 +740,6 @@ class RunTab(QWidget):
             if self._progress.maximum() != total:
                 self._progress.setRange(0, total)
             self._progress.setValue(current)
-            # Phase 54 audit m9: QProgressBar.setFormat treats '%' as
             # a format specifier. Progress messages can contain '%'
             # (e.g. "matched 95% of panels") which would raise
             # ValueError from the underlying QString formatter. Escape
@@ -781,17 +759,10 @@ class RunTab(QWidget):
         self._status_label.setText(new)
 
     def _show_live_progress(self, message: str) -> None:
-        """Write a live status message to ``_progress_msg`` and hide
-        the static empty-state hint.
+        """Write a live status message to the progress label.
 
-        Phase 55 audit B3 — live status is intentionally NOT in the
-        i18n registry. Only the static hint at the bottom of the tab
-        is translated. As soon as the pipeline emits its first
-        progress/status event we hide the hint and show the live
-        label so the user sees what the pipeline is doing right
-        now. Once the job is done we keep showing the live label
-        (so the user can see "completed in 38s" etc.); the hint
-        re-appears when ``_reset_to_idle`` is called below.
+        The static hint label is hidden while a job is running and
+        re-shown by ``_reset_to_idle`` when the job completes.
         """
         self._hint_label.hide()
         self._progress_msg.setText(message or "")
@@ -827,7 +798,6 @@ class RunTab(QWidget):
             self.job_failed.emit(self._current_job_id, error)
 
     def _on_thread_done(self) -> None:
-        # Phase 43: QThread cleanup. The previous code just set
         # ``self._worker = None`` which left the worker object alive
         # until Python's GC ran. If the user closed the window (or
         # hit Ctrl-C) before Python GC, the QThread's C++ object
@@ -850,7 +820,6 @@ class RunTab(QWidget):
         self._progress.setRange(0, 1)
         self._progress.setValue(1)
         self._progress.setFormat(i18n._tr("runtab.status.done"))
-        # Phase 55 audit B3 — keep the final status visible (don't
         # reset to the empty-state hint) so the user can read the
         # completion message.
         self._progress_msg.setText(i18n._tr("runtab.progress.done"))

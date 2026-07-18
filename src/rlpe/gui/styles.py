@@ -33,8 +33,6 @@ RADIUS_S = 3
 RADIUS_M = 6
 RADIUS_L = 10
 
-# Phase 41: import the progress-bar height constant so the
-# ``if False else 18`` dead-code branch can be removed below.
 from .constants import PROGRESS_BAR_MIN_HEIGHT_PX
 
 # ============================================================
