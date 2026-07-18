@@ -554,11 +554,9 @@ class MainWindow(QMainWindow):
         On Windows QSettings is registry-backed; changes are only
         flushed on process exit, not on every setValue.
         """
-        from PySide6.QtCore import QSettings
-        qs = QSettings(APP_AUTHOR, APP_NAME)
         for key, value in self._settings.items():
-            qs.setValue(key, value)
-        qs.sync()
+            self._qsettings.setValue(key, value)
+        self._qsettings.sync()
 
     # ------------------------------------------------------------------
     # Menu / toolbar slots
