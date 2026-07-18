@@ -218,7 +218,7 @@ def _norm_species(s: str | None) -> str:
     #    to "Archeo" for comparison. Case-sensitive so we don't break
     #    any future case-sensitive match (the eval lowercases later).
     if s.startswith("Archaeo"):
-        s = "Archeo" + s[len("Archaeo") :]
+        s = re.sub(r"^Archaeo(?![a-zA-Z])", "Archeo", s, flags=re.IGNORECASE)
     # 5) "X gen" (parser truncation) ↔ "X indet" (gold long form).
     #    The "gen. et sp. indet" → "indet" collapse above handles the
     #    gold side; this handles the pred side.

@@ -29,6 +29,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
+pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QComboBox  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])

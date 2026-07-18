@@ -133,14 +133,21 @@ def _sha256_file(path: Path) -> str:
 
 def _input_sha256(pdf_paths: list[Path]) -> dict[str, str]:
     digests: dict[str, str] = {}
+    missing_or_unreadable = []
     for p in pdf_paths:
         if p.exists() and p.is_file():
             try:
                 digests[p.name] = _sha256_file(p)
             except OSError:
                 digests[p.name] = "unreadable"
+                missing_or_unreadable.append(f"{p.name}: unreadable")
         else:
             digests[p.name] = "missing"
+            missing_or_unreadable.append(f"{p.name}: missing")
+    if missing_or_unreadable:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("Some input PDFs could not be hashed: %s", "; ".join(missing_or_unreadable))
     return digests
 
 

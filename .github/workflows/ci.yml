@@ -99,7 +99,7 @@ jobs:
         env:
           PYTHONPATH: src
         run: |
-          mypy src/rlpe/ --ignore-missing-imports --no-strict-optional --no-warn-return-any
+          mypy src/rlpe/ --ignore-missing-imports --no-strict-optional
 
   eval-smoke:
     name: eval smoke (gold-set + 9-paper v16)

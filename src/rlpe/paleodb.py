@@ -543,8 +543,10 @@ class PaleoDB:
             # ``cc2`` is a 2-letter ISO code (e.g. "MX"). Convert to
             # full name so downstream fields show readable values like
             # "Mexico" rather than "MX".
-            country_code = _alias("cc2", "cc")
-            country_raw = _alias("cc2", "cc", "country")
+            # Phase 55 audit: PBDB uses "cc2" for ISO country codes. "cc" is
+            # not a PBDB field — remove it from the alias chain.
+            country_code = _alias("cc2")
+            country_raw = _alias("cc2", "country")
             country = _iso_to_country(country_code) if country_code else None
             # Round 25 backwards compat: if the payload already carries
             # a full country name (not a 2-letter ISO code), pass it
@@ -553,13 +555,13 @@ class PaleoDB:
             # readable name in ``country``. Treat any value that's
             # longer than 2 chars (and not in the ISO table) as a
             # full-name fallback rather than dropping it to None.
-            if country is None and country_raw:
+            if country is None and country_code:
+                # Phase 55 audit: _iso_to_country returned None because the
+                # ISO code wasn't in our table. Use the raw code so the
+                # operator at least sees "XX" instead of losing it to None.
+                country = country_code
+            elif country is None and country_raw:
                 if len(country_raw) > 2:
-                    country = country_raw
-                elif country_raw != country_code:
-                    # ``cc2`` gave us a 2-letter code but it wasn't in
-                    # our table — still pass the raw value through so
-                    # at least the operator sees something.
                     country = country_raw
             out.append(
                 OccurrenceSummary(

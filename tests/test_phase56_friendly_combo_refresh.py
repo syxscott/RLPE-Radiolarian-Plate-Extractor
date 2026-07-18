@@ -21,6 +21,8 @@ import pytest
 # environment. The flag MUST be set before importing any Qt module.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
+pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QComboBox  # noqa: E402
 
 # Make ``rlpe`` importable when pytest is invoked from the repo root.

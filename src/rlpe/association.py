@@ -690,8 +690,8 @@ def match_panels(
             if pair_lookup:
                 caption_pairs_used = True
                 caption_pairs_source = "regex"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("caption regex fallback failed: %s", exc)
 
     # 1c) Assign species. STRICT mode: only assign if the panel's label
     # (or its leading-zero-normalised form) is in the caption-derived

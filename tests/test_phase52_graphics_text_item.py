@@ -33,7 +33,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
+pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
+import pytest
+pytest.importorskip("PySide6")
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QGraphicsRectItem,

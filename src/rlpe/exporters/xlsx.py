@@ -252,7 +252,7 @@ def _row_for_locality(paper_id: str, l: dict[str, Any]) -> list[Any]:
         l.get("coordinate_source") or "",
         l.get("geocoding_source") or "",
         l.get("confidence") if l.get("confidence") is not None else "",
-        (l.get("evidence_text") or "")[:80],
+        (l.get("evidence_text") or "")[:200],  # Phase 55: match geology_contexts truncation
     ]
 
 
