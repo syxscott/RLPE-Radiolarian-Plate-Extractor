@@ -64,6 +64,7 @@ from .constants import (
     RANGE_M3_MAX_RETRIES,
     RANGE_M3_OUTPUT_TOKENS,
     RANGE_M3_TIMEOUT,
+    RANGE_CAPTION_WINDOW,
     RANGE_OD_CAPTION_WINDOW,
     RANGE_PALEO_OCC,
     THEME_DARK,
@@ -242,10 +243,18 @@ class SettingsTab(QWidget):
 
         self._ocr_lang = QLineEdit(DEFAULT_OCR_LANG)
         self._ocr_lang.setPlaceholderText("en, en,ja, en,ch_sim…")
+        # Phase 56 audit: validate ocr_lang to prevent arbitrary strings
+        # being saved and passed to the OCR engine. Valid inputs look
+        # like "en", "ch_sim", "en,ja" (comma-separated ISO codes).
+        import re
+        from PySide6.QtGui import QRegExpValidator
+        ocr_lang_rx = re.compile(r"^[a-zA-Z_]+(\s*,\s*[a-zA-Z_]+)*$")
+        validator = QRegExpValidator(ocr_lang_rx, self._ocr_lang)
+        self._ocr_lang.setValidator(validator)
         olayout.addRow(tr_label("settab.ocr.lang"), self._ocr_lang)
 
         self._caption_window = QSpinBox()
-        self._caption_window.setRange(1, 50)
+        self._caption_window.setRange(*RANGE_CAPTION_WINDOW)
         self._caption_window.setValue(2)
         olayout.addRow(tr_label("settab.ocr.caption_window"), self._caption_window)
 

@@ -60,7 +60,8 @@ class BatchDialog(QDialog):
         super().__init__(parent)
         self._log = get_gui_logger()
         self._settings = settings
-        self._pdfs: list[Path] = []
+        self._pdfs: list[Path] = []        # ordered list for UI display
+        self._pdfs_set: set[Path] = set()  # Phase 56 audit: O(1) duplicate-check + remove
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -200,9 +201,10 @@ class BatchDialog(QDialog):
     def _add_pdf(self, path: Path) -> None:
         if not path.exists():
             return
-        if path in self._pdfs:
+        if path in self._pdfs_set:  # Phase 56 audit: O(1) via set
             return
         self._pdfs.append(path)
+        self._pdfs_set.add(path)
         item = QListWidgetItem(f"{path.name}  ·  {file_size_human(path)}")
         item.setData(Qt.UserRole, str(path))
         item.setToolTip(str(path))
@@ -231,10 +233,12 @@ class BatchDialog(QDialog):
             self._add_pdf(sub)
 
     def _on_remove(self) -> None:
+        # Phase 56 audit: use set for O(1) removal instead of list.remove O(n)
         for item in self._file_list.selectedItems():
             row = self._file_list.row(item)
             path = Path(item.data(Qt.UserRole))
-            if path in self._pdfs:
+            if path in self._pdfs_set:
+                self._pdfs_set.discard(path)
                 self._pdfs.remove(path)
             self._file_list.takeItem(row)
         self._count_label.setText(i18n._tr("batch.count").format(n=len(self._pdfs)))
@@ -243,6 +247,7 @@ class BatchDialog(QDialog):
         """Clear all PDFs from the list and the output directory."""
         self._file_list.clear()
         self._pdfs.clear()
+        self._pdfs_set.clear()  # Phase 56 audit: clear the set too
         self._count_label.setText(i18n._tr("batch.count").format(n=0))
 
     def _on_pick_out(self) -> None:
