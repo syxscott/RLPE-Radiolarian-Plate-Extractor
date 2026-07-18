@@ -310,7 +310,9 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
         for (pid, fid, plabel), preds in pred_groups.items():
             if pid != g.paper_id:
                 continue
-            if fid and g.figure_id and fid != g.figure_id:
+            # Phase 55 audit: explicit guard — skip when both are non-empty and differ
+            gold_fig = g.figure_id or ""
+            if gold_fig and fid and fid != gold_fig:
                 continue
             if match_panel(g, pid, plabel):
                 cand = _best_pred(preds)
@@ -342,16 +344,24 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
             elif gold_species and not matched_pred_species:
                 m.species_fn += 1
             else:
-                m.species_fp += 1
-                m.species_fn += 1
-                m.mismatches.append(
-                    {
-                        "figure_id": g.figure_id,
-                        "panel_id": g.panel_id,
-                        "expected": gold_species,
-                        "predicted": matched_pred_species or "",
-                    }
-                )
+                # Phase 55 audit fix: when both gold and predicted are empty,
+                # this is agreement on "no species" — not a double error (FP+FN).
+                # This is a true negative for species detection.
+                # When both are non-empty but different, it IS a mismatch (FP+FN).
+                if not gold_species and not matched_pred_species:
+                    pass  # mutual absence = agreement, no penalty
+                else:
+                    # Both non-empty but different species: count as FP + FN
+                    m.species_fp += 1
+                    m.species_fn += 1
+                    m.mismatches.append(
+                        {
+                            "figure_id": g.figure_id,
+                            "panel_id": g.panel_id,
+                            "expected": gold_species,
+                            "predicted": matched_pred_species or "",
+                        }
+                    )
         else:
             if gold_species:
                 m.species_fn += 1
@@ -514,8 +524,16 @@ def compare_before_after(
     # the merged DataFrame (no _before/_after suffix). The species
     # columns DO get suffixes because they aren't in the merge key.
     if len(merged) > 0:
-        merged["correct_before"] = merged["species_before"] == merged["gold_species"]
-        merged["correct_after"] = merged["species_after"] == merged["gold_species"]
+        # Phase 55 audit: use _norm_species for case-insensitive comparison,
+        # matching the logic used in evaluate()
+        merged["correct_before"] = (
+            merged["species_before"].apply(_norm_species).str.lower()
+            == merged["gold_species"].apply(_norm_species).str.lower()
+        )
+        merged["correct_after"] = (
+            merged["species_after"].apply(_norm_species).str.lower()
+            == merged["gold_species"].apply(_norm_species).str.lower()
+        )
 
     before_acc = (
         float(merged["correct_before"].mean())

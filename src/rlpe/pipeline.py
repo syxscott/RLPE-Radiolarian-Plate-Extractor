@@ -2455,7 +2455,8 @@ Rules:
             else:
                 with _PILImage.open(str(region_img)) as _im:
                     plate_pil = _im.convert("RGB")
-        except Exception:
+        except Exception as exc:
+            logger.warning("LLM-first image load failed for %s/%s: %s", paper_id, figure_id, exc)
             return None
 
         user_prompt = (

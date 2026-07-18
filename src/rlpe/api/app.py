@@ -212,7 +212,7 @@ class JobOptions(BaseModel):
     def _validate_backend(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        allowed = {"transformers", "ollama", "llamacpp", "MiniMax", "MiniMax-m3", "minimax"}
+        allowed = {"transformers", "ollama", "llamacpp", "MiniMax", "MiniMax-m3", "minimax", "minimax_api"}
         if v not in allowed:
             raise ValueError(f"llm_backend must be one of {sorted(allowed)}, got {v!r}")
         return v

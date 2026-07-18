@@ -2556,15 +2556,15 @@ def _coerce_bbox(v: Any, img_w: int, img_h: int) -> tuple[int, int, int, int] | 
         return None
     if max(nums) <= 1.01:
         x, y, w, h = nums
-        return (
-            max(0, int(x * img_w)),
-            max(0, int(y * img_h)),
-            min(img_w - max(0, int(x * img_w)), max(1, int(w * img_w))),
-            min(img_h - max(0, int(y * img_h)), max(1, int(h * img_h))),
-        )
-    return (
-        max(0, int(nums[0])),
-        max(0, int(nums[1])),
-        max(1, int(nums[2])),
-        max(1, int(nums[3])),
-    )
+        x_px = max(0, int(x * img_w))
+        y_px = max(0, int(y * img_h))
+        # Width: pixel value, minimum 1, capped at available distance to right edge
+        w_px = max(1, min(int(w * img_w), img_w - x_px))
+        h_px = max(1, min(int(h * img_h), img_h - y_px))
+        return (x_px, y_px, w_px, h_px)
+    # Pixel path: clamp each coord to image bounds (Phase 55 audit fix)
+    x = max(0, min(int(nums[0]), img_w))
+    y = max(0, min(int(nums[1]), img_h))
+    w = max(1, min(int(nums[2]), img_w - x))
+    h = max(1, min(int(nums[3]), img_h - y))
+    return (x, y, w, h)

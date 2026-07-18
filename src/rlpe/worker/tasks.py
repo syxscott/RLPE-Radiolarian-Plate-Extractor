@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..config import PipelineConfig
+from ..config import _KNOWN_EXTRA_KEYS, PipelineConfig
 from ..pipeline import RadiolarianPipeline
 
 try:
@@ -49,6 +49,12 @@ if celery_app is not None:
 
     @celery_app.task(name="rlpe.process_pdf_batch")
     def process_pdf_batch(pdf_dir: str, work_dir: str, config_extra: dict[str, Any] | None = None):
+        # Phase 55 audit: validate config_extra against known keys to prevent
+        # injection of arbitrary config from untrusted Celery task messages.
+        if config_extra:
+            unknown = set(config_extra.keys()) - _KNOWN_EXTRA_KEYS
+            if unknown:
+                raise ValueError(f"Unknown config_extra keys: {sorted(unknown)}")
         cfg = PipelineConfig(
             pdf_dir=Path(pdf_dir),
             work_dir=Path(work_dir),
@@ -61,6 +67,11 @@ if celery_app is not None:
     def process_gpu_gemma(
         pdf_dir: str, work_dir: str, gpu_id: int = 0, config_extra: dict[str, Any] | None = None
     ):
+        # Phase 55 audit: validate config_extra against known keys.
+        if config_extra:
+            unknown = set(config_extra.keys()) - _KNOWN_EXTRA_KEYS
+            if unknown:
+                raise ValueError(f"Unknown config_extra keys: {sorted(unknown)}")
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
         extra = dict(config_extra or {})
         extra["use_gemma4"] = True
