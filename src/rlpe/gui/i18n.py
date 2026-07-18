@@ -204,8 +204,10 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
                     pass
             else:
                 setattr(w, attr, text)
-        except Exception:
-            pass
+        except Exception as exc:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug("i18n _apply_to_one failed for %s.%s (%s): %s", object_name, attr, key, exc)
 
 
 def _apply_registry() -> None:
