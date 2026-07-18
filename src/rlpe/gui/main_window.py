@@ -123,6 +123,16 @@ class MainWindow(QMainWindow):
         self._log = get_gui_logger()
         self._qsettings = QSettings(APP_AUTHOR, APP_NAME)
         self._settings = self._load_settings_cache()
+        # Phase 56 audit: build the full UI (was stuck after _qbool return)
+        self._build_ui()
+        self._build_menu()
+        self._build_toolbar()
+        self._build_statusbar()
+        self._wire_signals()
+        self._restore_window_state()
+        # Phase 49: load completed jobs from disk so the Jobs tab
+        # shows historical results even after a GUI restart.
+        self._load_recent_jobs()
 
     @staticmethod
     def _qbool(qsettings: QSettings, key: str, default: bool) -> bool:
@@ -136,16 +146,6 @@ class MainWindow(QMainWindow):
         if isinstance(val, bool):
             return val
         return str(val).lower() in ("true", "1", "yes")
-        self._build_ui()
-        self._build_menu()
-        self._build_toolbar()
-        self._build_statusbar()
-        self._wire_signals()
-        self._restore_window_state()
-        # what the Web API does at startup) and populate the JobsTab.
-        # Without this, restarting the GUI loses visibility into jobs
-        # completed via the CLI / Web UI / a prior GUI session.
-        self._load_recent_jobs()
 
     def _load_recent_jobs(self) -> None:
         """Phase 49: scan service_work/ and work/ for completed jobs.
