@@ -98,7 +98,7 @@ class TestHttpStub:
                     "max_ma": 251.902,
                     "min_ma": 254.14,
                     "locality": "Dalong Section",
-                    "cc": "China",
+                    "country": "China",  # PBDB uses "country" for full country names
                     "lat": 31.5,
                     "lng": 110.3,
                     "formation": "Dalong Formation",
