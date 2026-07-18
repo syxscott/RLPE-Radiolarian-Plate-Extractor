@@ -530,7 +530,7 @@ class PaleoDB:
                     return None
 
             lat_v = _alias_float("lat")
-            lon_v = _alias_float("lng", "lon")
+            lon_v = _alias_float("lng")  # PBDB uses "lng" only; "lon" is not a PBDB field
             max_ma = _alias_float("eag", "max_ma")
             min_ma = _alias_float("lag", "min_ma")
             early_interval = _alias("oei", "early_interval")

@@ -600,7 +600,9 @@ class RadiolarianPipeline:
         # works even when ``self.gemma_runtime`` is not initialised
         # (the MiniMax-M3 vision path is independent of the local
         # Gemma4 loader).
-        api_key = os.environ.get("ANTHROPIC_API_KEY") or self.config.extra.get("MiniMax_api_key")
+        # Phase 55 audit: config takes priority over env vars so users can
+        # override ANTHROPIC_API_KEY (project-wide) with a per-run MiniMax_api_key.
+        api_key = self.config.extra.get("MiniMax_api_key") or os.environ.get("ANTHROPIC_API_KEY")
         base_url = os.environ.get("ANTHROPIC_BASE_URL") or self.config.extra.get(
             "MiniMax_endpoint", "https://api.minimaxi.com/anthropic"
         )

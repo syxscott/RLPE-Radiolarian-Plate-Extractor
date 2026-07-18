@@ -123,6 +123,19 @@ class MainWindow(QMainWindow):
         self._log = get_gui_logger()
         self._qsettings = QSettings(APP_AUTHOR, APP_NAME)
         self._settings = self._load_settings_cache()
+
+    @staticmethod
+    def _qbool(qsettings: QSettings, key: str, default: bool) -> bool:
+        """Phase 55 audit: correctly parse QSettings-stored booleans.
+
+        QSettings stores bools as strings ("true"/"false"). Wrapping in
+        bool() is wrong because bool("false") == True (non-empty string).
+        The correct approach is to use type=bool OR compare lowercase.
+        """
+        val = qsettings.value(key, default, type=bool)
+        if isinstance(val, bool):
+            return val
+        return str(val).lower() in ("true", "1", "yes")
         self._build_ui()
         self._build_menu()
         self._build_toolbar()
@@ -207,11 +220,11 @@ class MainWindow(QMainWindow):
             "MiniMax_max_output_tokens": int(self._qsettings.value("MiniMax_max_output_tokens", 2048)),
             "MiniMax_timeout_sec": int(self._qsettings.value("MiniMax_timeout_sec", 60)),
             "MiniMax_max_retries": int(self._qsettings.value("MiniMax_max_retries", 3)),
-            "use_paleodb": bool(self._qsettings.value("use_paleodb", True)),
+            "use_paleodb": self._qbool(self._qsettings, "use_paleodb", True),
             "paleodb_max_occurrences": int(self._qsettings.value("paleodb_max_occurrences", 25)),
             "paleodb_endpoint": self._qsettings.value("paleodb_endpoint", "https://paleobiodb.org/data1.2"),
             "render_dpi": int(self._qsettings.value("render_dpi", 200)),
-            "save_intermediate": bool(self._qsettings.value("save_intermediate", False)),
+            "save_intermediate": self._qbool(self._qsettings, "save_intermediate", False),
         }
 
     # ------------------------------------------------------------------

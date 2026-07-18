@@ -137,6 +137,7 @@ class ImagePreviewWidget(QWidget):
             self._current_path = None
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
+            self._text_items.clear()  # Phase 55: also clear text items (bugfix)
             self._path_label.setText(i18n._tr("preview.no_image"))
             return
         path = Path(image_path)
@@ -144,18 +145,22 @@ class ImagePreviewWidget(QWidget):
         if not path.exists():
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
+            self._text_items.clear()  # Phase 55: also clear text items (bugfix)
             self._path_label.setText(i18n._tr("preview.missing").format(name=path.name))
             return
         pix = self._load_pixmap(path)
         if pix is None:
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
+            self._text_items.clear()  # Phase 55: also clear text items (bugfix)
             self._path_label.setText(i18n._tr("preview.failed").format(name=path.name))
             return
         self._scene.clear()
         # Phase 41: also clear our explicit bbox item list so old
         # overlays don't survive a set_image() call.
+        # Phase 55: also clear text items so species labels don't accumulate.
         self._bbox_items.clear()
+        self._text_items.clear()
         item = QGraphicsPixmapItem(pix)
         self._scene.addItem(item)
         self._scene.setSceneRect(QRectF(pix.rect()))

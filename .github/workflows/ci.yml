@@ -50,7 +50,8 @@ jobs:
           PYTHONPATH: src
         run: |
           python -m pytest tests/ -q --tb=short \
-            --cov=rlpe --cov-report=term-missing --cov-report=xml
+            --cov=rlpe --cov-report=term-missing --cov-report=xml \
+            --cov-fail-under=80
 
       - name: Upload coverage artifact
         if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
@@ -122,7 +123,8 @@ jobs:
             echo "has_predictions=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_predictions=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::work/combined_9_v16_FINAL.jsonl not found — skipping eval-smoke. Run the pipeline and force-add the file to enable this check."
+            echo "::error::work/combined_9_v16_FINAL.jsonl not found — eval-smoke cannot run. Generate predictions with 'python scripts/evaluate.py --input data/gold --output work/combined_9_v16_FINAL.jsonl' and force-add with 'git add -f work/combined_9_v16_FINAL.jsonl'"
+            exit 1
           fi
       - uses: actions/setup-python@v5
         if: steps.check.outputs.has_predictions == 'true'

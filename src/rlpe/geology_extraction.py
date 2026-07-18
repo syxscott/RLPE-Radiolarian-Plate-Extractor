@@ -162,7 +162,7 @@ _CHEMOSTRAT_VOCAB = (
 _ISOTOPE_PATTERN = re.compile(
     r"(?:"
     # δ13C / δ18O / δ34S — with optional sign, value, permil
-    r"\b[δd](?:1[38]C|1[78]O|3[24]S|1[15]N|8[78]Sr)\s*"
+    r"\b[δd](?:13C|18O|34S|15N|8[78]Sr)\s*"
     r"(?:=|:)?\s*[-+]?\d+(?:\.\d+)?\s*[‰%]*"
     r"|"  # 87Sr/86Sr (or 86/86, 87/87, 88/86) ratio
     r"\b8[67]Sr/8[67]Sr\s*(?:=|:)?\s*0\.\d{3,6}"
