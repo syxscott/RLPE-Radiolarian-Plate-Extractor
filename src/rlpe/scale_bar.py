@@ -173,16 +173,21 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
         except (TypeError, ValueError) as exc:
             # The regex matched a range shape but the second group
             # wasn't a valid float (e.g. unicode minus, OCR noise
-            # injected between the digits). The single-value
-            # confidence is the right fallback — log at debug so the
-            # operator can see this happened without spamming the
-            # warning level.
+            # injected between the digits). Phase 62 Plan 5 (Bug
+            # 5.8): the previous fallback kept confidence=0.8
+            # (the single-value level) which overstated our
+            # certainty — the range form was matched but the
+            # upper bound couldn't be parsed, so we have only a
+            # single number with NO range confirmation. Lower
+            # confidence to 0.4 (caption) so downstream consumers
+            # can see the partial-failure path.
             logger.debug(
                 "scale caption: range form matched but group(2)=%r is not a "
-                "float: %s — keeping single value",
+                "float: %s — keeping single value with degraded confidence",
                 m.group(2),
                 exc,
             )
+            info.confidence = 0.4
     return info
 
 
@@ -228,14 +233,16 @@ def extract_scale_from_ocr_text(ocr_text: str) -> ScaleInfo:
                 info.value = mid
                 info.confidence = 0.6
         except (TypeError, ValueError) as exc:
-            # See caption variant above. OCR text is much noisier so
-            # this is more common — log at debug level.
+            # Phase 62 Plan 5 (Bug 5.8): see caption variant. OCR
+            # text is even noisier so this degraded-confidence path
+            # fires more often; we lower to 0.3 (degraded from 0.7).
             logger.debug(
                 "scale ocr: range form matched but group(2)=%r is not a "
-                "float: %s — keeping single value",
+                "float: %s — keeping single value with degraded confidence",
                 m.group(2),
                 exc,
             )
+            info.confidence = 0.3
     return info
 
 
