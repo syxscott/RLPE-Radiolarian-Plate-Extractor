@@ -31,7 +31,7 @@ from .config import PipelineConfig
 from .converters import match_result_from_dict, run_output_from_provenance
 from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
 from .geology_extraction import build_knowledge_graph, link_species_to_geology
-from .grobid import GrobidClient, parse_paper_metadata_from_tei
+from .grobid import GrobidClient, PipelineCancelledError, parse_paper_metadata_from_tei
 from .layout import choose_best_page, detect_figure_regions, extract_figure_number, render_pdf_pages
 from .m3_engine import CaptionPair, M3Engine, PanelBox, PanelMatch
 from .ocr import OCRBackend, normalize_ocr_tokens
@@ -91,6 +91,9 @@ class RadiolarianPipeline:
             server_url=config.grobid_url,
             timeout=int(self.config.extra.get("grobid_timeout", 300)),
             max_retries=int(self.config.extra.get("grobid_max_retries", 3)),
+            # Phase 59 (Bug 2.2): forward cancel_event so the GROBID
+            # retry loop honours user cancellation.
+            cancel_event=cancel_event,
         )
         # Phase 29: cycle guard. ``_process_one_pdf_grobid`` may now
         # call ``_process_one_pdf_od`` on failure, and ``_process_one_pdf_od``

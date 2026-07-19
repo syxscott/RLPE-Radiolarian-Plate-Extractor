@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 import xml
 import xml.etree.ElementTree as ET
@@ -15,6 +16,14 @@ from .types import CaptionEntity, CaptionRecord, PaperMetadata
 from .utils import ensure_dir, stable_id
 
 logger = logging.getLogger(__name__)
+
+
+class PipelineCancelledError(Exception):
+    """Raised when ``cancel_event`` is set during a long-running pipeline
+    operation. Phase 59 (Bug 2.2): the GROBID retry loop honours
+    ``cancel_event`` and raises this error instead of waiting for all
+    retries to elapse.
+    """
 
 
 @dataclass(slots=True)
@@ -71,11 +80,18 @@ class GrobidClient:
         timeout: int = 300,
         max_retries: int = 3,
         retry_backoff: float = 1.0,
+        cancel_event: "threading.Event | None" = None,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max(1, int(max_retries))
         self.retry_backoff = max(0.0, float(retry_backoff))
+        # Phase 59 (Bug 2.2): cooperative cancellation. When set, the
+        # retry loop checks the event at the top of every iteration
+        # and raises ``PipelineCancelledError`` so the user doesn't
+        # wait up to ``max_retries * timeout`` seconds after clicking
+        # Cancel on a hung GROBID run.
+        self.cancel_event = cancel_event
 
     def is_available(self, probe_timeout: float = 5.0) -> bool:
         """Phase 38: fast ``/api/isalive`` probe.
@@ -149,6 +165,19 @@ class GrobidClient:
         # attempts; we sleep ``min(2**attempt * retry_backoff, 30)``
         # between attempts. Successful attempt returns immediately.
         for attempt in range(self.max_retries):
+            # Phase 59 (Bug 2.2): honour cancel_event at the top of
+            # every retry. Without this check, a 200-page paper with
+            # max_retries=3 + timeout=300s runs for 15 minutes after
+            # the user clicked Cancel. With it, the user sees the
+            # cancellation take effect within the backoff window.
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                logger.info(
+                    "GROBID cancel_event set; aborting retry loop for %s",
+                    pdf_path.name,
+                )
+                raise PipelineCancelledError(
+                    f"GROBID retry loop cancelled for {pdf_path.name}"
+                )
             try:
                 with pdf_path.open("rb") as f:
                     resp = requests.post(
@@ -188,7 +217,17 @@ class GrobidClient:
                 # Sleep before next attempt unless this was the last.
                 if attempt + 1 < self.max_retries and self.retry_backoff > 0:
                     delay = min(2**attempt * self.retry_backoff, 30.0)
-                    time.sleep(delay)
+                    # Phase 59 (Bug 2.2): also honour cancel_event
+                    # during the backoff sleep, so cancellation
+                    # takes effect within ``delay`` seconds instead
+                    # of waiting for the full sleep.
+                    if self.cancel_event is not None:
+                        if not self.cancel_event.wait(timeout=delay):
+                            # delay elapsed without cancel; fall
+                            # through to next iteration's cancel check.
+                            pass
+                    else:
+                        time.sleep(delay)
         # All retries exhausted. Return a structured failure.
         return GrobidResult(
             paper_id=paper_id,
