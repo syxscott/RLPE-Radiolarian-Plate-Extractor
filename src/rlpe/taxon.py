@@ -330,6 +330,11 @@ class TaxonRecognizer:
         # ``m.start(1)`` / ``m.end(1)`` (which still align with the
         # cleaned string; both strings have the same length after NFKD
         # for the Latin / Greek chars we care about).
+        #
+        # Note: Greek letters (α β γ δ …) are NOT preserved by NFKD
+        # → ASCII encode (they get dropped). The Greek-letter shape
+        # ``Genus α`` is therefore matched by a separate scan on the
+        # pre-normalised ``cleaned`` string (Bug 3.5).
         cleaned_ascii = (
             unicodedata.normalize("NFKD", cleaned)
             .encode("ascii", "ignore")
@@ -370,6 +375,16 @@ class TaxonRecognizer:
             # still safe for non-``spp.`` shapes.
             r"(?=\s|[.,;:]|$)"
         )
+        # Phase 60 Plan 3 (Bug 3.5): Greek-letter and ``sp. A`` shapes
+        # are matched on the pre-NFKD ``cleaned`` text because NFKD →
+        # ASCII drops Greek letters. ``sp. A`` is the common De Wever /
+        # Bandini shape for an informally-labelled variant; single capital
+        # ``A`` / ``B`` / ``C`` is the informal-variant descriptor.
+        greek_or_capital_pattern = re.compile(
+            r"\b([A-Z][a-zA-Z-]{2,})"
+            r"(?:\s+(?:sp\.|spp\.|n\.\s*sp\.|sp\.\s*nov\.|nom\.\s*nov\.|comb\.\s*nov\.)\s+[A-Z])"
+            r"|\b([A-Z][a-zA-Z-]{2,})\s+([αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ])"
+        )
         entities: list[TaxonEntity] = []
         for m in pattern.finditer(cleaned_ascii):
             words = m.group(1).split()
@@ -393,6 +408,22 @@ class TaxonRecognizer:
                 continue
             entities.append(
                 TaxonEntity(text=m.group(1), start=m.start(1), end=m.end(1), score=0.55)
+            )
+        # Phase 60 Plan 3 (Bug 3.5): Greek-letter / ``sp. A`` open-
+        # nomenclature shapes on the pre-NFKD text. NFKD→ASCII drops
+        # Greek letters so we scan ``cleaned`` (not ``cleaned_ascii``)
+        # with a separate pattern.
+        for m in greek_or_capital_pattern.finditer(cleaned):
+            full = m.group(0).strip()
+            if not full:
+                continue
+            first_word = full.split()[0]
+            if first_word.lower() in _NON_TAXON_FIRST_WORDS:
+                continue
+            if first_word.lower() in _KNOWN_AUTHOR_SURNAMES:
+                continue
+            entities.append(
+                TaxonEntity(text=full, start=m.start(0), end=m.end(0), score=0.55)
             )
         return entities
 
