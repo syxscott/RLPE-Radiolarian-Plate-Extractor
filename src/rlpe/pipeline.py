@@ -2504,6 +2504,16 @@ class RadiolarianPipeline:
     # high-confidence single-panel micrograph is kept without retrying.
     _LLM_FIRST_SINGLE_PANEL_MIN_CONF: float = 0.75
 
+    # Phase 61 Plan 4 (Bug 4.1): token budget for the LLM-first caption
+    # prompt. The historical hard-truncate at 2000 chars dropped the
+    # tail of long captions (Bandini 2011 pl09 = ~3500 chars). The
+    # runtime helper ``_truncate_caption_for_llm`` honours this cap
+    # when the active backend exposes a tokenizer; otherwise it falls
+    # back to ``DEFAULT_MAX_CHARS`` (4000). Kept on the class so
+    # tests can verify the budget is in a sensible range without
+    # instantiating the pipeline.
+    _LLM_FIRST_MAX_TOKENS: int = 4000
+
     _LLM_FIRST_SYSTEM_PROMPT = """You are an expert paleontologist specializing in radiolarian microfossils. You will see an image of a radiolarian plate (figure) from a scientific publication, along with its caption text.
 
 Your task: identify every distinct specimen panel (sub-figure) in this plate and determine its label (A, B, C... or 1, 2, 3... as printed on the image) and the Latin binomial species name.
@@ -2569,10 +2579,34 @@ Rules:
             logger.warning("LLM-first image load failed for %s/%s: %s", paper_id, figure_id, exc)
             return None
 
+        # Phase 61 Plan 4 (Bug 4.1): token-aware caption truncation.
+        # Previous behaviour hard-truncated at 2000 chars; Bandini 2011
+        # pl09 (≈3500 chars) lost the tail species. The helper returns a
+        # ``(text, mode)`` tuple so we can stamp the truncation mode in
+        # metadata (debug / eval visibility) without re-parsing the
+        # prompt afterwards. The cap is 4000 tokens when a tokenizer is
+        # available, else 4000 chars as a safe fallback.
+        try:
+            from ._llm_caption import _truncate_caption_for_llm
+        except Exception:  # pragma: no cover - helper is in our package
+            _truncate_caption_for_llm = None  # type: ignore[assignment]
+        tokenizer = getattr(backend, "tokenizer", None)
+        truncation_mode = "char_fallback"
+        if _truncate_caption_for_llm is not None:
+            try:
+                truncated_caption, truncation_mode = _truncate_caption_for_llm(
+                    caption_text, tokenizer=tokenizer
+                )
+            except Exception:
+                truncated_caption = caption_text
+                truncation_mode = "error"
+        else:  # pragma: no cover - defensive
+            truncated_caption = (caption_text or "")[:4000]
+            truncation_mode = "char_fallback"
         user_prompt = (
             f"Paper: {paper_id}\n"
             f"Figure: {figure_id}\n"
-            f"Caption:\n{caption_text[:2000]}\n\n"
+            f"Caption:\n{truncated_caption}\n\n"
             f"Identify all specimen panels in this plate. Return JSON."
         )
 
@@ -2689,6 +2723,12 @@ Rules:
                     # review tools if stamped on a caption-derived id.
                     "caption_panel_id": panel_id,
                     "panel_id_source": "llm_first",
+                    # Phase 61 Plan 4 (Bug 4.1): record which truncation
+                    # strategy was applied to the caption before the
+                    # LLM call. "none" = no truncation; "token_aware" =
+                    # tokeniser-driven; "char_fallback" = 4000-char cap
+                    # because no tokenizer; "error" = helper crashed.
+                    "caption_truncation_mode": truncation_mode,
                 },
             )
             out.append(m.to_dict())

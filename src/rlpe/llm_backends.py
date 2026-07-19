@@ -20,6 +20,17 @@ logger = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 _JSON_ARR_RE = re.compile(r"\[.*?\]", re.DOTALL)
 
+# Phase 61 Plan 4 (Bug 4.1): re-export the token-aware caption truncation
+# helper from ``_llm_caption`` so callers can ``from rlpe.llm_backends
+# import _truncate_caption_for_llm``. We keep the actual implementation in
+# its own module to avoid dragging the Anthropic SDK / heavy dataclass
+# imports into places that just need the helper.
+from ._llm_caption import (  # noqa: E402  (import after logger setup)
+    DEFAULT_MAX_CHARS,
+    DEFAULT_MAX_TOKENS,
+    _truncate_caption_for_llm,
+)
+
 # Match Anthropic / MiniMax / OpenAI style API keys (sk-ant-..., sk-...,
 # plus generic 40+ char sk- prefixes). Anthropic's actual key shape is
 # ``sk-ant-api03-<48 alnum>``; MiniMax / OpenAI use ``sk-<30+ alnum>`` or
