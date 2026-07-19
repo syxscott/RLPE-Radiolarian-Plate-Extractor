@@ -45,6 +45,20 @@ def test_schema_file_is_in_sync():
     """The published schema must match the live Pydantic emission."""
     if not SCHEMA_PATH.exists():
         pytest.skip(f"{SCHEMA_PATH} not yet emitted; run schema_dump first")
+    # Phase 61 Plan 4 fix: Pydantic v2 caches model schemas across imports.
+    # Without an explicit model_rebuild, ``emit_json_schema`` would emit a
+    # stale cached schema that does not include fields added after the
+    # first schema generation. Force-rebuild every BaseModel in
+    # ``rlpe.schema_models`` before emitting the comparison copy.
+    from rlpe import schema_models as _schema_models
+
+    for _name in dir(_schema_models):
+        _obj = getattr(_schema_models, _name)
+        if isinstance(_obj, type) and issubclass(_obj, _schema_models.BaseModel):
+            try:
+                _obj.model_rebuild(force=True)
+            except Exception:
+                pass
     # Re-emit to a temp file and compare
     import tempfile
 

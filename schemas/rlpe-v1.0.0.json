@@ -1974,6 +1974,18 @@
           ],
           "default": null,
           "title": "Value"
+        },
+        "warning": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Warning"
         }
       },
       "title": "ScaleBarRecord",
