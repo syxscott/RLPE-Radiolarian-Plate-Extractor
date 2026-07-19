@@ -198,12 +198,35 @@ FACIES_PATTERN = re.compile(
 
 # Biozone patterns:
 #   - "N. optima Zone" / "P. uvus Zone" (radiolarian first-letter abbrev.)
-#   - "Zone 5" / "Subzone 5a" (numbered biozones)
+#   - "Zone 5" / "Subzone 5a" / "Zone 5a" (numbered biozones — the
+#     existing pattern required an uppercase-letter-then-optional-
+#     lowercase suffix, so "Zone 5" without a trailing letter did
+#     NOT match. Fixed below.)
 #   - "Morozovella aragonensis Zone" (full taxon-named zone)
+#   - "UAZ 1" / "UAZ 1-7" / "UAZ 12" — Unitary Association Zones
+#     (Baumgartner et al. 1995 standard for Mesozoic radiolarians).
+#   - "Pessagno Zone A" / "Pessagno Zone 1" — Pessagno's
+#     Jurassic-Cretaceous zonation (Pessagno 1977).
+#   - "Pessagno Zones A-B" — range form of Pessagno zones.
 _BIOZONE_RE = re.compile(
-    r"\b(?:[A-Z]\.\s*[a-z]+\s+Zone|"
-    r"(?:Sub)?zone\s+[A-Z0-9]+[a-z]?|"
-    r"[A-Z][a-z]+\s+[a-z]+\s+Zone)\b"
+    r"\b(?:"
+    # First-letter abbrev.: "N. optima Zone", "P. uvus Zone"
+    r"[A-Z]\.\s*[a-z]+\s+Zone"
+    r"|"
+    # Numbered zone: "Zone 5", "Subzone 5a", "Zone 5a". The trailing
+    # [a-z]? is OPTIONAL — "Zone 5" must match.
+    r"(?:Sub)?[Zz]one\s+\d+[a-z]?"
+    r"|"
+    # Full taxon-named zone: "Morozovella aragonensis Zone"
+    r"[A-Z][a-z]+\s+[a-z]+\s+Zone"
+    r"|"
+    # UAZ-numbered zones: "UAZ 1", "UAZ 12", "UAZ 1-7".
+    r"UAZ\s+\d+(?:-\d+)?"
+    r"|"
+    # Pessagno zones: "Pessagno Zone A", "Pessagno Zone 1",
+    # "Pessagno Zones A-B".
+    r"Pessagno\s+[Zz]ones?\s+[A-Z\d](?:-\d|[a-z])?"
+    r")\b"
 )
 
 # Country list: ISO 3166-1 shortlist of countries that appear in
