@@ -458,12 +458,30 @@ class TaxonRecognizer:
     def _lexicon_predict(self, text: str) -> list[TaxonEntity]:
         if not text or not self._lexicon:
             return []
+        # Phase 60 Plan 3 (Bug 3.12): the previous implementation
+        # used ``lower.find(name.lower())`` which is a substring match
+        # with no word-boundary check. The lexicon entry ``can`` would
+        # match inside ``canned`` / ``scan`` / ``canvas`` and emit a
+        # bogus taxon. The fix uses ``re.search(r\"\\b{word}\\b\")``
+        # so the entry must start AND end at a word boundary.
         out: list[TaxonEntity] = []
-        lower = text.lower()
         for name in self._lexicon:
-            start = lower.find(name.lower())
-            if start >= 0:
-                out.append(TaxonEntity(text=name, start=start, end=start + len(name), score=0.75))
+            # Pre-compile per call — the lexicon size is small (handful
+            # of entries on the order of 10s-100s) so the cost is
+            # negligible vs the alternative of maintaining a module-
+            # level cache that would have to invalidate on
+            # ``self._lexicon`` mutation.
+            pattern = re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)
+            m = pattern.search(text)
+            if m:
+                out.append(
+                    TaxonEntity(
+                        text=name,
+                        start=m.start(),
+                        end=m.end(),
+                        score=0.75,
+                    )
+                )
         return out
 
     @staticmethod
