@@ -3,10 +3,153 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+# Phase 60 Plan 3 (Bug 3.2): a curated set of well-known radiolarian
+# (and broader micropalaeontologist) author surnames that, when
+# capitalised at the start of a phrase, would otherwise be mis-extracted
+# as a genus name by the binomial regex. Lower-cased for case-insensitive
+# comparison. Add new surnames when auditing adds them; do NOT add
+# genus names even if they look like surnames — the check is explicitly
+# a blocklist of human names.
+_KNOWN_AUTHOR_SURNAMES: frozenset[str] = frozenset(
+    {
+        # Core radiolarian workers (after Phase 60 audit)
+        "riedel",
+        "kozur",
+        "bütschli",
+        "butschli",
+        "haeckel",
+        "sanfilippo",
+        "pessagno",
+        "de wever",
+        "dumitrica",
+        "o'dogherty",
+        "odogherty",
+        "foreman",
+        "hull",
+        "bailey",
+        "carter",
+        "clark",
+        "dunn",
+        "foster",
+        "goll",
+        "kiessling",
+        "lazarus",
+        "martin",
+        "nishimura",
+        "palmer",
+        "renaudie",
+        "sugiyama",
+        "takemura",
+        "umeda",
+        "vishnevskaya",
+        "won",
+        "yeh",
+        "zhang",
+        # Extended set — common in citations of any kind
+        "smith",
+        "jones",
+        "johnson",
+        "williams",
+        "brown",
+        "davis",
+        "miller",
+        "wilson",
+        "moore",
+        "taylor",
+        "anderson",
+        "thomas",
+        "jackson",
+        "white",
+        "harris",
+        "martin",
+        "thompson",
+        "garcia",
+        "martinez",
+        "robinson",
+        "clark",
+        "rodriguez",
+        "lewis",
+        "lee",
+        "walker",
+        "hall",
+        "allen",
+        "young",
+        "king",
+        "wright",
+        "scott",
+        "hill",
+        "green",
+        "adams",
+        "baker",
+        "nelson",
+        "mitchell",
+        "perez",
+        "roberts",
+        "turner",
+        "phillips",
+        "campbell",
+        "parker",
+        "evans",
+        "edwards",
+        "collins",
+        "stewart",
+        "sanchez",
+        "morris",
+        "rogers",
+        "reed",
+        "cook",
+        "morgan",
+        "bell",
+        "murphy",
+        "bailey",
+        "rivera",
+        "cooper",
+        "richardson",
+        "cox",
+        "howard",
+        "ward",
+        "torres",
+        "peterson",
+        "gray",
+        "ramirez",
+        "james",
+        "watson",
+        "brooks",
+        "kelly",
+        "sanders",
+        "price",
+        "bennett",
+        "wood",
+        "barnes",
+        "ross",
+        "henderson",
+        "coleman",
+        "jenkins",
+        "perry",
+        "powell",
+        "long",
+        "patterson",
+        "hughes",
+        "flores",
+        "washington",
+        "butler",
+        "simmons",
+        "foster",
+        "hendricks",
+        "cole",
+        "russell",
+        "griffin",
+        "diaz",
+        "hayes",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -194,6 +337,13 @@ class TaxonRecognizer:
             if len(words) < 2:
                 continue
             if words[0].lower() in _NON_TAXON_FIRST_WORDS:
+                continue
+            # Phase 60 Plan 3 (Bug 3.2): reject matches whose first
+            # token is a known paleontologist surname. Catches the
+            # common citation shape "Genus species Riedel & Sanfilippo"
+            # which the regex would otherwise turn into the bogus
+            # "Riedel Sanfilippo" binomial.
+            if words[0].lower() in _KNOWN_AUTHOR_SURNAMES:
                 continue
             epithet_idx = 1
             if len(words) > 2 and words[1].lower() in ("cf.", "aff."):
