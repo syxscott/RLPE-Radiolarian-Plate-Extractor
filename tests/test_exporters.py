@@ -102,7 +102,12 @@ class TestAnalysisCsv:
         run = _make_run(1)
         target = tmp_path / "out.csv"
         write_csv(run, target)
-        with open(target) as f:
+        # Phase 63 Plan 6.10 (Bug 6.10): write_csv now writes a UTF-8
+        # BOM so Excel on Windows reads Greek / CJK. csv.DictReader on
+        # the raw bytes treats the BOM as the first column name; use
+        # ``utf-8-sig`` to strip it transparently (same as Pandas and
+        # most modern readers do).
+        with open(target, encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             row = next(reader)
         assert row["scientificName"] == "Genus species_0"

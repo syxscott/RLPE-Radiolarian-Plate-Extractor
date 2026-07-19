@@ -86,7 +86,12 @@ class AnalysisOptions:
     """Options for the analysis-view export."""
 
     include_unmatched: bool = True
-    csv_encoding: str = "utf-8"
+    # Phase 63 Plan 6.10 (Bug 6.10): default to utf-8-sig so Excel on
+    # Windows detects the UTF-8 encoding and renders Greek / CJK
+    # scientificName / locality chars verbatim. The 3-byte BOM is
+    # transparent to csv.DictReader / Pandas (``utf-8-sig`` strips
+    # it on read).
+    csv_encoding: str = "utf-8-sig"
     csv_delimiter: str = ","
 
 
