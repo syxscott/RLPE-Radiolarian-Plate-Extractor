@@ -27,7 +27,14 @@ FORMATION_PATTERN = re.compile(r"\b([A-Z][A-Za-z\-\s]+(?:Formation|Member|Group|
 LOCALITY_PATTERN = re.compile(
     r"\b(?:from|at|in)\s+"
     r"([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+){0,3})"
-    r"(?=\s*[,.;:()]|\s+(?:and|the|of|a|an|is|are|was|were|in|at)\b|$)"
+    # Phase 62 Plan 5 (Bug 5.17): expanded the lookahead stop-word
+    # set so common sentence patterns like "from Italy, in Sicily"
+    # and "from New York, the section" all match. Added: "we", "is",
+    # "are", "was", "were" (verbs), "to", "by", "for", "on", "as"
+    # (prepositions/connectors). These are the words that most
+    # commonly follow a locality phrase in radiolarian-paper text.
+    r"(?=\s*[,.;:()]|\s+(?:and|the|of|a|an|is|are|was|were|in|at|"
+    r"we|to|by|for|on|as|which|that|where)\b|$)"
 )
 COORDINATE_PATTERN = re.compile(
     r"\b(\d{1,3}(?:\.\d+)?)\s*°?\s*([NSns])?[,\s]+(\d{1,3}(?:\.\d+)?)\s*°?\s*([EWew])?\b"
