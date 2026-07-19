@@ -72,6 +72,18 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
     parts = [panel.paper_id, panel.figure_id, panel.panel_id or "_"]
     occ_id = ":".join(p for p in parts if p)
     media = panel.panel_path or ""
+    # Phase 58 Plan 1.2 (Bug 1.2): prefer modern_latitude/longitude when
+    # present, fall back to legacy latitude/longitude. Round 25+
+    # converters populate modern_* (used by GBIF/PBDB), while legacy
+    # fields exist for backwards compat with older extraction runs.
+    lat = (
+        geo.modern_latitude if geo and geo.modern_latitude is not None
+        else (geo.latitude if geo and geo.latitude is not None else None)
+    )
+    lon = (
+        geo.modern_longitude if geo and geo.modern_longitude is not None
+        else (geo.longitude if geo and geo.longitude is not None else None)
+    )
     return {
         "occurrenceID": occ_id,
         "basisOfRecord": "FossilSpecimen" if panel.species else "",
@@ -93,8 +105,8 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         # Previously every DwCA export had an empty country column
         # even when the PBDB occurrence record had country data.
         "country": (geo.country if geo and geo.country else ""),
-        "decimalLatitude": (str(geo.latitude) if geo and geo.latitude is not None else ""),
-        "decimalLongitude": (str(geo.longitude) if geo and geo.longitude is not None else ""),
+        "decimalLatitude": (str(lat) if lat is not None else ""),
+        "decimalLongitude": (str(lon) if lon is not None else ""),
         "geologicalContextID": (geo.age if geo and geo.age else ""),
         "formation": (geo.formation if geo and geo.formation else ""),
         "identifiedBy": ("; ".join(pm.authors) if pm and pm.authors else ""),
@@ -173,11 +185,21 @@ def _build_eml_xml(run: RunOutput) -> str:
 
 
 def write_dwca_zip(
-    run: RunOutput,
+    run: RunOutput | dict,
     target: Path,
     options: DwCAOptions | None = None,
 ) -> int:
-    """Write a DwC-A zip file. Returns the row count."""
+    """Write a DwC-A zip file. Returns the row count.
+
+    Phase 58 Plan 1.1 (Bug 1.1): the GUI's ``_build_run_output`` returns a
+    plain ``dict``, not a :class:`RunOutput`. We accept either and coerce
+    transparently. If ``provenance`` is incomplete (e.g. GUI only supplies
+    ``job_id``/``source``), we fill in stub fields rather than rejecting
+    the export outright — DwC-A consumers care more about the occurrence
+    rows than a perfect provenance stamp.
+    """
+    if isinstance(run, dict):
+        run = _coerce_run_output_from_dict(run)
     options = options or DwCAOptions()
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -211,3 +233,40 @@ def write_dwca_zip(
         zf.writestr("eml.xml", eml_xml)
         zf.writestr("occurrence.txt", occurrence_txt)
     return len(rows)
+
+
+def _coerce_run_output_from_dict(run: dict) -> RunOutput:
+    """Coerce a GUI-built dict into a fully-validated :class:`RunOutput`.
+
+    The GUI's :meth:`ResultsTab._build_run_output` (and ``Job.rows``
+    loaded from ``matches.jsonl``) supplies only a minimal ``provenance``
+    (``job_id`` + ``source``). To keep ``ProvenanceRecord`` happy, we
+    backfill any missing required fields with harmless stub values
+    (``pipeline_version="unknown"``, ``host="unknown"``, etc.).
+    """
+    prov = dict(run.get("provenance") or {})
+    # Phase 58 Plan 1.1: backwards-compat shim — GUI exports carried
+    # GUI-only keys (job_id/source) and lacked full provenance. Strip
+    # unknown keys and backfill stubs so RunOutput.model_validate accepts.
+    allowed_prov_keys = {
+        "pipeline_version",
+        "schema_version",
+        "git_commit",
+        "git_dirty",
+        "config_snapshot",
+        "input_sha256",
+        "timestamp_utc",
+        "host",
+        "python_version",
+    }
+    prov = {k: v for k, v in prov.items() if k in allowed_prov_keys}
+    prov.setdefault("pipeline_version", "unknown")
+    prov.setdefault("schema_version", run.get("schema_version", "1.0.0"))
+    prov.setdefault("git_commit", "unknown")
+    prov.setdefault("git_dirty", False)
+    prov.setdefault("timestamp_utc", "1970-01-01T00:00:00Z")
+    prov.setdefault("host", "unknown")
+    prov.setdefault("python_version", "unknown")
+    payload = dict(run)
+    payload["provenance"] = prov
+    return RunOutput.model_validate(payload)

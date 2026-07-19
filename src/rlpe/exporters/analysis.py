@@ -92,6 +92,16 @@ def _to_analysis_row(panel: PanelRecord) -> dict[str, Any]:
     sb = panel.metadata.scale_bar
     occurrence_id_parts = [panel.paper_id, panel.figure_id, panel.panel_id or "_"]
     occurrence_id = ":".join(p for p in occurrence_id_parts if p)
+    # Phase 58 Plan 1.2 (Bug 1.2): prefer modern_latitude/longitude when
+    # present, fall back to legacy latitude/longitude (Round 25+ convention).
+    lat = (
+        geo.modern_latitude if geo and geo.modern_latitude is not None
+        else (geo.latitude if geo and geo.latitude is not None else None)
+    )
+    lon = (
+        geo.modern_longitude if geo and geo.modern_longitude is not None
+        else (geo.longitude if geo and geo.longitude is not None else None)
+    )
 
     return {
         "occurrenceID": occurrence_id,
@@ -102,8 +112,8 @@ def _to_analysis_row(panel: PanelRecord) -> dict[str, Any]:
         "basisOfRecord": "FossilSpecimen" if panel.species else "",
         "eventDate": str(pm.year) if pm and pm.year else "",
         "locality": (geo.locality if geo and geo.locality else "") or "",
-        "decimalLatitude": (geo.latitude if geo and geo.latitude is not None else ""),
-        "decimalLongitude": (geo.longitude if geo and geo.longitude is not None else ""),
+        "decimalLatitude": (lat if lat is not None else ""),
+        "decimalLongitude": (lon if lon is not None else ""),
         "geologicalContextID": (geo.age if geo and geo.age else "") or "",
         "formation": (geo.formation if geo and geo.formation else "") or "",
         "identifiedBy": ("; ".join(pm.authors) if pm and pm.authors else ""),
