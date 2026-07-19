@@ -87,6 +87,31 @@ from ._llm_caption import (  # noqa: E402  (import after logger setup)
     _truncate_caption_for_llm,
 )
 
+
+def select_backend_after_4xx(
+    current_backend: str,
+    configured_fallback: str | None,
+    attempts_made: int,
+) -> str:
+    """Phase 61 Plan 4 (Bug 4.10): pick the backend for the next retry.
+
+    Pure helper so tests can verify the policy without spinning up an
+    LLM client. Behaviour:
+      * If no fallback is configured → return ``current_backend``.
+      * If we are already on the fallback backend → return it (no loop).
+      * If ``attempts_made < 2`` → return ``current_backend`` (we still
+        owe one retry to the primary backend; only after the first
+        retry fails do we switch).
+      * Otherwise → return ``configured_fallback``.
+    """
+    if not configured_fallback:
+        return current_backend
+    if configured_fallback == current_backend:
+        return current_backend
+    if attempts_made < 2:
+        return current_backend
+    return configured_fallback
+
 # Match Anthropic / MiniMax / OpenAI style API keys (sk-ant-..., sk-...,
 # plus generic 40+ char sk- prefixes). Anthropic's actual key shape is
 # ``sk-ant-api03-<48 alnum>``; MiniMax / OpenAI use ``sk-<30+ alnum>`` or
@@ -751,6 +776,16 @@ class MiniMaxM3Backend(BaseLLMBackend):
         # malformed JSON body — that's a model-quality signal very
         # different from "no thinking happened" or "API timed out".
         self.failed_with_thinking: int = 0
+        # Phase 61 Plan 4 (Bug 4.10): number of 4xx retries that
+        # SHOULD have used the configured fallback backend. Surfaced
+        # in /system/llm-status so operators can spot when their
+        # PipelineConfig.extra["fallback_llm_backend"] would have
+        # rescued a run.
+        self.fallback_4xx_hints: int = 0
+        # The configured fallback backend name (string), or None if no
+        # fallback was wired. Set via ``set_fallback_backend()`` from
+        # the pipeline's config-loader step.
+        self._configured_fallback: str | None = None
 
     # ------------------------------------------------------------------ helpers
 
@@ -889,7 +924,38 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     )
                     raise
                 else:
-                    # 4xx (not retryable) -> count and re-raise immediately
+                    # 4xx (not retryable) -> count and re-raise immediately.
+                    # Phase 61 Plan 4 (Bug 4.10): also surface a fallback
+                    # recommendation so a higher-level orchestrator can
+                    # retry once with a different backend (configured via
+                    # PipelineConfig.extra["fallback_llm_backend"]).
+                    # The retry loop itself cannot swap backends mid-flight
+                    # because the Anthropic client + prompt templates are
+                    # baked in at construction; instead we log the
+                    # recommendation and stamp the per-backend counter so
+                    # the dashboard can surface how often 4xx retries
+                    # *should* have used the fallback.
+                    try:
+                        recommended = select_backend_after_4xx(
+                            current_backend=self.backend_name,
+                            configured_fallback=getattr(
+                                self, "_configured_fallback", None
+                            ),
+                            attempts_made=attempt + 1,
+                        )
+                        if recommended != self.backend_name:
+                            logger.info(
+                                "MiniMax 4xx: consider switching to fallback "
+                                "backend %r on next attempt (current=%r, "
+                                "attempts=%d)",
+                                recommended,
+                                self.backend_name,
+                                attempt + 1,
+                            )
+                            with self._lock:
+                                self.fallback_4xx_hints += 1
+                    except Exception:
+                        pass
                     with self._lock:
                         self.total_errors += 1
                     raise
@@ -1161,7 +1227,17 @@ class MiniMaxM3Backend(BaseLLMBackend):
         used by the ``/system/llm-status`` API route. Kept as a
         separate method so the route handler does not need to know the
         internal cost-summary field names."""
-        return self.cost_summary()
+        base = self.cost_summary()
+        base["fallback_4xx_hints"] = self.fallback_4xx_hints
+        base["configured_fallback"] = self._configured_fallback
+        return base
+
+    def set_fallback_backend(self, name: str | None) -> None:
+        """Phase 61 Plan 4 (Bug 4.10): wire the configured fallback
+        backend name into this backend so the 4xx retry loop can
+        recommend a switch via ``select_backend_after_4xx``. ``None``
+        clears the recommendation."""
+        self._configured_fallback = name or None
 
 
 # =============================================================================
