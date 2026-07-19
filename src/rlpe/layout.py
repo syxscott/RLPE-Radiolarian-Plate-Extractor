@@ -177,7 +177,13 @@ def choose_best_page(
         return None
     candidates = find_caption_pages(pages, figure_number, window=window)
     if candidates:
-        return candidates[0]
+        # Phase 59 (Bug 2.7): rank candidates by plate-region score
+        # (lowest text density = highest score) and return the best.
+        # The previous code returned ``candidates[0]`` (always the
+        # first match), which on figure-heavy plates where the same
+        # "Fig. N" caption text repeats across adjacent pages picked
+        # the page with the densest text — the worst plate page.
+        return max(candidates, key=lambda p: -page_text_density(p))
     # Fallback to pages around where the figure number first appears in the text.
     if figure_number:
         for i, page in enumerate(pages):
