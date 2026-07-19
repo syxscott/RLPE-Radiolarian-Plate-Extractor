@@ -85,6 +85,12 @@ class GeologyLinkRecord(BaseModel):
     evidence_text: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     biozone: str | None = None  # optional biozone name (e.g. "N. optima Zone")
+    # Phase 63 Plan 6.15 (Bug 6.15): GBIF requires
+    # ``coordinateUncertaintyInMeters`` on georeferenced occurrences.
+    # Derived from ``coord_source``: regex-extracted -> 1000m, modern
+    # centroid -> 25000m, paleodb-derived -> 5000m. ``None`` means
+    # the coordinate is missing / not provided.
+    coordinate_uncertainty_in_meters: float | None = None
     # Round 24: environment / geochem / facies fields. The
     # radiolarian-extraction user requested these to support
     # Permian–Triassic extinction / recovery studies (P/T
@@ -234,6 +240,30 @@ class TaxonRecord(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     needs_review: bool = False
     review_reasons: list[str] = Field(default_factory=list)
+    # Phase 63 Plan 6.16 (Bug 6.16): Darwin Core requires
+    # ``nomenclaturalCode`` on acceptedNameUsage / recordedName
+    # usages. Radiolarians are governed by ICZN
+    # (International Code of Zoological Nomenclature), NOT ICN
+    # (botanical). Default = "ICZN" because every record in this
+    # pipeline is a fossil specimen.
+    nomenclatural_code: str = "ICZN"
+    # Phase 63 Plan 6.17 (Bug 6.17): ``scientificNameAuthorship``
+    # carries the author/year string (``(Smith, 1900)``) extracted
+    # from species strings by ``_taxon_parts`` /
+    # ``_extract_authorship``. ``None`` means not in the source
+    # verbatim_name.
+    scientific_name_authorship: str | None = None
+    # Phase 63 Plan 6.18 (Bug 6.18): ``genericName`` (DwC) for the
+    # subgenus-in-parentheses shape ``Podocyrtis (Podocyrtites)``.
+    # ``genus`` keeps the higher-level genus (Podocyrtis); ``genericName``
+    # holds the subgenus when present (Podocyrtites).
+    generic_name: str | None = None
+    # Phase 63 Plan 6.19 (Bug 6.19): ``taxonRemarks`` (DwC) for
+    # extraction-method / provenance notes. Round-trippable to/from
+    # ``PanelRecord.metadata.extraction_method`` so reviewers can see
+    # how the taxon name was determined (caption regex vs. llm-first
+    # vs. hybrid).
+    taxon_remarks: str | None = None
 
 
 class SampleRecord(BaseModel):
@@ -287,6 +317,9 @@ class LocalityRecord(BaseModel):
     coordinate_source: str | None = None
     geocoding_source: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Phase 63 Plan 6.15 (Bug 6.15): GBIF/PBDB requirement.
+    # ``None`` when the locality has no coordinate.
+    coordinate_uncertainty_in_meters: float | None = None
 
 
 class PaleoCoordinateRecord(BaseModel):
@@ -305,6 +338,10 @@ class PaleoCoordinateRecord(BaseModel):
     method: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     backend_status: str | None = None
+    # Phase 63 Plan 6.20 (Bug 6.20): PBDB-style paleocoords carry an
+    # uncertainty (typically 10-50 km for Euler-pole reconstructions).
+    # ``None`` means the backend didn't report one.
+    coordinate_uncertainty_in_meters: float | None = None
 
 
 class WarningRecord(BaseModel):

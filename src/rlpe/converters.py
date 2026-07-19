@@ -147,6 +147,14 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
                 redox=g.get("redox"),
                 chemostrat=g.get("chemostrat"),
                 facies=g.get("facies"),
+                # Phase 63 Plan 6.15 (Bug 6.15): GBIF requires
+                # ``coordinateUncertaintyInMeters``. We map
+                # ``coord_source`` to a representative radius (see
+                # ``_coordinate_uncertainty_for``). ``None`` when the
+                # coord_source isn't one of the recognised values.
+                coordinate_uncertainty_in_meters=_coordinate_uncertainty_for(
+                    g.get("coord_source", "") or ""
+                ),
             )
         )
     return out
@@ -257,13 +265,24 @@ def _locality_id(geo: dict[str, Any], paper_id: str) -> str:
     orderings, which could diverge on edge cases. This helper
     centralises the schema to ``(paper_id, locality, lat, lon)`` so
     the two lists always join.
+
+    Phase 63 Plan 6.14 (Bug 6.14): use modern_latitude / modern_longitude
+    when present (Round 25+ convention), falling back to legacy
+    latitude / longitude. The previous formula relied solely on the
+    legacy ``latitude/longitude`` fields, which Round 25+ leaves as
+    ``None`` for derived (centroid, paleo-reconstructed) coords —
+    so two physically distinct localities at the same name with
+    different modern coords collapsed onto the SAME hash and the
+    export silently dropped one.
     """
+    lat = _resolve_modern_coord(geo.get("modern_latitude"), geo.get("latitude"))
+    lon = _resolve_modern_coord(geo.get("modern_longitude"), geo.get("longitude"))
     return _stable_id(
         "loc",
         paper_id,
         geo.get("locality"),
-        geo.get("latitude"),
-        geo.get("longitude"),
+        lat,
+        lon,
     )
 
 
@@ -435,6 +454,79 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
     return {"genus": genus, "specific_epithet": epithet, "qualifier": qualifier}
 
 
+def _extract_authorship(species: str | None) -> tuple[str | None, str | None, str | None]:
+    """Best-effort split of an ICZN authorship out of a species string.
+
+    Returns ``(genus, subgenus, authorship)``. The input shape is::
+
+        ``Genus species (Smith, 1900)``
+        ``Genus (Subgenus) species Smith, 1900``
+        ``Podocyrtis (Podocyrtites) species Haeckel, 1887``
+
+    Phase 63 Plan 6.17/6.18 (Bugs 6.17/6.18) decompose this shape into
+    DwC-compatible fields: ``genericName`` (subgenus),
+    ``scientificNameAuthorship`` (the author/year string).
+
+    Returns ``(None, None, None)`` when no clear authority is found
+    — caller stores ``None`` and downstream reviewers see the
+    verbatim_name carrying the full string.
+    """
+    name = _normalise_species_name(species)
+    if not name:
+        return None, None, None
+
+    # Look for an authorship block in parentheses ``(Smith, 1900)``
+    # or as a trailing Smith, 1900. We scan from the right.
+    authorship: str | None = None
+    subgenus: str | None = None
+    rest = name
+
+    # 1. Parenthesised authority e.g. ``(Smith, 1900)``
+    m = re.search(r"\(([^()]+(?:,\s*\d{4}[a-z]?))\)\s*$", name)
+    if m:
+        authorship = m.group(1).strip()
+        rest = name[: m.start()].strip()
+
+    # 2. Trailing ``, 1900`` style (Smith, 1900) without parens — only
+    # when there's no parenthesised match above.
+    if authorship is None:
+        m = re.search(r"([A-Z][\w\-']*(?:,\s*\d{4}[a-z]?))\s*$", name)
+        if m:
+            authorship = m.group(1).strip()
+            rest = name[: m.start()].strip()
+
+    # 3. Subgenus in parentheses e.g. ``Podocyrtis (Podocyrtites) species``
+    if rest:
+        sm = re.match(r"^([A-Z][\w\-']+)\s+\(([A-Z][\w\-']+)\)\s+", rest)
+        if sm:
+            subgenus = sm.group(2).strip()
+
+    return None, subgenus, authorship
+
+
+def _coordinate_uncertainty_for(coord_source: str | None) -> float | None:
+    """Map ``coord_source`` to a GBIF-compatible
+    ``coordinateUncertaintyInMeters`` value.
+
+    GBIF guidelines:
+      * ``regex`` / ``caption``: textual, ~1000m uncertainty
+      * ``paleodb``: derived from PBDB centroid, ~5000m
+      * ``country_centroid``: large fallback, ~25000m
+      * ``paleo_reconstructed``: paleocoord, ~10000m
+      * None: missing
+    """
+    if not coord_source:
+        return None
+    table = {
+        "regex": 1000.0,
+        "caption": 1000.0,
+        "paleodb": 5000.0,
+        "country_centroid": 25000.0,
+        "paleo_reconstructed": 10000.0,
+    }
+    return table.get(coord_source, 1000.0)
+
+
 def _panel_review_reasons(match: MatchResult) -> list[str]:
     reasons: list[str] = []
     meta = match.metadata or {}
@@ -536,8 +628,50 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
 # is preserved.
 
 
+def _coerce_provenance(provenance: ProvenanceRecord | dict[str, Any]) -> ProvenanceRecord:
+    """Accept either a :class:`ProvenanceRecord` or a plain dict and
+    return a fully-validated :class:`ProvenanceRecord`.
+
+    Used by ``run_output_from_provenance`` (Phase 63 Plan 6.1, Bug 6.1)
+    so callers (GUI, web ``Job.rows``, CLI export) can pass either
+    form. Mirrors ``_coerce_run_output_from_dict`` in
+    ``exporters.archive``: a partial dict (``{job_id, source}`` from
+    the GUI) is backfilled with harmless stub values rather than
+    rejected. This keeps the legacy ``ProvenanceRecord``-only callers
+    fully compatible.
+    """
+    if isinstance(provenance, ProvenanceRecord):
+        return provenance
+    if not isinstance(provenance, dict):
+        raise TypeError(
+            f"provenance must be ProvenanceRecord or dict, got "
+            f"{type(provenance).__name__}"
+        )
+    prov = dict(provenance)
+    allowed_keys = {
+        "pipeline_version",
+        "schema_version",
+        "git_commit",
+        "git_dirty",
+        "config_snapshot",
+        "input_sha256",
+        "timestamp_utc",
+        "host",
+        "python_version",
+    }
+    prov = {k: v for k, v in prov.items() if k in allowed_keys}
+    prov.setdefault("pipeline_version", "unknown")
+    prov.setdefault("schema_version", "1.0.0")
+    prov.setdefault("git_commit", "unknown")
+    prov.setdefault("git_dirty", False)
+    prov.setdefault("timestamp_utc", "1970-01-01T00:00:00Z")
+    prov.setdefault("host", "unknown")
+    prov.setdefault("python_version", "unknown")
+    return ProvenanceRecord(**prov)
+
+
 def run_output_from_provenance(
-    provenance: ProvenanceRecord,
+    provenance: ProvenanceRecord | dict[str, Any],
     matches: list[MatchResult] | None,
 ) -> dict[str, Any]:
     """Build a JSON-serializable RunOutput dict from a provenance and a
@@ -558,7 +692,14 @@ def run_output_from_provenance(
     inside the ``*_records_from_matches`` helpers. An empty list
     produces an empty RunOutput with the provenance still attached —
     which is the correct degraded behavior.
+
+    Phase 63 Plan 6.1 (Bug 6.1): ``provenance`` may now be a plain
+    ``dict`` (mirrors ``write_dwca_zip``'s accept-dict behaviour).
+    A partial dict is backfilled with stub fields so the GUI's
+    truncated provenance (``{job_id, source}``) does not blow up
+    ``ProvenanceRecord.model_validate``.
     """
+    provenance = _coerce_provenance(provenance)
     if matches is None:
         matches = []
     panels = [panel_record_from_match(m) for m in matches]
@@ -775,6 +916,24 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         meta = m.metadata or {}
         pbdb = meta.get("paleodb") or {}
         pbdb_tax = pbdb.get("taxonomy") or {}
+        # Phase 63 Plan 6.17/6.18 (Bugs 6.17/6.18): extract the
+        # authority/year and subgenus from the verbatim species
+        # string. ``_extract_authorship`` recognises both
+        # parenthesised ``(Smith, 1900)`` and trailing ``Smith, 1900``
+        # shapes; ``subgenus`` is the parenthetical after the genus
+        # (``Podocyrtis (Podocyrtites) species Haeckel``).
+        _, subgenus, authorship = _extract_authorship(sp)
+        # Phase 63 Plan 6.19 (Bug 6.19): taxon_remarks captures the
+        # extraction method so DwC reviewers can see how the taxon
+        # was determined. The Round-1 default was ``source`` on
+        # ``TaxonRecord`` for the same purpose; ``taxon_remarks`` is
+        # the explicit DwC term so the export self-documents.
+        extraction_method = meta.get("extraction_method") or ""
+        taxon_remarks = (
+            f"extraction_method={extraction_method}"
+            if extraction_method
+            else None
+        )
         rec = TaxonRecord(
             taxon_id=taxon_id,
             verbatim_name=sp,
@@ -782,7 +941,7 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             genus=parts["genus"],
             specific_epithet=parts["specific_epithet"],
             qualifier=parts["qualifier"],
-            authority=pbdb_tax.get("authority") or None,
+            authority=pbdb_tax.get("authority") or authorship,
             rank=(
                 pbdb_tax.get("rank")
                 or ("species" if parts["specific_epithet"] else "genus_or_other")
@@ -797,6 +956,16 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             confidence=float(m.confidence),
             needs_review=bool(meta.get("needs_review", False)),
             review_reasons=list(meta.get("review_reasons", []) or []),
+            # Phase 63 Plan 6.16 (Bug 6.16): ICZN is the default;
+            # explicit so the export self-documents.
+            nomenclatural_code="ICZN",
+            # Phase 63 Plan 6.17 (Bug 6.17)
+            scientific_name_authorship=authorship,
+            # Phase 63 Plan 6.18 (Bug 6.18): subgenus extracted from
+            # the parenthetical shape ``Podocyrtis (Podocyrtites)``.
+            generic_name=subgenus,
+            # Phase 63 Plan 6.19 (Bug 6.19)
+            taxon_remarks=taxon_remarks,
         )
         seen[taxon_id] = rec.model_dump()
     return list(seen.values())
@@ -1003,10 +1172,17 @@ def _pbdb_enrich_geology(
         for f in ("early_interval", "formation", "locality", "country"):
             if agg[f]:
                 top[f] = max(agg[f].items(), key=lambda x: x[1])[0]
+        # Phase 63 Plan 6.21 (Bug 6.21): use ``statistics.median`` for
+        # biostratigraphic range bounds. Mean of a bimodal range has
+        # no biostratigraphic meaning (a Carboniferous-Cambrian mean
+        # is just a number, not a real range). Median selects the
+        # centre of the largest cluster and is robust to outliers.
         if agg["ma_top"]:
-            top["ma_top"] = sum(agg["ma_top"]) / len(agg["ma_top"])
+            import statistics as _stats
+            top["ma_top"] = _stats.median(agg["ma_top"])
         if agg["ma_base"]:
-            top["ma_base"] = sum(agg["ma_base"]) / len(agg["ma_base"])
+            import statistics as _stats
+            top["ma_base"] = _stats.median(agg["ma_base"])
         if agg["lat"]:
             top["lat"] = sum(agg["lat"]) / len(agg["lat"])
             top["lon"] = sum(agg["lon"]) / len(agg["lon"])
@@ -1125,11 +1301,18 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
             locality = g.get("locality")
             if not locality:
                 continue
+            # Phase 63 Plan 6.14 (Bug 6.14): the dedup key now uses
+            # modern_latitude / modern_longitude (Round 25+ convention)
+            # so two distinct localities with the same name but
+            # different coords are kept separate. ``_resolve_modern_coord``
+            # picks the modern field when present, falling back to legacy.
+            lat = _resolve_modern_coord(g.get("modern_latitude"), g.get("latitude"))
+            lon = _resolve_modern_coord(g.get("modern_longitude"), g.get("longitude"))
             key = (
                 m.paper_id,
                 locality,
-                g.get("latitude"),
-                g.get("longitude"),
+                lat,
+                lon,
             )
             if key in seen:
                 continue
@@ -1156,6 +1339,10 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
                 ),
                 geocoding_source=None,
                 confidence=float(g.get("confidence", 0.0) or 0.0),
+                # Phase 63 Plan 6.15 (Bug 6.15)
+                coordinate_uncertainty_in_meters=_coordinate_uncertainty_for(
+                    g.get("coord_source", "") or ""
+                ),
             )
             seen[key] = rec.model_dump()
     return list(seen.values())
@@ -1354,6 +1541,10 @@ def paleo_coordinates_from_localities(
             method="euler_pole_rotation",
             confidence=0.7 if paleo_lat is not None else 0.0,
             backend_status="ok" if paleo_lat is not None else "plate_or_age_unknown",
+            # Phase 63 Plan 6.20 (Bug 6.20): PBDB-style paleocoord
+            # uncertainty. Seton2012 Euler-pole reconstructions carry
+            # ~50 km of plate motion uncertainty at typical ages.
+            coordinate_uncertainty_in_meters=50000.0,
         )
         out.append(rec.model_dump())
     return out, warnings_out

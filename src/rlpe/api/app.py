@@ -8,6 +8,7 @@ import sys
 import threading
 import traceback
 import uuid
+from urllib.parse import quote as _url_quote
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -1229,12 +1230,32 @@ def get_results(
 def _row_id(job_id: str, row: dict[str, Any]) -> str:
     """Stable identifier for one result row.
 
-    ``(job_id, paper_id, figure_id, panel_id)`` is unique within the
-    cache because ``panel_id`` is unique per figure within a paper.
+    The default key is ``(job_id, paper_id, figure_id, panel_id)``
+    which is unique per (job, panel). When ``panel_id`` is missing
+    (LLM-first paths, panel_index=None, caption parser gave up),
+    the figure might still contain multiple distinct rows; we fall
+    back to ``bbox`` so two panels in the same figure that lack a
+    panel id are still distinguishable. The last-resort key is the
+    row's pipeline-synthesised position (``_seq`` / position from
+    the source list / a hashed blob of the row).
     """
-    return (
-        f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:{row.get('panel_id', '')}"
-    )
+    panel_id = row.get("panel_id")
+    if panel_id:
+        return (
+            f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:{panel_id}"
+        )
+    bbox = row.get("bbox")
+    if bbox:
+        return (
+            f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:"
+            f"bbox:{','.join(str(int(v)) for v in bbox)}"
+        )
+    # Last resort: stable hash of the row's identifying fields so two
+    # identical rows collapse but two differing rows don't.
+    import hashlib
+    blob = repr(sorted(row.items())).encode("utf-8")
+    digest = hashlib.sha1(blob).hexdigest()[:12]
+    return f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:hash:{digest}"
 
 
 @app.delete("/results")
@@ -2023,7 +2044,18 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 try:
                     rel = panel_abs.relative_to(job_root)
                     normalized["panel_local_path"] = str(panel_abs)
-                    normalized["panel_path"] = f"/jobs/{job_id}/files/{rel.as_posix()}"
+                    # Phase 63 Plan 6.11 (Bug 6.11): URL-encode the
+                    # relative-path segments so a paper whose figure
+                    # folder is ``図版1`` or contains a space / percent
+                    # / non-ASCII char produces a valid URL. ``safe='/'``
+                    # preserves the directory separators (so the URL
+                    # still reads ``/jobs/{id}/files/foo/bar.png`` and
+                    # not ``/jobs%2F%7Bid%7D%2Ffiles%2Ffoo%2Fbar.png``).
+                    # The frontend uses ``path.split('/')`` after
+                    # decoding, so the URL structure stays the same.
+                    normalized["panel_path"] = (
+                        f"/jobs/{job_id}/files/{_url_quote(rel.as_posix(), safe='/')}"
+                    )
                 except ValueError:
                     # Keep original path when file is outside this job workspace.
                     pass

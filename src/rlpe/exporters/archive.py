@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from html import escape as _xml_escape
 from pathlib import Path
 
+from ..converters import _taxon_parts
 from ..schema_models import PanelRecord, RunOutput
 
 
@@ -84,6 +85,17 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         geo.modern_longitude if geo and geo.modern_longitude is not None
         else (geo.longitude if geo and geo.longitude is not None else None)
     )
+    # Phase 63 Plan 6.7 (Bug 6.7): use ``_taxon_parts`` (centralised in
+    # ``rlpe.converters``) instead of naive ``species.split()``. The
+    # naive split mis-classified ``Genus cf. species`` -> genus="Genus",
+    # specificEpithet="cf." and similarly broke on ``aff.``, ``sp.``,
+    # ``spp.``, trinomial names (``Genus species subspecies``),
+    # and author citations (``Genus species (Smith, 1900)``).
+    # ``_taxon_parts`` returns ``None``/empty when the binomial is
+    # incomplete (cf./aff./sp./spp.) — GBIF/PBDB reject those as
+    # authoritative entries; open-nomenclature rows carry only the
+    # ``scientificName`` string.
+    taxon = _taxon_parts(panel.species)
     return {
         "occurrenceID": occ_id,
         "basisOfRecord": "FossilSpecimen" if panel.species else "",
@@ -93,10 +105,8 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         "class": "",
         "order": "",
         "family": "",
-        "genus": (panel.species.split()[0] if panel.species else ""),
-        "specificEpithet": (
-            panel.species.split()[1] if panel.species and len(panel.species.split()) >= 2 else ""
-        ),
+        "genus": (taxon.get("genus") or ""),
+        "specificEpithet": (taxon.get("specific_epithet") or ""),
         "eventDate": str(pm.year) if pm and pm.year else "",
         "year": str(pm.year) if pm and pm.year else "",
         "locality": (geo.locality if geo and geo.locality else ""),

@@ -175,11 +175,14 @@ def export_json(rows: list[dict[str, Any]], path: Path) -> None:
 def export_csv(rows: list[dict[str, Any]], path: Path) -> None:
     ensure_dir(path.parent)
     if not rows:
-        path.write_text("", encoding="utf-8")
+        # Phase 63 Plan 6.10 (Bug 6.10): still emit a 3-byte UTF-8 BOM
+        # so the empty file isn't misinterpreted as ANSI when the
+        # operator opens it later in Excel. utf-8-sig IS utf-8 + BOM.
+        path.write_bytes(b"\xef\xbb\xbf")
         return
     flat = [flatten_for_csv(r) for r in rows]
     fieldnames = sorted({k for row in flat for k in row.keys()})
-    with path.open("w", newline="", encoding="utf-8") as f:
+    with path.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in flat:

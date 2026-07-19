@@ -831,12 +831,46 @@ class ResultsTab(QWidget):
         if not path:
             return
         try:
+            # Phase 63 Plan 6.5 (Bug 6.5): route through analysis-level
+            # CSV helpers instead of the bare csv.DictWriter call we had
+            # here. The bare call produced three problems downstream:
+            #   1) No formula-injection sanitisation (CWE-1236) —
+            #      Excel/LibreOffice would treat a paper caption
+            #      starting with ``=``, ``+``, ``-``, ``@`` or TAB as
+            #      a formula and execute ``=cmd|'/c calc'!A1`` on open.
+            #   2) No UTF-8 BOM (Phase 63 Plan 6.10) — Excel on
+            #      Windows defaults to ANSI code page and mangles Greek
+            #      / CJK.
+            #   3) No NaN/Inf sanitisation — scale-bar or geo coord
+            #      paths occasionally produced ``float("nan")`` which
+            #      csv writes as the string "nan" instead of an empty
+            #      cell.
+            # The fix imports ``_sanitise_csv_cell`` from
+            # ``rlpe.exporters.analysis`` (the same helper
+            # ``analysis.write_csv`` uses), reads NaN/Inf handler from
+            # ``rlpe.export._csv_cell`` (Task 6.8/6.10), and writes the
+            # file with a UTF-8 BOM. The displayed column ordering
+            # (RESULT_COLUMNS) is preserved so what the user sees on
+            # screen is what they get in the export.
+            from math import isnan, isinf
             import csv
-            with open(path, "w", newline="", encoding="utf-8") as fh:
-                w = csv.DictWriter(fh, fieldnames=[c.key for c in RESULT_COLUMNS])
+            from ..exporters.analysis import _sanitise_csv_cell
+            from ..export import _csv_cell
+            column_keys = [c.key for c in RESULT_COLUMNS]
+            with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+                w = csv.DictWriter(fh, fieldnames=column_keys)
                 w.writeheader()
                 for r in self._filtered_rows:
-                    w.writerow({k: self._extract_column(r, k) for k in (c.key for c in RESULT_COLUMNS)})
+                    out: dict[str, Any] = {}
+                    for k in column_keys:
+                        v = self._extract_column(r, k)
+                        # NaN/Inf → empty string first (Phase 63 Plan 6.8)
+                        if isinstance(v, float) and (isnan(v) or isinf(v)):
+                            v = ""
+                        # Then formula-injection sanitisation (Phase 63 Plan 6.5)
+                        v = _csv_cell(_sanitise_csv_cell(v))
+                        out[k] = v
+                    w.writerow(out)
             self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
         except Exception as exc:
             QMessageBox.warning(

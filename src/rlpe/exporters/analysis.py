@@ -23,6 +23,7 @@ fallback for numeric lat/long).
 from __future__ import annotations
 
 import csv
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,15 +35,45 @@ _CSV_DANGER_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
 def _sanitise_csv_cell(value: Any) -> Any:
-    """Prefix a leading ``=``/``+``/``-``/``@``/TAB with a single quote
-    so Excel/LibreOffice don't treat the cell as a formula.
+    """Sanitise a single CSV cell value.
 
-    Numeric values pass through unchanged (they can't be formulas).
-    None becomes the empty string.
+    Two concerns are addressed here:
+
+    1. Formula-injection (CWE-1236, Round 15 audit). A leading
+       ``=``/``+``/``-``/``@``/TAB makes Excel/LibreOffice treat
+       the cell as a formula; a paper caption like ``=cmd|'/c
+       calc'!A1`` would execute on open. Prefixing with a single
+       quote neutralises the formula.
+    2. NaN/Inf / non-finite floats (Phase 63 Plan 6.8, Bug 6.8).
+       Scale-bar / coordinate parsing paths occasionally emit
+       ``float('nan')`` or ``float('inf')``. CSV writers wrote
+       these as the Python repr ("nan"/"inf"), which Excel
+       rendered as ``#NAME?`` and which GBIF/PBDB ingest
+       rejected. We coerce them to ``""`` so the exported CSV
+       has the same shape as a missing value.
+
+    Numeric values that are finite and not bool pass through; None
+    becomes the empty string.
     """
     if value is None:
         return ""
-    if isinstance(value, (int, float, bool)):
+    if isinstance(value, bool):
+        # NB: bool subclasses int; check it first so ``True`` and
+        # ``False`` keep their literal rendering (Excel doesn't
+        # treat ``True`` as a formula).
+        if isinstance(value, float):
+            # unreachable; kept for clarity
+            pass
+        return value
+    if isinstance(value, float):
+        # NaN / Inf — Excel/pandas/most CSV readers render the Python
+        # repr as ``nan`` / ``inf``, which downstream consumers
+        # treat as a parse error. Drop these to the same shape as
+        # a missing value.
+        if math.isnan(value) or math.isinf(value):
+            return ""
+        return value
+    if isinstance(value, int):
         return value
     s = str(value)
     if s and s[0] in _CSV_DANGER_PREFIXES:
@@ -55,7 +86,12 @@ class AnalysisOptions:
     """Options for the analysis-view export."""
 
     include_unmatched: bool = True
-    csv_encoding: str = "utf-8"
+    # Phase 63 Plan 6.10 (Bug 6.10): default to utf-8-sig so Excel on
+    # Windows detects the UTF-8 encoding and renders Greek / CJK
+    # scientificName / locality chars verbatim. The 3-byte BOM is
+    # transparent to csv.DictReader / Pandas (``utf-8-sig`` strips
+    # it on read).
+    csv_encoding: str = "utf-8-sig"
     csv_delimiter: str = ","
 
 
