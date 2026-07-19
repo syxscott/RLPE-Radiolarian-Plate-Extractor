@@ -27,6 +27,7 @@ import socket
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import re as _re
 
 # Compat shim: ``datetime.UTC`` was added in Python 3.11; on 3.10
 # (and earlier) the canonical spelling is ``datetime.timezone.utc``.
@@ -160,19 +161,97 @@ def _host_string() -> str:
 
 
 def _config_snapshot(config: Any) -> dict[str, Any]:
-    """Best-effort JSON-safe dump of a PipelineConfig-like object."""
+    """Best-effort JSON-safe dump of a PipelineConfig-like object.
+
+    Phase 63 Plan 6.9 (Bug 6.9): also strips known API-key fields and
+    applies ``rlpe.llm_backends._redact_api_keys`` to every string
+    value so a stray ``sk-...`` token embedded in a prompt, endpoint,
+    or header can't leak into ``run_output.json`` /
+    ``matches.jsonl``. The fallback walker already filters keys
+    starting with ``_`` (which is why ``_MiniMax_external_handler``
+    was never exposed), but the public ``MiniMax_api_key`` field
+    *was* exposed — the fix removes it by name before applying the
+    string-level redaction to every remaining value.
+    """
     if config is None:
         return {}
     if isinstance(config, dict):
-        return _json_safe(config)
-    if hasattr(config, "to_dict") and callable(config.to_dict):
+        snap = _json_safe(config)
+    elif hasattr(config, "to_dict") and callable(config.to_dict):
         try:
             snap = config.to_dict()
         except Exception:
             snap = _fallback_walk(config)
+        snap = _json_safe(snap)
     else:
-        snap = _fallback_walk(config)
-    return _json_safe(snap)
+        snap = _json_safe(_fallback_walk(config))
+    return _redact_secrets(snap)
+
+
+# Known field names that carry credentials. Removing them by name is
+# safer than relying on regex alone because operators occasionally
+# store keys under domain-specific names (``MiniMax_api_key``,
+# ``anthropic_api_key``, ``openai_api_key``, ...) and the canonical
+# ``MiniMax_api_key`` pattern needs an exact match. The regex layer
+# below still catches stray tokens embedded in any other string.
+_API_KEY_FIELD_NAMES = {
+    "MiniMax_api_key",
+    "minimax_api_key",
+    "MiniMax_api_token",
+    "minimax_api_token",
+    "anthropic_api_key",
+    "openai_api_key",
+    "google_api_key",
+    "minimax_api_key",
+    "minimax_secret_key",
+    "gemma_api_key",
+    "huggingface_token",
+    "hf_token",
+    "wandb_api_key",
+    "pbdb_api_key",
+}
+
+# Re-exported here for the recursive walker. We import the helper
+# lazily to avoid an import cycle (rlpe.llm_backends imports a number
+# of heavy ML client libraries).
+_API_KEY_REGEXES: tuple[_re.Pattern[str], ...] = (
+    _re.compile(r"(?<![A-Za-z0-9_])sk-(?=[A-Za-z0-9]{16})[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+){0,3}"),
+    _re.compile(r"(?<![A-Za-z0-9_])sk-ant-api03-[A-Za-z0-9]{20,}"),
+    _re.compile(r"(?<![A-Za-z0-9_])sk-ant-(?!api03-)[A-Za-z0-9]{16,}"),
+    _re.compile(r"(?<![A-Za-z0-9_])sk-proj-[A-Za-z0-9]{16,}"),
+    _re.compile(r"(?<![A-Za-z0-9_])sk-cp-[A-Za-z0-9]{16,}"),
+)
+
+
+def _redact_api_keys(text: str) -> str:
+    """Replace any API-key-looking substrings with ``[REDACTED]``.
+
+    Mirrors ``rlpe.llm_backends._redact_api_keys``; defined here so
+    we don't need an import cycle through llm_backends (which pulls
+    in heavy ML client libraries at import time).
+    """
+    if not text:
+        return text
+    for pat in _API_KEY_REGEXES:
+        text = pat.sub("[REDACTED]", text)
+    return text
+
+
+def _redact_secrets(obj: Any) -> Any:
+    """Walk ``obj`` recursively; remove known API-key fields and
+    redact stray ``sk-...`` tokens in every string value."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            if str(k) in _API_KEY_FIELD_NAMES:
+                continue
+            out[k] = _redact_secrets(v)
+        return out
+    if isinstance(obj, (list, tuple)):
+        return [_redact_secrets(v) for v in obj]
+    if isinstance(obj, str):
+        return _redact_api_keys(obj)
+    return obj
 
 
 def _json_safe(obj: Any) -> Any:
