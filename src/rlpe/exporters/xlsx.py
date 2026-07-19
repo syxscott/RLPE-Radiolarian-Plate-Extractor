@@ -32,6 +32,7 @@ they start with ``=``/``+``/``-``/``@``/TAB to defeat CWE-1236.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -45,12 +46,36 @@ _EXCEL_DANGER_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
 def _sanitise(value: Any) -> Any:
-    """Prefix dangerous leading chars with a single quote so Excel
-    does not interpret the cell as a formula. Numeric values pass
-    through unchanged."""
+    """Sanitise a workbook cell.
+
+    Two concerns are addressed here:
+
+    1. Formula-injection (CWE-1236). A leading ``=``/``+``/``-``/``@``/
+       TAB makes Excel treat the cell as a formula; a paper caption
+       like ``=cmd|'/c calc'!A1`` would execute on open. Prefixing
+       with a single quote neutralises the formula (Excel renders
+       the leading quote as part of the cell content but does not
+       re-parse it as a formula).
+    2. NaN/Inf (Phase 63 Plan 6.8, Bug 6.8). Scale-bar / coordinate
+       parsing paths occasionally emit ``float('nan')``. openpyxl
+       raises ``ValueError`` on ``nan`` / ``inf`` when writing a
+       numeric cell — the cell ends up an ``#N/A`` Excel error which
+       GBIF/PBDB ingest rejects. Drop to the empty string so the
+       workbook mirrors CSV behaviour.
+
+    Numeric values that are finite and not bool pass through.
+    """
     if value is None:
         return ""
-    if isinstance(value, (int, float, bool)):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        # NaN / Inf — openpyxl refuses to write these, leaving an
+        # Excel ``#N/A`` error. Drop to the same shape as missing.
+        if math.isnan(value) or math.isinf(value):
+            return ""
+        return value
+    if isinstance(value, int):
         return value
     if isinstance(value, str):
         if value and value[0] in _EXCEL_DANGER_PREFIXES:
