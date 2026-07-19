@@ -55,6 +55,16 @@ def _value_in_sanity_range(val: float, unit: str | None) -> bool:
         return True
     return _SANITY_VALUE_MIN_UM <= um <= _SANITY_VALUE_MAX_UM
 
+
+# Phase 62 Plan 5 (Bug 5.11): explicit sentinel returned by
+# ``normalize_unit`` for ``None`` / empty / whitespace-only input.
+# Previously these all returned ``""``, indistinguishable from a
+# legitimate unknown-unit input that happened to normalise to
+# empty (none currently do, but the contract was fragile).
+# Callers can use ``unit is UNKNOWN_UNIT`` to detect "no unit at
+# all" without relying on string magic.
+UNKNOWN_UNIT = "__unknown__"
+
 # Words whose presence near a number-unit pair indicate a NON-scale-bar
 # context: specimen sizes, sieve apertures, sediment depths, etc. When
 # the SCALE_PATTERN matches a "bare number + unit" (no "scale bar"
@@ -345,7 +355,15 @@ def merge_scale_info(
 
 
 def normalize_unit(unit: str) -> str:
-    u = (unit or "").lower().strip()
+    # Phase 62 Plan 5 (Bug 5.11): explicit None / empty / whitespace
+    # handling. Return UNKNOWN_UNIT sentinel so callers can tell
+    # "no unit provided" apart from "unknown unit" (which still
+    # returns the lowercased input).
+    if unit is None:
+        return UNKNOWN_UNIT
+    u = unit.lower().strip()
+    if not u:
+        return UNKNOWN_UNIT
     if u in {"μm", "µm", "um", "micron", "microns"}:
         return "um"
     return u
