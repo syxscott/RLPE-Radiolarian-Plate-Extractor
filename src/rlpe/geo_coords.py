@@ -28,6 +28,13 @@ class Coordinate:
     source: str = ""  # the snippet where it was found
     raw: str = ""  # the original match
     confidence: float = 0.9
+    # Phase 62 Plan 5 (Bug 5.4): whether this coordinate was framed
+    # by surrounding text as the position AT DEPOSITION TIME
+    # (``is_paleo=True``) versus today's locality (``is_paleo=False``).
+    # Populated by ``parse_coordinate`` / ``parse_all_coordinates``
+    # via the same 120-char-prefix keyword heuristic that
+    # ``geology_extraction._classify_coordinate_age`` uses.
+    is_paleo: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -68,7 +75,11 @@ _DMS_RE = re.compile(
 def parse_coordinate(text: str) -> Coordinate | None:
     """Return the first parseable coordinate in ``text`` or ``None``.
 
-    Tries DMS first (more specific) then decimal-degrees.
+    Tries DMS first (more specific) then decimal-degrees. The
+    returned ``Coordinate`` carries an ``is_paleo`` flag populated
+    by the same 120-char-prefix keyword heuristic
+    ``geology_extraction._classify_coordinate_age`` uses, so
+    downstream consumers don't have to re-walk the text.
     """
     if not text:
         return None
@@ -93,7 +104,13 @@ def parse_coordinate(text: str) -> Coordinate | None:
             if m.group("lon_h") and m.group("lon_h").upper() == "W":
                 lon = -lon
             if _valid(lat, lon):
-                return Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
+                return Coordinate(
+                    latitude=lat,
+                    longitude=lon,
+                    source=text[:200],
+                    raw=m.group(0),
+                    is_paleo=_is_paleo_text(text, m.start()),
+                )
         except (TypeError, ValueError) as exc:
             # Regex matched a DMS shape but the groups aren't valid
             # numbers (e.g. OCR noise between the digits). Log at
@@ -119,7 +136,13 @@ def parse_coordinate(text: str) -> Coordinate | None:
             if m.group("lon_h") and m.group("lon_h").upper() == "W":
                 lon = -lon
             if _valid(lat, lon):
-                return Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
+                return Coordinate(
+                    latitude=lat,
+                    longitude=lon,
+                    source=text[:200],
+                    raw=m.group(0),
+                    is_paleo=_is_paleo_text(text, m.start()),
+                )
         except (TypeError, ValueError) as exc:
             import logging
 
@@ -156,7 +179,13 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
                 lon = -lon
             if _valid(lat, lon):
                 out.append(
-                    Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
+                    Coordinate(
+                        latitude=lat,
+                        longitude=lon,
+                        source=text[:200],
+                        raw=m.group(0),
+                        is_paleo=_is_paleo_text(text, m.start()),
+                    )
                 )
         except Exception:
             pass
@@ -173,7 +202,13 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
                 lon = -lon
             if _valid(lat, lon):
                 out.append(
-                    Coordinate(latitude=lat, longitude=lon, source=text[:200], raw=m.group(0))
+                    Coordinate(
+                        latitude=lat,
+                        longitude=lon,
+                        source=text[:200],
+                        raw=m.group(0),
+                        is_paleo=_is_paleo_text(text, m.start()),
+                    )
                 )
         except Exception:
             pass
@@ -182,3 +217,34 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
 
 def _valid(lat: float, lon: float) -> bool:
     return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
+
+
+# Phase 62 Plan 5 (Bug 5.4): same keyword heuristic as
+# ``geology_extraction._classify_coordinate_age``. Kept local so the
+# geo_coords module doesn't depend on geology_extraction (avoids a
+# potential circular import — geology_extraction imports
+# parse_coordinate indirectly through converter chains).
+_PALEO_KEYWORDS_GEO = (
+    "during the ", "at that time", "at the time", "in the late ",
+    "in the early ", "in the middle ", "paleogeographic",
+    "paleolatitude", "paleolongitude", "during deposition",
+    "reconstructed", "was located", "lay at", "was situated",
+    "at deposition", "in triassic", "in jurassic", "in cretaceous",
+    "in permian", "in devonian", "in ordovician", "in silurian",
+    "in cambrian", "in carboniferous",
+)
+
+
+def _is_paleo_text(text: str, match_start: int) -> bool:
+    """Return True if a paleo keyword appears within ~120 chars
+    BEFORE ``match_start``. Used by ``parse_coordinate`` /
+    ``parse_all_coordinates`` to populate ``Coordinate.is_paleo``
+    without forcing downstream code to re-walk the text.
+
+    Mirrors ``geology_extraction._classify_coordinate_age``. The two
+    paths use independent keyword copies to keep ``geo_coords``
+    importable without ``geology_extraction`` (which itself imports
+    modules that touch coordinate parsing).
+    """
+    ctx = text[max(0, match_start - 120) : match_start].lower()
+    return any(kw in ctx for kw in _PALEO_KEYWORDS_GEO)
