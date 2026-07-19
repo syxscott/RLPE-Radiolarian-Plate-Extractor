@@ -151,6 +151,11 @@ class RadiolarianPipeline:
         # segmenter (SAM2) and gemma runtimes are NOT concurrent-safe, so
         # they retain per-pipeline locks.
         self._seg_lock = threading.Lock()
+        # Phase 59 (Bug 2.5): serialise progress-callback invocations.
+        # Multiple worker threads can finish PDFs concurrently and
+        # invoke ``_progress_cb`` simultaneously; without this lock,
+        # Qt signal dispatch in the GUI can interleave updates.
+        self._progress_lock = threading.Lock()
         # Fallback handler for MiniMax API errors (None when not using MiniMax)
         self.gemma_fallback_handler = None
         # Secondary Gemma runtime used as fallback target (lazy-init on first error)
@@ -325,8 +330,15 @@ class RadiolarianPipeline:
         ensure_dir(self.config.manifests_dir())
 
     def _emit_progress(self, current: int, total: int, message: str) -> None:
+        # Phase 59 (Bug 2.5): hold ``_progress_lock`` so concurrent
+        # worker threads serialise callback invocations. Without the
+        # lock, multiple workers finishing PDFs at the same time can
+        # call into Qt's signal dispatcher in parallel, leading to
+        # interleaved updates and progress-bar regressions
+        # ("Completed 3/4" before "Completed 1/4").
         if self._progress_cb is not None:
-            self._progress_cb(current, total, message)
+            with self._progress_lock:
+                self._progress_cb(current, total, message)
 
     def _collect_llm_usage(self) -> dict[str, Any] | None:
         """Thin wrapper around :func:`rlpe.llm_usage.collect_llm_usage`.
