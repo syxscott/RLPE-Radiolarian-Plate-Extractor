@@ -387,6 +387,15 @@ _LIGATURE_MAP: dict[str, str] = {
     "ﬄ": "ffl",
     "Ĳ": "IJ",
     "ĳ": "ij",
+    # Phase 61 Plan 4 (Bug 4.12): common Latin ligatures that appear
+    # in European-language species names ("Cœlacanth", "Archæan",
+    # "Ĥirnant"). Without these, regex parses miss the tail word and
+    # the caption parser returns zero pairs.
+    "œ": "oe",
+    "Œ": "Oe",
+    "æ": "ae",
+    "Æ": "Ae",
+    "ĥ": "h",
     # Curly quotes / dashes
     "’": "'",
     "‘": "'",
