@@ -361,4 +361,12 @@ def to_um(value: float, unit: str) -> float | None:
         return value * 10000.0
     if u == "nm":
         return value / 1000.0
+    # Phase 62 Plan 5 (Bug 5.9): add km branch. 1 km = 1e9 µm. The
+    # value will fail the sanity-range gate in
+    # ``_value_in_sanity_range`` (any km-scale figure is far above
+    # the 10000 µm ceiling), so it will be dropped before reaching
+    # downstream consumers — but the conversion itself is now
+    # well-defined so we don't silently lose the unit signal.
+    if u == "km":
+        return value * 1e9
     return None
