@@ -2345,15 +2345,65 @@ class RadiolarianPipeline:
             else:
                 real_rows.append(r)
 
-        best_by_key: dict[tuple[str, str | None], dict[str, Any]] = {}
+        # Phase 59 (Bug 2.4): split real_rows by panel_id presence.
+        # ``(figure_id, panel_id=None)`` collapses multiple distinct
+        # no-panel rows (caption-parser, layout-only fallback,
+        # OD-unpaired stub) into one when keyed on
+        # ``(figure_id, panel_id)``. We dedup None-rows separately
+        # using ``(figure_id, bbox_tuple, species, panel_index)`` so
+        # distinct rows survive.
+        none_panel_rows: list[dict[str, Any]] = []
+        keyed_rows: list[dict[str, Any]] = []
         for r in real_rows:
+            if r.get("panel_id") is None:
+                none_panel_rows.append(r)
+            else:
+                keyed_rows.append(r)
+
+        def _none_panel_key(r: dict[str, Any]) -> tuple:
+            """Dedup key for panel_id=None rows: figure + bbox +
+            species + panel_index. Two rows with the same key are
+            true duplicates; distinct keys represent distinct
+            no-panel observations that must be preserved."""
+            bbox = r.get("bbox")
+            return (
+                r.get("figure_id", ""),
+                tuple(bbox) if isinstance(bbox, (list, tuple)) else bbox,
+                r.get("species"),
+                (r.get("metadata") or {}).get("panel_index"),
+            )
+
+        best_by_key: dict[tuple, dict[str, Any]] = {}
+        # Phase 59 (Bug 2.4): mixed key types — keyed rows use
+        # ``(figure_id, panel_id)``; None-panel rows use the richer
+        # ``_none_panel_key`` tuple. Python tuples are structural so
+        # the two never collide.
+        # Phase A: keyed rows — original (figure_id, panel_id) dedup.
+        for r in keyed_rows:
             key = (r.get("figure_id", ""), r.get("panel_id"))
             cur = best_by_key.get(key)
             if cur is None:
                 best_by_key[key] = r
                 continue
-            # Higher confidence wins; ties broken by panel_score
-            # (classical detector score), then by first-seen (lower idx).
+            r_conf = float(r.get("confidence") or 0.0)
+            c_conf = float(cur.get("confidence") or 0.0)
+            if r_conf > c_conf:
+                best_by_key[key] = r
+            elif r_conf == c_conf:
+                r_score = float((r.get("metadata") or {}).get("panel_score") or 0.0)
+                c_score = float((cur.get("metadata") or {}).get("panel_score") or 0.0)
+                if r_score > c_score:
+                    best_by_key[key] = r
+
+        # Phase B: dedup None-panel rows by (figure_id, bbox, species,
+        # panel_index). Distinct keys mean distinct rows that must
+        # survive (Bug 2.4 fix).
+        for r in none_panel_rows:
+            key = _none_panel_key(r)
+            cur = best_by_key.get(key)
+            if cur is None:
+                best_by_key[key] = r
+                continue
             r_conf = float(r.get("confidence") or 0.0)
             c_conf = float(cur.get("confidence") or 0.0)
             if r_conf > c_conf:
@@ -2367,11 +2417,19 @@ class RadiolarianPipeline:
         deduped = list(best_by_key.values())
 
         # Phase 2: drop empty-signal rows and invalid panel_ids.
+        # Phase 59 (Bug 2.4): panel_id=None is now a *valid* category
+        # (e.g. caption-parser rows, layout-only fallbacks, OD-unpaired
+        # figure stubs). Drop only rows where panel_id is a string
+        # but fails the SHAPE check.
         kept: list[dict[str, Any]] = []
         for r in deduped:
             pid = r.get("panel_id")
-            # Skip rows where panel_id is None / empty / invalid format.
-            if not pid or not isinstance(pid, str) or not SHAPE.fullmatch(pid.strip()):
+            # Phase 59: only drop rows whose panel_id is a malformed
+            # STRING (not a None — None is now allowed through).
+            if pid is not None and (
+                not isinstance(pid, str)
+                or not SHAPE.fullmatch(pid.strip())
+            ):
                 logger.debug(
                     "Drop row with invalid panel_id=%r (fig=%s)",
                     pid,
