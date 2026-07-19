@@ -320,16 +320,40 @@ class TaxonRecognizer:
 
     def _fallback_predict(self, text: str) -> list[TaxonEntity]:
         cleaned = self._clean_caption_for_taxon(text)
+        # Phase 60 Plan 3 (Bug 3.3): extended to also accept isolated-
+        # genus open-nomenclature forms (``Genus sp.``, ``Genus spp.``,
+        # ``Genus n. sp.``, ``Genus sp. nov.``, ``Genus nom. nov.``,
+        # ``Genus comb. nov.``). The new alternative uses the qualifier
+        # directly as the second token instead of a lowercase epithet.
+        #
+        # IMPORTANT: the isolated-genus alternative MUST come BEFORE the
+        # generic ``\s+[a-z][a-zA-Z-]{2,}`` epithet branch. Otherwise
+        # ``Genus spp.`` greedily matches the epithet branch as
+        # ``spp`` (3 lowercase chars) and the trailing ``.`` is lost.
         pattern = re.compile(
             r"\b("
             r"[A-Z][a-zA-Z-]{2,}"
             r"(?:"
+            # Bug 3.3: isolated-genus open nomenclature. ``sp.`` /
+            # ``spp.`` / ``n. sp.`` / ``sp. nov.`` / ``nom. nov.`` /
+            # ``comb. nov.`` all appear as the second token in real
+            # radiolarian captions and must be matched. MUST come
+            # before the generic epithet branch (see comment above).
+            r"\s+(?:sp\.|spp\.|n\.\s*sp\.|sp\.\s*nov\.|nom\.\s*nov\.|comb\.\s*nov\.)"
+            r"|"
             r"\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]{2,}"
             r"|"
             r"\s+[a-z][a-zA-Z-]{2,}"
             r")"
             r"(?:\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?"
-            r")\b"
+            r")"
+            # Trailing boundary: ``spp.`` ends in ``.`` which is a
+            # non-word char, so the original ``\b`` dropped the
+            # trailing period for ``Entactinia spp.``. A positive
+            # lookahead on whitespace / sentence-punctuation /
+            # end-of-string keeps the period in the match and is
+            # still safe for non-``spp.`` shapes.
+            r"(?=\s|[.,;:]|$)"
         )
         entities: list[TaxonEntity] = []
         for m in pattern.finditer(cleaned):
