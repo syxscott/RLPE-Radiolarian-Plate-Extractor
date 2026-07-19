@@ -8,6 +8,7 @@ import sys
 import threading
 import traceback
 import uuid
+from urllib.parse import quote as _url_quote
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -2023,7 +2024,18 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 try:
                     rel = panel_abs.relative_to(job_root)
                     normalized["panel_local_path"] = str(panel_abs)
-                    normalized["panel_path"] = f"/jobs/{job_id}/files/{rel.as_posix()}"
+                    # Phase 63 Plan 6.11 (Bug 6.11): URL-encode the
+                    # relative-path segments so a paper whose figure
+                    # folder is ``図版1`` or contains a space / percent
+                    # / non-ASCII char produces a valid URL. ``safe='/'``
+                    # preserves the directory separators (so the URL
+                    # still reads ``/jobs/{id}/files/foo/bar.png`` and
+                    # not ``/jobs%2F%7Bid%7D%2Ffiles%2Ffoo%2Fbar.png``).
+                    # The frontend uses ``path.split('/')`` after
+                    # decoding, so the URL structure stays the same.
+                    normalized["panel_path"] = (
+                        f"/jobs/{job_id}/files/{_url_quote(rel.as_posix(), safe='/')}"
+                    )
                 except ValueError:
                     # Keep original path when file is outside this job workspace.
                     pass
