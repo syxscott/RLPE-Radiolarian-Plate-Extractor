@@ -586,6 +586,44 @@ class AgeClassification:
         return asdict(self)
 
 
+# Phase 60 Plan 3 (Bug 3.10): the previous pattern required
+# whitespace between the modifier and the period / epoch name. Real
+# captions use ``Late-Permian`` (hyphen), ``Late.Permian`` (period),
+# ``Late—Permian`` (em-dash), ``Late–Permian`` (en-dash), and
+# ``Late_Permian`` (underscore in italicised names). The fix
+# normalises ``-`` / ``.`` / ``_`` / ``—`` / ``–`` to a single
+# whitespace before applying the modifier pattern.
+#
+# We rewrite the input rather than the regex because the regex would
+# need a complex alternation of separator characters and the
+# normalisation is cheaper + reusable by other consumers of the age
+# classifier.
+_MODIFIER_SEP_RE = re.compile(r"[-._—–]")
+
+
+def _normalise_modifier_sep(text: str) -> str:
+    """Replace ``-`` / ``.`` / ``_`` / ``—`` / ``–`` with whitespace.
+
+    Only operates on the FIRST separator occurrence (after the leading
+    whitespace + modifier word), so we don't accidentally rewrite a
+    hyphen inside a multi-word name like ``Late Permian-aged``.
+    """
+    s = text.strip()
+    if not s:
+        return s
+    # Find the modifier word and only rewrite the separator immediately
+    # after it. We split into at most 3 parts: modifier / sep / body.
+    m = re.match(
+        r"^(\s*)(Early|Middle|Late|Lower|Upper|E\.|M\.|L\.|上|中|下)\s*([-._—–])\s*(.+)$",
+        s,
+        re.IGNORECASE,
+    )
+    if m:
+        leading, modifier, _, body = m.groups()
+        return f"{leading}{modifier} {body}"
+    return s
+
+
 _MODIFIER_PATTERN = re.compile(
     r"^\s*(Early|Middle|Late|Lower|Middle|Upper|E\.|M\.|L\.|上|中|下)\s+",
     re.IGNORECASE,
@@ -607,6 +645,12 @@ def classify_age_string(text: str) -> AgeClassification:
     if not text or not text.strip():
         return AgeClassification(raw="", confidence=0.0)
     raw = text.strip()
+    # Phase 60 Plan 3 (Bug 3.10): normalise ``-`` / ``.`` / ``_`` /
+    # em-dash / en-dash separators between the modifier and the name
+    # to whitespace, so ``Late-Permian`` is classified the same as
+    # ``Late Permian``. Without this the modifier would be eaten but
+    # the body would be ``-Permian`` which fails the ICS_INDEX lookup.
+    raw = _normalise_modifier_sep(raw)
     body = _MODIFIER_PATTERN.sub("", raw).strip()
     # Direct hit
     hit = ICS_INDEX.get(body) or ICS_INDEX.get(body.lower()) or ICS_INDEX.get(body.capitalize())
