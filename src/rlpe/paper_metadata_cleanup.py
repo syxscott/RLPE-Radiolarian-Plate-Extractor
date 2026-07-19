@@ -64,6 +64,18 @@ _TITLE_GARBAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
 # legitimate).
 _MIN_TITLE_LEN = 8
 
+# Phase 62 Plan 5 (Bug 5.13): apply _MIN_TITLE_LEN as a final
+# alphanumeric-only filter. Titles shorter than this that contain
+# NO alphabetic characters (or that have no run of 3+ consecutive
+# alphabetic characters) are flagged as parse artifacts.
+# Examples caught:
+#   - "1234567" (digits only, 7 chars)
+#   - "a1b2c3" (alternating single letters + digits, no real word)
+# Examples NOT caught (real titles):
+#   - "GIS data" (8 chars, contains "GIS" — 3 consecutive letters)
+#   - "A 2-D map" (contains real words)
+_RUN_OF_LETTERS_RE = re.compile(r"[A-Za-z]{3,}")
+
 
 def looks_like_garbage_title(title: str | None) -> bool:
     """Return True if ``title`` looks like a parse-failure artifact.
@@ -72,6 +84,12 @@ def looks_like_garbage_title(title: str | None) -> bool:
       - Page-range strings (``"001_020"``, ``"035_048"``)
       - Filenames ending in ``.fm`` / ``.tex`` / ``.pdf`` / ``.dvi``
       - Pure digits (``"15"``, ``"542"``)
+      - Phase 62 Plan 5 (Bug 5.13): alphanumeric gibberish. Titles
+        shorter than ``_MIN_TITLE_LEN`` characters that contain no
+        run of 3+ consecutive letters (e.g. ``"a1b2c3"``,
+        ``"1234567"``) are flagged. Real short titles like
+        ``"GIS data"`` are preserved because they contain
+        consecutive-letter runs.
 
     Returns False for ``None``, empty string, or any plausible
     title that does not match the patterns above.
@@ -84,6 +102,12 @@ def looks_like_garbage_title(title: str | None) -> bool:
     for pat in _TITLE_GARBAGE_PATTERNS:
         if pat.match(t):
             return True
+    # Phase 62 Plan 5 (Bug 5.13): short alphanumeric titles with
+    # no real word are garbage. Real titles always contain at
+    # least one run of 3+ consecutive letters (e.g. "Late",
+    # "Triassic", "GIS", "Italy").
+    if len(t) < _MIN_TITLE_LEN and not _RUN_OF_LETTERS_RE.search(t):
+        return True
     return False
 
 
