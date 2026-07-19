@@ -358,7 +358,15 @@ class RadiolarianPipeline:
         # Fire one initial tick so the UI can show "started" before the first
         # PDF actually finishes.
         self._emit_progress(0, total, f"Starting pipeline ({total} PDF(s))")
-        with ThreadPoolExecutor(max_workers=max(1, self.config.num_workers)) as pool:
+        # Phase 59 (Bug 2.3): pool lifecycle is now manual so the
+        # cancel branch can call ``pool.shutdown(wait=False,
+        # cancel_futures=True)``. The previous ``with ThreadPoolExecutor(...)``
+        # form called ``shutdown(wait=True)`` on exit, which blocked
+        # until every running worker (especially long LLM API calls)
+        # had finished — a 30s sleep per PDF meant 4 PDFs blocked for
+        # 2 minutes after the user clicked Cancel.
+        pool = ThreadPoolExecutor(max_workers=max(1, self.config.num_workers))
+        try:
             futures = {pool.submit(self._process_one_pdf, p): p for p in pdf_files}
             try:
                 # Phase 42: also check cancel_event at the top of the
@@ -366,14 +374,16 @@ class RadiolarianPipeline:
                 # completes still short-circuits the run.
                 for fut in as_completed(futures):
                     if cancel_event is not None and cancel_event.is_set():
-                        # Cancel all in-flight futures; return what
-                        # we've processed so far.
-                        for f in futures:
-                            f.cancel()
+                        # Phase 59 (Bug 2.3): fast shutdown. Cancel
+                        # any futures that haven't started yet and
+                        # return immediately — don't wait for running
+                        # workers (they may be stuck in an LLM API
+                        # call with a 30s+ timeout).
                         self._emit_progress(
                             completed, total,
                             f"Cancelled by user after {completed}/{total} PDFs",
                         )
+                        pool.shutdown(wait=False, cancel_futures=True)
                         return rows
                     pdf = futures[fut]
                     if fut.cancelled():
@@ -392,8 +402,7 @@ class RadiolarianPipeline:
                         # ``cancelled`` (the API's own cancel path doesn't
                         # go through ``run()``, but the API may also be
                         # wrapping this method).
-                        for f in futures:
-                            f.cancel()
+                        pool.shutdown(wait=False, cancel_futures=True)
                         raise
                     except Exception:
                         logger.exception("PDF processing failed; continuing with remaining PDFs")
@@ -409,9 +418,18 @@ class RadiolarianPipeline:
                 # Same handling if the cancel happens between ``as_completed``
                 # yields (e.g. signal handler fires while we're idle waiting
                 # for the next future).
-                for f in futures:
-                    f.cancel()
+                pool.shutdown(wait=False, cancel_futures=True)
                 raise
+        finally:
+            # Always release the executor; if we already entered the
+            # cancel branch, ``wait=False`` was used; otherwise default
+            # to ``wait=True`` so the remaining futures drain cleanly.
+            try:
+                pool.shutdown(wait=True)
+            except Exception:
+                # shutdown may already have been called from the cancel
+                # branch — ignore the resulting RuntimeError.
+                pass
 
         manifest_path = self.config.manifests_dir() / "matches.jsonl"
         write_jsonl(manifest_path, rows)
