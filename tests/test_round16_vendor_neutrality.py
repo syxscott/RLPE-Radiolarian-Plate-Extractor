@@ -191,17 +191,21 @@ def test_job_options_thinking_defaults_off():
     )
 
 
-def test_dataclass_data_outbound_policy_is_redacted():
-    """llm_backends.py MiniMaxM3Backend.data_outbound_policy must default
-    to 'api_redacted', not 'api_full' (which sends full PDF text)."""
+def test_dataclass_data_outbound_policy_is_api_full():
+    """Phase 61 Plan 4 (Bug 4.11): the default for
+    ``data_outbound_policy`` flipped from ``api_redacted`` to
+    ``api_full`` so M3 vision gets full-resolution morphology details.
+    Operators working with sensitive preprints can still opt back in
+    via ``--data-outbound-policy api_redacted``.
+    """
     import inspect
 
     from rlpe.llm_backends import MiniMaxM3Backend
 
     field = MiniMaxM3Backend.__dataclass_fields__["data_outbound_policy"]
-    assert field.default == "api_redacted", (
+    assert field.default == "api_full", (
         f"MiniMaxM3Backend.data_outbound_policy defaults to {field.default!r}; "
-        f"must default to 'api_redacted' (privacy-by-default)."
+        f"Phase 61 Plan 4 requires 'api_full' so M3 vision sees full-res images."
     )
 
 
