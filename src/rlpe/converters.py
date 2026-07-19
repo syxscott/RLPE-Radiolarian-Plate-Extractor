@@ -1534,6 +1534,10 @@ def paleo_coordinates_from_localities(
             method="euler_pole_rotation",
             confidence=0.7 if paleo_lat is not None else 0.0,
             backend_status="ok" if paleo_lat is not None else "plate_or_age_unknown",
+            # Phase 63 Plan 6.20 (Bug 6.20): PBDB-style paleocoord
+            # uncertainty. Seton2012 Euler-pole reconstructions carry
+            # ~50 km of plate motion uncertainty at typical ages.
+            coordinate_uncertainty_in_meters=50000.0,
         )
         out.append(rec.model_dump())
     return out, warnings_out
