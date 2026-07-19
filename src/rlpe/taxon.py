@@ -594,8 +594,16 @@ _NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset(
 
 # Common 2-3 letter non-Latin epithets that the binomial regex used to match.
 # Anything here is a stopword / preposition / article, never a species epithet.
+#
+# Phase 60 Plan 3 (Bug 3.6): the previous list blocked only ~20
+# high-frequency stopwords. Real radiolarian-caption text contains
+# title-case bigrams like ``Crystal Structure``, ``Late Jurassic``,
+# ``Rosso Ammonitico Formation``, ``Crystal Distribution`` that match
+# the binomial regex but are NOT species. Extended with a curated set
+# of common geological / microscopy / stratigraphy nouns.
 _NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset(
     {
+        # Original short stopwords
         "of",
         "in",
         "on",
@@ -620,5 +628,57 @@ _NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset(
         "nov",
         "gen",
         "comb",
+        # Phase 60 Plan 3 (Bug 3.6): extended common-noun blocklist.
+        # Each entry is a word that, when it appears as the SECOND
+        # token of a title-case bigram, is overwhelmingly more likely
+        # to be a topic-phrase noun than a species epithet.
+        "structure",
+        "distribution",
+        "occurrence",
+        "assemblage",
+        "fauna",
+        "flora",
+        "biostratigraphy",
+        "recovery",
+        "extinction",
+        "diversity",
+        "abundance",
+        "range",
+        "radiolarian",
+        "sponge",
+        "section",
+        "outcrop",
+        "sample",
+        "specimen",
+        "species",
+        "genus",
+        "group",
+        "member",
+        "zone",
+        "age",
+        "epoch",
+        "era",
+        "period",
+        "stage",
+        "system",
+        # Bonus: more nouns seen in real papers' section headings
+        "formation",
+        "locality",
+        "material",
+        "method",
+        "methods",
+        "results",
+        "discussion",
+        "introduction",
+        "abstract",
+        "references",
+        "acknowledgements",
+        "acknowledgments",
+        "conclusion",
+        "summary",
+        "figure",
+        "table",
+        "plate",
+        "appendix",
     }
 )
