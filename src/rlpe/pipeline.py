@@ -2864,13 +2864,40 @@ Rules:
                             if (r.get("panel_id") or r.get("label_text") or "").strip()
                         }
                         filled = 0
+                        skipped_invalid = 0
                         for r in llm_results:
                             if r.get("species"):
                                 continue
                             label = r.get("panel_id") or r.get("label_text") or ""
                             matched_key = _label_in_pair_lookup(label, pair_lookup)
                             if matched_key:
-                                r["species"] = pair_lookup[matched_key]
+                                candidate_species = pair_lookup[matched_key]
+                                # Phase 61 Plan 4 (Bug 4.2): guard
+                                # against LLM / caption-parser hallucinations
+                                # like "Foreman species" or "Dubious
+                                # species". The species-validity check
+                                # blocks author-surname genera and
+                                # common placeholder tokens. If
+                                # invalid, KEEP the rule result (do
+                                # not overwrite) so eval sees the
+                                # honest "no species" state.
+                                try:
+                                    from .taxon import _is_valid_species
+
+                                    if not _is_valid_species(candidate_species):
+                                        skipped_invalid += 1
+                                        r.setdefault("metadata", {})[
+                                            "hybrid_species_rejected"
+                                        ] = candidate_species
+                                        continue
+                                except Exception:
+                                    # If the helper is unavailable for
+                                    # any reason we still write the
+                                    # species to preserve legacy
+                                    # behaviour. Better a noisy
+                                    # downstream than a silent fallback.
+                                    pass
+                                r["species"] = candidate_species
                                 r.setdefault("metadata", {})["species_source"] = (
                                     "caption_parser_hybrid"
                                     if self.m3_engine is not None
@@ -2911,6 +2938,20 @@ Rules:
                             # is the post-append total, not the
                             # post-append total + 1.
                             pre_append_count = len(llm_results)
+                            # Phase 61 Plan 4 (Bug 4.2): same validity
+                            # guard as the fill loop above — if the
+                            # new-row species looks like a hallucinated
+                            # author-surname + epithet, DROP the row
+                            # rather than appending a polluted entry.
+                            try:
+                                from .taxon import _is_valid_species
+
+                                _new_row_species_is_valid = _is_valid_species(species)
+                            except Exception:
+                                _new_row_species_is_valid = True
+                            if not _new_row_species_is_valid:
+                                skipped_invalid += 1
+                                continue
                             llm_results.append(
                                 MatchResult(
                                     paper_id=paper_id,
