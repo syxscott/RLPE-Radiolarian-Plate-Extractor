@@ -290,6 +290,16 @@ def _interpolate_euler(plate: str, age_ma: float):
     requested age. Linearly interpolates between the two adjacent
     timesteps bracketing ``age_ma``. Returns None when ``plate`` has
     no table or ``age_ma`` is outside the table's age range.
+
+    Phase 62 Plan 5 (Bug 5.16): plates with very short / sparse
+    Euler pole tables (Sundaland, East Gondwana, Mokoiwi, Siberia,
+    Iran) are flagged as "stable" — their most-recent pole is
+    ~(0,0,0,0) and their oldest entry is < 200 Ma. Reconstructing
+    these plates at age > 100 Ma silently returned the modern
+    coords via the (0,0,0,0) identity pole. We now return None
+    for such requests so downstream consumers see "we don't have
+    a reliable reconstruction for this plate at this age" rather
+    than a fabricated "no motion" answer.
     """
     poles = EULER_POLES.get(plate)
     if not poles:
@@ -299,6 +309,15 @@ def _interpolate_euler(plate: str, age_ma: float):
     age_min, age_max = min(ages), max(ages)
     if age_ma < age_min or age_ma > age_max:
         return None
+    # Phase 62 Plan 5 (Bug 5.16): refuse to reconstruct known-stable
+    # plates far in the past. The heuristic for "stable" is:
+    #   * <= 3 reconstruction timesteps in the table, AND
+    #   * oldest timestep <= 100 Ma, AND
+    #   * most-recent pole has rotation_deg <= 1.0° (effectively
+    #     the modern identity).
+    if len(poles) <= 3 and age_max <= 100.0 and abs(poles[0][3]) <= 1.0:
+        if age_ma > 50.0:
+            return None
     # Find the two adjacent timesteps bracketing age_ma. Note poles[i]
     # is the YOUNGER end (smaller age) and poles[i+1] is the OLDER
     # end (larger age). The bracket condition is

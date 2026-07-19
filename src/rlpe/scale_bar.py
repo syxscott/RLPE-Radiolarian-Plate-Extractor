@@ -19,6 +19,52 @@ SCALE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Phase 62 Plan 5 (Bug 5.2): sanity bounds for an extracted scale-bar
+# value, expressed in µm. The bounds are deliberately generous so
+# unusual but legitimate scales ("5 mm" for a microfossil overview
+# plate, "500 nm" for an SEM close-up) still pass. The gate exists
+# to catch the catastrophic 10x and 100x OCR misreads (e.g. "1O µm"
+# being read as "10 µm" by a naive OCR pass, or a stray "O"
+# character dropped entirely).
+#
+#  * Lower bound 0.1 µm = 100 nm: below this, the bar would be
+#    sub-pixel on any reasonable figure.
+#  * Upper bound 10000 µm = 10 mm: above this, the bar is a
+#    map-scale, not a figure-scale.
+#
+# We convert the parsed value to µm via ``to_um`` BEFORE comparing,
+# so a "1 cm" value (which is 10000 µm) sits exactly on the upper
+# bound and is accepted.
+_SANITY_VALUE_MIN_UM = 0.1
+_SANITY_VALUE_MAX_UM = 10000.0
+
+
+def _value_in_sanity_range(val: float, unit: str | None) -> bool:
+    """Return True if ``val`` (in ``unit``) is within the scale-bar
+    sanity range. Used to reject catastrophic OCR misreads that
+    would otherwise pass the bare ``\\d+`` regex.
+    """
+    if val is None:
+        return False
+    um = to_um(val, unit)
+    # If the unit is unknown, fall through and accept the value —
+    # the downstream merge_scale_info will flag a disagreement if
+    # the value is wrong, and we don't want to drop legitimate
+    # unfamiliar-unit bars here.
+    if um is None:
+        return True
+    return _SANITY_VALUE_MIN_UM <= um <= _SANITY_VALUE_MAX_UM
+
+
+# Phase 62 Plan 5 (Bug 5.11): explicit sentinel returned by
+# ``normalize_unit`` for ``None`` / empty / whitespace-only input.
+# Previously these all returned ``""``, indistinguishable from a
+# legitimate unknown-unit input that happened to normalise to
+# empty (none currently do, but the contract was fragile).
+# Callers can use ``unit is UNKNOWN_UNIT`` to detect "no unit at
+# all" without relying on string magic.
+UNKNOWN_UNIT = "__unknown__"
+
 # Words whose presence near a number-unit pair indicate a NON-scale-bar
 # context: specimen sizes, sieve apertures, sediment depths, etc. When
 # the SCALE_PATTERN matches a "bare number + unit" (no "scale bar"
@@ -99,26 +145,59 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
         return ScaleInfo()
     val = float(m.group(1))
     unit = normalize_unit(m.group(3))
+    # Phase 62 Plan 5 (Bug 5.2): sanity-check the value against the
+    # bounds defined in ``_SANITY_VALUE_MIN_UM`` /
+    # ``_SANITY_VALUE_MAX_UM``. A 50000 µm or 0.001 µm value almost
+    # always means OCR misread the digit (e.g. "1O" → "10", "O" →
+    # "0"); we drop the value and log at debug so the operator can
+    # see this without spamming the warning level.
+    if not _value_in_sanity_range(val, unit):
+        logger.debug(
+            "scale caption: parsed value=%s unit=%r outside sanity range "
+            "[%s, %s] µm — dropping (likely OCR misread)",
+            val,
+            unit,
+            _SANITY_VALUE_MIN_UM,
+            _SANITY_VALUE_MAX_UM,
+        )
+        return ScaleInfo()
     info = ScaleInfo(value=val, unit=unit, source="caption", confidence=0.8)
     # Range form: 5–10 µm → use midpoint
     if m.group(2):
         try:
             hi = float(m.group(2))
-            info.value = (val + hi) / 2.0
-            info.confidence = 0.7
+            # Re-check sanity on the midpoint; if the midpoint is
+            # out of range the range itself was garbage.
+            mid = (val + hi) / 2.0
+            if not _value_in_sanity_range(mid, unit):
+                logger.debug(
+                    "scale caption: range midpoint=%s unit=%r outside sanity "
+                    "range — keeping single value=%s instead",
+                    mid,
+                    unit,
+                    val,
+                )
+            else:
+                info.value = mid
+                info.confidence = 0.7
         except (TypeError, ValueError) as exc:
             # The regex matched a range shape but the second group
             # wasn't a valid float (e.g. unicode minus, OCR noise
-            # injected between the digits). The single-value
-            # confidence is the right fallback — log at debug so the
-            # operator can see this happened without spamming the
-            # warning level.
+            # injected between the digits). Phase 62 Plan 5 (Bug
+            # 5.8): the previous fallback kept confidence=0.8
+            # (the single-value level) which overstated our
+            # certainty — the range form was matched but the
+            # upper bound couldn't be parsed, so we have only a
+            # single number with NO range confirmation. Lower
+            # confidence to 0.4 (caption) so downstream consumers
+            # can see the partial-failure path.
             logger.debug(
                 "scale caption: range form matched but group(2)=%r is not a "
-                "float: %s — keeping single value",
+                "float: %s — keeping single value with degraded confidence",
                 m.group(2),
                 exc,
             )
+            info.confidence = 0.4
     return info
 
 
@@ -134,21 +213,46 @@ def extract_scale_from_ocr_text(ocr_text: str) -> ScaleInfo:
         return ScaleInfo()
     val = float(m.group(1))
     unit = normalize_unit(m.group(3))
+    # Phase 62 Plan 5 (Bug 5.2): sanity-check the value (see
+    # ``_value_in_sanity_range`` docstring). OCR text is even
+    # noisier than captions so this gate fires more often.
+    if not _value_in_sanity_range(val, unit):
+        logger.debug(
+            "scale ocr: parsed value=%s unit=%r outside sanity range "
+            "[%s, %s] µm — dropping (likely OCR misread)",
+            val,
+            unit,
+            _SANITY_VALUE_MIN_UM,
+            _SANITY_VALUE_MAX_UM,
+        )
+        return ScaleInfo()
     info = ScaleInfo(value=val, unit=unit, source="ocr", confidence=0.7)
     if m.group(2):
         try:
             hi = float(m.group(2))
-            info.value = (val + hi) / 2.0
-            info.confidence = 0.6
+            mid = (val + hi) / 2.0
+            if not _value_in_sanity_range(mid, unit):
+                logger.debug(
+                    "scale ocr: range midpoint=%s unit=%r outside sanity "
+                    "range — keeping single value=%s instead",
+                    mid,
+                    unit,
+                    val,
+                )
+            else:
+                info.value = mid
+                info.confidence = 0.6
         except (TypeError, ValueError) as exc:
-            # See caption variant above. OCR text is much noisier so
-            # this is more common — log at debug level.
+            # Phase 62 Plan 5 (Bug 5.8): see caption variant. OCR
+            # text is even noisier so this degraded-confidence path
+            # fires more often; we lower to 0.3 (degraded from 0.7).
             logger.debug(
                 "scale ocr: range form matched but group(2)=%r is not a "
-                "float: %s — keeping single value",
+                "float: %s — keeping single value with degraded confidence",
                 m.group(2),
                 exc,
             )
+            info.confidence = 0.3
     return info
 
 
@@ -251,7 +355,15 @@ def merge_scale_info(
 
 
 def normalize_unit(unit: str) -> str:
-    u = (unit or "").lower().strip()
+    # Phase 62 Plan 5 (Bug 5.11): explicit None / empty / whitespace
+    # handling. Return UNKNOWN_UNIT sentinel so callers can tell
+    # "no unit provided" apart from "unknown unit" (which still
+    # returns the lowercased input).
+    if unit is None:
+        return UNKNOWN_UNIT
+    u = unit.lower().strip()
+    if not u:
+        return UNKNOWN_UNIT
     if u in {"μm", "µm", "um", "micron", "microns"}:
         return "um"
     return u
@@ -267,4 +379,12 @@ def to_um(value: float, unit: str) -> float | None:
         return value * 10000.0
     if u == "nm":
         return value / 1000.0
+    # Phase 62 Plan 5 (Bug 5.9): add km branch. 1 km = 1e9 µm. The
+    # value will fail the sanity-range gate in
+    # ``_value_in_sanity_range`` (any km-scale figure is far above
+    # the 10000 µm ceiling), so it will be dropped before reaching
+    # downstream consumers — but the conversion itself is now
+    # well-defined so we don't silently lose the unit signal.
+    if u == "km":
+        return value * 1e9
     return None

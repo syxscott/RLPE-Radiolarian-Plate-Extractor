@@ -320,6 +320,13 @@ class SpeciesRange:
     range_top: str = ""  # free-text bed/level name (e.g. "Bed 9")
     range_base: str = ""
     biozone: str = ""
+    # Phase 62 Plan 5 (Bug 5.7): per-species confidence (0..1).
+    # Distinct from the chart-wide ``RangeChartResult.confidence``:
+    # a species can have a confident identity but an uncertain
+    # chart-position reading (or vice versa). ``0.0`` is the
+    # dataclass default and is also the sentinel used by the parser
+    # to mean "JSON omitted this field — inherit chart-wide".
+    confidence: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -470,7 +477,10 @@ Extract every piece of geological information visible in the chart as strict JSO
       "section": "Pingdingshan" (string, must match a section.name),
       "range_top": "Bed 9 (Yinkeng Fm base)" (string, the YOUNG/upper limit),
       "range_base": "Bed 7 (top Talung Fm)" (string, the OLD/lower limit),
-      "biozone": "N. optima Zone (latest Changhsingian)" (string, optional)
+      "biozone": "N. optima Zone (latest Changhsingian)" (string, optional),
+      "confidence": 0.0-1.0 reflecting your certainty in THIS ROW specifically
+        (species identity + chart position). Distinct from the chart-wide
+        "confidence" below.
     }
   ],
   "biozones": [
@@ -649,6 +659,30 @@ def extract_range_chart(
         logger.warning("range_chart JSON parse failed for %s/%s: %s", paper_id, figure_id, exc)
         return result
 
+    return _parse_extraction_response(parsed=parsed, paper_id=paper_id, figure_id=figure_id, base_result=result)
+
+
+def _parse_extraction_response(
+    *,
+    parsed: dict[str, Any],
+    paper_id: str,
+    figure_id: str,
+    base_result: RangeChartResult | None = None,
+) -> RangeChartResult:
+    """Populate ``RangeChartResult`` fields from the parsed JSON dict.
+
+    Phase 62 Plan 5 (Bug 5.7): each ``SpeciesRange`` now carries its
+    own ``confidence`` field (the LLM's per-row certainty), distinct
+    from the chart-wide ``result.confidence``. When the JSON omits
+    the per-row value, the species inherits the chart-wide value
+    (backward-compat fallback).
+
+    Extracted from ``extract_range_chart`` so tests can drive the
+    JSON → dataclass conversion without making a real API call.
+    """
+    result = base_result or RangeChartResult(
+        figure_id=figure_id, paper_id=paper_id
+    )
     for sec in parsed.get("sections") or []:
         if not isinstance(sec, dict):
             continue
@@ -664,6 +698,15 @@ def extract_range_chart(
     for sp in parsed.get("species_ranges") or []:
         if not isinstance(sp, dict):
             continue
+        # Phase 62 Plan 5 (Bug 5.7): per-species confidence. Read
+        # ``sp["confidence"]`` if present; otherwise fall back to the
+        # chart-wide confidence parsed below. We stash the raw value
+        # first and rewrite it after parsing the chart-wide conf so
+        # the fallback uses the same post-clamp value.
+        try:
+            raw_sp_conf = float(sp.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            raw_sp_conf = 0.0
         result.species_ranges.append(
             SpeciesRange(
                 species=str(sp.get("species", "")),
@@ -671,6 +714,7 @@ def extract_range_chart(
                 range_top=str(sp.get("range_top", "")),
                 range_base=str(sp.get("range_base", "")),
                 biozone=str(sp.get("biozone", "")),
+                confidence=raw_sp_conf,
             )
         )
     for bz in parsed.get("biozones") or []:
@@ -698,6 +742,23 @@ def extract_range_chart(
     if not math.isfinite(result.confidence):
         result.confidence = 0.0
     result.confidence = max(0.0, min(1.0, result.confidence))
+
+    # Phase 62 Plan 5 (Bug 5.7): any species whose JSON omitted a
+    # per-row confidence value inherits the (now clamped) chart-wide
+    # value. Species that DID provide a per-row value keep theirs
+    # (clamped to [0,1] for safety).
+    for sr in result.species_ranges:
+        if not math.isfinite(sr.confidence):
+            sr.confidence = 0.0
+        sr.confidence = max(0.0, min(1.0, sr.confidence))
+        # 0.0 is the sentinel we wrote when JSON omitted the field.
+        # Promote to chart-wide confidence in that case so the
+        # emitted link is honest about the model's uncertainty.
+        if sr.confidence == 0.0 and parsed.get("confidence") is not None:
+            # Only promote if the JSON had a chart-wide confidence.
+            # If the chart-wide is also 0.0, leave as 0.0 (model gave
+            # us nothing — don't pretend otherwise).
+            sr.confidence = result.confidence
 
     logger.info(
         "range_chart %s/%s: %d sections, %d species_ranges, %d biozones, conf=%.2f",
@@ -825,7 +886,15 @@ def build_geology_links_for_panels(
                     f"in section {sr.section or '?'}, range {sr.range_base} → {sr.range_top}, "
                     f"biozone={sr.biozone or '?'}"
                 ),
-                "confidence": chart.confidence,
+                # Phase 62 Plan 5 (Bug 5.7): per-species confidence.
+                # Previously this stamped chart-wide confidence on
+                # every link; now each species carries its own row
+                # confidence (or inherits the chart-wide value when
+                # the LLM omitted it). The species name is included
+                # so downstream consumers can join species records
+                # back to panels.
+                "confidence": sr.confidence,
+                "species": sr.species,
             }
             links.append(link)
     return links

@@ -27,7 +27,14 @@ FORMATION_PATTERN = re.compile(r"\b([A-Z][A-Za-z\-\s]+(?:Formation|Member|Group|
 LOCALITY_PATTERN = re.compile(
     r"\b(?:from|at|in)\s+"
     r"([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+){0,3})"
-    r"(?=\s*[,.;:()]|\s+(?:and|the|of|a|an|is|are|was|were|in|at)\b|$)"
+    # Phase 62 Plan 5 (Bug 5.17): expanded the lookahead stop-word
+    # set so common sentence patterns like "from Italy, in Sicily"
+    # and "from New York, the section" all match. Added: "we", "is",
+    # "are", "was", "were" (verbs), "to", "by", "for", "on", "as"
+    # (prepositions/connectors). These are the words that most
+    # commonly follow a locality phrase in radiolarian-paper text.
+    r"(?=\s*[,.;:()]|\s+(?:and|the|of|a|an|is|are|was|were|in|at|"
+    r"we|to|by|for|on|as|which|that|where)\b|$)"
 )
 COORDINATE_PATTERN = re.compile(
     r"\b(\d{1,3}(?:\.\d+)?)\s*°?\s*([NSns])?[,\s]+(\d{1,3}(?:\.\d+)?)\s*°?\s*([EWew])?\b"
@@ -198,12 +205,35 @@ FACIES_PATTERN = re.compile(
 
 # Biozone patterns:
 #   - "N. optima Zone" / "P. uvus Zone" (radiolarian first-letter abbrev.)
-#   - "Zone 5" / "Subzone 5a" (numbered biozones)
+#   - "Zone 5" / "Subzone 5a" / "Zone 5a" (numbered biozones — the
+#     existing pattern required an uppercase-letter-then-optional-
+#     lowercase suffix, so "Zone 5" without a trailing letter did
+#     NOT match. Fixed below.)
 #   - "Morozovella aragonensis Zone" (full taxon-named zone)
+#   - "UAZ 1" / "UAZ 1-7" / "UAZ 12" — Unitary Association Zones
+#     (Baumgartner et al. 1995 standard for Mesozoic radiolarians).
+#   - "Pessagno Zone A" / "Pessagno Zone 1" — Pessagno's
+#     Jurassic-Cretaceous zonation (Pessagno 1977).
+#   - "Pessagno Zones A-B" — range form of Pessagno zones.
 _BIOZONE_RE = re.compile(
-    r"\b(?:[A-Z]\.\s*[a-z]+\s+Zone|"
-    r"(?:Sub)?zone\s+[A-Z0-9]+[a-z]?|"
-    r"[A-Z][a-z]+\s+[a-z]+\s+Zone)\b"
+    r"\b(?:"
+    # First-letter abbrev.: "N. optima Zone", "P. uvus Zone"
+    r"[A-Z]\.\s*[a-z]+\s+Zone"
+    r"|"
+    # Numbered zone: "Zone 5", "Subzone 5a", "Zone 5a". The trailing
+    # [a-z]? is OPTIONAL — "Zone 5" must match.
+    r"(?:Sub)?[Zz]one\s+\d+[a-z]?"
+    r"|"
+    # Full taxon-named zone: "Morozovella aragonensis Zone"
+    r"[A-Z][a-z]+\s+[a-z]+\s+Zone"
+    r"|"
+    # UAZ-numbered zones: "UAZ 1", "UAZ 12", "UAZ 1-7".
+    r"UAZ\s+\d+(?:-\d+)?"
+    r"|"
+    # Pessagno zones: "Pessagno Zone A", "Pessagno Zone 1",
+    # "Pessagno Zones A-B".
+    r"Pessagno\s+[Zz]ones?\s+[A-Z\d](?:-\d|[a-z])?"
+    r")\b"
 )
 
 # Country list: ISO 3166-1 shortlist of countries that appear in
@@ -323,6 +353,21 @@ _PALEO_KEYWORDS = (
     "at deposition", "in triassic", "in jurassic", "in cretaceous",
     "in permian", "in devonian", "in ordovician", "in silurian",
     "in cambrian", "in carboniferous",
+    # Phase 62 Plan 5 (Bug 5.15): era + epoch names. The original
+    # list covered periods only, so a sentence framed "in the
+    # Eocene" / "in the Mesozoic" was mis-classified as modern.
+    # Both "in the X" and bare "X" framings are covered — real
+    # sentences use both forms interchangeably.
+    "in mesozoic", "in the mesozoic", "mesozoic",
+    "in cenozoic", "in the cenozoic", "cenozoic",
+    "in paleozoic", "in the paleozoic", "paleozoic",
+    "in paleogene", "in the paleogene", "paleogene",
+    "in neogene", "in the neogene", "neogene",
+    "in eocene", "in the eocene", "eocene",
+    "in oligocene", "in the oligocene", "oligocene",
+    "in miocene", "in the miocene", "miocene",
+    "in pliocene", "in the pliocene", "pliocene",
+    "in pleistocene", "in the pleistocene", "pleistocene",
 )
 _MODERN_KEYWORDS = (
     "today", "present-day", "present day", "currently",
@@ -342,6 +387,46 @@ def _strip_leading_article(name: str | None) -> str | None:
         if name.startswith(art):
             return name[len(art):]
     return name
+
+
+# Phase 62 Plan 5 (Bug 5.5): stopword prefixes the article-strip
+# helper above does NOT handle. Real formation/group/member names
+# never begin with these; a match that does is almost always the
+# regex catching a sentence-spanning phrase ("In Group we infer
+# age" → "In Group") rather than a real unit name. Used by
+# ``_formation_name_ok`` to reject the match.
+_FORMATION_STOPWORD_PREFIXES = (
+    "the ", "The ",
+    "a ", "A ",
+    "an ", "An ",
+    "of ", "Of ",
+    "in ", "In ",
+    "and ", "And ",
+    "from ", "From ",
+    "near ", "Near ",
+    "by ", "By ",
+)
+
+
+def _starts_with_stopword(name: str | None) -> bool:
+    """Return True if ``name`` (after the trailing formation/group/member
+    keyword has been stripped) begins with a stopword prefix.
+
+    Checks both forms:
+      * ``"In " + space`` — the prefix is followed by other words.
+      * ``"In"`` alone — the prefix is the entire stripped name
+        (e.g. "In Group" stripped → "In").
+    """
+    if not name:
+        return False
+    # Match with trailing space (multi-word name starting with a
+    # stopword: "In Sicanian Group" stripped → "In Sicanian").
+    if any(name.startswith(p) for p in _FORMATION_STOPWORD_PREFIXES):
+        return True
+    # Match when the entire stripped name IS the stopword.
+    first_word = name.split(" ", 1)[0].lower()
+    stopwords = {p.strip().lower() for p in _FORMATION_STOPWORD_PREFIXES}
+    return first_word in stopwords
 
 
 def _classify_coordinate_age(
@@ -531,11 +616,19 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
             # Strip the trailing "Formation"/"Fm." and check the
             # remaining name. The trailing keyword is removed first
             # so its presence doesn't pollute the digit check.
+            stripped = name
             for kw in ("Formation", "Fm.", "Group", "Gp.", "Member", "Mb."):
-                if name.endswith(kw):
-                    name = name[: -len(kw)].rstrip()
+                if stripped.endswith(kw):
+                    stripped = stripped[: -len(kw)].rstrip()
                     break
-            return not any(ch.isdigit() for ch in name)
+            # Phase 62 Plan 5 (Bug 5.5): reject stopword prefixes
+            # (The, A, An, Of, In, And, From, Near, By). Real
+            # formation/group/member names never begin with these;
+            # a match that does is almost always the regex catching
+            # a sentence-spanning phrase.
+            if _starts_with_stopword(stripped):
+                return False
+            return not any(ch.isdigit() for ch in stripped)
 
         groups = [
             m.group(1).strip()

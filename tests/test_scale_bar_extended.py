@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from rlpe.scale_bar import (
+    UNKNOWN_UNIT,
     ScaleInfo,
     extract_scale_from_caption,
     extract_scale_from_ocr_text,
@@ -30,7 +31,9 @@ class TestNormalizeUnit:
         assert normalize_unit("parsec") == "parsec"
 
     def test_empty(self):
-        assert normalize_unit("") == ""
+        # Phase 62 Plan 5 (Bug 5.11): empty input returns the
+        # UNKNOWN_UNIT sentinel rather than "".
+        assert normalize_unit("") == UNKNOWN_UNIT
 
 
 class TestToUm:
