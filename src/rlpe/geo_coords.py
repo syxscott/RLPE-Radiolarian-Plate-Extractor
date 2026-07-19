@@ -38,10 +38,14 @@ class Coordinate:
 # ---------------------------------------------------------------------------
 
 # Decimal degrees with optional hemisphere letter
-# Latitude: N/S allowed; Longitude: E/W allowed only (N/S are for lat)
+# Phase 62 Plan 5 (Bug 5.1): Latitude hemisphere is N/S only.
+# Longitude hemisphere is E/W only. A previous version accepted any
+# of [NSEW] as latitude, which silently flipped a stray "45W" into a
+# -45 (southern-hemisphere) coordinate — see parse_coordinate
+# rejection tests for the failure mode.
 _DECIMAL_RE = re.compile(
     r"""
-    (?P<lat>\d{1,3}(?:\.\d+)?)\s*°?\s*(?P<lat_h>[NSEWnsew])?
+    (?P<lat>\d{1,3}(?:\.\d+)?)\s*°?\s*(?P<lat_h>[NSns])?
     \s*[,;\s]\s*
     (?P<lon>-?\d{1,3}(?:\.\d+)?)\s*°?\s*(?P<lon_h>[EWew])?
     """,
@@ -49,10 +53,11 @@ _DECIMAL_RE = re.compile(
 )
 
 # DMS form: 35°42'12"N   110°18'00"E
-# Latitude: N/S allowed; Longitude: E/W allowed only
+# Phase 62 Plan 5 (Bug 5.1): parity with the decimal form — latitude
+# hemisphere is N/S only; longitude hemisphere is E/W only.
 _DMS_RE = re.compile(
     r"""
-    (?P<lat_d>\d{1,3})[°]\s*(?P<lat_m>\d{1,2})['′]\s*(?P<lat_s>\d{1,2}(?:\.\d+)?)["″]?\s*(?P<lat_h>[NSEWnsew])?
+    (?P<lat_d>\d{1,3})[°]\s*(?P<lat_m>\d{1,2})['′]\s*(?P<lat_s>\d{1,2}(?:\.\d+)?)["″]?\s*(?P<lat_h>[NSns])?
     \s*[,;\s]\s*
     (?P<lon_d>\d{1,3})[°]\s*(?P<lon_m>\d{1,2})['′]\s*(?P<lon_s>\d{1,2}(?:\.\d+)?)["″]?\s*(?P<lon_h>[EWew])?
     """,
