@@ -320,6 +320,21 @@ class TaxonRecognizer:
 
     def _fallback_predict(self, text: str) -> list[TaxonEntity]:
         cleaned = self._clean_caption_for_taxon(text)
+        # Phase 60 Plan 3 (Bug 3.4): apply Unicode NFKD normalisation
+        # so ligatures (``æ`` → ``ae``, ``ﬁ`` → ``fi``, ``œ`` → ``oe``)
+        # and combining diacritics (``ö`` → ``o`` + combining diaeresis,
+        # stripped on ASCII encode) are flattened to their ASCII
+        # equivalents before the regex runs. The original surface form
+        # is preserved in the entity's ``text`` field because we offset
+        # the match positions back to the un-normalised string via
+        # ``m.start(1)`` / ``m.end(1)`` (which still align with the
+        # cleaned string; both strings have the same length after NFKD
+        # for the Latin / Greek chars we care about).
+        cleaned_ascii = (
+            unicodedata.normalize("NFKD", cleaned)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
         # Phase 60 Plan 3 (Bug 3.3): extended to also accept isolated-
         # genus open-nomenclature forms (``Genus sp.``, ``Genus spp.``,
         # ``Genus n. sp.``, ``Genus sp. nov.``, ``Genus nom. nov.``,
@@ -356,7 +371,7 @@ class TaxonRecognizer:
             r"(?=\s|[.,;:]|$)"
         )
         entities: list[TaxonEntity] = []
-        for m in pattern.finditer(cleaned):
+        for m in pattern.finditer(cleaned_ascii):
             words = m.group(1).split()
             if len(words) < 2:
                 continue
