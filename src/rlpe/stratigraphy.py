@@ -793,11 +793,25 @@ def find_ages_in_text(text: str) -> list[AgeClassification]:
         for variant in (en, en.lower(), cn):
             if not variant or variant in seen:
                 continue
-            # Use a non-boundary search — age names are unique enough that
-            # substring collisions are rare. We add a small negative lookahead
-            # to prevent matching a longer superset of a known name (e.g.
-            # don't match "Permian" inside "Permianian").
-            m = re.search(rf"(?:{mod})?{re.escape(variant)}", text, re.IGNORECASE)
+            # Phase 60 Plan 3 (Bug 3.9): the previous regex was a
+            # substring match with a comment promising "a small negative
+            # lookahead to prevent matching a longer superset" — the
+            # lookahead was never actually present, so ``Cambrian``
+            # matched inside ``Cambrianian`` and ``Permian`` matched
+            # inside ``Permianian``. The fix adds ``(?<![A-Za-z])``
+            # before the match and ``(?![A-Za-z])`` after so the age
+            # name must start/end at a word boundary. We use explicit
+            # ASCII letter classes rather than ``\\b`` because
+            # ``\\b`` triggers on every non-word character (digits,
+            # punctuation, Chinese characters) and we want the
+            # boundary to be specifically a non-LETTER boundary —
+            # e.g. ``Late-Cambrian`` and ``Late.Cambrian`` are valid
+            # but ``Cambrianian`` is not.
+            m = re.search(
+                rf"(?<![A-Za-z])(?:{mod})?{re.escape(variant)}(?![A-Za-z])",
+                text,
+                re.IGNORECASE,
+            )
             if m:
                 cls = classify_age_string(m.group(0).strip())
                 if cls.confidence > 0:
