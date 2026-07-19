@@ -942,7 +942,22 @@ def _pbdb_enrich_geology(
     Round 25: this function is no-op if no ``paleodb`` payload
     is attached to any match (i.e. ``use_paleodb=False`` in
     JobOptions).
+
+    Phase 60 Plan 3 (Bug 3.7): the function is also a no-op when
+    every match's metadata already carries ``pbdb_enriched=True``.
+    The flag is flipped at the end of the pass so a second call
+    (e.g. the export converter invoking it again after a re-run)
+    does not re-aggregate and rewrite the already-populated
+    geology-link fields. Without this guard, each subsequent
+    pass appended another ``[PBDB first-occurrence: ...]`` suffix
+    to ``evidence_text`` and re-averaged ``ma_top`` / ``ma_base``
+    (drifting them away from the original PBDB values).
     """
+    # Phase 60 Plan 3 (Bug 3.7): idempotency guard.
+    if matches and all(
+        (m.metadata or {}).get("pbdb_enriched") for m in matches
+    ):
+        return
     # Aggregate per species: most-common non-None value per field.
     species_agg: dict[str, dict[str, Any]] = {}
     for m in matches:
@@ -1043,6 +1058,17 @@ def _pbdb_enrich_geology(
                 g["ma_top"] = round(top["ma_top"], 2)
             if g.get("ma_base") is None and top.get("ma_base") is not None:
                 g["ma_base"] = round(top["ma_base"], 2)
+
+    # Phase 60 Plan 3 (Bug 3.7): mark every touched match as
+    # already-enriched so a second call to this function short-
+    # circuits via the early-return at the top. The flag lives on
+    # ``match.metadata`` so the export pipeline / future callers can
+    # also short-circuit on the marker without re-invoking.
+    for m in matches:
+        meta = m.metadata or {}
+        if meta.get("paleodb") and not meta.get("pbdb_enriched"):
+            meta["pbdb_enriched"] = True
+            m.metadata = meta
 
 
 def geology_contexts_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:

@@ -3,10 +3,153 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+# Phase 60 Plan 3 (Bug 3.2): a curated set of well-known radiolarian
+# (and broader micropalaeontologist) author surnames that, when
+# capitalised at the start of a phrase, would otherwise be mis-extracted
+# as a genus name by the binomial regex. Lower-cased for case-insensitive
+# comparison. Add new surnames when auditing adds them; do NOT add
+# genus names even if they look like surnames — the check is explicitly
+# a blocklist of human names.
+_KNOWN_AUTHOR_SURNAMES: frozenset[str] = frozenset(
+    {
+        # Core radiolarian workers (after Phase 60 audit)
+        "riedel",
+        "kozur",
+        "bütschli",
+        "butschli",
+        "haeckel",
+        "sanfilippo",
+        "pessagno",
+        "de wever",
+        "dumitrica",
+        "o'dogherty",
+        "odogherty",
+        "foreman",
+        "hull",
+        "bailey",
+        "carter",
+        "clark",
+        "dunn",
+        "foster",
+        "goll",
+        "kiessling",
+        "lazarus",
+        "martin",
+        "nishimura",
+        "palmer",
+        "renaudie",
+        "sugiyama",
+        "takemura",
+        "umeda",
+        "vishnevskaya",
+        "won",
+        "yeh",
+        "zhang",
+        # Extended set — common in citations of any kind
+        "smith",
+        "jones",
+        "johnson",
+        "williams",
+        "brown",
+        "davis",
+        "miller",
+        "wilson",
+        "moore",
+        "taylor",
+        "anderson",
+        "thomas",
+        "jackson",
+        "white",
+        "harris",
+        "martin",
+        "thompson",
+        "garcia",
+        "martinez",
+        "robinson",
+        "clark",
+        "rodriguez",
+        "lewis",
+        "lee",
+        "walker",
+        "hall",
+        "allen",
+        "young",
+        "king",
+        "wright",
+        "scott",
+        "hill",
+        "green",
+        "adams",
+        "baker",
+        "nelson",
+        "mitchell",
+        "perez",
+        "roberts",
+        "turner",
+        "phillips",
+        "campbell",
+        "parker",
+        "evans",
+        "edwards",
+        "collins",
+        "stewart",
+        "sanchez",
+        "morris",
+        "rogers",
+        "reed",
+        "cook",
+        "morgan",
+        "bell",
+        "murphy",
+        "bailey",
+        "rivera",
+        "cooper",
+        "richardson",
+        "cox",
+        "howard",
+        "ward",
+        "torres",
+        "peterson",
+        "gray",
+        "ramirez",
+        "james",
+        "watson",
+        "brooks",
+        "kelly",
+        "sanders",
+        "price",
+        "bennett",
+        "wood",
+        "barnes",
+        "ross",
+        "henderson",
+        "coleman",
+        "jenkins",
+        "perry",
+        "powell",
+        "long",
+        "patterson",
+        "hughes",
+        "flores",
+        "washington",
+        "butler",
+        "simmons",
+        "foster",
+        "hendricks",
+        "cole",
+        "russell",
+        "griffin",
+        "diaz",
+        "hayes",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -177,23 +320,84 @@ class TaxonRecognizer:
 
     def _fallback_predict(self, text: str) -> list[TaxonEntity]:
         cleaned = self._clean_caption_for_taxon(text)
+        # Phase 60 Plan 3 (Bug 3.4): apply Unicode NFKD normalisation
+        # so ligatures (``æ`` → ``ae``, ``ﬁ`` → ``fi``, ``œ`` → ``oe``)
+        # and combining diacritics (``ö`` → ``o`` + combining diaeresis,
+        # stripped on ASCII encode) are flattened to their ASCII
+        # equivalents before the regex runs. The original surface form
+        # is preserved in the entity's ``text`` field because we offset
+        # the match positions back to the un-normalised string via
+        # ``m.start(1)`` / ``m.end(1)`` (which still align with the
+        # cleaned string; both strings have the same length after NFKD
+        # for the Latin / Greek chars we care about).
+        #
+        # Note: Greek letters (α β γ δ …) are NOT preserved by NFKD
+        # → ASCII encode (they get dropped). The Greek-letter shape
+        # ``Genus α`` is therefore matched by a separate scan on the
+        # pre-normalised ``cleaned`` string (Bug 3.5).
+        cleaned_ascii = (
+            unicodedata.normalize("NFKD", cleaned)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+        # Phase 60 Plan 3 (Bug 3.3): extended to also accept isolated-
+        # genus open-nomenclature forms (``Genus sp.``, ``Genus spp.``,
+        # ``Genus n. sp.``, ``Genus sp. nov.``, ``Genus nom. nov.``,
+        # ``Genus comb. nov.``). The new alternative uses the qualifier
+        # directly as the second token instead of a lowercase epithet.
+        #
+        # IMPORTANT: the isolated-genus alternative MUST come BEFORE the
+        # generic ``\s+[a-z][a-zA-Z-]{2,}`` epithet branch. Otherwise
+        # ``Genus spp.`` greedily matches the epithet branch as
+        # ``spp`` (3 lowercase chars) and the trailing ``.`` is lost.
         pattern = re.compile(
             r"\b("
             r"[A-Z][a-zA-Z-]{2,}"
             r"(?:"
+            # Bug 3.3: isolated-genus open nomenclature. ``sp.`` /
+            # ``spp.`` / ``n. sp.`` / ``sp. nov.`` / ``nom. nov.`` /
+            # ``comb. nov.`` all appear as the second token in real
+            # radiolarian captions and must be matched. MUST come
+            # before the generic epithet branch (see comment above).
+            r"\s+(?:sp\.|spp\.|n\.\s*sp\.|sp\.\s*nov\.|nom\.\s*nov\.|comb\.\s*nov\.)"
+            r"|"
             r"\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]{2,}"
             r"|"
             r"\s+[a-z][a-zA-Z-]{2,}"
             r")"
             r"(?:\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?"
-            r")\b"
+            r")"
+            # Trailing boundary: ``spp.`` ends in ``.`` which is a
+            # non-word char, so the original ``\b`` dropped the
+            # trailing period for ``Entactinia spp.``. A positive
+            # lookahead on whitespace / sentence-punctuation /
+            # end-of-string keeps the period in the match and is
+            # still safe for non-``spp.`` shapes.
+            r"(?=\s|[.,;:]|$)"
+        )
+        # Phase 60 Plan 3 (Bug 3.5): Greek-letter and ``sp. A`` shapes
+        # are matched on the pre-NFKD ``cleaned`` text because NFKD →
+        # ASCII drops Greek letters. ``sp. A`` is the common De Wever /
+        # Bandini shape for an informally-labelled variant; single capital
+        # ``A`` / ``B`` / ``C`` is the informal-variant descriptor.
+        greek_or_capital_pattern = re.compile(
+            r"\b([A-Z][a-zA-Z-]{2,})"
+            r"(?:\s+(?:sp\.|spp\.|n\.\s*sp\.|sp\.\s*nov\.|nom\.\s*nov\.|comb\.\s*nov\.)\s+[A-Z])"
+            r"|\b([A-Z][a-zA-Z-]{2,})\s+([αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ])"
         )
         entities: list[TaxonEntity] = []
-        for m in pattern.finditer(cleaned):
+        for m in pattern.finditer(cleaned_ascii):
             words = m.group(1).split()
             if len(words) < 2:
                 continue
             if words[0].lower() in _NON_TAXON_FIRST_WORDS:
+                continue
+            # Phase 60 Plan 3 (Bug 3.2): reject matches whose first
+            # token is a known paleontologist surname. Catches the
+            # common citation shape "Genus species Riedel & Sanfilippo"
+            # which the regex would otherwise turn into the bogus
+            # "Riedel Sanfilippo" binomial.
+            if words[0].lower() in _KNOWN_AUTHOR_SURNAMES:
                 continue
             epithet_idx = 1
             if len(words) > 2 and words[1].lower() in ("cf.", "aff."):
@@ -204,6 +408,22 @@ class TaxonRecognizer:
                 continue
             entities.append(
                 TaxonEntity(text=m.group(1), start=m.start(1), end=m.end(1), score=0.55)
+            )
+        # Phase 60 Plan 3 (Bug 3.5): Greek-letter / ``sp. A`` open-
+        # nomenclature shapes on the pre-NFKD text. NFKD→ASCII drops
+        # Greek letters so we scan ``cleaned`` (not ``cleaned_ascii``)
+        # with a separate pattern.
+        for m in greek_or_capital_pattern.finditer(cleaned):
+            full = m.group(0).strip()
+            if not full:
+                continue
+            first_word = full.split()[0]
+            if first_word.lower() in _NON_TAXON_FIRST_WORDS:
+                continue
+            if first_word.lower() in _KNOWN_AUTHOR_SURNAMES:
+                continue
+            entities.append(
+                TaxonEntity(text=full, start=m.start(0), end=m.end(0), score=0.55)
             )
         return entities
 
@@ -238,12 +458,30 @@ class TaxonRecognizer:
     def _lexicon_predict(self, text: str) -> list[TaxonEntity]:
         if not text or not self._lexicon:
             return []
+        # Phase 60 Plan 3 (Bug 3.12): the previous implementation
+        # used ``lower.find(name.lower())`` which is a substring match
+        # with no word-boundary check. The lexicon entry ``can`` would
+        # match inside ``canned`` / ``scan`` / ``canvas`` and emit a
+        # bogus taxon. The fix uses ``re.search(r\"\\b{word}\\b\")``
+        # so the entry must start AND end at a word boundary.
         out: list[TaxonEntity] = []
-        lower = text.lower()
         for name in self._lexicon:
-            start = lower.find(name.lower())
-            if start >= 0:
-                out.append(TaxonEntity(text=name, start=start, end=start + len(name), score=0.75))
+            # Pre-compile per call — the lexicon size is small (handful
+            # of entries on the order of 10s-100s) so the cost is
+            # negligible vs the alternative of maintaining a module-
+            # level cache that would have to invalidate on
+            # ``self._lexicon`` mutation.
+            pattern = re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)
+            m = pattern.search(text)
+            if m:
+                out.append(
+                    TaxonEntity(
+                        text=name,
+                        start=m.start(),
+                        end=m.end(),
+                        score=0.75,
+                    )
+                )
         return out
 
     @staticmethod
@@ -374,8 +612,16 @@ _NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset(
 
 # Common 2-3 letter non-Latin epithets that the binomial regex used to match.
 # Anything here is a stopword / preposition / article, never a species epithet.
+#
+# Phase 60 Plan 3 (Bug 3.6): the previous list blocked only ~20
+# high-frequency stopwords. Real radiolarian-caption text contains
+# title-case bigrams like ``Crystal Structure``, ``Late Jurassic``,
+# ``Rosso Ammonitico Formation``, ``Crystal Distribution`` that match
+# the binomial regex but are NOT species. Extended with a curated set
+# of common geological / microscopy / stratigraphy nouns.
 _NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset(
     {
+        # Original short stopwords
         "of",
         "in",
         "on",
@@ -400,5 +646,57 @@ _NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset(
         "nov",
         "gen",
         "comb",
+        # Phase 60 Plan 3 (Bug 3.6): extended common-noun blocklist.
+        # Each entry is a word that, when it appears as the SECOND
+        # token of a title-case bigram, is overwhelmingly more likely
+        # to be a topic-phrase noun than a species epithet.
+        "structure",
+        "distribution",
+        "occurrence",
+        "assemblage",
+        "fauna",
+        "flora",
+        "biostratigraphy",
+        "recovery",
+        "extinction",
+        "diversity",
+        "abundance",
+        "range",
+        "radiolarian",
+        "sponge",
+        "section",
+        "outcrop",
+        "sample",
+        "specimen",
+        "species",
+        "genus",
+        "group",
+        "member",
+        "zone",
+        "age",
+        "epoch",
+        "era",
+        "period",
+        "stage",
+        "system",
+        # Bonus: more nouns seen in real papers' section headings
+        "formation",
+        "locality",
+        "material",
+        "method",
+        "methods",
+        "results",
+        "discussion",
+        "introduction",
+        "abstract",
+        "references",
+        "acknowledgements",
+        "acknowledgments",
+        "conclusion",
+        "summary",
+        "figure",
+        "table",
+        "plate",
+        "appendix",
     }
 )

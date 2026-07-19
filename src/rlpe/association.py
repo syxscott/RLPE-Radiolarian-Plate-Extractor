@@ -29,8 +29,32 @@ SUBPANEL_LABEL_PATTERN = re.compile(
     r"(?:\(|\[)([A-Z]|[0-9]{1,2})(?:\)|\])"
     r"|(?<!\w)([A-Z]|[0-9]{1,2})(?=\.|\:)\s*"
 )
+# Phase 60 Plan 3 (Bug 3.1): the previous pattern only allowed the
+# ``cf./aff.`` qualifier AFTER the species epithet (``Genus sp. cf.``),
+# but real radiolarian captions (Bandini 2011 pl08 / pl09) use the
+# inverted shape where the qualifier + compared species come AFTER the
+# epithet: ``Genus species cf. S. excelsa``. The canonical binomial is
+# matched by group 1; a SEPARATE pattern ``TAXON_CF_COMPARE_PATTERN``
+# below picks up the trailing comparison reference so the compared
+# species epithet is not silently dropped.
 TAXON_LIKE_PATTERN = re.compile(
     r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b"
+)
+# Phase 60 Plan 3 (Bug 3.1): ``cf. <Author>. <epithet>`` / ``aff. <Author>. <epithet>``
+# — separate scan so the trailing comparison reference is preserved
+# as a taxon epithet. Two shapes are common in radiolarian captions:
+#
+#   * ``cf. S. excelsa``     — single-letter author initial + epithet
+#   * ``cf. Stichocapsa excelsa`` — full compared genus + epithet
+#
+# We capture the epithet only (group 2) so the ``S.`` author initial
+# doesn't pollute the taxon list downstream — the epithet alone is
+# the canonical ICZN signature of the compared species.
+TAXON_CF_COMPARE_PATTERN = re.compile(
+    r"\b(?:cf\.|aff\.)\s+"
+    # either an author initial token (``S.``) OR a real genus name
+    r"(?:[A-Z]\.|([A-Z][a-zA-Z-]+))\s+"
+    r"([a-z][a-zA-Z-]+)"
 )
 _SINGLE_UPPER = re.compile(r"[A-Z]")
 _SINGLE_DIGITS = re.compile(r"\d{1,2}")
@@ -279,6 +303,14 @@ def extract_taxa_from_caption(caption_text: str) -> list[str]:
         tax = m.group(1).strip()
         if tax and tax not in taxa:
             taxa.append(tax)
+    # Phase 60 Plan 3 (Bug 3.1): also surface trailing cf./aff.
+    # comparison references so the compared species epithet isn't
+    # silently dropped (e.g. Bandini 2011 pl08 / pl09 ``cf. S. excelsa``
+    # used to disappear from the panel→species mapping).
+    for m in TAXON_CF_COMPARE_PATTERN.finditer(caption_text):
+        compared = m.group(2).strip() if m.group(2) else None
+        if compared and compared not in taxa:
+            taxa.append(compared)
     return taxa
 
 
