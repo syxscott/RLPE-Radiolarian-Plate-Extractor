@@ -2124,13 +2124,19 @@ class RadiolarianPipeline:
                 continue
             caption.page_index = best_page.page_index
 
+            # Phase 59 (Bug 2.8): candidate-pages expansion now uses
+            # ``self.config.caption_window`` as the radius instead of
+            # the hardcoded ±1 offset. Operators can widen the
+            # cross-page figure search without code changes.
             candidate_pages = [best_page]
-            if best_page.page_index > 1:
-                prev_page = pages[best_page.page_index - 2]
-                candidate_pages.insert(0, prev_page)
-            if best_page.page_index < len(pages):
-                next_page = pages[best_page.page_index]
-                candidate_pages.append(next_page)
+            radius = max(1, int(self.config.caption_window))
+            for offset in range(1, radius + 1):
+                prev_idx = best_page.page_index - 1 - offset
+                next_idx = best_page.page_index - 1 + offset
+                if prev_idx >= 0:
+                    candidate_pages.insert(0, pages[prev_idx])
+                if next_idx < len(pages):
+                    candidate_pages.append(pages[next_idx])
 
             chosen_regions = []
             for page in candidate_pages:
