@@ -536,8 +536,50 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
 # is preserved.
 
 
+def _coerce_provenance(provenance: ProvenanceRecord | dict[str, Any]) -> ProvenanceRecord:
+    """Accept either a :class:`ProvenanceRecord` or a plain dict and
+    return a fully-validated :class:`ProvenanceRecord`.
+
+    Used by ``run_output_from_provenance`` (Phase 63 Plan 6.1, Bug 6.1)
+    so callers (GUI, web ``Job.rows``, CLI export) can pass either
+    form. Mirrors ``_coerce_run_output_from_dict`` in
+    ``exporters.archive``: a partial dict (``{job_id, source}`` from
+    the GUI) is backfilled with harmless stub values rather than
+    rejected. This keeps the legacy ``ProvenanceRecord``-only callers
+    fully compatible.
+    """
+    if isinstance(provenance, ProvenanceRecord):
+        return provenance
+    if not isinstance(provenance, dict):
+        raise TypeError(
+            f"provenance must be ProvenanceRecord or dict, got "
+            f"{type(provenance).__name__}"
+        )
+    prov = dict(provenance)
+    allowed_keys = {
+        "pipeline_version",
+        "schema_version",
+        "git_commit",
+        "git_dirty",
+        "config_snapshot",
+        "input_sha256",
+        "timestamp_utc",
+        "host",
+        "python_version",
+    }
+    prov = {k: v for k, v in prov.items() if k in allowed_keys}
+    prov.setdefault("pipeline_version", "unknown")
+    prov.setdefault("schema_version", "1.0.0")
+    prov.setdefault("git_commit", "unknown")
+    prov.setdefault("git_dirty", False)
+    prov.setdefault("timestamp_utc", "1970-01-01T00:00:00Z")
+    prov.setdefault("host", "unknown")
+    prov.setdefault("python_version", "unknown")
+    return ProvenanceRecord(**prov)
+
+
 def run_output_from_provenance(
-    provenance: ProvenanceRecord,
+    provenance: ProvenanceRecord | dict[str, Any],
     matches: list[MatchResult] | None,
 ) -> dict[str, Any]:
     """Build a JSON-serializable RunOutput dict from a provenance and a
@@ -558,7 +600,14 @@ def run_output_from_provenance(
     inside the ``*_records_from_matches`` helpers. An empty list
     produces an empty RunOutput with the provenance still attached —
     which is the correct degraded behavior.
+
+    Phase 63 Plan 6.1 (Bug 6.1): ``provenance`` may now be a plain
+    ``dict`` (mirrors ``write_dwca_zip``'s accept-dict behaviour).
+    A partial dict is backfilled with stub fields so the GUI's
+    truncated provenance (``{job_id, source}``) does not blow up
+    ``ProvenanceRecord.model_validate``.
     """
+    provenance = _coerce_provenance(provenance)
     if matches is None:
         matches = []
     panels = [panel_record_from_match(m) for m in matches]
