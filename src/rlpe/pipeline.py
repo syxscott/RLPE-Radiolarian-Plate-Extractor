@@ -2927,6 +2927,68 @@ Rules:
                                 filled,
                                 added,
                             )
+
+                # Phase 59 (Bug 2.6): post-hybrid dedup. The hybrid
+                # block above adds NEW rows for caption labels that
+                # were not in the LLM output, but if a label slipped
+                # past the "if lbl_norm in existing_labels: continue"
+                # gate (e.g. because LLM-normalised the label
+                # differently than the caption parser), the same
+                # (paper_id, figure_id, panel_id) can now appear
+                # twice in ``llm_results``. The downstream
+                # ``_finalize_rows`` dedups by (figure_id, panel_id)
+                # so the higher-confidence row wins, but in this
+                # hybrid case the caption-derived row has
+                # confidence=0.0 while the LLM row may have 0.8 — so
+                # the dedup keeps the LLM row and discards the
+                # caption enrichment. That breaks the recovery path.
+                #
+                # We post-process: for any caption-derived row whose
+                # (paper_id, figure_id, panel_id_normalised) already
+                # exists in ``llm_results`` (i.e. the LLM did produce
+                # that row), drop the caption-derived duplicate and
+                # keep the LLM row (it has richer bbox / metadata).
+                # The remaining caption-only rows (the LLM
+                # truncation case) survive unchanged.
+                if llm_results and pair_lookup:
+                    seen_panel_keys: dict[
+                        tuple[str, str, str], dict[str, Any]
+                    ] = {}
+                    deduped_llm: list[dict[str, Any]] = []
+                    for r in llm_results:
+                        pid = r.get("panel_id")
+                        if pid is None:
+                            # No panel_id → can't dedup; keep as-is.
+                            deduped_llm.append(r)
+                            continue
+                        norm = _normalize_panel_label(str(pid)).strip().lower()
+                        if not norm:
+                            deduped_llm.append(r)
+                            continue
+                        key = (paper_id, str(r.get("figure_id", figure_id)), norm)
+                        # Caption-derived rows (species_source ends with
+                        # ``_hybrid_added`` or ``caption_parser_hybrid``)
+                        # drop when an LLM-native row exists; LLM rows
+                        # themselves always win.
+                        is_caption_added = (r.get("metadata") or {}).get(
+                            "species_source"
+                        ) in (
+                            "caption_parser_hybrid",
+                            "regex_caption_hybrid_added",
+                        )
+                        if is_caption_added and key in seen_panel_keys:
+                            # The earlier LLM row wins — drop this duplicate.
+                            continue
+                        seen_panel_keys[key] = r
+                        deduped_llm.append(r)
+                    if len(deduped_llm) != len(llm_results):
+                        logger.debug(
+                            "Post-hybrid dedup %s/%s: dropped %d caption-duplicate rows",
+                            paper_id,
+                            figure_id,
+                            len(llm_results) - len(deduped_llm),
+                        )
+                        llm_results = deduped_llm
                 # Round 11 (Bug 2 fix): filter M3-returned panels whose
                 # label doesn't appear in the caption-derived pair set.
                 # M3 frequently invents panel_ids for plates whose
