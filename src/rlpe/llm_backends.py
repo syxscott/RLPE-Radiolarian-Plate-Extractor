@@ -711,7 +711,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
     #                     is the correct setting for offline / air-gapped
     #                     deployments (M3 weights not yet open-sourced,
     #                     privacy-sensitive papers).
-    data_outbound_policy: str = "api_redacted"  # safer default than api_full
+    data_outbound_policy: str = "api_full"  # Phase 61 (Bug 4.11): M3 vision needs full-res image for species ID
 
     def __post_init__(self) -> None:
         # ``local_only`` does not need an API key: the backend will refuse
