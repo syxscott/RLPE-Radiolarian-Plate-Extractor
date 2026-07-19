@@ -36,12 +36,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Phase 54 audit m19 — TTL constant for the Crossref negative cache.
+# Phase 54 audit m19 — TTL constant for the Crossref cache.
 # 1 hour: long enough to dedupe a single run's repeated DOI lookups
 # (one paper with 5 species of bad DOIs hits the network once instead
 # of 5 times), short enough that transient Crossref outages self-heal
 # without a process restart.
 _CROSSREF_CACHE_TTL_SEC: int = 3600
+
+# Phase 62 Plan 5 (Bug 5.14): split the Crossref TTL into positive
+# (real journal) and negative (None / non-200 / network error)
+# buckets. A transient Crossref outage at the start of a batch
+# run was tagging every paper with ``journal=None`` for the next
+# hour. The negative TTL of 60s is short enough to recover from
+# outages within one minute but long enough to dedupe a single
+# paper's 5 bad-DOI retries into 1 network call.
+_CROSSREF_POSITIVE_TTL_SEC: int = 3600
+_CROSSREF_NEGATIVE_TTL_SEC: int = 60
 
 
 # --- 1) Title garbage detection --------------------------------------------
@@ -193,6 +203,12 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
     for Bragin 2025, which is actually the publisher "Pleiades
     Publishing"). When GROBID's journal is None, empty, or
     suspiciously short, this function provides a fallback.
+
+    Phase 62 Plan 5 (Bug 5.14): the cache TTL is split into
+    positive (real journal name → 1 hour) and negative (None,
+    non-200, network error → 60s) buckets. A transient Crossref
+    outage at the start of a batch run no longer tags every paper
+    with ``journal=None`` for the next hour.
     """
     if doi in _CROSSREF_CACHE:
         cached_value, cached_at = _CROSSREF_CACHE[doi]
@@ -205,7 +221,16 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
         # retries collapse to 1 network call) and short enough that
         # transient Crossref outages self-heal without a process
         # restart.
-        if (time.time() - cached_at) < _CROSSREF_CACHE_TTL_SEC:
+        #
+        # Phase 62 Plan 5 (Bug 5.14): negative entries (None) use
+        # the much shorter 60s TTL so a transient outage recovers
+        # within a minute rather than an hour.
+        ttl = (
+            _CROSSREF_NEGATIVE_TTL_SEC
+            if cached_value is None
+            else _CROSSREF_POSITIVE_TTL_SEC
+        )
+        if (time.time() - cached_at) < ttl:
             return cached_value
     try:
         import requests  # local import to keep cold-import cheap
