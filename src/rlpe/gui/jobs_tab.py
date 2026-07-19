@@ -593,6 +593,11 @@ class JobsTab(QWidget):
 
     def _export_json(self, job: JobRecord) -> None:
         if not job.rows:
+            QMessageBox.information(
+                self,
+                i18n._tr("jobstab.menu.export_json"),
+                i18n._tr("jobstab.export.no_rows"),
+            )
             return
         default_path = str(Path(job.output_dir) / f"{job.job_id}.json")
         path, _ = QFileDialog.getSaveFileName(
@@ -659,15 +664,30 @@ class JobsTab(QWidget):
         self._update_summary()
 
     def _clear_finished(self) -> None:
-        # Remove all jobs whose status is done / failed / cancelled
-        for status in (STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED):
-            to_remove = [j for j, job in self._jobs.items() if job.status == status]
-            for jid in to_remove:
-                self._remove_job(jid)
+        # Remove all jobs whose status is done / failed / cancelled.
+        # Phase 56 audit: batch removal avoids O(N²) repeated _find_row +
+        # _update_summary; collect rows first, remove bottom-to-top.
+        statuses = {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED}
+        to_remove = [j for j, job in self._jobs.items() if job.status in statuses]
+        if not to_remove:
+            return
+        rows_to_remove = sorted(
+            {self._find_row(j) for j in to_remove if self._find_row(j) >= 0},
+            reverse=True,
+        )
+        for r in rows_to_remove:
+            self._table.removeRow(r)
+        for jid in to_remove:
+            self._jobs.pop(jid, None)
+        self._ctx_actions.clear()
+        self._update_summary()
 
     def _clear_all(self) -> None:
-        for jid in list(self._jobs.keys()):
-            self._remove_job(jid)
+        # Phase 56 audit: batch clear instead of individual _remove_job calls.
+        self._jobs.clear()
+        self._table.setRowCount(0)
+        self._ctx_actions.clear()
+        self._update_summary()
 
     def _refresh_texts(self) -> None:
         """Re-apply column headers and context-menu actions after language switch."""

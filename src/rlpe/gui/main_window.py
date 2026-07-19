@@ -839,7 +839,28 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        self._results_tab._export_xlsx_to(Path(path), all_rows)
+        # Phase 56 audit: build run_output from all batch rows and export via xlsx.
+        from ..exporters.xlsx import write_xlsx
+        run_output = {
+            "schema_version": "1.0.0",
+            "provenance": {"job_id": "batch", "source": "rlpe-gui"},
+            "papers": [],
+            "figures": [],
+            "panels": all_rows,
+            "taxa": [],
+            "samples": [],
+            "geology_contexts": [
+                g for r in all_rows for g in ((r.get("metadata") or {}).get("geology_links") or [])
+            ],
+            "localities": [
+                {"country": g.get("country"), "locality": g.get("locality")}
+                for r in all_rows for g in ((r.get("metadata") or {}).get("geology_links") or [])
+                if g.get("country") or g.get("locality")
+            ],
+            "paleo_coordinates": [],
+            "warnings": [],
+        }
+        write_xlsx(run_output, str(path))
 
     # Patch into the run tab to advance the batch on each completion
     def _refresh_texts(self) -> None:

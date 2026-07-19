@@ -212,6 +212,12 @@ class SettingsTab(QWidget):
         glayout.setVerticalSpacing(SPACE_S)
 
         self._grobid_url = QLineEdit(DEFAULT_GROBID_URL)
+        # Phase 56 audit: validate URL format (must start with http:// or https://)
+        import re as _re
+        from PySide6.QtGui import QRegExpValidator
+        self._grobid_url.setValidator(
+            QRegExpValidator(_re.compile(r"^https?://[^\s/$.?#].[^\s]*$"), self._grobid_url)
+        )
         glayout.addRow(tr_label("settab.grobid.url"), self._grobid_url)
 
         self._grobid_retries = QSpinBox()
@@ -329,6 +335,10 @@ class SettingsTab(QWidget):
 
         self._pbdb_endpoint = QLineEdit("https://paleobiodb.org/data1.2")
         self._pbdb_endpoint.setPlaceholderText("(leave blank for default)")
+        # Phase 56 audit: validate URL format; empty is OK (uses default).
+        self._pbdb_endpoint.setValidator(
+            QRegExpValidator(_re.compile(r"^$|^https?://[^\s/$.?#].[^\s]*$"), self._pbdb_endpoint)
+        )
         playout.addRow(tr_label("settab.pbdb.endpoint"), self._pbdb_endpoint)
 
         body_layout.addWidget(pbdb)
@@ -465,12 +475,16 @@ class SettingsTab(QWidget):
         # ``int("")`` raises ValueError and the spinbox would crash
         # the whole ``_load`` path. The helper also clamps to the
         # spinbox range to handle hand-edited INI files.
-        def _qint(key: str, default: int) -> int:
+        def _qint(key: str, default: int, valid_range: tuple[int, int] | None = None) -> int:
             raw = self._qsettings.value(key, default)
             try:
-                return int(raw)
+                val = int(raw)
             except (TypeError, ValueError):
                 return default
+            # Phase 56 audit: clamp to valid range if provided
+            if valid_range is not None:
+                val = max(valid_range[0], min(val, valid_range[1]))
+            return val
 
         # GROBID
         self._grobid_url.setText(self._qsettings.value("grobid_url", DEFAULT_GROBID_URL))
@@ -483,8 +497,8 @@ class SettingsTab(QWidget):
         if ocr_ix >= 0:
             self._ocr_backend.setCurrentIndex(ocr_ix)
         self._ocr_lang.setText(self._qsettings.value("ocr_lang", DEFAULT_OCR_LANG))
-        self._caption_window.setValue(_qint("caption_window", 2))
-        self._od_caption_window.setValue(_qint("od_caption_window", 5))
+        self._caption_window.setValue(_qint("caption_window", 2, RANGE_CAPTION_WINDOW))
+        self._od_caption_window.setValue(_qint("od_caption_window", 5, RANGE_OD_CAPTION_WINDOW))
 
         # LLM
         llm_backend = self._qsettings.value("llm_backend", "minimax")
@@ -567,6 +581,7 @@ class SettingsTab(QWidget):
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, theme)
+        # Phase 56 audit: emit settings_changed so listening tabs refresh.
         self.settings_changed.emit()
         QMessageBox.information(
             self,

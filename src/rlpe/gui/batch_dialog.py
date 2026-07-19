@@ -200,6 +200,8 @@ class BatchDialog(QDialog):
     # ------------------------------------------------------------------
     def _add_pdf(self, path: Path) -> None:
         if not path.exists():
+            # Phase 56 audit: log a warning so silent failures are traceable
+            self._log.warning("Skipping non-existent PDF: %s", path)
             return
         if path in self._pdfs_set:  # Phase 56 audit: O(1) via set
             return
@@ -209,26 +211,34 @@ class BatchDialog(QDialog):
         item.setData(Qt.UserRole, str(path))
         item.setToolTip(str(path))
         self._file_list.addItem(item)
-        self._count_label.setText(f"{len(self._pdfs)} PDFs queued")
+        # Phase 56 audit: use i18n template (was bare English f-string)
+        self._count_label.setText(i18n._tr("batch.count").format(n=len(self._pdfs)))
 
     def _on_add(self) -> None:
+        last_dir = self._settings.get("last_pdf_dir", str(Path.home()))
         paths, _ = QFileDialog.getOpenFileNames(
             self,
             i18n._tr("batch.add.title"),
-            self._settings.get("last_pdf_dir", str(Path.home())),
+            last_dir,
             "PDF files (*.pdf)",
         )
         for p in paths:
             self._add_pdf(Path(p))
+        # Phase 56 audit: persist last browsed directory
+        if paths:
+            self._settings["last_pdf_dir"] = str(Path(paths[0]).parent)
 
     def _on_add_dir(self) -> None:
+        last_dir = self._settings.get("last_pdf_dir", str(Path.home()))
         path = QFileDialog.getExistingDirectory(
             self,
             i18n._tr("batch.add_dir.title"),
-            self._settings.get("last_pdf_dir", str(Path.home())),
+            last_dir,
         )
         if not path:
             return
+        # Phase 56 audit: persist last browsed directory
+        self._settings["last_pdf_dir"] = path
         for sub in sorted(Path(path).glob("*.pdf")):
             self._add_pdf(sub)
 
@@ -281,6 +291,14 @@ class BatchDialog(QDialog):
             return
         out_dir = self._out_dir_edit.text().strip()
         if not out_dir:
+            QMessageBox.warning(
+                self,
+                i18n._tr("batch.no_outdir.title"),
+                i18n._tr("batch.no_outdir.body"),
+            )
+            return
+        # Phase 56 audit: verify out_dir is not an existing file
+        if Path(out_dir).is_file():
             QMessageBox.warning(
                 self,
                 i18n._tr("batch.no_outdir.title"),

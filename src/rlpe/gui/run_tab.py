@@ -483,6 +483,9 @@ class RunTab(QWidget):
             "use_geo_vision": self._geo_vision.isChecked(),
             "use_m3_stage3": self._m3_stage3.isChecked(),
             "m3_multi_plate_enrich": self._m3_multi_plate.isChecked(),
+            # NOTE: _od_fallback checkbox is "use OD fallback" (positive),
+            # but the pipeline config key is "disable_od_fallback" (negative).
+            # Invert here; matched by apply_settings below.
             "disable_od_fallback": not self._od_fallback.isChecked(),
             "save_intermediate": self._save_intermediate.isChecked(),
             "render_dpi": self._dpi.value(),
@@ -585,7 +588,10 @@ class RunTab(QWidget):
 
     def _on_language_changed(self, _lang: str) -> None:
         """Rebuild format strings on language switch (i18n listener)."""
-        self._refresh_formats()
+        # Phase 56 audit: defer refresh to next event loop iteration so
+        # it doesn't race with worker signal handlers on the main thread.
+        from PySide6.QtCore import QTimer as _QTimer
+        _QTimer.singleShot(0, self._refresh_formats)
 
     def _remove_i18n_listener(self) -> None:
         """Remove our i18n listener when the widget is destroyed."""
@@ -733,6 +739,9 @@ class RunTab(QWidget):
         self._worker.request_cancel()
         self._cancel_btn.setEnabled(False)
         self._status_label.setText(i18n._tr("runtab.status.cancelling"))
+        self._status_label.setProperty("status", "cancelling")
+        self._status_label.style().unpolish(self._status_label)
+        self._status_label.style().polish(self._status_label)
 
     @staticmethod
     def _make_job_id(pdf_path: str | Path) -> str:
@@ -793,6 +802,8 @@ class RunTab(QWidget):
 
     def _on_finished(self, results: list) -> None:
         self._log.info("Job %s finished with %d rows", self._current_job_id, len(results))
+        # Phase 56 audit: clear live progress message so it doesn't linger
+        self._reset_to_idle()
         if self._current_job_id:
             self.job_finished.emit(self._current_job_id, results)
 
@@ -821,6 +832,19 @@ class RunTab(QWidget):
         # and wait() (block until the thread actually exits) before
         # dropping the reference.
         worker = self._worker
+        was_cancelled = worker is not None and worker.isInterruptionRequested()
+        # Phase 56 audit: disconnect signals before cleanup so late
+        # signals from a dying thread don't reach stale slots.
+        if worker is not None:
+            try:
+                worker.progress.disconnect(self._on_progress)
+                worker.log_line.disconnect(self._log_to_statusbar)
+                worker.status_changed.disconnect(self._on_status)
+                worker.finished_ok.disconnect(self._on_finished)
+                worker.failed.disconnect(self._on_failed)
+                worker.finished.disconnect(self._on_thread_done)
+            except (TypeError, RuntimeError):
+                pass  # already disconnected or worker partially deleted
         if worker is not None and worker.isRunning():
             worker.quit()
             if not worker.wait(2000):  # 2s timeout
@@ -833,12 +857,15 @@ class RunTab(QWidget):
         self._cancel_btn.setEnabled(False)
         self._progress.setRange(0, 1)
         self._progress.setValue(1)
-        self._progress.setFormat(i18n._tr("runtab.status.done"))
-        # reset to the empty-state hint) so the user can read the
-        # completion message.
-        self._progress_msg.setText(i18n._tr("runtab.progress.done"))
         # Phase 56 audit: reset status label QSS property to idle so colour
         # reverts from "running" (blue) back to neutral after job completes.
         self._status_label.setProperty("status", "idle")
         self._status_label.style().unpolish(self._status_label)
         self._status_label.style().polish(self._status_label)
+        # reset to the empty-state hint) so the user can read the
+        # completion message.
+        self._progress_msg.setText(i18n._tr("runtab.progress.done"))
+        if was_cancelled:
+            self._status_label.setText(i18n._tr("runtab.status.cancelled"))
+        else:
+            self._status_label.setText(i18n._tr("runtab.status.done"))

@@ -56,6 +56,30 @@ from .utils import (
 )
 
 
+# Phase 56 audit: class-level constants for scope/OCR lookup — avoids
+# recreating these dicts on every _render_detail() call.
+_SCOPE_KEYS: dict[str, str] = {
+    "panel": "restab.detail.scope.panel",
+    "figure_anchor": "restab.detail.scope.figure_anchor",
+    "none": "restab.detail.scope.none",
+}
+_SCOPE_CLASSES: dict[str, str] = {
+    "panel": "badge-info",
+    "figure_anchor": "badge-warn",
+    "none": "badge-muted",
+}
+_OCR_KEYS: dict[str, str] = {
+    "image_ocr": "restab.detail.ocr.image_ocr",
+    "positional": "restab.detail.ocr.positional",
+    "no_image": "restab.detail.ocr.no_image",
+}
+_OCR_CLASSES: dict[str, str] = {
+    "image_ocr": "badge-info",
+    "positional": "badge-warn",
+    "no_image": "badge-muted",
+}
+
+
 class ResultsTab(QWidget):
     """Row-by-row results browser with image preview + detail panel."""
 
@@ -299,6 +323,8 @@ class ResultsTab(QWidget):
                     combo.setItemText(i, i18n._tr("restab.filter.yes"))
                 elif ud == "no":
                     combo.setItemText(i, i18n._tr("restab.filter.no"))
+        # Phase 56 audit: refresh search placeholder on language switch
+        self._search_edit.setPlaceholderText(i18n._tr("restab.search.placeholder"))
 
     def _on_language_changed(self, _lang: str) -> None:
         """Rebuild UI texts on language switch (i18n listener)."""
@@ -412,7 +438,12 @@ class ResultsTab(QWidget):
     def _refresh_view(self) -> None:
         rows = self._filter_rows()
         self._filtered_rows = rows
-        self._count_label.setText(f"{len(rows):,} / {len(self._all_rows):,} rows")
+        # Phase 56 audit: use i18n template with placeholders so the
+        # count label translates on language switch (previously a bare
+        # English f-string).
+        self._count_label.setText(
+            i18n._tr("restab.count").format(shown=len(rows), total=len(self._all_rows))
+        )
         # Populate table
         self._table.setRowCount(len(rows))
         for r_idx, row in enumerate(rows):
@@ -527,35 +558,36 @@ class ResultsTab(QWidget):
 
         # ── ID / metadata grid ─────────────────────────────────
         geo_scope = md.get("geology_scope") or "none"
-        scope_labels = {"panel": "Panel专属", "figure_anchor": "图级锚定", "none": "无地质"}
-        scope_cls = {"panel": "badge-info", "figure_anchor": "badge-warn", "none": "badge-muted"}
-        scope_label = scope_labels.get(geo_scope, geo_scope)
-        cls = scope_cls.get(geo_scope, "badge-muted")
+        # Class-level dicts (defined once, not per-call).
+        scope_key = _SCOPE_KEYS.get(geo_scope, "restab.detail.scope.none")
+        scope_label = i18n._tr(scope_key)
+        cls = _SCOPE_CLASSES.get(geo_scope, "badge-muted")
         ocr_src = md.get("extraction_source") or ""
-        ocr_badges = {
-            "image_ocr": ("OCR", "badge-info"),
-            "positional": ("位置", "badge-warn"),
-            "no_image": ("无图像", "badge-muted"),
-        }
-        ocr_label, ocr_cls = ocr_badges.get(ocr_src, (ocr_src or "—", "badge-muted"))
+        ocr_key = _OCR_KEYS.get(ocr_src)
+        ocr_label = i18n._tr(ocr_key) if ocr_key else (ocr_src or "—")
+        ocr_cls = _OCR_CLASSES.get(ocr_src, "badge-muted")
         conf = row.get("confidence")
         conf_str = f"{conf * 100:.0f}%" if isinstance(conf, (int, float)) else "—"
 
         html.append("<table style='font-size:12px;border-collapse:collapse;width:100%;margin-bottom:8px'>")
         meta_pairs = [
-            ("论文ID", html_escape(row.get("paper_id") or "—")),
-            ("图版ID", html_escape(row.get("figure_id") or "—")),
-            ("Panel标签", html_escape(panel_id or "—")),
-            ("Page", md.get("page_index") if md.get("page_index") is not None else "—"),
-            ("来源", f"<span class='{ocr_cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{ocr_label}</span>"),
-            ("置信度", conf_str),
-            ("地质范围", f"<span class='{cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{scope_label}</span>"),
+            (i18n._tr("restab.detail.paper_id"), html_escape(row.get("paper_id") or "—")),
+            (i18n._tr("restab.detail.figure_id"), html_escape(row.get("figure_id") or "—")),
+            (i18n._tr("restab.detail.panel_label"), html_escape(panel_id or "—")),
+            (i18n._tr("restab.detail.page"), md.get("page_index") if md.get("page_index") is not None else "—"),
+            (i18n._tr("restab.detail.source"), f"<span class='{ocr_cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(ocr_label)}</span>"),
+            (i18n._tr("restab.detail.confidence"), conf_str),
+            (i18n._tr("restab.detail.geo_scope"), f"<span class='{cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(scope_label)}</span>"),
         ]
-        if row.get("bbox") and isinstance(row.get("bbox"), list) and any(v > 0 for v in row["bbox"]):
+        # Phase 56 audit: guard against non-numeric bbox elements (None, str)
+        bbox = row.get("bbox")
+        if isinstance(bbox, list) and len(bbox) == 4 and any(
+            v > 0 for v in bbox if isinstance(v, (int, float))
+        ):
             html.append(
-                f"<tr><td style='padding:2px 8px 2px 0;color:#888'>BBox</td>"
+                f"<tr><td style='padding:2px 8px 2px 0;color:#888'>{i18n._tr('restab.detail.bbox')}</td>"
                 f"<td style='padding:2px 0;font-family:monospace;font-size:11px'>"
-                f"[{', '.join(str(v) for v in row['bbox'])}]</td></tr>"
+                f"[{', '.join(str(v) for v in bbox)}]</td></tr>"
             )
         for k, v in meta_pairs:
             html.append(
@@ -763,6 +795,7 @@ class ResultsTab(QWidget):
 
     def _export_json(self) -> None:
         if not self._filtered_rows:
+            QMessageBox.information(self, i18n._tr("restab.export.json"), i18n._tr("jobstab.export.no_rows"))
             return
         default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.json")
         path, _ = QFileDialog.getSaveFileName(
@@ -786,6 +819,7 @@ class ResultsTab(QWidget):
 
     def _export_csv(self) -> None:
         if not self._filtered_rows:
+            QMessageBox.information(self, i18n._tr("restab.export.csv"), i18n._tr("jobstab.export.no_rows"))
             return
         default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.csv")
         path, _ = QFileDialog.getSaveFileName(
@@ -813,6 +847,7 @@ class ResultsTab(QWidget):
 
     def _export_dwca(self) -> None:
         if not self._filtered_rows:
+            QMessageBox.information(self, i18n._tr("restab.export.dwca"), i18n._tr("jobstab.export.no_rows"))
             return
         default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.zip")
         path, _ = QFileDialog.getSaveFileName(
@@ -836,31 +871,6 @@ class ResultsTab(QWidget):
                     error=f"{type(exc).__name__}: {exc}",
                 ),
             )
-
-    def _export_xlsx_to(self, path: Path, rows: list[dict[str, Any]]) -> None:
-        """Export ``rows`` to ``path`` as .xlsx, reusing the standard multi-sheet layout."""
-        from ..exporters.xlsx import write_xlsx
-        panels = rows
-        run_output = {
-            "schema_version": "1.0.0",
-            "provenance": {"job_id": "batch", "source": "rlpe-gui"},
-            "papers": [],
-            "figures": [],
-            "panels": panels,
-            "taxa": [],
-            "samples": [],
-            "geology_contexts": [
-                g for r in panels for g in ((r.get("metadata") or {}).get("geology_links") or [])
-            ],
-            "localities": [
-                {"country": g.get("country"), "locality": g.get("locality")}
-                for r in panels for g in ((r.get("metadata") or {}).get("geology_links") or [])
-                if g.get("country") or g.get("locality")
-            ],
-            "paleo_coordinates": [],
-            "warnings": [],
-        }
-        write_xlsx(run_output, str(path))
 
     def _build_run_output(self) -> dict[str, Any]:
         panels = self._filtered_rows
