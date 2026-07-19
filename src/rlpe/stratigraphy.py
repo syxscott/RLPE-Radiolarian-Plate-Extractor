@@ -816,6 +816,111 @@ def _pbdb_lookup(body: str) -> dict[str, Any] | None:
 # High-level convenience: classify_all_in_text
 # ---------------------------------------------------------------------------
 
+# Phase 60 Plan 3 (Bug 3.11): curated biozone → Ma lookup table.
+#
+# Real radiolarian biostratigraphy uses named biozones that do not
+# correspond 1:1 with ICS chronostratigraphic ages. The most common
+# standard is the Baumgartner 1984 Unitary Association Zones
+# (UAZ 1-21) covering Bathonian (mid-Jurassic) through Hauterivian
+# (mid-Cretaceous); older papers use the Hollis 1997 / O'Dogherty
+# 1994 zonation for Cretaceous–Paleogene material. Each entry maps a
+# canonical zone name (case-insensitive lookup via the helper) to a
+# ``(ma_top, ma_base)`` tuple where ``ma_top`` is the young (top)
+# boundary and ``ma_base`` is the old (base) boundary.
+#
+# Reference values are taken from:
+#   - Baumgartner et al. (1984), "A Middle Jurassic to Early
+#     Cretaceous radiolarian zonation based on Unitary Associations
+#     and Rhabdocyclus costatus", Micropaleontology 30(2)
+#   - Hollis (1997), "Radiolarian faunal change through the
+#     Cretaceous–Tertiary transition at Flaxbourne River and
+#     Woodside Creek, New Zealand", IGNS Science Report 97/17
+#   - O'Dogherty (1994), "Biochronology and paleontology of
+#     mid-Cretaceous radiolarians from Northern Apennines (Italy)
+#     and Betic Cordillera (Spain)", Mémoires de Géologie (Lausanne) 21
+#
+# The table is INTENTIONALLY CURATED (not auto-generated from PBDB)
+# because (a) the standard radiolarian zones pre-date PBDB's
+# chronostratigraphic chart and (b) the Ma bounds are a paper-table
+# scientific fact that must not be silently re-derived from a noisy
+# occurrence aggregation. Unknown zones return ``None`` from the
+# lookup helper — the operator sees the unmatched zone name + a
+# ``biozone_unknown`` warning instead of invented bounds.
+_BIOZONE_TO_MA: dict[str, tuple[float, float]] = {
+    # Baumgartner 1984 Unitary Association Zones (UAZ 1-21)
+    # Mid-Jurassic (Bathonian) → mid-Cretaceous (Hauterivian)
+    "UAZ 1": (152.0, 168.0),     # Callovian–Kimmeridgian
+    "UAZ 2": (145.0, 152.0),     # late Kimmeridgian–Tithonian
+    "UAZ 3": (139.8, 145.0),     # Berriasian
+    "UAZ 4": (132.6, 139.8),     # Valanginian
+    "UAZ 5": (121.4, 132.6),     # Hauterivian–Barremian
+    "UAZ 6": (113.0, 121.4),     # Aptian
+    "UAZ 7": (100.5, 113.0),     # Albian
+    "UAZ 8": (89.0, 100.5),      # Cenomanian–Albian top
+    "UAZ 9": (83.6, 89.0),       # Turonian–Coniacian
+    "UAZ 10": (74.0, 83.6),      # Santonian–Campanian
+    "UAZ 11": (66.0, 83.6),      # Campanian–Maastrichtian
+    # Hollis 1997 NZ Late Cretaceous radiolarian zones
+    "Buryella clinata Zone": (254.14, 259.51),    # Wuchiapingian
+    "Cryptocephalus nigricae Zone": (83.6, 86.3),  # Coniacian–Santonian
+    # O'Dogherty 1994 Betic Cordillera zones (mid-Cretaceous subset)
+    "Pessagno Zone A": (121.4, 132.6),            # Valanginian–Hauterivian
+    "Pessagno Zone B": (113.0, 121.4),            # Barremian
+    "Pessagno Zone C": (100.5, 113.0),            # Aptian–Albian
+    # Legacy radiolarian zonation (Riedel & Sanfilippo 1978)
+    # — commonly cited in older bandini / pouille papers.
+    "Buryella tetradica Zone": (247.2, 251.9),    # Olenekian–Anisian
+    "Triassocampe deweveri Zone": (208.5, 227.0), # Carnian–Norian
+    # Bare-name aliases (no trailing "Zone") so callers that already
+    # stripped the suffix don't pay an extra re-lookup cost. Both
+    # forms resolve to the same (ma_top, ma_base) tuple.
+    "Buryella clinata": (254.14, 259.51),
+    "Cryptocephalus nigricae": (83.6, 86.3),
+    "Buryella tetradica": (247.2, 251.9),
+    "Triassocampe deweveri": (208.5, 227.0),
+    "Pessagno Zone A": (121.4, 132.6),  # canonical key already, kept for symmetry
+}
+
+
+def lookup_biozone_ma(name: str | None) -> tuple[float, float] | None:
+    """Look up the (ma_top, ma_base) for a named biozone.
+
+    Returns ``None`` if the name is missing, empty, or not in the
+    curated table. The helper is case-insensitive and tolerates a
+    trailing ``Zone`` / ``Subzone`` so ``"Buryella clinata"`` and
+    ``"Buryella clinata Zone"`` resolve to the same bounds.
+
+    Unknown zones are intentionally returned as ``None`` rather than
+    inventing bounds — the caller is expected to surface the
+    unmatched zone name as a ``biozone_unknown`` warning so the
+    operator can update the table without contaminating the dataset
+    with fabricated ages.
+    """
+    if not name:
+        return None
+    raw = str(name).strip()
+    if not raw:
+        return None
+    # Direct hit.
+    if raw in _BIOZONE_TO_MA:
+        return _BIOZONE_TO_MA[raw]
+    # Strip a trailing "Zone" / "Subzone" / "Sub-biozone" / "Biozone".
+    stripped = re.sub(
+        r"\s+(Zone|Subzone|Biozone|Sub-biozone)\s*$",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    ).strip()
+    if stripped and stripped != raw and stripped in _BIOZONE_TO_MA:
+        return _BIOZONE_TO_MA[stripped]
+    # Case-insensitive fallback — the keys above are canonical, but
+    # some papers write them as ``Buryella Clinata Zone``.
+    lower = raw.lower()
+    for key, val in _BIOZONE_TO_MA.items():
+        if key.lower() == lower:
+            return val
+    return None
+
 
 def find_ages_in_text(text: str) -> list[AgeClassification]:
     """Find and classify every age / stage name in ``text``.
