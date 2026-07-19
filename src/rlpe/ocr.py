@@ -4,11 +4,18 @@ import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+# Phase 61 Plan 4 (Bug 4.4): discriminated token type so downstream
+# ``match_panels`` can tell panel-label tokens apart from species tokens
+# (and from generic OCR noise). The default "other" preserves legacy
+# behaviour — existing callers that ignore ``token_type`` keep working.
+_OCRTokenType = Literal["label", "species", "other"]
 
 
 @dataclass(slots=True)
@@ -17,6 +24,14 @@ class OCRToken:
     confidence: float
     bbox: tuple[int, int, int, int]
     metadata: dict[str, Any] | None = None
+    # Phase 61 Plan 4 (Bug 4.4): token type discriminator.
+    #   "label"   - this token is a printed panel label ("1a", "Fig. 3").
+    #               Stamped by ``recognize_panel_label()``.
+    #   "species" - this token looks like a radiolarian taxon (binomial,
+    #               "Genus cf. species", "Genus sp.", etc.). Stamped by
+    #               ``extract_species_tokens()``.
+    #   "other"   - generic OCR text; default for backward compatibility.
+    token_type: _OCRTokenType = "other"
 
 
 # Phase 27: map our internal short names to the engine-native spellings
@@ -507,10 +522,70 @@ class OCRBackend:
                             if tok.metadata is not None
                             else {"label_corner": name}
                         ),
+                        # Phase 61 Plan 4 (Bug 4.4): stamp every
+                        # output of ``recognize_panel_label`` as a
+                        # "label" token. The downstream matcher uses
+                        # this to prefer label-shaped text over
+                        # generic OCR noise when picking the panel id.
+                        token_type="label",
                     )
                     for tok in tokens
                 ]
         return best_tokens
+
+
+def extract_species_tokens(tokens: list[OCRToken]) -> list[OCRToken]:
+    """Return a NEW list of tokens whose text looks like a radiolarian taxon.
+
+    Each token whose text matches a recognised taxon shape (binomial,
+    "Genus cf. species", "Genus sp.", etc.) is stamped with
+    ``token_type="species"`` and returned. Tokens that fail the check
+    are passed through with their existing ``token_type`` unchanged
+    (defaulting to "other") so callers can still filter on
+    ``token_type != "species"`` for non-species OCR text.
+
+    The check uses the existing ``_taxon_parts`` decomposition so the
+    notion of "species-like" stays consistent with the data-package
+    view (Phase 60).
+    """
+    out: list[OCRToken] = []
+    try:
+        from .converters import _taxon_parts
+    except Exception:
+        # If the converters module can't be imported we still pass
+        # through tokens unchanged (downstream degrades to legacy
+        # behaviour).
+        return list(tokens)
+    for tok in tokens:
+        parts = _taxon_parts(tok.text) or {}
+        genus = parts.get("genus")
+        epithet = parts.get("specific_epithet")
+        qualifier = parts.get("qualifier")
+        # Recognise the same shapes _is_valid_species() accepts:
+        #   * "Genus species"
+        #   * "Genus cf. species"
+        #   * "Genus sp." / "Genus spp."
+        #   * "Genus indet"
+        is_species = False
+        if genus and epithet:
+            is_species = True
+        elif genus and qualifier:
+            q = qualifier.strip().rstrip(".").lower()
+            if q in {"sp", "spp", "indet", "gr", "group", "subsp", "var", "n", "nom", "cf", "aff"}:
+                is_species = True
+        if is_species:
+            out.append(
+                OCRToken(
+                    text=tok.text,
+                    confidence=tok.confidence,
+                    bbox=tok.bbox,
+                    metadata=tok.metadata,
+                    token_type="species",
+                )
+            )
+        else:
+            out.append(tok)
+    return out
 
 
 def normalize_ocr_tokens(tokens: list[OCRToken]) -> list[OCRToken]:
