@@ -172,7 +172,14 @@ def _row_for_panel(p: dict[str, Any]) -> list[Any]:
         p.get("paper_id") or "",
         p.get("figure_id") or "",
         p.get("panel_id") or "",
-        md.get("v18_panel_id_source") or "",
+        # Phase 58 Plan 1.3 (Bug 1.3): panel_id_source lives at
+        # panel.metadata["panel_id_source"] (set by converters.py:448
+        # and association.match_panels). The previous lookup referenced
+        # a non-existent legacy key, leaving the "Panel来源" column
+        # always empty. Top-level p.get("panel_id_source") is the
+        # PanelRecord schema field; prefer metadata first since that's
+        # what the pipeline actually writes.
+        (md.get("panel_id_source") or p.get("panel_id_source") or ""),
         p.get("species") or "",
         p.get("confidence") if p.get("confidence") is not None else "",
         md.get("geology_scope") or "",
