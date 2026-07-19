@@ -4309,6 +4309,47 @@ Rules:
 # ---- module-level helpers -----------------------------------------------
 
 
+def stage3_rescale_bbox(
+    bbox: tuple[int, int, int, int] | list[int],
+    *,
+    source_dpi: int,
+    crop_dpi: int,
+) -> tuple[int, int, int, int]:
+    """Phase 61 Plan 4 (Bug 4.5): rescale an M3 Stage 3 bbox from the
+    extraction DPI to the visual-storage DPI used for the cropped image.
+
+    M3 returns bboxes in pixels of the rendered plate (the DPI it saw
+    when generating). The crop helper re-saves the panel at a possibly
+    different ``crop_dpi``; if the consumer (a downstream LLM call, an
+    annotation overlay, …) reads the bbox as-is it will land on the
+    wrong pixels.
+
+    The scale factor is ``crop_dpi / source_dpi``. Inputs of 0 / negative
+    DPI are treated as "no rescaling" (defensive default to avoid
+    divide-by-zero — the bbox is returned unchanged). Output is always
+    a 4-tuple of ints, clamped to ``>= 0`` for safety.
+    """
+    if not bbox or len(bbox) != 4:
+        return (0, 0, 0, 0)
+    try:
+        s = int(source_dpi)
+        c = int(crop_dpi)
+    except (TypeError, ValueError):
+        return tuple(int(v) for v in bbox)  # type: ignore[return-value]
+    if s <= 0 or c <= 0:
+        return tuple(int(v) for v in bbox)  # type: ignore[return-value]
+    if s == c:
+        return tuple(int(v) for v in bbox)  # type: ignore[return-value]
+    factor = c / float(s)
+    out = []
+    for v in bbox:
+        try:
+            out.append(max(0, int(round(float(v) * factor))))
+        except (TypeError, ValueError):
+            out.append(0)
+    return (out[0], out[1], out[2], out[3])
+
+
 def _resolve_m3_prompt_lang(value: Any) -> str | None:
     """Phase 27: translate the CLI's ``--m3-prompt-lang`` value to the
     argument expected by ``M3Engine.parse_caption(..., lang=)``.
