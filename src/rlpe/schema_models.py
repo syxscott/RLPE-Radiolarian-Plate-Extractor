@@ -45,6 +45,10 @@ class ScaleBarRecord(BaseModel):
     pixel_length: float | None = None
     um_per_px: float | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Phase 61 Plan 4.6 (Bug 4.6): scale_bar sanity check flags
+    # 2x-10x disagreement ("scale_bar_disagreement") or drops value on
+    # >10x disagreement (value=None, warning="scale_bar_10x_disagreement").
+    warning: str | None = None
 
 
 class GeologyLinkRecord(BaseModel):

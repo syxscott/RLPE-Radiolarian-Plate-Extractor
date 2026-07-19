@@ -2504,6 +2504,16 @@ class RadiolarianPipeline:
     # high-confidence single-panel micrograph is kept without retrying.
     _LLM_FIRST_SINGLE_PANEL_MIN_CONF: float = 0.75
 
+    # Phase 61 Plan 4 (Bug 4.1): token budget for the LLM-first caption
+    # prompt. The historical hard-truncate at 2000 chars dropped the
+    # tail of long captions (Bandini 2011 pl09 = ~3500 chars). The
+    # runtime helper ``_truncate_caption_for_llm`` honours this cap
+    # when the active backend exposes a tokenizer; otherwise it falls
+    # back to ``DEFAULT_MAX_CHARS`` (4000). Kept on the class so
+    # tests can verify the budget is in a sensible range without
+    # instantiating the pipeline.
+    _LLM_FIRST_MAX_TOKENS: int = 4000
+
     _LLM_FIRST_SYSTEM_PROMPT = """You are an expert paleontologist specializing in radiolarian microfossils. You will see an image of a radiolarian plate (figure) from a scientific publication, along with its caption text.
 
 Your task: identify every distinct specimen panel (sub-figure) in this plate and determine its label (A, B, C... or 1, 2, 3... as printed on the image) and the Latin binomial species name.
@@ -2569,10 +2579,34 @@ Rules:
             logger.warning("LLM-first image load failed for %s/%s: %s", paper_id, figure_id, exc)
             return None
 
+        # Phase 61 Plan 4 (Bug 4.1): token-aware caption truncation.
+        # Previous behaviour hard-truncated at 2000 chars; Bandini 2011
+        # pl09 (≈3500 chars) lost the tail species. The helper returns a
+        # ``(text, mode)`` tuple so we can stamp the truncation mode in
+        # metadata (debug / eval visibility) without re-parsing the
+        # prompt afterwards. The cap is 4000 tokens when a tokenizer is
+        # available, else 4000 chars as a safe fallback.
+        try:
+            from ._llm_caption import _truncate_caption_for_llm
+        except Exception:  # pragma: no cover - helper is in our package
+            _truncate_caption_for_llm = None  # type: ignore[assignment]
+        tokenizer = getattr(backend, "tokenizer", None)
+        truncation_mode = "char_fallback"
+        if _truncate_caption_for_llm is not None:
+            try:
+                truncated_caption, truncation_mode = _truncate_caption_for_llm(
+                    caption_text, tokenizer=tokenizer
+                )
+            except Exception:
+                truncated_caption = caption_text
+                truncation_mode = "error"
+        else:  # pragma: no cover - defensive
+            truncated_caption = (caption_text or "")[:4000]
+            truncation_mode = "char_fallback"
         user_prompt = (
             f"Paper: {paper_id}\n"
             f"Figure: {figure_id}\n"
-            f"Caption:\n{caption_text[:2000]}\n\n"
+            f"Caption:\n{truncated_caption}\n\n"
             f"Identify all specimen panels in this plate. Return JSON."
         )
 
@@ -2689,6 +2723,12 @@ Rules:
                     # review tools if stamped on a caption-derived id.
                     "caption_panel_id": panel_id,
                     "panel_id_source": "llm_first",
+                    # Phase 61 Plan 4 (Bug 4.1): record which truncation
+                    # strategy was applied to the caption before the
+                    # LLM call. "none" = no truncation; "token_aware" =
+                    # tokeniser-driven; "char_fallback" = 4000-char cap
+                    # because no tokenizer; "error" = helper crashed.
+                    "caption_truncation_mode": truncation_mode,
                 },
             )
             out.append(m.to_dict())
@@ -2824,13 +2864,40 @@ Rules:
                             if (r.get("panel_id") or r.get("label_text") or "").strip()
                         }
                         filled = 0
+                        skipped_invalid = 0
                         for r in llm_results:
                             if r.get("species"):
                                 continue
                             label = r.get("panel_id") or r.get("label_text") or ""
                             matched_key = _label_in_pair_lookup(label, pair_lookup)
                             if matched_key:
-                                r["species"] = pair_lookup[matched_key]
+                                candidate_species = pair_lookup[matched_key]
+                                # Phase 61 Plan 4 (Bug 4.2): guard
+                                # against LLM / caption-parser hallucinations
+                                # like "Foreman species" or "Dubious
+                                # species". The species-validity check
+                                # blocks author-surname genera and
+                                # common placeholder tokens. If
+                                # invalid, KEEP the rule result (do
+                                # not overwrite) so eval sees the
+                                # honest "no species" state.
+                                try:
+                                    from .taxon import _is_valid_species
+
+                                    if not _is_valid_species(candidate_species):
+                                        skipped_invalid += 1
+                                        r.setdefault("metadata", {})[
+                                            "hybrid_species_rejected"
+                                        ] = candidate_species
+                                        continue
+                                except Exception:
+                                    # If the helper is unavailable for
+                                    # any reason we still write the
+                                    # species to preserve legacy
+                                    # behaviour. Better a noisy
+                                    # downstream than a silent fallback.
+                                    pass
+                                r["species"] = candidate_species
                                 r.setdefault("metadata", {})["species_source"] = (
                                     "caption_parser_hybrid"
                                     if self.m3_engine is not None
@@ -2871,6 +2938,20 @@ Rules:
                             # is the post-append total, not the
                             # post-append total + 1.
                             pre_append_count = len(llm_results)
+                            # Phase 61 Plan 4 (Bug 4.2): same validity
+                            # guard as the fill loop above — if the
+                            # new-row species looks like a hallucinated
+                            # author-surname + epithet, DROP the row
+                            # rather than appending a polluted entry.
+                            try:
+                                from .taxon import _is_valid_species
+
+                                _new_row_species_is_valid = _is_valid_species(species)
+                            except Exception:
+                                _new_row_species_is_valid = True
+                            if not _new_row_species_is_valid:
+                                skipped_invalid += 1
+                                continue
                             llm_results.append(
                                 MatchResult(
                                     paper_id=paper_id,
@@ -4226,6 +4307,47 @@ Rules:
 
 
 # ---- module-level helpers -----------------------------------------------
+
+
+def stage3_rescale_bbox(
+    bbox: tuple[int, int, int, int] | list[int],
+    *,
+    source_dpi: int,
+    crop_dpi: int,
+) -> tuple[int, int, int, int]:
+    """Phase 61 Plan 4 (Bug 4.5): rescale an M3 Stage 3 bbox from the
+    extraction DPI to the visual-storage DPI used for the cropped image.
+
+    M3 returns bboxes in pixels of the rendered plate (the DPI it saw
+    when generating). The crop helper re-saves the panel at a possibly
+    different ``crop_dpi``; if the consumer (a downstream LLM call, an
+    annotation overlay, …) reads the bbox as-is it will land on the
+    wrong pixels.
+
+    The scale factor is ``crop_dpi / source_dpi``. Inputs of 0 / negative
+    DPI are treated as "no rescaling" (defensive default to avoid
+    divide-by-zero — the bbox is returned unchanged). Output is always
+    a 4-tuple of ints, clamped to ``>= 0`` for safety.
+    """
+    if not bbox or len(bbox) != 4:
+        return (0, 0, 0, 0)
+    try:
+        s = int(source_dpi)
+        c = int(crop_dpi)
+    except (TypeError, ValueError):
+        return tuple(int(v) for v in bbox)  # type: ignore[return-value]
+    if s <= 0 or c <= 0:
+        return tuple(int(v) for v in bbox)  # type: ignore[return-value]
+    if s == c:
+        return tuple(int(v) for v in bbox)  # type: ignore[return-value]
+    factor = c / float(s)
+    out = []
+    for v in bbox:
+        try:
+            out.append(max(0, int(round(float(v) * factor))))
+        except (TypeError, ValueError):
+            out.append(0)
+    return (out[0], out[1], out[2], out[3])
 
 
 def _resolve_m3_prompt_lang(value: Any) -> str | None:

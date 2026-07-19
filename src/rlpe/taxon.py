@@ -152,6 +152,77 @@ _KNOWN_AUTHOR_SURNAMES: frozenset[str] = frozenset(
 )
 
 
+# Phase 61 Plan 4 (Bug 4.2): conservative species-validity check used by
+# the LLM-first hybrid fill path before it overwrites rule-extracted
+# species with LLM-hallucinated text. The check combines two signals:
+#
+#   1. ``_taxon_parts`` decomposition shape (must produce a genus AND
+#      an epithet, OR a recognised open-nomenclature shape like
+#      ``Genus sp.``).
+#   2. The genus must NOT be in the known-author-surname blocklist
+#      above (catches "Foreman" → "Foreman 1995" hallucinations) and
+#      must NOT be the placeholder "Dubious" / "Indet" tokens that
+#      LLMs surface when they cannot determine the species.
+#
+# The function returns True for ``None`` and empty strings because
+# those are the normal "no species yet" sentinel the upstream extractor
+# emits — they must NOT be flagged as invalid (otherwise the rule
+# path would also be filtered).
+def _is_valid_species(species: str | None) -> bool:
+    if species is None:
+        return True
+    if not isinstance(species, str):
+        return True
+    s = species.strip()
+    if not s:
+        return True
+    # Cheap placeholder-token guard. The LLM sometimes emits these
+    # when it cannot determine the species from the image alone.
+    placeholder_tokens = {
+        "dubious",
+        "indet",
+        "indeterminate",
+        "unknown",
+        "unidentified",
+        "n. gen.",
+        "n. sp.",
+        "new genus",
+        "new species",
+    }
+    first = s.split(maxsplit=1)[0].lower().rstrip(".,;:?!")
+    if first in placeholder_tokens:
+        return False
+
+    # Author-surname blocklist on the genus token.
+    genus_token = s.split(maxsplit=1)[0]
+    bare = genus_token.rstrip(".,;:?!")
+    if bare.lower() in _KNOWN_AUTHOR_SURNAMES:
+        return False
+
+    # Shape check: must decompose to a real-looking taxon. We reuse
+    # ``_taxon_parts`` (Phase 60) for consistency with the data-package
+    # view. A bare single token (no epithet) and no recognised
+    # open-nomenclature fails this check.
+    try:
+        from .converters import _taxon_parts
+    except Exception:
+        return True
+    parts = _taxon_parts(species) or {}
+    genus = parts.get("genus")
+    epithet = parts.get("specific_epithet")
+    qualifier = parts.get("qualifier")
+    if not genus:
+        return False
+    # Must have either a real epithet OR a recognised open-nom shape.
+    has_epithet = bool(epithet and epithet.strip())
+    has_open_nom = bool(
+        qualifier
+        and qualifier.strip().rstrip(".").lower()
+        in {"sp", "spp", "indet", "gr", "group", "subsp", "var", "n", "nom", "cf", "aff"}
+    )
+    return has_epithet or has_open_nom
+
+
 @dataclass(slots=True)
 class TaxonEntity:
     text: str

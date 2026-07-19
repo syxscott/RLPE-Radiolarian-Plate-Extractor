@@ -72,6 +72,12 @@ class ScaleInfo:
     pixel_length: float | None = None
     um_per_px: float | None = None
     confidence: float = 0.0
+    # Phase 61 Plan 4 (Bug 4.6): disagreement diagnostic. ``"scale_bar_10x_disagreement"``
+    # means the caption + OCR values differed by >10x and BOTH were dropped;
+    # ``"scale_bar_disagreement"`` means a 2x-10x ratio, kept the
+    # higher-confidence value but flagged for review; empty/None means the
+    # two sources agreed within 2x (or only one source had a value).
+    warning: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -198,12 +204,47 @@ def merge_scale_info(
     if base.value is None and caption_info.value is not None:
         base = caption_info
 
+    # Phase 61 Plan 4 (Bug 4.6): detect scale-bar disagreement between
+    # caption and OCR sources. Two sources producing wildly different
+    # numbers (e.g. 100 µm vs 1 µm, a 100x gap) is almost always an
+    # OCR error on one side; trusting either silently propagates a
+    # garbage ``um_per_px`` into PBDB coord-radius validation
+    # downstream. Compute the ratio in µm units and:
+    #   * ratio > 10x → drop BOTH values, return a "no-scale" ScaleInfo
+    #     stamped with warning="scale_bar_10x_disagreement".
+    #   * ratio 2x-10x → keep higher-confidence value but stamp
+    #     warning="scale_bar_disagreement".
+    #   * ratio < 2x (or only one source has a value) → unchanged
+    #     legacy behaviour.
+    warning = ""
+    cv = caption_info.value if caption_info.value not in (None, 0) else None
+    ov = ocr_info.value if ocr_info.value not in (None, 0) else None
+    if cv is not None and ov is not None:
+        cv_um = to_um(cv, caption_info.unit)
+        ov_um = to_um(ov, ocr_info.unit)
+        if cv_um and ov_um and cv_um > 0 and ov_um > 0:
+            ratio = max(cv_um, ov_um) / min(cv_um, ov_um)
+            if ratio > 10.0:
+                # Drop both. The caller (figure-level inference) will
+                # see value=None and um_per_px=None.
+                return ScaleInfo(
+                    value=None,
+                    unit=None,
+                    source="none",
+                    pixel_length=pixel_length,
+                    confidence=0.0,
+                    warning="scale_bar_10x_disagreement",
+                )
+            if ratio >= 2.0:
+                warning = "scale_bar_disagreement"
+
     out = ScaleInfo(
         value=base.value,
         unit=base.unit,
         source=base.source,
         pixel_length=pixel_length,
         confidence=base.confidence,
+        warning=warning,
     )
     out.um_per_px = estimate_um_per_px(out.value, out.unit, out.pixel_length)
     return out

@@ -220,15 +220,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable interactive popup prompt on API error (CLI)",
     )
     p.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Force temperature=0 / do_sample=False and seed Python + "
+        "numpy + torch RNGs to 42 so two consecutive runs on the same "
+        "paper produce identical species lists. Off by default "
+        "(production stays stochastic for higher recall).",
+    )
+    p.add_argument(
+        "--deterministic-seed",
+        type=int,
+        default=42,
+        help="Seed value for --deterministic (default 42).",
+    )
+    p.add_argument(
         "--data-outbound-policy",
         type=str,
-        default="api_redacted",
+        default="api_full",
         choices=["api_full", "api_redacted", "local_only"],
         help="What data is sent to the LLM backend. Defaults to "
-        "api_redacted (caption text + plate region; sensitive fields "
-        "like raw PDF bytes are stripped before sending). Override "
-        "with api_full to send the full PDF text, or local_only to "
-        "skip remote LLM calls entirely.",
+        "api_full (full caption + plate image at native DPI) because "
+        "M3 vision needs the high-resolution morphology details to "
+        "identify species accurately. Override with api_redacted to "
+        "strip captions to 200 chars and downscale images to 256x256 "
+        "(useful for sensitive preprints), or local_only to skip "
+        "remote LLM calls entirely.",
     )
     p.add_argument("--use-geology-llm", action="store_true")
     p.add_argument(
@@ -446,6 +462,9 @@ def main() -> int:
             "MiniMax_fallback_default": args.MiniMax_fallback_default,
             "MiniMax_interactive": args.MiniMax_interactive,
             "data_outbound_policy": args.data_outbound_policy,
+            # Phase 61 Plan 4 (Bug 4.3): deterministic / reproducibility knob.
+            "deterministic": args.deterministic,
+            "deterministic_seed": args.deterministic_seed,
             "use_geology_llm": args.use_geology_llm,
             "use_geo_vision": args.use_geo_vision,
             "use_m3_stage3": args.use_m3_stage3,

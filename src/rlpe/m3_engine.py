@@ -387,6 +387,15 @@ _LIGATURE_MAP: dict[str, str] = {
     "ﬄ": "ffl",
     "Ĳ": "IJ",
     "ĳ": "ij",
+    # Phase 61 Plan 4 (Bug 4.12): common Latin ligatures that appear
+    # in European-language species names ("Cœlacanth", "Archæan",
+    # "Ĥirnant"). Without these, regex parses miss the tail word and
+    # the caption parser returns zero pairs.
+    "œ": "oe",
+    "Œ": "Oe",
+    "æ": "ae",
+    "Æ": "Ae",
+    "ĥ": "h",
     # Curly quotes / dashes
     "’": "'",
     "‘": "'",
@@ -397,6 +406,86 @@ _LIGATURE_MAP: dict[str, str] = {
     "…": "...",
     " ": " ",
 }
+
+
+def _redact_enrichment_caption(
+    page_caption: str | None,
+    current_plate_caption: str | None,
+    *,
+    unrelated_budget: int = 200,
+    pad: int = 32,
+) -> str:
+    """Phase 61 Plan 4 (Bug 4.9): selectively redact a page-level caption
+    for the enrichment second pass.
+
+    The Round 7 ``enrich_plate_panels`` call needs to send M3 the page
+    caption (which contains captions for *other* plates on the same
+    page) plus the image of just the current plate. The historical
+    ``api_redacted`` outbound policy truncated the entire payload to
+    200 chars via ``_apply_outbound_policy``, which silently dropped
+    the *current* plate's species labels when the page caption was
+    large.
+
+    This helper identifies the substring of ``page_caption`` that
+    matches ``current_plate_caption`` and:
+      * preserves that section verbatim (with a small pad on each side
+        for context),
+      * redacts the rest of the page to ``unrelated_budget`` chars.
+
+    When ``current_plate_caption`` is empty or not found in the page,
+    we fall back to a hard 200-char truncation of the whole thing —
+    safe but not ideal.
+    """
+    if not page_caption:
+        return ""
+    if not current_plate_caption:
+        return page_caption[:unrelated_budget]
+    pc = page_caption
+    cc = current_plate_caption.strip()
+    if not cc:
+        return pc[:unrelated_budget]
+    # Find the longest exact (case-sensitive) match. Falling back to
+    # lower-cased comparison is too risky because two captions on the
+    # same page can differ only by species name.
+    idx = pc.find(cc)
+    if idx < 0:
+        # Try a normalised match (collapse whitespace).
+        import re as _re
+
+        normalised_cc = _re.sub(r"\s+", " ", cc).strip()
+        normalised_pc = _re.sub(r"\s+", " ", pc)
+        idx = normalised_pc.find(normalised_cc)
+        if idx < 0:
+            # Can't locate the current plate's caption → hard truncate.
+            return pc[:unrelated_budget]
+        # Recompute the matching span in the original pc (approximate —
+        # text may have multiple spaces). We use the normalised index
+        # and search forward for the original substring; the pad
+        # windows cover any whitespace drift.
+        match_end = idx + len(normalised_cc)
+        # Find a unique anchor in the original text by using the first
+        # 16 chars of the match as a fingerprint.
+        anchor = normalised_cc[:16]
+        a_idx = pc.find(anchor)
+        if a_idx < 0:
+            return pc[:unrelated_budget]
+        idx = a_idx
+    start = max(0, idx - pad)
+    end = min(len(pc), idx + len(cc) + pad)
+    matched = pc[start:end]
+    # Build the redacted payload: matched section + a redacted
+    # surrounding context. Cap the total unrelated text to
+    # ``unrelated_budget`` characters so a 50k-char page can't blow the
+    # M3 input budget.
+    before = pc[:start]
+    after = pc[end:]
+    before_budget = unrelated_budget // 2
+    after_budget = unrelated_budget - before_budget
+    before_truncated = before[-before_budget:] if len(before) > before_budget else before
+    after_truncated = after[:after_budget] if len(after) > after_budget else after
+    return (
+        f"{before_truncated}[…redacted…]{matched}[…redacted…]{after_truncated}"
+    )
 
 
 def _normalize_caption_text(text: str) -> str:

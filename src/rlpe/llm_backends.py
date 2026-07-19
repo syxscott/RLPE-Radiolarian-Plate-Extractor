@@ -20,6 +20,98 @@ logger = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 _JSON_ARR_RE = re.compile(r"\[.*?\]", re.DOTALL)
 
+# Phase 61 Plan 4 (Bug 4.3): deterministic run knob. When a caller passes
+# ``deterministic=True`` to ``resolve_deterministic_kwargs`` the resulting
+# sampling params drive every LLM backend to temperature=0 + greedy
+# decode + a fixed Python / numpy / torch seed. The default is the
+# stochastic behaviour from before Phase 61 (do_sample=True, temperature
+# = 0.1) so production runs are unchanged unless ``--deterministic`` is
+# passed.
+DEFAULT_DETERMINISTIC_SEED: int = 42
+
+
+def resolve_deterministic_kwargs(
+    base: dict[str, Any] | None = None,
+    *,
+    deterministic: bool = False,
+    seed: int = DEFAULT_DETERMINISTIC_SEED,
+    seed_python: bool = True,
+) -> dict[str, Any]:
+    """Return a copy of ``base`` overwritten for deterministic decode.
+
+    When ``deterministic`` is True, sets ``temperature=0.0``,
+    ``do_sample=False``, and ``seed=<int>``. Also seeds the standard
+    library ``random`` + ``numpy.random`` modules so any non-LLM
+    randomness (random choice for NMS tie-breaks, etc.) is reproducible
+    across runs. ``torch`` is seeded lazily (only if torch is imported).
+
+    Returns the merged dict. Returns ``base`` unchanged when
+    ``deterministic`` is False.
+    """
+    out: dict[str, Any] = dict(base or {})
+    if not deterministic:
+        return out
+    out["temperature"] = 0.0
+    out["do_sample"] = False
+    out["seed"] = int(seed)
+    if seed_python:
+        try:
+            import random as _random
+
+            _random.seed(int(seed))
+        except Exception:
+            pass
+        try:
+            import numpy as _np
+
+            _np.random.seed(int(seed))
+        except Exception:
+            pass
+        try:
+            import torch as _torch
+
+            _torch.manual_seed(int(seed))
+        except Exception:
+            pass
+    return out
+
+
+# Phase 61 Plan 4 (Bug 4.1): re-export the token-aware caption truncation
+# helper from ``_llm_caption`` so callers can ``from rlpe.llm_backends
+# import _truncate_caption_for_llm``. We keep the actual implementation in
+# its own module to avoid dragging the Anthropic SDK / heavy dataclass
+# imports into places that just need the helper.
+from ._llm_caption import (  # noqa: E402  (import after logger setup)
+    DEFAULT_MAX_CHARS,
+    DEFAULT_MAX_TOKENS,
+    _truncate_caption_for_llm,
+)
+
+
+def select_backend_after_4xx(
+    current_backend: str,
+    configured_fallback: str | None,
+    attempts_made: int,
+) -> str:
+    """Phase 61 Plan 4 (Bug 4.10): pick the backend for the next retry.
+
+    Pure helper so tests can verify the policy without spinning up an
+    LLM client. Behaviour:
+      * If no fallback is configured → return ``current_backend``.
+      * If we are already on the fallback backend → return it (no loop).
+      * If ``attempts_made < 2`` → return ``current_backend`` (we still
+        owe one retry to the primary backend; only after the first
+        retry fails do we switch).
+      * Otherwise → return ``configured_fallback``.
+    """
+    if not configured_fallback:
+        return current_backend
+    if configured_fallback == current_backend:
+        return current_backend
+    if attempts_made < 2:
+        return current_backend
+    return configured_fallback
+
 # Match Anthropic / MiniMax / OpenAI style API keys (sk-ant-..., sk-...,
 # plus generic 40+ char sk- prefixes). Anthropic's actual key shape is
 # ``sk-ant-api03-<48 alnum>``; MiniMax / OpenAI use ``sk-<30+ alnum>`` or
@@ -619,7 +711,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
     #                     is the correct setting for offline / air-gapped
     #                     deployments (M3 weights not yet open-sourced,
     #                     privacy-sensitive papers).
-    data_outbound_policy: str = "api_redacted"  # safer default than api_full
+    data_outbound_policy: str = "api_full"  # Phase 61 (Bug 4.11): M3 vision needs full-res image for species ID
 
     def __post_init__(self) -> None:
         # ``local_only`` does not need an API key: the backend will refuse
@@ -678,6 +770,22 @@ class MiniMaxM3Backend(BaseLLMBackend):
         self.total_output_tokens: int = 0
         self.total_calls: int = 0
         self.total_errors: int = 0
+        # Phase 61 Plan 4 (Bug 4.8): dedicated counter for "JSON parse
+        # failure but extended thinking was present". Operators need to
+        # know whether a paid call returned reasoning tokens but a
+        # malformed JSON body — that's a model-quality signal very
+        # different from "no thinking happened" or "API timed out".
+        self.failed_with_thinking: int = 0
+        # Phase 61 Plan 4 (Bug 4.10): number of 4xx retries that
+        # SHOULD have used the configured fallback backend. Surfaced
+        # in /system/llm-status so operators can spot when their
+        # PipelineConfig.extra["fallback_llm_backend"] would have
+        # rescued a run.
+        self.fallback_4xx_hints: int = 0
+        # The configured fallback backend name (string), or None if no
+        # fallback was wired. Set via ``set_fallback_backend()`` from
+        # the pipeline's config-loader step.
+        self._configured_fallback: str | None = None
 
     # ------------------------------------------------------------------ helpers
 
@@ -816,7 +924,38 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     )
                     raise
                 else:
-                    # 4xx (not retryable) -> count and re-raise immediately
+                    # 4xx (not retryable) -> count and re-raise immediately.
+                    # Phase 61 Plan 4 (Bug 4.10): also surface a fallback
+                    # recommendation so a higher-level orchestrator can
+                    # retry once with a different backend (configured via
+                    # PipelineConfig.extra["fallback_llm_backend"]).
+                    # The retry loop itself cannot swap backends mid-flight
+                    # because the Anthropic client + prompt templates are
+                    # baked in at construction; instead we log the
+                    # recommendation and stamp the per-backend counter so
+                    # the dashboard can surface how often 4xx retries
+                    # *should* have used the fallback.
+                    try:
+                        recommended = select_backend_after_4xx(
+                            current_backend=self.backend_name,
+                            configured_fallback=getattr(
+                                self, "_configured_fallback", None
+                            ),
+                            attempts_made=attempt + 1,
+                        )
+                        if recommended != self.backend_name:
+                            logger.info(
+                                "MiniMax 4xx: consider switching to fallback "
+                                "backend %r on next attempt (current=%r, "
+                                "attempts=%d)",
+                                recommended,
+                                self.backend_name,
+                                attempt + 1,
+                            )
+                            with self._lock:
+                                self.fallback_4xx_hints += 1
+                    except Exception:
+                        pass
                     with self._lock:
                         self.total_errors += 1
                     raise
@@ -854,6 +993,16 @@ class MiniMaxM3Backend(BaseLLMBackend):
         try:
             parsed = parse_json_from_text(text)
         except Exception as exc:
+            # Phase 61 Plan 4 (Bug 4.8): bump the dedicated counter when
+            # the model returned reasoning but a malformed JSON body.
+            # Operators can use the ``failed_with_thinking`` rate as a
+            # model-quality KPI: a high value means the API is paid for
+            # but the model's output is not parseable.
+            if thinking and thinking.strip():
+                try:
+                    self.record_failed_with_thinking(thinking)
+                except Exception:
+                    pass
             # Set `error` / `error_type` so downstream code (e.g.
             # apply_gemma_to_matches) can propagate it to match.metadata
             # and the FallbackHandler popup shows the real reason.
@@ -1038,6 +1187,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
             out_t = self.total_output_tokens
             calls = self.total_calls
             errs = self.total_errors
+            failed_thinking = self.failed_with_thinking
         cost = round(
             in_t / 1_000_000 * MiniMax_PRICE_INPUT_PER_M
             + out_t / 1_000_000 * MiniMax_PRICE_OUTPUT_PER_M,
@@ -1049,7 +1199,45 @@ class MiniMaxM3Backend(BaseLLMBackend):
             "input_tokens": in_t,
             "output_tokens": out_t,
             "total_cost_cny": cost,
+            # Phase 61 Plan 4 (Bug 4.8): surface failed-with-thinking
+            # rate separately so dashboards can distinguish "API error"
+            # from "API returned reasoning but malformed JSON body".
+            "failed_with_thinking": failed_thinking,
         }
+
+    def record_failed_with_thinking(self, thinking_text: str | None = None) -> None:
+        """Phase 61 Plan 4 (Bug 4.8): bump the failed-with-thinking
+        counter AND the total_errors counter. The two are tracked
+        independently so a dashboard can show
+        ``failed_with_thinking / total_calls`` as a model-quality KPI.
+
+        ``thinking_text`` is optional — present for future use (e.g. to
+        extract token counts) but not required today.
+        """
+        with self._lock:
+            self.failed_with_thinking += 1
+            self.total_errors += 1
+        logger.debug(
+            "MiniMax: JSON parse failure with thinking present (failed_with_thinking=%d)",
+            self.failed_with_thinking,
+        )
+
+    def llm_status(self) -> dict[str, Any]:
+        """Phase 61 Plan 4 (Bug 4.8): thin alias for ``cost_summary``
+        used by the ``/system/llm-status`` API route. Kept as a
+        separate method so the route handler does not need to know the
+        internal cost-summary field names."""
+        base = self.cost_summary()
+        base["fallback_4xx_hints"] = self.fallback_4xx_hints
+        base["configured_fallback"] = self._configured_fallback
+        return base
+
+    def set_fallback_backend(self, name: str | None) -> None:
+        """Phase 61 Plan 4 (Bug 4.10): wire the configured fallback
+        backend name into this backend so the 4xx retry loop can
+        recommend a switch via ``select_backend_after_4xx``. ``None``
+        clears the recommendation."""
+        self._configured_fallback = name or None
 
 
 # =============================================================================
