@@ -333,12 +333,18 @@ def _label_sort_key(label: str) -> tuple[int, str]:
 def _normalize_panel_label(label: str | None) -> str | None:
     """Normalise a panel label so OCR misreads don't break caption lookup.
 
-    Two normalisations:
+    Three normalisations:
       1. Strip leading zeros ("00" → "0", "04" → "4") — PaddleOCR commonly
          reads "3" as "03" or "0" as "00" when the glyph is small.
       2. Strip trailing zero-padding for double-digit OCR ("30" misread
          of "3" stays as "3" if "3" is in the pair_lookup). The
          caller decides whether to keep or drop by trying both forms.
+      3. Phase 62 Plan 5 (Bug 5.10): recover from digit+letter+single-
+         trailing-digit OCR misreads ("3a0" → "3a", "12b5" → "12b").
+         A trailing single digit on an otherwise-valid digit+letter
+         label is almost always OCR noise (the next character's
+         glyph has bled into the OCR window); strip it. Multi-digit
+         trailing ("3a00") is left as-is — too ambiguous to recover.
 
     Returns the cleanest single label (or None for empty input).
     """
@@ -347,6 +353,19 @@ def _normalize_panel_label(label: str | None) -> str | None:
     s = str(label).strip()
     if not s:
         return None
+    # Phase 62 Plan 5 (Bug 5.10): digit + letter + single trailing
+    # digit OCR misread → strip the trailing digit. We require the
+    # base (without trailing digit) to look like a valid panel
+    # label shape so we never silently produce garbage.
+    if len(s) >= 3 and s[-1].isdigit() and s[-2].isalpha():
+        candidate = s[:-1]
+        # Run the candidate through the existing numeric-normalisation
+        # path below — if it's pure-digit it'll be reduced; if it's
+        # digit+letter, we just use it as-is.
+        if candidate.isdigit():
+            s = str(int(candidate))
+        else:
+            s = candidate
     # Don't normalise alphabetic labels ("A", "B" stay as-is).
     if not s.isdigit():
         return s
