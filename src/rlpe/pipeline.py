@@ -31,7 +31,7 @@ from .config import PipelineConfig
 from .converters import match_result_from_dict, run_output_from_provenance
 from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
 from .geology_extraction import build_knowledge_graph, link_species_to_geology
-from .grobid import GrobidClient, parse_paper_metadata_from_tei
+from .grobid import GrobidClient, PipelineCancelledError, parse_paper_metadata_from_tei
 from .layout import choose_best_page, detect_figure_regions, extract_figure_number, render_pdf_pages
 from .m3_engine import CaptionPair, M3Engine, PanelBox, PanelMatch
 from .ocr import OCRBackend, normalize_ocr_tokens
@@ -91,6 +91,9 @@ class RadiolarianPipeline:
             server_url=config.grobid_url,
             timeout=int(self.config.extra.get("grobid_timeout", 300)),
             max_retries=int(self.config.extra.get("grobid_max_retries", 3)),
+            # Phase 59 (Bug 2.2): forward cancel_event so the GROBID
+            # retry loop honours user cancellation.
+            cancel_event=cancel_event,
         )
         # Phase 29: cycle guard. ``_process_one_pdf_grobid`` may now
         # call ``_process_one_pdf_od`` on failure, and ``_process_one_pdf_od``
@@ -99,6 +102,13 @@ class RadiolarianPipeline:
         # The set tracks paper_ids currently in the GROBID code path
         # so OD can detect re-entry and skip the recursive GROBID call.
         self._grobid_in_progress: set[str] = set()
+        # Phase 59 (Bug 2.1): ``_grobid_in_progress`` is read at L861 and
+        # modified at L1960/L1967 from ``ThreadPoolExecutor`` workers
+        # without any ``threading.Lock``. Race conditions can: (a) miss
+        # cycle detection, (b) leak entries, (c) cause GROBID↔OD
+        # infinite recursion. All reads and writes to the cycle-guard
+        # set MUST go through ``self._grobid_lock``.
+        self._grobid_lock = threading.Lock()
         # Phase 27: forward the configured OCR language list. Default
         # ``"en"`` keeps the legacy English-only flow identical. JA
         # papers pass ``--ocr-lang en,ja`` and EasyOCR / PaddleOCR both
@@ -141,6 +151,11 @@ class RadiolarianPipeline:
         # segmenter (SAM2) and gemma runtimes are NOT concurrent-safe, so
         # they retain per-pipeline locks.
         self._seg_lock = threading.Lock()
+        # Phase 59 (Bug 2.5): serialise progress-callback invocations.
+        # Multiple worker threads can finish PDFs concurrently and
+        # invoke ``_progress_cb`` simultaneously; without this lock,
+        # Qt signal dispatch in the GUI can interleave updates.
+        self._progress_lock = threading.Lock()
         # Fallback handler for MiniMax API errors (None when not using MiniMax)
         self.gemma_fallback_handler = None
         # Secondary Gemma runtime used as fallback target (lazy-init on first error)
@@ -315,8 +330,15 @@ class RadiolarianPipeline:
         ensure_dir(self.config.manifests_dir())
 
     def _emit_progress(self, current: int, total: int, message: str) -> None:
+        # Phase 59 (Bug 2.5): hold ``_progress_lock`` so concurrent
+        # worker threads serialise callback invocations. Without the
+        # lock, multiple workers finishing PDFs at the same time can
+        # call into Qt's signal dispatcher in parallel, leading to
+        # interleaved updates and progress-bar regressions
+        # ("Completed 3/4" before "Completed 1/4").
         if self._progress_cb is not None:
-            self._progress_cb(current, total, message)
+            with self._progress_lock:
+                self._progress_cb(current, total, message)
 
     def _collect_llm_usage(self) -> dict[str, Any] | None:
         """Thin wrapper around :func:`rlpe.llm_usage.collect_llm_usage`.
@@ -348,7 +370,15 @@ class RadiolarianPipeline:
         # Fire one initial tick so the UI can show "started" before the first
         # PDF actually finishes.
         self._emit_progress(0, total, f"Starting pipeline ({total} PDF(s))")
-        with ThreadPoolExecutor(max_workers=max(1, self.config.num_workers)) as pool:
+        # Phase 59 (Bug 2.3): pool lifecycle is now manual so the
+        # cancel branch can call ``pool.shutdown(wait=False,
+        # cancel_futures=True)``. The previous ``with ThreadPoolExecutor(...)``
+        # form called ``shutdown(wait=True)`` on exit, which blocked
+        # until every running worker (especially long LLM API calls)
+        # had finished — a 30s sleep per PDF meant 4 PDFs blocked for
+        # 2 minutes after the user clicked Cancel.
+        pool = ThreadPoolExecutor(max_workers=max(1, self.config.num_workers))
+        try:
             futures = {pool.submit(self._process_one_pdf, p): p for p in pdf_files}
             try:
                 # Phase 42: also check cancel_event at the top of the
@@ -356,14 +386,16 @@ class RadiolarianPipeline:
                 # completes still short-circuits the run.
                 for fut in as_completed(futures):
                     if cancel_event is not None and cancel_event.is_set():
-                        # Cancel all in-flight futures; return what
-                        # we've processed so far.
-                        for f in futures:
-                            f.cancel()
+                        # Phase 59 (Bug 2.3): fast shutdown. Cancel
+                        # any futures that haven't started yet and
+                        # return immediately — don't wait for running
+                        # workers (they may be stuck in an LLM API
+                        # call with a 30s+ timeout).
                         self._emit_progress(
                             completed, total,
                             f"Cancelled by user after {completed}/{total} PDFs",
                         )
+                        pool.shutdown(wait=False, cancel_futures=True)
                         return rows
                     pdf = futures[fut]
                     if fut.cancelled():
@@ -382,8 +414,7 @@ class RadiolarianPipeline:
                         # ``cancelled`` (the API's own cancel path doesn't
                         # go through ``run()``, but the API may also be
                         # wrapping this method).
-                        for f in futures:
-                            f.cancel()
+                        pool.shutdown(wait=False, cancel_futures=True)
                         raise
                     except Exception:
                         logger.exception("PDF processing failed; continuing with remaining PDFs")
@@ -399,9 +430,18 @@ class RadiolarianPipeline:
                 # Same handling if the cancel happens between ``as_completed``
                 # yields (e.g. signal handler fires while we're idle waiting
                 # for the next future).
-                for f in futures:
-                    f.cancel()
+                pool.shutdown(wait=False, cancel_futures=True)
                 raise
+        finally:
+            # Always release the executor; if we already entered the
+            # cancel branch, ``wait=False`` was used; otherwise default
+            # to ``wait=True`` so the remaining futures drain cleanly.
+            try:
+                pool.shutdown(wait=True)
+            except Exception:
+                # shutdown may already have been called from the cancel
+                # branch — ignore the resulting RuntimeError.
+                pass
 
         manifest_path = self.config.manifests_dir() / "matches.jsonl"
         write_jsonl(manifest_path, rows)
@@ -858,7 +898,9 @@ class RadiolarianPipeline:
             # failed), skip the recursive GROBID call to avoid an
             # infinite loop. Return empty so the caller can fall
             # through to the visual-stub fallback.
-            if paper_id in self._grobid_in_progress:
+            with self._grobid_lock:
+                cycle_detected = paper_id in self._grobid_in_progress
+            if cycle_detected:
                 logger.warning(
                     "Skipping recursive GROBID fallback for %s; "
                     "OD↔GROBID cycle detected.",
@@ -1957,14 +1999,18 @@ class RadiolarianPipeline:
         # Phase 29: mark this paper as currently in the GROBID code
         # path so the OD-fallback path can detect re-entry and break
         # the GROBID↔OD cycle. Cleared in the finally block.
-        self._grobid_in_progress.add(paper_id)
+        # Phase 59 (Bug 2.1): guarded by ``_grobid_lock`` so concurrent
+        # workers can't miss the cycle guard or leak the entry.
+        with self._grobid_lock:
+            self._grobid_in_progress.add(paper_id)
         try:
             return self._process_one_pdf_grobid_inner(paper_id, pdf_path)
         finally:
             # Phase 29: clear the cycle-guard entry on every exit path
             # so the OD↔GROBID fallback doesn't leak paper_ids across
             # unrelated papers.
-            self._grobid_in_progress.discard(paper_id)
+            with self._grobid_lock:
+                self._grobid_in_progress.discard(paper_id)
 
     def _process_one_pdf_grobid_inner(
         self, paper_id: str, pdf_path: Path
@@ -2078,13 +2124,19 @@ class RadiolarianPipeline:
                 continue
             caption.page_index = best_page.page_index
 
+            # Phase 59 (Bug 2.8): candidate-pages expansion now uses
+            # ``self.config.caption_window`` as the radius instead of
+            # the hardcoded ±1 offset. Operators can widen the
+            # cross-page figure search without code changes.
             candidate_pages = [best_page]
-            if best_page.page_index > 1:
-                prev_page = pages[best_page.page_index - 2]
-                candidate_pages.insert(0, prev_page)
-            if best_page.page_index < len(pages):
-                next_page = pages[best_page.page_index]
-                candidate_pages.append(next_page)
+            radius = max(1, int(self.config.caption_window))
+            for offset in range(1, radius + 1):
+                prev_idx = best_page.page_index - 1 - offset
+                next_idx = best_page.page_index - 1 + offset
+                if prev_idx >= 0:
+                    candidate_pages.insert(0, pages[prev_idx])
+                if next_idx < len(pages):
+                    candidate_pages.append(pages[next_idx])
 
             chosen_regions = []
             for page in candidate_pages:
@@ -2311,15 +2363,65 @@ class RadiolarianPipeline:
             else:
                 real_rows.append(r)
 
-        best_by_key: dict[tuple[str, str | None], dict[str, Any]] = {}
+        # Phase 59 (Bug 2.4): split real_rows by panel_id presence.
+        # ``(figure_id, panel_id=None)`` collapses multiple distinct
+        # no-panel rows (caption-parser, layout-only fallback,
+        # OD-unpaired stub) into one when keyed on
+        # ``(figure_id, panel_id)``. We dedup None-rows separately
+        # using ``(figure_id, bbox_tuple, species, panel_index)`` so
+        # distinct rows survive.
+        none_panel_rows: list[dict[str, Any]] = []
+        keyed_rows: list[dict[str, Any]] = []
         for r in real_rows:
+            if r.get("panel_id") is None:
+                none_panel_rows.append(r)
+            else:
+                keyed_rows.append(r)
+
+        def _none_panel_key(r: dict[str, Any]) -> tuple:
+            """Dedup key for panel_id=None rows: figure + bbox +
+            species + panel_index. Two rows with the same key are
+            true duplicates; distinct keys represent distinct
+            no-panel observations that must be preserved."""
+            bbox = r.get("bbox")
+            return (
+                r.get("figure_id", ""),
+                tuple(bbox) if isinstance(bbox, (list, tuple)) else bbox,
+                r.get("species"),
+                (r.get("metadata") or {}).get("panel_index"),
+            )
+
+        best_by_key: dict[tuple, dict[str, Any]] = {}
+        # Phase 59 (Bug 2.4): mixed key types — keyed rows use
+        # ``(figure_id, panel_id)``; None-panel rows use the richer
+        # ``_none_panel_key`` tuple. Python tuples are structural so
+        # the two never collide.
+        # Phase A: keyed rows — original (figure_id, panel_id) dedup.
+        for r in keyed_rows:
             key = (r.get("figure_id", ""), r.get("panel_id"))
             cur = best_by_key.get(key)
             if cur is None:
                 best_by_key[key] = r
                 continue
-            # Higher confidence wins; ties broken by panel_score
-            # (classical detector score), then by first-seen (lower idx).
+            r_conf = float(r.get("confidence") or 0.0)
+            c_conf = float(cur.get("confidence") or 0.0)
+            if r_conf > c_conf:
+                best_by_key[key] = r
+            elif r_conf == c_conf:
+                r_score = float((r.get("metadata") or {}).get("panel_score") or 0.0)
+                c_score = float((cur.get("metadata") or {}).get("panel_score") or 0.0)
+                if r_score > c_score:
+                    best_by_key[key] = r
+
+        # Phase B: dedup None-panel rows by (figure_id, bbox, species,
+        # panel_index). Distinct keys mean distinct rows that must
+        # survive (Bug 2.4 fix).
+        for r in none_panel_rows:
+            key = _none_panel_key(r)
+            cur = best_by_key.get(key)
+            if cur is None:
+                best_by_key[key] = r
+                continue
             r_conf = float(r.get("confidence") or 0.0)
             c_conf = float(cur.get("confidence") or 0.0)
             if r_conf > c_conf:
@@ -2333,11 +2435,19 @@ class RadiolarianPipeline:
         deduped = list(best_by_key.values())
 
         # Phase 2: drop empty-signal rows and invalid panel_ids.
+        # Phase 59 (Bug 2.4): panel_id=None is now a *valid* category
+        # (e.g. caption-parser rows, layout-only fallbacks, OD-unpaired
+        # figure stubs). Drop only rows where panel_id is a string
+        # but fails the SHAPE check.
         kept: list[dict[str, Any]] = []
         for r in deduped:
             pid = r.get("panel_id")
-            # Skip rows where panel_id is None / empty / invalid format.
-            if not pid or not isinstance(pid, str) or not SHAPE.fullmatch(pid.strip()):
+            # Phase 59: only drop rows whose panel_id is a malformed
+            # STRING (not a None — None is now allowed through).
+            if pid is not None and (
+                not isinstance(pid, str)
+                or not SHAPE.fullmatch(pid.strip())
+            ):
                 logger.debug(
                     "Drop row with invalid panel_id=%r (fig=%s)",
                     pid,
@@ -2823,6 +2933,68 @@ Rules:
                                 filled,
                                 added,
                             )
+
+                # Phase 59 (Bug 2.6): post-hybrid dedup. The hybrid
+                # block above adds NEW rows for caption labels that
+                # were not in the LLM output, but if a label slipped
+                # past the "if lbl_norm in existing_labels: continue"
+                # gate (e.g. because LLM-normalised the label
+                # differently than the caption parser), the same
+                # (paper_id, figure_id, panel_id) can now appear
+                # twice in ``llm_results``. The downstream
+                # ``_finalize_rows`` dedups by (figure_id, panel_id)
+                # so the higher-confidence row wins, but in this
+                # hybrid case the caption-derived row has
+                # confidence=0.0 while the LLM row may have 0.8 — so
+                # the dedup keeps the LLM row and discards the
+                # caption enrichment. That breaks the recovery path.
+                #
+                # We post-process: for any caption-derived row whose
+                # (paper_id, figure_id, panel_id_normalised) already
+                # exists in ``llm_results`` (i.e. the LLM did produce
+                # that row), drop the caption-derived duplicate and
+                # keep the LLM row (it has richer bbox / metadata).
+                # The remaining caption-only rows (the LLM
+                # truncation case) survive unchanged.
+                if llm_results and pair_lookup:
+                    seen_panel_keys: dict[
+                        tuple[str, str, str], dict[str, Any]
+                    ] = {}
+                    deduped_llm: list[dict[str, Any]] = []
+                    for r in llm_results:
+                        pid = r.get("panel_id")
+                        if pid is None:
+                            # No panel_id → can't dedup; keep as-is.
+                            deduped_llm.append(r)
+                            continue
+                        norm = _normalize_panel_label(str(pid)).strip().lower()
+                        if not norm:
+                            deduped_llm.append(r)
+                            continue
+                        key = (paper_id, str(r.get("figure_id", figure_id)), norm)
+                        # Caption-derived rows (species_source ends with
+                        # ``_hybrid_added`` or ``caption_parser_hybrid``)
+                        # drop when an LLM-native row exists; LLM rows
+                        # themselves always win.
+                        is_caption_added = (r.get("metadata") or {}).get(
+                            "species_source"
+                        ) in (
+                            "caption_parser_hybrid",
+                            "regex_caption_hybrid_added",
+                        )
+                        if is_caption_added and key in seen_panel_keys:
+                            # The earlier LLM row wins — drop this duplicate.
+                            continue
+                        seen_panel_keys[key] = r
+                        deduped_llm.append(r)
+                    if len(deduped_llm) != len(llm_results):
+                        logger.debug(
+                            "Post-hybrid dedup %s/%s: dropped %d caption-duplicate rows",
+                            paper_id,
+                            figure_id,
+                            len(llm_results) - len(deduped_llm),
+                        )
+                        llm_results = deduped_llm
                 # Round 11 (Bug 2 fix): filter M3-returned panels whose
                 # label doesn't appear in the caption-derived pair set.
                 # M3 frequently invents panel_ids for plates whose
