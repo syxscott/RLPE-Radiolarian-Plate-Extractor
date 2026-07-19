@@ -1172,10 +1172,17 @@ def _pbdb_enrich_geology(
         for f in ("early_interval", "formation", "locality", "country"):
             if agg[f]:
                 top[f] = max(agg[f].items(), key=lambda x: x[1])[0]
+        # Phase 63 Plan 6.21 (Bug 6.21): use ``statistics.median`` for
+        # biostratigraphic range bounds. Mean of a bimodal range has
+        # no biostratigraphic meaning (a Carboniferous-Cambrian mean
+        # is just a number, not a real range). Median selects the
+        # centre of the largest cluster and is robust to outliers.
         if agg["ma_top"]:
-            top["ma_top"] = sum(agg["ma_top"]) / len(agg["ma_top"])
+            import statistics as _stats
+            top["ma_top"] = _stats.median(agg["ma_top"])
         if agg["ma_base"]:
-            top["ma_base"] = sum(agg["ma_base"]) / len(agg["ma_base"])
+            import statistics as _stats
+            top["ma_base"] = _stats.median(agg["ma_base"])
         if agg["lat"]:
             top["lat"] = sum(agg["lat"]) / len(agg["lat"])
             top["lon"] = sum(agg["lon"]) / len(agg["lon"])
