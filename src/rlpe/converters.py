@@ -257,13 +257,24 @@ def _locality_id(geo: dict[str, Any], paper_id: str) -> str:
     orderings, which could diverge on edge cases. This helper
     centralises the schema to ``(paper_id, locality, lat, lon)`` so
     the two lists always join.
+
+    Phase 63 Plan 6.14 (Bug 6.14): use modern_latitude / modern_longitude
+    when present (Round 25+ convention), falling back to legacy
+    latitude / longitude. The previous formula relied solely on the
+    legacy ``latitude/longitude`` fields, which Round 25+ leaves as
+    ``None`` for derived (centroid, paleo-reconstructed) coords —
+    so two physically distinct localities at the same name with
+    different modern coords collapsed onto the SAME hash and the
+    export silently dropped one.
     """
+    lat = _resolve_modern_coord(geo.get("modern_latitude"), geo.get("latitude"))
+    lon = _resolve_modern_coord(geo.get("modern_longitude"), geo.get("longitude"))
     return _stable_id(
         "loc",
         paper_id,
         geo.get("locality"),
-        geo.get("latitude"),
-        geo.get("longitude"),
+        lat,
+        lon,
     )
 
 
@@ -1174,11 +1185,18 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
             locality = g.get("locality")
             if not locality:
                 continue
+            # Phase 63 Plan 6.14 (Bug 6.14): the dedup key now uses
+            # modern_latitude / modern_longitude (Round 25+ convention)
+            # so two distinct localities with the same name but
+            # different coords are kept separate. ``_resolve_modern_coord``
+            # picks the modern field when present, falling back to legacy.
+            lat = _resolve_modern_coord(g.get("modern_latitude"), g.get("latitude"))
+            lon = _resolve_modern_coord(g.get("modern_longitude"), g.get("longitude"))
             key = (
                 m.paper_id,
                 locality,
-                g.get("latitude"),
-                g.get("longitude"),
+                lat,
+                lon,
             )
             if key in seen:
                 continue
