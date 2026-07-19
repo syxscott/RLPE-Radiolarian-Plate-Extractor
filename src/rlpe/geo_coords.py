@@ -232,6 +232,19 @@ _PALEO_KEYWORDS_GEO = (
     "at deposition", "in triassic", "in jurassic", "in cretaceous",
     "in permian", "in devonian", "in ordovician", "in silurian",
     "in cambrian", "in carboniferous",
+    # Phase 62 Plan 5 (Bug 5.15): era + epoch names (mirror copy
+    # of geology_extraction._PALEO_KEYWORDS so the two paths stay
+    # in sync without a circular import).
+    "in mesozoic", "in the mesozoic", "mesozoic",
+    "in cenozoic", "in the cenozoic", "cenozoic",
+    "in paleozoic", "in the paleozoic", "paleozoic",
+    "in paleogene", "in the paleogene", "paleogene",
+    "in neogene", "in the neogene", "neogene",
+    "in eocene", "in the eocene", "eocene",
+    "in oligocene", "in the oligocene", "oligocene",
+    "in miocene", "in the miocene", "miocene",
+    "in pliocene", "in the pliocene", "pliocene",
+    "in pleistocene", "in the pleistocene", "pleistocene",
 )
 
 

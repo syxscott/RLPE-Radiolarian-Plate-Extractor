@@ -346,6 +346,21 @@ _PALEO_KEYWORDS = (
     "at deposition", "in triassic", "in jurassic", "in cretaceous",
     "in permian", "in devonian", "in ordovician", "in silurian",
     "in cambrian", "in carboniferous",
+    # Phase 62 Plan 5 (Bug 5.15): era + epoch names. The original
+    # list covered periods only, so a sentence framed "in the
+    # Eocene" / "in the Mesozoic" was mis-classified as modern.
+    # Both "in the X" and bare "X" framings are covered — real
+    # sentences use both forms interchangeably.
+    "in mesozoic", "in the mesozoic", "mesozoic",
+    "in cenozoic", "in the cenozoic", "cenozoic",
+    "in paleozoic", "in the paleozoic", "paleozoic",
+    "in paleogene", "in the paleogene", "paleogene",
+    "in neogene", "in the neogene", "neogene",
+    "in eocene", "in the eocene", "eocene",
+    "in oligocene", "in the oligocene", "oligocene",
+    "in miocene", "in the miocene", "miocene",
+    "in pliocene", "in the pliocene", "pliocene",
+    "in pleistocene", "in the pleistocene", "pleistocene",
 )
 _MODERN_KEYWORDS = (
     "today", "present-day", "present day", "currently",
