@@ -147,6 +147,14 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
                 redox=g.get("redox"),
                 chemostrat=g.get("chemostrat"),
                 facies=g.get("facies"),
+                # Phase 63 Plan 6.15 (Bug 6.15): GBIF requires
+                # ``coordinateUncertaintyInMeters``. We map
+                # ``coord_source`` to a representative radius (see
+                # ``_coordinate_uncertainty_for``). ``None`` when the
+                # coord_source isn't one of the recognised values.
+                coordinate_uncertainty_in_meters=_coordinate_uncertainty_for(
+                    g.get("coord_source", "") or ""
+                ),
             )
         )
     return out
@@ -444,6 +452,79 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
         qualifier = " ".join(tokens[qualifier_idx:])
 
     return {"genus": genus, "specific_epithet": epithet, "qualifier": qualifier}
+
+
+def _extract_authorship(species: str | None) -> tuple[str | None, str | None, str | None]:
+    """Best-effort split of an ICZN authorship out of a species string.
+
+    Returns ``(genus, subgenus, authorship)``. The input shape is::
+
+        ``Genus species (Smith, 1900)``
+        ``Genus (Subgenus) species Smith, 1900``
+        ``Podocyrtis (Podocyrtites) species Haeckel, 1887``
+
+    Phase 63 Plan 6.17/6.18 (Bugs 6.17/6.18) decompose this shape into
+    DwC-compatible fields: ``genericName`` (subgenus),
+    ``scientificNameAuthorship`` (the author/year string).
+
+    Returns ``(None, None, None)`` when no clear authority is found
+    — caller stores ``None`` and downstream reviewers see the
+    verbatim_name carrying the full string.
+    """
+    name = _normalise_species_name(species)
+    if not name:
+        return None, None, None
+
+    # Look for an authorship block in parentheses ``(Smith, 1900)``
+    # or as a trailing Smith, 1900. We scan from the right.
+    authorship: str | None = None
+    subgenus: str | None = None
+    rest = name
+
+    # 1. Parenthesised authority e.g. ``(Smith, 1900)``
+    m = re.search(r"\(([^()]+(?:,\s*\d{4}[a-z]?))\)\s*$", name)
+    if m:
+        authorship = m.group(1).strip()
+        rest = name[: m.start()].strip()
+
+    # 2. Trailing ``, 1900`` style (Smith, 1900) without parens — only
+    # when there's no parenthesised match above.
+    if authorship is None:
+        m = re.search(r"([A-Z][\w\-']*(?:,\s*\d{4}[a-z]?))\s*$", name)
+        if m:
+            authorship = m.group(1).strip()
+            rest = name[: m.start()].strip()
+
+    # 3. Subgenus in parentheses e.g. ``Podocyrtis (Podocyrtites) species``
+    if rest:
+        sm = re.match(r"^([A-Z][\w\-']+)\s+\(([A-Z][\w\-']+)\)\s+", rest)
+        if sm:
+            subgenus = sm.group(2).strip()
+
+    return None, subgenus, authorship
+
+
+def _coordinate_uncertainty_for(coord_source: str | None) -> float | None:
+    """Map ``coord_source`` to a GBIF-compatible
+    ``coordinateUncertaintyInMeters`` value.
+
+    GBIF guidelines:
+      * ``regex`` / ``caption``: textual, ~1000m uncertainty
+      * ``paleodb``: derived from PBDB centroid, ~5000m
+      * ``country_centroid``: large fallback, ~25000m
+      * ``paleo_reconstructed``: paleocoord, ~10000m
+      * None: missing
+    """
+    if not coord_source:
+        return None
+    table = {
+        "regex": 1000.0,
+        "caption": 1000.0,
+        "paleodb": 5000.0,
+        "country_centroid": 25000.0,
+        "paleo_reconstructed": 10000.0,
+    }
+    return table.get(coord_source, 1000.0)
 
 
 def _panel_review_reasons(match: MatchResult) -> list[str]:
@@ -835,6 +916,24 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         meta = m.metadata or {}
         pbdb = meta.get("paleodb") or {}
         pbdb_tax = pbdb.get("taxonomy") or {}
+        # Phase 63 Plan 6.17/6.18 (Bugs 6.17/6.18): extract the
+        # authority/year and subgenus from the verbatim species
+        # string. ``_extract_authorship`` recognises both
+        # parenthesised ``(Smith, 1900)`` and trailing ``Smith, 1900``
+        # shapes; ``subgenus`` is the parenthetical after the genus
+        # (``Podocyrtis (Podocyrtites) species Haeckel``).
+        _, subgenus, authorship = _extract_authorship(sp)
+        # Phase 63 Plan 6.19 (Bug 6.19): taxon_remarks captures the
+        # extraction method so DwC reviewers can see how the taxon
+        # was determined. The Round-1 default was ``source`` on
+        # ``TaxonRecord`` for the same purpose; ``taxon_remarks`` is
+        # the explicit DwC term so the export self-documents.
+        extraction_method = meta.get("extraction_method") or ""
+        taxon_remarks = (
+            f"extraction_method={extraction_method}"
+            if extraction_method
+            else None
+        )
         rec = TaxonRecord(
             taxon_id=taxon_id,
             verbatim_name=sp,
@@ -842,7 +941,7 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             genus=parts["genus"],
             specific_epithet=parts["specific_epithet"],
             qualifier=parts["qualifier"],
-            authority=pbdb_tax.get("authority") or None,
+            authority=pbdb_tax.get("authority") or authorship,
             rank=(
                 pbdb_tax.get("rank")
                 or ("species" if parts["specific_epithet"] else "genus_or_other")
@@ -857,6 +956,16 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             confidence=float(m.confidence),
             needs_review=bool(meta.get("needs_review", False)),
             review_reasons=list(meta.get("review_reasons", []) or []),
+            # Phase 63 Plan 6.16 (Bug 6.16): ICZN is the default;
+            # explicit so the export self-documents.
+            nomenclatural_code="ICZN",
+            # Phase 63 Plan 6.17 (Bug 6.17)
+            scientific_name_authorship=authorship,
+            # Phase 63 Plan 6.18 (Bug 6.18): subgenus extracted from
+            # the parenthetical shape ``Podocyrtis (Podocyrtites)``.
+            generic_name=subgenus,
+            # Phase 63 Plan 6.19 (Bug 6.19)
+            taxon_remarks=taxon_remarks,
         )
         seen[taxon_id] = rec.model_dump()
     return list(seen.values())
@@ -1223,6 +1332,10 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
                 ),
                 geocoding_source=None,
                 confidence=float(g.get("confidence", 0.0) or 0.0),
+                # Phase 63 Plan 6.15 (Bug 6.15)
+                coordinate_uncertainty_in_meters=_coordinate_uncertainty_for(
+                    g.get("coord_source", "") or ""
+                ),
             )
             seen[key] = rec.model_dump()
     return list(seen.values())

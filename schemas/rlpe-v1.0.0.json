@@ -412,6 +412,18 @@
           "title": "Coord Source",
           "type": "string"
         },
+        "coordinate_uncertainty_in_meters": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coordinate Uncertainty In Meters"
+        },
         "country": {
           "anyOf": [
             {
@@ -751,6 +763,18 @@
           "default": null,
           "title": "Coordinate Source"
         },
+        "coordinate_uncertainty_in_meters": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coordinate Uncertainty In Meters"
+        },
         "country": {
           "anyOf": [
             {
@@ -872,6 +896,18 @@
           "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
+        },
+        "coordinate_uncertainty_in_meters": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coordinate Uncertainty In Meters"
         },
         "locality_id": {
           "anyOf": [
@@ -2038,6 +2074,18 @@
           "default": null,
           "title": "Family"
         },
+        "generic_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Generic Name"
+        },
         "genus": {
           "anyOf": [
             {
@@ -2054,6 +2102,11 @@
           "default": false,
           "title": "Needs Review",
           "type": "boolean"
+        },
+        "nomenclatural_code": {
+          "default": "ICZN",
+          "title": "Nomenclatural Code",
+          "type": "string"
         },
         "normalized_name": {
           "anyOf": [
@@ -2110,6 +2163,18 @@
           "title": "Review Reasons",
           "type": "array"
         },
+        "scientific_name_authorship": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scientific Name Authorship"
+        },
         "source": {
           "anyOf": [
             {
@@ -2137,6 +2202,18 @@
         "taxon_id": {
           "title": "Taxon Id",
           "type": "string"
+        },
+        "taxon_remarks": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Taxon Remarks"
         },
         "verbatim_name": {
           "anyOf": [
