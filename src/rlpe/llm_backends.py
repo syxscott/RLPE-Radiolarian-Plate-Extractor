@@ -745,6 +745,12 @@ class MiniMaxM3Backend(BaseLLMBackend):
         self.total_output_tokens: int = 0
         self.total_calls: int = 0
         self.total_errors: int = 0
+        # Phase 61 Plan 4 (Bug 4.8): dedicated counter for "JSON parse
+        # failure but extended thinking was present". Operators need to
+        # know whether a paid call returned reasoning tokens but a
+        # malformed JSON body — that's a model-quality signal very
+        # different from "no thinking happened" or "API timed out".
+        self.failed_with_thinking: int = 0
 
     # ------------------------------------------------------------------ helpers
 
@@ -921,6 +927,16 @@ class MiniMaxM3Backend(BaseLLMBackend):
         try:
             parsed = parse_json_from_text(text)
         except Exception as exc:
+            # Phase 61 Plan 4 (Bug 4.8): bump the dedicated counter when
+            # the model returned reasoning but a malformed JSON body.
+            # Operators can use the ``failed_with_thinking`` rate as a
+            # model-quality KPI: a high value means the API is paid for
+            # but the model's output is not parseable.
+            if thinking and thinking.strip():
+                try:
+                    self.record_failed_with_thinking(thinking)
+                except Exception:
+                    pass
             # Set `error` / `error_type` so downstream code (e.g.
             # apply_gemma_to_matches) can propagate it to match.metadata
             # and the FallbackHandler popup shows the real reason.
@@ -1105,6 +1121,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
             out_t = self.total_output_tokens
             calls = self.total_calls
             errs = self.total_errors
+            failed_thinking = self.failed_with_thinking
         cost = round(
             in_t / 1_000_000 * MiniMax_PRICE_INPUT_PER_M
             + out_t / 1_000_000 * MiniMax_PRICE_OUTPUT_PER_M,
@@ -1116,7 +1133,35 @@ class MiniMaxM3Backend(BaseLLMBackend):
             "input_tokens": in_t,
             "output_tokens": out_t,
             "total_cost_cny": cost,
+            # Phase 61 Plan 4 (Bug 4.8): surface failed-with-thinking
+            # rate separately so dashboards can distinguish "API error"
+            # from "API returned reasoning but malformed JSON body".
+            "failed_with_thinking": failed_thinking,
         }
+
+    def record_failed_with_thinking(self, thinking_text: str | None = None) -> None:
+        """Phase 61 Plan 4 (Bug 4.8): bump the failed-with-thinking
+        counter AND the total_errors counter. The two are tracked
+        independently so a dashboard can show
+        ``failed_with_thinking / total_calls`` as a model-quality KPI.
+
+        ``thinking_text`` is optional — present for future use (e.g. to
+        extract token counts) but not required today.
+        """
+        with self._lock:
+            self.failed_with_thinking += 1
+            self.total_errors += 1
+        logger.debug(
+            "MiniMax: JSON parse failure with thinking present (failed_with_thinking=%d)",
+            self.failed_with_thinking,
+        )
+
+    def llm_status(self) -> dict[str, Any]:
+        """Phase 61 Plan 4 (Bug 4.8): thin alias for ``cost_summary``
+        used by the ``/system/llm-status`` API route. Kept as a
+        separate method so the route handler does not need to know the
+        internal cost-summary field names."""
+        return self.cost_summary()
 
 
 # =============================================================================
