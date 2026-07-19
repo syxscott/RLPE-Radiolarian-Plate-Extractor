@@ -1230,12 +1230,32 @@ def get_results(
 def _row_id(job_id: str, row: dict[str, Any]) -> str:
     """Stable identifier for one result row.
 
-    ``(job_id, paper_id, figure_id, panel_id)`` is unique within the
-    cache because ``panel_id`` is unique per figure within a paper.
+    The default key is ``(job_id, paper_id, figure_id, panel_id)``
+    which is unique per (job, panel). When ``panel_id`` is missing
+    (LLM-first paths, panel_index=None, caption parser gave up),
+    the figure might still contain multiple distinct rows; we fall
+    back to ``bbox`` so two panels in the same figure that lack a
+    panel id are still distinguishable. The last-resort key is the
+    row's pipeline-synthesised position (``_seq`` / position from
+    the source list / a hashed blob of the row).
     """
-    return (
-        f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:{row.get('panel_id', '')}"
-    )
+    panel_id = row.get("panel_id")
+    if panel_id:
+        return (
+            f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:{panel_id}"
+        )
+    bbox = row.get("bbox")
+    if bbox:
+        return (
+            f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:"
+            f"bbox:{','.join(str(int(v)) for v in bbox)}"
+        )
+    # Last resort: stable hash of the row's identifying fields so two
+    # identical rows collapse but two differing rows don't.
+    import hashlib
+    blob = repr(sorted(row.items())).encode("utf-8")
+    digest = hashlib.sha1(blob).hexdigest()[:12]
+    return f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:hash:{digest}"
 
 
 @app.delete("/results")
