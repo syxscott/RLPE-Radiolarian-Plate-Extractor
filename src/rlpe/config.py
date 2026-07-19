@@ -91,6 +91,16 @@ _KNOWN_EXTRA_KEYS = {
     "paleodb_endpoint",
     "paleodb_cache_dir",
     "paleodb_offline",
+    # Phase 61 Plan 4 (Bug 4.3): reproducible-runs knob. When True, every
+    # LLM backend sets temperature=0.0 / do_sample=False and seeds the
+    # Python + numpy + torch RNGs so two consecutive runs on the same
+    # paper produce identical species lists. See
+    # ``llm_backends.resolve_deterministic_kwargs``.
+    "deterministic",
+    "deterministic_seed",
+    # Phase 61 Plan 4 (Bug 4.10): optional name of a fallback LLM backend
+    # for 4xx-then-retry.
+    "fallback_llm_backend",
 }
 
 

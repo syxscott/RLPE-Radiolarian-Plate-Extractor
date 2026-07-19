@@ -20,6 +20,62 @@ logger = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 _JSON_ARR_RE = re.compile(r"\[.*?\]", re.DOTALL)
 
+# Phase 61 Plan 4 (Bug 4.3): deterministic run knob. When a caller passes
+# ``deterministic=True`` to ``resolve_deterministic_kwargs`` the resulting
+# sampling params drive every LLM backend to temperature=0 + greedy
+# decode + a fixed Python / numpy / torch seed. The default is the
+# stochastic behaviour from before Phase 61 (do_sample=True, temperature
+# = 0.1) so production runs are unchanged unless ``--deterministic`` is
+# passed.
+DEFAULT_DETERMINISTIC_SEED: int = 42
+
+
+def resolve_deterministic_kwargs(
+    base: dict[str, Any] | None = None,
+    *,
+    deterministic: bool = False,
+    seed: int = DEFAULT_DETERMINISTIC_SEED,
+    seed_python: bool = True,
+) -> dict[str, Any]:
+    """Return a copy of ``base`` overwritten for deterministic decode.
+
+    When ``deterministic`` is True, sets ``temperature=0.0``,
+    ``do_sample=False``, and ``seed=<int>``. Also seeds the standard
+    library ``random`` + ``numpy.random`` modules so any non-LLM
+    randomness (random choice for NMS tie-breaks, etc.) is reproducible
+    across runs. ``torch`` is seeded lazily (only if torch is imported).
+
+    Returns the merged dict. Returns ``base`` unchanged when
+    ``deterministic`` is False.
+    """
+    out: dict[str, Any] = dict(base or {})
+    if not deterministic:
+        return out
+    out["temperature"] = 0.0
+    out["do_sample"] = False
+    out["seed"] = int(seed)
+    if seed_python:
+        try:
+            import random as _random
+
+            _random.seed(int(seed))
+        except Exception:
+            pass
+        try:
+            import numpy as _np
+
+            _np.random.seed(int(seed))
+        except Exception:
+            pass
+        try:
+            import torch as _torch
+
+            _torch.manual_seed(int(seed))
+        except Exception:
+            pass
+    return out
+
+
 # Phase 61 Plan 4 (Bug 4.1): re-export the token-aware caption truncation
 # helper from ``_llm_caption`` so callers can ``from rlpe.llm_backends
 # import _truncate_caption_for_llm``. We keep the actual implementation in
