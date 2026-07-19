@@ -344,6 +344,46 @@ def _strip_leading_article(name: str | None) -> str | None:
     return name
 
 
+# Phase 62 Plan 5 (Bug 5.5): stopword prefixes the article-strip
+# helper above does NOT handle. Real formation/group/member names
+# never begin with these; a match that does is almost always the
+# regex catching a sentence-spanning phrase ("In Group we infer
+# age" → "In Group") rather than a real unit name. Used by
+# ``_formation_name_ok`` to reject the match.
+_FORMATION_STOPWORD_PREFIXES = (
+    "the ", "The ",
+    "a ", "A ",
+    "an ", "An ",
+    "of ", "Of ",
+    "in ", "In ",
+    "and ", "And ",
+    "from ", "From ",
+    "near ", "Near ",
+    "by ", "By ",
+)
+
+
+def _starts_with_stopword(name: str | None) -> bool:
+    """Return True if ``name`` (after the trailing formation/group/member
+    keyword has been stripped) begins with a stopword prefix.
+
+    Checks both forms:
+      * ``"In " + space`` — the prefix is followed by other words.
+      * ``"In"`` alone — the prefix is the entire stripped name
+        (e.g. "In Group" stripped → "In").
+    """
+    if not name:
+        return False
+    # Match with trailing space (multi-word name starting with a
+    # stopword: "In Sicanian Group" stripped → "In Sicanian").
+    if any(name.startswith(p) for p in _FORMATION_STOPWORD_PREFIXES):
+        return True
+    # Match when the entire stripped name IS the stopword.
+    first_word = name.split(" ", 1)[0].lower()
+    stopwords = {p.strip().lower() for p in _FORMATION_STOPWORD_PREFIXES}
+    return first_word in stopwords
+
+
 def _classify_coordinate_age(
     text: str, match_start: int, match_end: int
 ) -> str:
@@ -531,11 +571,19 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
             # Strip the trailing "Formation"/"Fm." and check the
             # remaining name. The trailing keyword is removed first
             # so its presence doesn't pollute the digit check.
+            stripped = name
             for kw in ("Formation", "Fm.", "Group", "Gp.", "Member", "Mb."):
-                if name.endswith(kw):
-                    name = name[: -len(kw)].rstrip()
+                if stripped.endswith(kw):
+                    stripped = stripped[: -len(kw)].rstrip()
                     break
-            return not any(ch.isdigit() for ch in name)
+            # Phase 62 Plan 5 (Bug 5.5): reject stopword prefixes
+            # (The, A, An, Of, In, And, From, Near, By). Real
+            # formation/group/member names never begin with these;
+            # a match that does is almost always the regex catching
+            # a sentence-spanning phrase.
+            if _starts_with_stopword(stripped):
+                return False
+            return not any(ch.isdigit() for ch in stripped)
 
         groups = [
             m.group(1).strip()
