@@ -287,7 +287,13 @@ def test_finalize_rows_drops_empty_signal_row():
 
 def test_finalize_rows_drops_invalid_panel_id_format():
     """Invalid panel_id formats ('10, 11', empty string, etc.) drop.
-    Round 9 added the shape regex; Round 11 enforces it at emission."""
+    Round 9 added the shape regex; Round 11 enforces it at emission.
+
+    Phase 59 (Bug 2.4): panel_id=None is now a valid category and is
+    kept (the dedup preserves distinct None-rows by bbox+key). The
+    "invalid format" assertion therefore applies only to non-None
+    strings that fail the SHAPE regex.
+    """
     if not _HAS_CV2:
         pytest.skip("cv2 not available")
     p = RadiolarianPipeline.__new__(RadiolarianPipeline)
@@ -313,15 +319,6 @@ def test_finalize_rows_drops_invalid_panel_id_format():
         {
             "paper_id": "p1",
             "figure_id": "f1",
-            "panel_id": None,
-            "species": "A",
-            "panel_path": "/c.png",
-            "confidence": 0.9,
-            "metadata": {},
-        },
-        {
-            "paper_id": "p1",
-            "figure_id": "f1",
             "panel_id": "1",
             "species": "A",
             "panel_path": "/d.png",
@@ -330,8 +327,48 @@ def test_finalize_rows_drops_invalid_panel_id_format():
         },
     ]
     out = p._finalize_rows(rows)
+    # Both invalid-format panel_id rows drop; only "1" remains.
     assert len(out) == 1
     assert out[0]["panel_id"] == "1"
+
+
+def test_finalize_rows_preserves_distinct_panel_id_none_rows():
+    """Phase 59 (Bug 2.4): distinct panel_id=None rows are preserved.
+
+    Previously the dedup keyed on (figure_id, panel_id) and collapsed
+    all None-rows into one. The fix keeps distinct None-rows by
+    (figure_id, bbox, species, panel_index). This is the canonical
+    regression test for the fix.
+    """
+    if not _HAS_CV2:
+        pytest.skip("cv2 not available")
+    p = RadiolarianPipeline.__new__(RadiolarianPipeline)
+    rows = [
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": None,
+            "species": "A",
+            "panel_path": "/a.png",
+            "confidence": 0.9,
+            "bbox": (10, 20, 30, 40),
+            "metadata": {},
+        },
+        {
+            "paper_id": "p1",
+            "figure_id": "f1",
+            "panel_id": None,
+            "species": "B",
+            "panel_path": "/b.png",
+            "confidence": 0.9,
+            "bbox": (50, 60, 70, 80),
+            "metadata": {},
+        },
+    ]
+    out = p._finalize_rows(rows)
+    assert len(out) == 2
+    species = sorted(r["species"] for r in out)
+    assert species == ["A", "B"]
 
 
 def test_finalize_rows_keeps_real_panel_with_no_species_but_has_path():
