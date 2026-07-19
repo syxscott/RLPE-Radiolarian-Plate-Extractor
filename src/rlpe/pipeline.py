@@ -99,6 +99,13 @@ class RadiolarianPipeline:
         # The set tracks paper_ids currently in the GROBID code path
         # so OD can detect re-entry and skip the recursive GROBID call.
         self._grobid_in_progress: set[str] = set()
+        # Phase 59 (Bug 2.1): ``_grobid_in_progress`` is read at L861 and
+        # modified at L1960/L1967 from ``ThreadPoolExecutor`` workers
+        # without any ``threading.Lock``. Race conditions can: (a) miss
+        # cycle detection, (b) leak entries, (c) cause GROBID↔OD
+        # infinite recursion. All reads and writes to the cycle-guard
+        # set MUST go through ``self._grobid_lock``.
+        self._grobid_lock = threading.Lock()
         # Phase 27: forward the configured OCR language list. Default
         # ``"en"`` keeps the legacy English-only flow identical. JA
         # papers pass ``--ocr-lang en,ja`` and EasyOCR / PaddleOCR both
@@ -858,7 +865,9 @@ class RadiolarianPipeline:
             # failed), skip the recursive GROBID call to avoid an
             # infinite loop. Return empty so the caller can fall
             # through to the visual-stub fallback.
-            if paper_id in self._grobid_in_progress:
+            with self._grobid_lock:
+                cycle_detected = paper_id in self._grobid_in_progress
+            if cycle_detected:
                 logger.warning(
                     "Skipping recursive GROBID fallback for %s; "
                     "OD↔GROBID cycle detected.",
@@ -1957,14 +1966,18 @@ class RadiolarianPipeline:
         # Phase 29: mark this paper as currently in the GROBID code
         # path so the OD-fallback path can detect re-entry and break
         # the GROBID↔OD cycle. Cleared in the finally block.
-        self._grobid_in_progress.add(paper_id)
+        # Phase 59 (Bug 2.1): guarded by ``_grobid_lock`` so concurrent
+        # workers can't miss the cycle guard or leak the entry.
+        with self._grobid_lock:
+            self._grobid_in_progress.add(paper_id)
         try:
             return self._process_one_pdf_grobid_inner(paper_id, pdf_path)
         finally:
             # Phase 29: clear the cycle-guard entry on every exit path
             # so the OD↔GROBID fallback doesn't leak paper_ids across
             # unrelated papers.
-            self._grobid_in_progress.discard(paper_id)
+            with self._grobid_lock:
+                self._grobid_in_progress.discard(paper_id)
 
     def _process_one_pdf_grobid_inner(
         self, paper_id: str, pdf_path: Path
