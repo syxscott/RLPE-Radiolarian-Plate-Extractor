@@ -1237,6 +1237,122 @@ class RadiolarianPipeline:
                 )
                 continue
 
+            # Phase 64 Plan B (Task B.4): route schematic / diagram /
+            # reconstruction / phylogenetic figures to
+            # ``M3Engine.extract_schematic`` instead of falling
+            # through to the plate-segmentation path. These figures
+            # don't contain radiolarian specimen panels — they show
+            # boxes / arrows / cladograms — so the classical
+            # segmenter would either produce zero useful panels or
+            # generate thousands of spurious rows (audit trace:
+            # Round 6 micro-CT paper produced 1216 zero-confidence
+            # rows before its fix; the same risk applies to
+            # conceptual figures).
+            #
+            # The flow mirrors the geo_vision block above: open the
+            # image, call ``extract_schematic``, and emit a stub
+            # record carrying the extracted ``figure_schematic_data``
+            # on ``metadata``. We emit the stub even when the M3 call
+            # returns ``None`` so the operator can see the figure was
+            # processed but produced no extraction — same Round 23
+            # audit fix used for geo_vision.
+            if fig_type in ("schematic", "diagram", "reconstruction", "phylogenetic"):
+                schematic_data: dict[str, Any] | None = None  # Audit Bug 1
+                # analogue: initialize so the stub below never sees
+                # UnboundLocalError when the image is missing or
+                # m3_engine is None.
+                schematic_image_path = primary_path
+                if schematic_image_path is None:
+                    schematic_image_path = self._find_orphan_image_for_range_chart(
+                        figures, pair, od_result.json_data
+                    )
+                if schematic_image_path is not None and self.m3_engine is not None:
+                    try:
+                        from PIL import Image as _PILImage
+
+                        with _PILImage.open(schematic_image_path) as im:
+                            schematic_image = im.convert("RGB")
+                        schematic_data = self.m3_engine.extract_schematic(
+                            image=schematic_image,
+                            caption=pair.caption_text or "",
+                            figure_type=fig_type,
+                            paper_id=paper_id,
+                            figure_id=pair.figure_id,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "schematic_vision %s failed for %s/%s: %s",
+                            fig_type,
+                            paper_id,
+                            pair.figure_id,
+                            exc,
+                        )
+                        schematic_data = None
+                # Strip the leading-underscore provenance fields
+                # before storing on the metadata. The downstream
+                # JSONL exporter carries these as provenance columns
+                # (paper_id / figure_id are already on the record).
+                stored_schematic: dict[str, Any] | None = None
+                if schematic_data:
+                    stored_schematic = {
+                        k: v
+                        for k, v in schematic_data.items()
+                        if not k.startswith("_")
+                    }
+                # Always emit a stub so the figure isn't silently
+                # lost — same Round 23 audit fix. The stub uses a
+                # panel_id starting with ``SCHEMATIC_`` so the
+                # operator can filter for it.
+                results.append(
+                    {
+                        "paper_id": paper_id,
+                        "figure_id": pair.figure_id,
+                        "panel_id": f"SCHEMATIC_{fig_type.upper()}",
+                        "species": None,
+                        "panel_path": schematic_image_path,
+                        "bbox": None,
+                        "confidence": (
+                            float(schematic_data.get("confidence", 0.0))
+                            if schematic_data
+                            else 0.0
+                        ),
+                        "label_text": None,
+                        "caption_snippet": (pair.caption_text or "")[:240],
+                        "ocr_text": None,
+                        "paper_metadata": None,
+                        "metadata": {
+                            "figure_type": fig_type,
+                            "extraction_source": "schematic_vision",
+                            "figure_schematic_data": stored_schematic,
+                            "schematic_vision_used": bool(stored_schematic),
+                            "schematic_vision_figure_type": fig_type,
+                        },
+                    }
+                )
+                if stored_schematic:
+                    logger.info(
+                        "%s %s: extracted %d text elements + %d relationships via schematic_vision",
+                        fig_type,
+                        pair.figure_id,
+                        len(stored_schematic.get("text_elements") or []),
+                        len(stored_schematic.get("relationships") or []),
+                    )
+                else:
+                    logger.warning(
+                        "%s %s: schematic_vision returned no data; "
+                        "stub record still emitted so the figure is "
+                        "not silently lost",
+                        fig_type,
+                        pair.figure_id,
+                    )
+                self._emit_progress(
+                    fig_idx,
+                    n_figs,
+                    f"[{fig_idx}/{n_figs}] {fig_type} → "
+                    f"{len(stored_schematic.get('text_elements') or []) if stored_schematic else 0} text elements",
+                )
+                continue
+
             # Map / location figure: extract geographic context
             # (location names, lat/lon) from the caption and produce
             # a stub record. This ensures these figures aren't silently
