@@ -223,17 +223,22 @@ class ResultsTab(QWidget):
         bottom_splitter.setChildrenCollapsible(False)
         bottom_splitter.addWidget(self._preview)
         bottom_splitter.addWidget(right_panel)
-        # Phase 64: was 4:6 (image:detail) with no initial setSizes —
-        # QSplitter's default is 50:50 so the SEM image dominated the
-        # bottom pane and the detail browser got squeezed. Flip the
-        # stretch (detail now has priority) and seed sizes explicitly
-        # so the user sees a ~30:70 split from the very first paint.
+        # Phase 64: image:detail ~30:70 (still user-draggable).
         bottom_splitter.setStretchFactor(0, 3)
         bottom_splitter.setStretchFactor(1, 7)
         bottom_splitter.setSizes([360, 840])
         splitter.addWidget(bottom_splitter)
 
-        splitter.setSizes([600, 300])
+        # Phase 64 (round 2): the table-on-top splitter was given
+        # setSizes([600, 300]) which makes the detail bottom pane
+        # only 1/3 of vertical space (~358px on a 1000px window).
+        # Detail content (species + metadata + caption + evidence +
+        # geology + PBDB + sample IDs) needs ~600-800px vertical to
+        # be readable. Flip to 40:60 (table:detail) and add stretch
+        # so when the user drags the splitter the detail grows.
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 6)
+        splitter.setSizes([400, 600])
 
         # ---- Footer: export buttons ----
         footer = QHBoxLayout()
