@@ -162,6 +162,15 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
 
 def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
     meta = match.metadata or {}
+    # Phase 64 Plan B (Task B.5): forward the schematic extraction
+    # payload from the match metadata onto the exported PanelMetadata.
+    # We store the value verbatim (the JSON shape comes from the M3
+    # prompt contract in extract_schematic) so downstream consumers
+    # see the same structure they would see if they called the M3
+    # engine directly.
+    schematic_data = meta.get("figure_schematic_data")
+    if not isinstance(schematic_data, dict):
+        schematic_data = None
     return PanelMetadata(
         panel_score=meta.get("panel_score"),
         ocr_count=int(meta.get("ocr_count", 0) or 0),
@@ -180,6 +189,7 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
         needs_review=bool(meta.get("needs_review", False)),
         review_reasons=list(meta.get("review_reasons", []) or []),
         geology_scope=str(meta.get("geology_scope", "") or ""),
+        figure_schematic_data=schematic_data,
     )
 
 
