@@ -136,10 +136,16 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         # JSON-encoded blob. We serialise the same prompt-
         # contract shape M3 produced so GBIF / DwC consumers
         # can re-parse the JSON without needing our schema.
-        # Empty when no figure_schematic_data so the column
-        # stays clean for non-schematic rows.
-        "dynamicProperties": _schematic_dynamic_properties(
-            panel.metadata.figure_schematic_data
+        # Phase 65 Plan A.5: cross-figure linker metadata is
+        # merged into the same dynamicProperties blob so the
+        # DwC-A file carries one self-describing JSON payload
+        # rather than two parallel columns. The linker payload
+        # is added as a separate top-level key
+        # ``"cross_figure_link"`` so existing schematic
+        # consumers (which only know the figure_type /
+        # text_elements keys) keep working unchanged.
+        "dynamicProperties": _merged_dynamic_properties(
+            panel.metadata
         ),
     }
 
@@ -166,6 +172,99 @@ def _schematic_dynamic_properties(schematic_data: Any) -> str:
         # equal dicts produce byte-identical blobs (helps test
         # snapshots and idempotent exports).
         return _json.dumps(schematic_data, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return ""
+
+
+def _linker_dynamic_properties(metadata: Any) -> str:
+    """Phase 65 Plan A.5: serialise cross-figure linker provenance
+    as a JSON blob for DwC's ``dynamicProperties`` column.
+
+    Returns an empty string when the linker didn't run for this
+    row (legacy rows, or the linker flag was off). The JSON shape
+    is intentionally flat:
+        ``{
+            "source": "sample_match" | "locality_match" |
+                      "m3_inference" | "unlinked",
+            "confidence": float,
+            "figure_id": str | null,
+        }``
+    so a downstream consumer can read it without consulting the
+    RLPE schema. When paired with the schematic blob via
+    ``_merged_dynamic_properties``, the linker block sits under
+    ``cross_figure_link`` to avoid colliding with the schematic
+    keys (figure_type / text_elements / ...).
+    """
+    if metadata is None:
+        return ""
+    src = getattr(metadata, "link_source", None)
+    conf = getattr(metadata, "link_confidence", 0.0) or 0.0
+    fig_id = getattr(metadata, "link_figure_id", None)
+    if not src:
+        return ""
+    try:
+        import json as _json
+
+        return _json.dumps(
+            {
+                "source": str(src),
+                "confidence": float(conf),
+                "figure_id": fig_id,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    except Exception:
+        return ""
+
+
+def _merged_dynamic_properties(metadata: Any) -> str:
+    """Phase 65 Plan A.5: combine schematic + linker payloads into
+    a single DwC ``dynamicProperties`` blob.
+
+    Behaviour:
+    * If only the schematic block is present -> serialise it alone
+      (back-compat for Phase 64 Plan B).
+    * If only the linker block is present -> serialise a small
+      wrapper ``{"cross_figure_link": {...}}``.
+    * If both are present -> merge them under one JSON object so
+      the row carries a single self-describing payload (preferred
+      for downstream consumers).
+    * If neither is present -> empty string.
+
+    Empty string on any serialisation error so the export never
+    crashes mid-row.
+    """
+    sch = getattr(metadata, "figure_schematic_data", None)
+    link_src = getattr(metadata, "link_source", None)
+
+    if not sch and not link_src:
+        return ""
+    try:
+        import json as _json
+    except ImportError:  # pragma: no cover
+        return ""
+
+    payload: dict[str, Any] = {}
+    # Schematic block: only include when figure_type is present
+    # (matches _schematic_dynamic_properties' contract).
+    if isinstance(sch, dict) and sch.get("figure_type"):
+        payload.update(sch)
+    # Linker block: only include when the linker actually ran.
+    if link_src:
+        try:
+            conf = float(getattr(metadata, "link_confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        payload["cross_figure_link"] = {
+            "source": str(link_src),
+            "confidence": conf,
+            "figure_id": getattr(metadata, "link_figure_id", None),
+        }
+    if not payload:
+        return ""
+    try:
+        return _json.dumps(payload, ensure_ascii=False, sort_keys=True)
     except Exception:
         return ""
 
