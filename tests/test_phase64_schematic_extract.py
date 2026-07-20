@@ -113,12 +113,12 @@ def _make_engine_with_canned(canned: list[dict]) -> M3Engine:
 
 
 class TestSchematicGeoPrompt:
-    """PROMPT_REGISTRY['schematic_geo'] exists with the contract
+    """PROMPT_REGISTRY['schematic_extract'] exists with the contract
     documented in the design spec."""
 
     def test_prompt_registered(self) -> None:
-        assert "schematic_geo" in PROMPT_REGISTRY
-        prompt = PROMPT_REGISTRY["schematic_geo"]
+        assert "schematic_extract" in PROMPT_REGISTRY
+        prompt = PROMPT_REGISTRY["schematic_extract"]
         assert isinstance(prompt, str)
         # Sanity-check the prompt mentions the JSON shape.
         assert "text_elements" in prompt
@@ -134,13 +134,13 @@ class TestSchematicGeoPrompt:
 
 
 class TestExtractSchematic:
-    """M3Engine.extract_schematic dispatches to schematic_geo prompt."""
+    """M3Engine.extract_schematic dispatches to schematic_extract prompt."""
 
     def test_returns_prompt_contract_shape(self) -> None:
         engine = _make_engine_with_canned(
             [
                 {
-                    "match": lambda sp: "schematic_geo" in sp,
+                    "match": lambda sp: "schematic_extract" in sp,
                     **_schematic_canned(),
                 }
             ]
@@ -180,7 +180,7 @@ class TestExtractSchematic:
         engine = _make_engine_with_canned(
             [
                 {
-                    "match": lambda sp: "schematic_geo" in sp,
+                    "match": lambda sp: "schematic_extract" in sp,
                     **_schematic_canned(),
                 }
             ]
@@ -200,7 +200,7 @@ class TestExtractSchematic:
         engine = _make_engine_with_canned(
             [
                 {
-                    "match": lambda sp: "schematic_geo" in sp,
+                    "match": lambda sp: "schematic_extract" in sp,
                     **_schematic_canned(),
                 }
             ]
@@ -234,7 +234,7 @@ class TestExtractSchematic:
         engine = _make_engine_with_canned(
             [
                 {
-                    "match": lambda sp: "schematic_geo" in sp,
+                    "match": lambda sp: "schematic_extract" in sp,
                     **_schematic_canned(),
                 }
             ]
@@ -249,7 +249,7 @@ class TestExtractSchematic:
         assert result is not None
         assert result["_paper_id"] == "bandini2011"
         assert result["_figure_id"] == "fig-sch-1"
-        assert result["_source"] == "schematic_geo"
+        assert result["_source"] == "schematic_extract"
 
     def test_overrides_model_figure_type_with_classifier(self) -> None:
         """If the LLM emits figure_type='diagram' but the classifier
@@ -264,7 +264,7 @@ class TestExtractSchematic:
         engine = _make_engine_with_canned(
             [
                 {
-                    "match": lambda sp: "schematic_geo" in sp,
+                    "match": lambda sp: "schematic_extract" in sp,
                     **bad_response,
                 }
             ]
@@ -285,7 +285,7 @@ class TestExtractSchematic:
         engine = _make_engine_with_canned(
             [
                 {
-                    "match": lambda sp: "schematic_geo" in sp,
+                    "match": lambda sp: "schematic_extract" in sp,
                     **_phylogenetic_canned(),
                 }
             ]
@@ -309,7 +309,7 @@ class TestExtractSchematic:
         engine = _make_engine_with_canned(
             [
                 {
-                    "match": lambda sp: "schematic_geo" in sp,
+                    "match": lambda sp: "schematic_extract" in sp,
                     **bad_response,
                 }
             ]

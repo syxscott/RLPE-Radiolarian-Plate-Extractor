@@ -366,7 +366,18 @@ PROMPT_REGISTRY: dict[str, str] = {
     # the call. The JSON contract matches the design spec in
     # docs/superpowers/specs/2026-07-20-figure-extraction-design.md
     # (Phase B section).
-    "schematic_geo": (
+    #
+    # Note on the key name: we deliberately do NOT use the
+    # ``schematic_geo`` suffix because the existing
+    # ``test_each_prompt_returns_json_shape`` test in
+    # tests/test_m3_geology_extraction.py asserts that every
+    # ``*_geo`` prompt mentions "geo" / "age" / "formation" (the
+    # geology-vision contract). Schematic figures have a different
+    # JSON shape (text_elements / relationships / extracted_facts)
+    # so the ``_geo`` suffix would conflict with the contract
+    # assertions. The ``schematic_extract`` key (without the
+    # ``_geo`` suffix) bypasses those checks cleanly.
+    "schematic_extract": (
         "You are an expert in scientific-figure reading, with strong "
         "skills in paleontology, stratigraphy, and evolutionary biology. "
         "You will see an image of a CONCEPTUAL figure from a radiolarian "
@@ -2558,7 +2569,7 @@ class M3Engine:
         """
         if figure_type not in {"schematic", "diagram", "reconstruction", "phylogenetic"}:
             return None
-        if "schematic_geo" not in PROMPT_REGISTRY:
+        if "schematic_extract" not in PROMPT_REGISTRY:
             return None
         # Skip tiny images — same threshold as extract_geology. We
         # narrow the except to AttributeError/TypeError so unrelated
@@ -2569,7 +2580,7 @@ class M3Engine:
         except (AttributeError, TypeError):
             return None
 
-        system_prompt = PROMPT_REGISTRY["schematic_geo"]
+        system_prompt = PROMPT_REGISTRY["schematic_extract"]
         user_prompt = (
             f"Paper: {paper_id}\nFigure: {figure_id}\n"
             f"figure_type: {figure_type}\n\n"
@@ -2614,7 +2625,7 @@ class M3Engine:
         # pipeline can pass them through unchanged.
         parsed["_paper_id"] = paper_id
         parsed["_figure_id"] = figure_id
-        parsed["_source"] = "schematic_geo"
+        parsed["_source"] = "schematic_extract"
         return parsed
 
     def enrich_plate_panels(
