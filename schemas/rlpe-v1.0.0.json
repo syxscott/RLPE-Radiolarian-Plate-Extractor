@@ -1088,6 +1088,37 @@
           "title": "Geology Scope",
           "type": "string"
         },
+        "link_confidence": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Link Confidence",
+          "type": "number"
+        },
+        "link_figure_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Link Figure Id"
+        },
+        "link_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Link Source"
+        },
         "m3_diagnostic": {
           "additionalProperties": true,
           "title": "M3 Diagnostic",
