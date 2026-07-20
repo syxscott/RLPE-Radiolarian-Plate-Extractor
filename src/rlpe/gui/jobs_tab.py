@@ -395,11 +395,18 @@ class JobsTab(QWidget):
     def _refresh_row(self, job: JobRecord) -> None:
         row = self._find_row(job.job_id)
         if row < 0:
+            # Phase 64: cap BEFORE inserting so the cap doesn't shift
+            # the just-inserted row 0 by removeRow. With 271 historical
+            # jobs and MAX_RECENT_JOBS_IN_LIST=200, this race silently
+            # failed setItem() at row=old_index when row 0 was evicted,
+            # causing _refresh_row to throw AttributeError on the next
+            # `self._table.item(row, 1)` call. main_window's
+            # load_recent_jobs_from_disk wrapped in try/except caught
+            # this and the user saw an empty GUI.
+            while self._table.rowCount() >= MAX_RECENT_JOBS_IN_LIST:
+                self._table.removeRow(0)
             row = self._table.rowCount()
             self._table.insertRow(row)
-            # Cap the table at MAX_RECENT_JOBS_IN_LIST rows.
-            while self._table.rowCount() > MAX_RECENT_JOBS_IN_LIST:
-                self._table.removeRow(0)
 
         # Column 0: Job ID (monospace)
         item_id = QTableWidgetItem(job.job_id)
@@ -409,9 +416,12 @@ class JobsTab(QWidget):
         item_id.setFont(font)
         self._table.setItem(row, 0, item_id)
 
-        # Column 1: PDF (short path tooltip)
-        self._table.setItem(row, 1, QTableWidgetItem(short_path(Path(job.pdf_path), 50)))
-        self._table.item(row, 1).setToolTip(job.pdf_path)
+        # Column 1: PDF (short path tooltip). Hold a local reference to
+        # the QTableWidgetItem instead of re-fetching from the model —
+        # row indices can shift if cap evicts during a later insert.
+        pdf_item = QTableWidgetItem(short_path(Path(job.pdf_path), 50))
+        pdf_item.setToolTip(job.pdf_path)
+        self._table.setItem(row, 1, pdf_item)
 
         # Column 2: Status (coloured via QSS objectName)
         status_item = QTableWidgetItem(job.status)
