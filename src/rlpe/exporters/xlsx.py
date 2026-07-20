@@ -151,6 +151,13 @@ _PANEL_HEADERS = [
     # string when the row has no figure_schematic_data so the
     # operator can filter or sort.
     "示意图摘要",
+    # Phase 65 Plan A.5: cross-figure linker provenance. Carries
+    # the winning strategy ("sample_match" / "locality_match" /
+    # "m3_inference" / "unlinked") and the linker confidence.
+    # Operator can filter "unlinked" rows to find panels that
+    # still need manual linking. Empty when the linker didn't
+    # run (legacy rows).
+    "Link Source", "Link Confidence", "Link Figure",
 ]
 # --- geology_context columns ------------------------------------------------
 _GEOLOGY_HEADERS = [
@@ -246,6 +253,14 @@ def _row_for_panel(p: dict[str, Any]) -> list[Any]:
         # cell. Format: "schematic|text=12|rel=3|conf=0.95". Empty
         # for non-schematic rows so the workbook stays clean.
         _summarize_schematic_data(md.get("figure_schematic_data")),
+        # Phase 65 Plan A.5: cross-figure linker provenance.
+        # ``link_source`` is the winning strategy; ``link_confidence``
+        # is the linker's own confidence (NOT the species confidence
+        # above); ``link_figure_id`` is the paper-level figure the
+        # panel was linked to. Empty when the linker didn't run.
+        md.get("link_source") or "",
+        md.get("link_confidence") if md.get("link_confidence") is not None else "",
+        md.get("link_figure_id") or "",
     ]
 
 

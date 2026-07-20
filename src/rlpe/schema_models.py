@@ -405,6 +405,17 @@ class PanelMetadata(BaseModel):
     # building a nested Pydantic model so the downstream export
     # path can iterate the same shape without re-marshalling.
     figure_schematic_data: dict[str, Any] | None = None
+    # Phase 65 Plan A.4: cross-figure linker provenance.
+    # ``link_source`` records which strategy won (``sample_match`` /
+    # ``locality_match`` / ``m3_inference`` / ``unlinked``); the
+    # paired ``link_confidence`` is the linker's own confidence (NOT
+    # the species-extraction confidence above). ``link_figure_id``
+    # is the paper-level figure id the panel was linked to (None for
+    # unlinked). All three default to None / 0.0 so legacy records
+    # remain valid.
+    link_source: str | None = None
+    link_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    link_figure_id: str | None = None
 
 
 class PanelRecord(BaseModel):

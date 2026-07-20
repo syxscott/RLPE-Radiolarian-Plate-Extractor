@@ -171,6 +171,21 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
     schematic_data = meta.get("figure_schematic_data")
     if not isinstance(schematic_data, dict):
         schematic_data = None
+    # Phase 65 Plan A.5: forward cross-figure linker provenance so the
+    # export chain (JSONL / xlsx / DwC-A) can surface the link strategy
+    # + confidence to operators. Defaults stay None / 0.0 so legacy
+    # records (no linker run) remain valid.
+    link_source_val = meta.get("link_source")
+    if link_source_val is not None and not isinstance(link_source_val, str):
+        link_source_val = None
+    link_figure_id_val = meta.get("link_figure_id")
+    if link_figure_id_val is not None and not isinstance(link_figure_id_val, str):
+        link_figure_id_val = None
+    try:
+        link_confidence_val = float(meta.get("link_confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        link_confidence_val = 0.0
+    link_confidence_val = max(0.0, min(1.0, link_confidence_val))
     return PanelMetadata(
         panel_score=meta.get("panel_score"),
         ocr_count=int(meta.get("ocr_count", 0) or 0),
@@ -190,6 +205,9 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
         review_reasons=list(meta.get("review_reasons", []) or []),
         geology_scope=str(meta.get("geology_scope", "") or ""),
         figure_schematic_data=schematic_data,
+        link_source=link_source_val,
+        link_confidence=link_confidence_val,
+        link_figure_id=link_figure_id_val,
     )
 
 
