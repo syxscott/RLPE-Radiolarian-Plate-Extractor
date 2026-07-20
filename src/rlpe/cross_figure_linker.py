@@ -623,12 +623,204 @@ def link_species_to_geology(
     return out
 
 
+# Source string stamped onto every Phase C visual link so downstream
+# audit / GUI / export can distinguish them from Phase A text-only
+# links.
+VISUAL_LINK_SOURCE = "m3_visual"
+
+# Phase 66 Plan C.3: figures considered "anchor" figures for the
+# visual-coordinate trigger. If the paper has any of these alongside
+# a plate, Phase C may fire. Mirrors the list in
+# ``_build_figure_index`` above.
+_ANCHOR_FIGURE_TYPES = frozenset({
+    "strat_column", "stratigraphic_column",
+    "litholog_column", "litholog",
+    "paleogeographic_map", "map",
+})
+
+# Phase 66 Plan C.3: figure_type values that count as "plate" for the
+# trigger condition. Papers without a plate don't need Phase C
+# (there's nothing to link).
+_PLATE_FIGURE_TYPES = frozenset({
+    "plate", "plate_image",
+})
+
+
+# ---------------------------------------------------------------------------
+# Phase 66 Plan C.3 — visual coordinate trigger
+# ---------------------------------------------------------------------------
+
+def _panel_link_source(panel: Any) -> str | None:
+    """Best-effort link_source from a panel dict/object."""
+    if isinstance(panel, dict):
+        meta = panel.get("metadata") or {}
+        return meta.get("link_source")
+    meta = getattr(panel, "metadata", None) or {}
+    if isinstance(meta, dict):
+        return meta.get("link_source")
+    return getattr(meta, "link_source", None)
+
+
+def _has_plate_and_anchor(figures: Iterable[PaperFigureLike]) -> tuple[bool, PaperFigureLike | None, PaperFigureLike | None]:
+    """Return ``(has_both, plate_fig, anchor_fig)``.
+
+    Returns the FIRST plate figure and the FIRST anchor figure (strat
+    column / litholog / paleogeographic map). Phase C only needs one
+    of each — multi-plate / multi-strat combos use the first match.
+    """
+    plate = None
+    anchor = None
+    for fig in figures:
+        ftype = _figure_type(fig)
+        if ftype in _PLATE_FIGURE_TYPES and plate is None:
+            plate = fig
+        elif ftype in _ANCHOR_FIGURE_TYPES and anchor is None:
+            anchor = fig
+        if plate is not None and anchor is not None:
+            break
+    return (plate is not None and anchor is not None, plate, anchor)
+
+
+def link_visual_coordinates(
+    panels: Iterable[Any],
+    paper_figures: Iterable[PaperFigureLike],
+    m3_engine: Any | None = None,
+) -> list[list[dict[str, Any]]]:
+    """Phase 66 Plan C.3 — vision-based cross-figure linkage.
+
+    Runs the ``cross_figure_visual_inference`` M3 method on each panel
+    whose Phase A Strategy-1 (sample_match) didn't reach confidence
+    1.0 AND whose paper has BOTH a plate figure AND a strat column /
+    litholog / paleogeographic map. The returned visual links are
+    stored as Phase C precision refinements — they don't replace the
+    Phase A linkage.
+
+    Parameters
+    ----------
+    panels : iterable
+        Panel-level objects (MatchResult / dict). Each must expose
+        ``metadata.link_source`` (set by Phase A) so we can detect
+        the "Strategy 1 already nailed it" case.
+    paper_figures : iterable
+        Paper-level figure summaries (Phase B FigureRecord or dict).
+    m3_engine : optional
+        A ``M3Engine`` instance with a
+        ``cross_figure_visual_inference(plate_image, strat_image,
+        plate_caption, strat_caption)`` method. If ``None`` or the
+        method is missing, Phase C is silently skipped.
+
+    Returns
+    -------
+    list[list[dict]]
+        Outer list indexed by panel (preserves input order). Inner
+        list is the visual links for that panel — empty when the
+        trigger condition is not met OR M3 returned nothing usable.
+        Each entry has keys::
+
+          {
+            "target_figure_id": str,
+            "target_layer": int | None,
+            "target_age": str | None,
+            "target_formation": str | None,
+            "confidence": float (0.0-1.0),
+            "source": "m3_visual",
+          }
+
+    Notes
+    -----
+    * The Phase A ``link_source`` field is the gate — panels marked
+      ``"sample_match"`` (confidence 1.0 or 0.9) are skipped because
+      Strategy 1 is intrinsically the strongest Phase A signal.
+    * The plate + anchor requirement is structural: without a strat
+      column or map, there's nothing to visually link to. A paper
+      with only plates is Phase A's territory.
+    * The caller is responsible for writing the inner lists into
+      ``panel.metadata.cross_figure_visual_links`` (Task C.4 does
+      this from the pipeline).
+    """
+    panels_list = list(panels)
+    figures_list = list(paper_figures)
+
+    has_both, plate_fig, anchor_fig = _has_plate_and_anchor(figures_list)
+    if not has_both:
+        return [[] for _ in panels_list]
+
+    # No M3 engine (or no visual method) → silent skip, same as
+    # fallback_used upstream.
+    if m3_engine is None:
+        return [[] for _ in panels_list]
+    visual_method = getattr(m3_engine, "cross_figure_visual_inference", None)
+    if not callable(visual_method):
+        return [[] for _ in panels_list]
+
+    # We don't actually have real images at this layer (the pipeline
+    # passes them in separately in Task C.4). For the trigger-logic
+    # function we pass None — the visual method handles missing
+    # images via its ``image.width < 32`` early-return path.
+    plate_caption = _figure_caption(plate_fig) if plate_fig is not None else ""
+    anchor_caption = _figure_caption(anchor_fig) if anchor_fig is not None else ""
+    anchor_id = (
+        str(anchor_fig.get("figure_id") or "") if anchor_fig is not None else ""
+    )
+
+    out: list[list[dict[str, Any]]] = []
+    for panel in panels_list:
+        link_source = _panel_link_source(panel)
+        # The trigger condition: skip panels whose Phase A Strategy 1
+        # already nailed them. Everything else (locality_match,
+        # m3_inference, unlinked) gets the visual treatment.
+        if link_source == LINK_SOURCE_SAMPLE:
+            out.append([])
+            continue
+
+        try:
+            result = visual_method(
+                None, None, plate_caption, anchor_caption,
+            )
+        except Exception:
+            # Defensive: a backend exception must never propagate up
+            # the pipeline. Phase C silently degrades to empty.
+            out.append([])
+            continue
+        panels_data = result.get("plate_panels") if isinstance(result, dict) else None
+        if not isinstance(panels_data, list) or not panels_data:
+            out.append([])
+            continue
+
+        # Build the per-panel link list. We emit one link per panel
+        # entry M3 returned; the panel itself doesn't filter by
+        # cell_label (the schema stores them all and the GUI picks
+        # the right one per printed_panel_id).
+        links: list[dict[str, Any]] = []
+        for entry in panels_data:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                conf = float(entry.get("confidence", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            conf = max(0.0, min(1.0, conf))
+            links.append({
+                "target_figure_id": anchor_id,
+                "target_layer": entry.get("links_to_strat_layer"),
+                "target_age": entry.get("links_to_age"),
+                "target_formation": entry.get("links_to_formation"),
+                "confidence": conf,
+                "source": VISUAL_LINK_SOURCE,
+            })
+        out.append(links)
+
+    return out
+
+
 __all__ = [
     "LinkResult",
     "M3InferenceCallable",
     "link_species_to_geology",
+    "link_visual_coordinates",
     "LINK_SOURCE_SAMPLE",
     "LINK_SOURCE_LOCALITY",
     "LINK_SOURCE_M3",
     "LINK_SOURCE_UNLINKED",
+    "VISUAL_LINK_SOURCE",
 ]
