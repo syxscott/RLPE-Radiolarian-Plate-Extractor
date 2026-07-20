@@ -155,6 +155,11 @@ STRINGS = {
     'restab.detail.schematic_geo': '地名',
     'restab.detail.schematic_taxa': '分类',
     'restab.detail.schematic_confidence': '置信度',
+    # Phase 65 Plan A.6: cross-figure linker source chip labels.
+    'restab.detail.link_source.sample_match': '样品号匹配',
+    'restab.detail.link_source.locality_match': '产地匹配',
+    'restab.detail.link_source.m3_inference': 'M3 推理',
+    'restab.detail.link_source.unlinked': '未关联',
     'restab.detail.source': '来源',
     'restab.detail.title': '行详情',
     'restab.done': '任务 {id}  ·  {rows} 行',

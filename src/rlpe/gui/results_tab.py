@@ -68,6 +68,88 @@ _SCOPE_CLASSES: dict[str, str] = {
     "figure_anchor": "badge-warn",
     "none": "badge-muted",
 }
+
+# Phase 65 Plan A.6: cross-figure linker source chip styling.
+# ``sample_match`` and ``locality_match`` are deterministic so we use
+# the "good" green chip; ``m3_inference`` is the fallback so we use
+# amber; ``unlinked`` is muted red so operators can spot rows that
+# need manual review at a glance.
+_LINK_SOURCE_PREFIX = "cross_figure_linker:"
+_LINK_SOURCE_CHIP_CLASSES: dict[str, str] = {
+    "sample_match": "badge-info",       # blue chip
+    "locality_match": "badge-info",     # blue chip
+    "m3_inference": "badge-warn",        # amber chip
+    "unlinked": "badge-muted",           # grey chip
+}
+_LINK_SOURCE_LABEL_KEYS: dict[str, str] = {
+    "sample_match": "restab.detail.link_source.sample_match",
+    "locality_match": "restab.detail.link_source.locality_match",
+    "m3_inference": "restab.detail.link_source.m3_inference",
+    "unlinked": "restab.detail.link_source.unlinked",
+}
+
+
+def _emit_link_source_badge(html: list[str], coord_source: str) -> None:
+    """Append a per-link source badge to the geology-links block.
+
+    Phase 65 Plan A.6. The cross-figure linker tags each appended
+    geology_links entry with ``coord_source = cross_figure_linker:
+    <strategy>``. We parse that here and render a coloured chip so
+    operators can tell Strategy 1 / 2 / 3 / unlinked apart without
+    opening the underlying JSON. Non-linker entries (plain
+    geo_vision entries) get no badge so the chip is unique to
+    linker output.
+    """
+    if not coord_source or not coord_source.startswith(_LINK_SOURCE_PREFIX):
+        return
+    raw = coord_source[len(_LINK_SOURCE_PREFIX):]
+    cls = _LINK_SOURCE_CHIP_CLASSES.get(raw, "badge-muted")
+    label_key = _LINK_SOURCE_LABEL_KEYS.get(raw)
+    if label_key:
+        try:
+            label = i18n._tr(label_key)
+        except Exception:
+            label = raw
+    else:
+        label = raw
+    try:
+        conf = float(coord_source.rsplit(":", 1)[-1]) if False else 0.0
+    except Exception:
+        conf = 0.0
+    html.append(
+        f"<div style='margin:4px 0 2px'>"
+        f"<span class='{cls}' style='padding:1px 6px;border-radius:3px;font-size:10px'>"
+        f"link: {html_escape(label)}</span></div>"
+    )
+
+
+def _emit_link_summary_badge(html: list[str], source: str, confidence: float) -> None:
+    """Append a panel-level linker summary chip.
+
+    Phase 65 Plan A.6. Shows the winning strategy and the linker's
+    confidence at the top of the detail panel. Operators scan these
+    to find panels still needing manual linking (source="unlinked").
+    """
+    cls = _LINK_SOURCE_CHIP_CLASSES.get(source, "badge-muted")
+    label_key = _LINK_SOURCE_LABEL_KEYS.get(source)
+    if label_key:
+        try:
+            label = i18n._tr(label_key)
+        except Exception:
+            label = source
+    else:
+        label = source
+    try:
+        conf_pct = f"{float(confidence) * 100:.0f}%"
+    except Exception:
+        conf_pct = "—"
+    html.append(
+        f"<div style='padding:4px 8px;border-top:1px solid #eee;font-size:11px'>"
+        f"<b>Cross-figure link:</b> "
+        f"<span class='{cls}' style='padding:1px 6px;border-radius:3px;font-size:10px'>"
+        f"{html_escape(label)}</span> "
+        f"<span style='color:#888'>({conf_pct})</span></div>"
+    )
 _OCR_KEYS: dict[str, str] = {
     "image_ocr": "restab.detail.ocr.image_ocr",
     "positional": "restab.detail.ocr.positional",
@@ -706,6 +788,12 @@ class ResultsTab(QWidget):
             )
             for g in geo_links[:8]:
                 bits = []
+                # Phase 65 Plan A.6: link source badge per geology link.
+                # The cross-figure linker tags each appended entry with
+                # ``coord_source = cross_figure_linker:<source>`` so we
+                # can render a coloured chip without parsing the rest
+                # of the link.
+                _emit_link_source_badge(html, g.get("coord_source") or "")
                 # Age / chronostratigraphy
                 age = g.get("age") or g.get("chronostratigraphy") or ""
                 if age:
@@ -764,6 +852,14 @@ class ResultsTab(QWidget):
             if len(geo_links) > 8:
                 html.append(f"<div style='color:#888;font-size:11px;margin-top:4px'>… and {len(geo_links)-8} more</div>")
             html.append("</div>")
+
+        # ── Cross-figure linker provenance (Phase 65 Plan A.6) ────
+        # If the linker ran, surface a single summary chip near the
+        # geology links block so operators can spot "unlinked" rows at
+        # a glance without scanning the whole link list.
+        link_src = md.get("link_source")
+        if link_src:
+            _emit_link_summary_badge(html, link_src, md.get("link_confidence") or 0.0)
 
         # ── Schematic content (Phase 64 Plan B Task B.7) ─────────
         # When the figure was classified as schematic / diagram /

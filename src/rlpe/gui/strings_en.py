@@ -225,6 +225,11 @@ STRINGS = {
     "restab.detail.schematic_geo": "Geographic",
     "restab.detail.schematic_taxa": "Taxa",
     "restab.detail.schematic_confidence": "Confidence",
+    # Phase 65 Plan A.6: cross-figure linker source chip labels.
+    "restab.detail.link_source.sample_match": "Sample ID match",
+    "restab.detail.link_source.locality_match": "Locality match",
+    "restab.detail.link_source.m3_inference": "M3 inference",
+    "restab.detail.link_source.unlinked": "Unlinked",
 
     # ============================================================
     # Settings tab
