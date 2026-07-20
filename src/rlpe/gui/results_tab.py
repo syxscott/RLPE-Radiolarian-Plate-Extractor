@@ -765,6 +765,98 @@ class ResultsTab(QWidget):
                 html.append(f"<div style='color:#888;font-size:11px;margin-top:4px'>… and {len(geo_links)-8} more</div>")
             html.append("</div>")
 
+        # ── Schematic content (Phase 64 Plan B Task B.7) ─────────
+        # When the figure was classified as schematic / diagram /
+        # reconstruction / phylogenetic, the M3 ``extract_schematic``
+        # result lives on ``metadata.figure_schematic_data``. Render
+        # a compact summary so the operator can confirm the
+        # extraction worked without opening the raw JSON.
+        sch = md.get("figure_schematic_data")
+        if isinstance(sch, dict):
+            html.append(
+                f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
+                f"<b style='font-size:12px'>{i18n._tr('restab.detail.schematic')}</b>"
+            )
+            sch_type = sch.get("figure_type") or ""
+            text_elements = sch.get("text_elements") or []
+            if not isinstance(text_elements, list):
+                text_elements = []
+            relationships = sch.get("relationships") or []
+            if not isinstance(relationships, list):
+                relationships = []
+            facts = sch.get("extracted_facts") or {}
+            if not isinstance(facts, dict):
+                facts = {}
+            try:
+                sch_conf = float(sch.get("confidence", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                sch_conf = 0.0
+            sch_conf = max(0.0, min(1.0, sch_conf))
+            html.append("<table style='font-size:12px;margin-top:4px;border-collapse:collapse'>")
+            sch_rows = [
+                (
+                    i18n._tr("restab.detail.schematic_type"),
+                    f"<span class='badge-info' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(sch_type or '—')}</span>",
+                ),
+                (
+                    i18n._tr("restab.detail.schematic_text_count"),
+                    str(len(text_elements)),
+                ),
+                (
+                    i18n._tr("restab.detail.schematic_rel_count"),
+                    str(len(relationships)),
+                ),
+                (
+                    i18n._tr("restab.detail.schematic_confidence"),
+                    f"{sch_conf * 100:.0f}%",
+                ),
+            ]
+            # Sample of text elements (first 3) so the operator can
+            # see what M3 read without opening the raw JSON.
+            if text_elements:
+                sample_parts: list[str] = []
+                for el in text_elements[:3]:
+                    if not isinstance(el, dict):
+                        continue
+                    txt = str(el.get("text", "") or "").strip()
+                    typ = str(el.get("type", "") or "").strip()
+                    if not txt:
+                        continue
+                    sample_parts.append(
+                        f"<span style='background:#eef;color:#335;padding:1px 4px;"
+                        f"border-radius:3px;font-size:11px;margin-right:3px'>"
+                        f"{html_escape(txt)}"
+                        f"<span style='color:#888;font-size:10px'> ({html_escape(typ)})</span>"
+                        f"</span>"
+                    )
+                if sample_parts:
+                    sch_rows.append(
+                        (
+                            i18n._tr("restab.detail.schematic"),
+                            " ".join(sample_parts),
+                        )
+                    )
+            # Extracted-facts key=value rows. We keep the same
+            # compact format the operator sees on the geology panel.
+            for fact_key, fact_label in (
+                ("ages_mentioned", i18n._tr("restab.detail.schematic_ages")),
+                ("geographic_names", i18n._tr("restab.detail.schematic_geo")),
+                ("taxa_mentioned", i18n._tr("restab.detail.schematic_taxa")),
+            ):
+                vals = facts.get(fact_key) or []
+                if isinstance(vals, list) and vals:
+                    joined = ", ".join(str(v) for v in vals[:8])
+                    if len(vals) > 8:
+                        joined += f" (+{len(vals) - 8})"
+                    sch_rows.append((fact_label, html_escape(joined)))
+            for k, v in sch_rows:
+                html.append(
+                    f"<tr><td style='padding:2px 8px 2px 0;color:#888;white-space:nowrap'>{k}</td>"
+                    f"<td style='padding:2px 0'>{v}</td></tr>"
+                )
+            html.append("</table>")
+            html.append("</div>")
+
         html.append("</body></html>")
         self._detail_browser.setHtml("\n".join(html))
 
