@@ -160,6 +160,15 @@ STRINGS = {
     'restab.detail.link_source.locality_match': '产地匹配',
     'restab.detail.link_source.m3_inference': 'M3 推理',
     'restab.detail.link_source.unlinked': '未关联',
+    # Phase 66 Plan C.6: visual-coordinate cross-reference section
+    # labels (Phase C fires only when Phase A Strategy-1 didn't match).
+    'restab.detail.visual_links': '视觉坐标关联',
+    'restab.detail.visual_target': '目标图',
+    'restab.detail.visual_layer': '地层层位',
+    'restab.detail.visual_age': '年代',
+    'restab.detail.visual_formation': '组',
+    'restab.detail.visual_confidence': '置信度',
+    'restab.detail.visual_empty': '(无视觉关联)',
     'restab.detail.source': '来源',
     'restab.detail.title': '行详情',
     'restab.done': '任务 {id}  ·  {rows} 行',
