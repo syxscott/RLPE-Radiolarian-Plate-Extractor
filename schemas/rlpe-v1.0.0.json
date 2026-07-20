@@ -1063,6 +1063,19 @@
           "default": null,
           "title": "Figure Number"
         },
+        "figure_schematic_data": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Figure Schematic Data"
+        },
         "geology_links": {
           "items": {
             "$ref": "#/$defs/GeologyLinkRecord"
