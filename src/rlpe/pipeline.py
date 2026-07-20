@@ -485,6 +485,22 @@ class RadiolarianPipeline:
             # ------ GROBID + layout path (default) -----------------------------
             rows = self._process_one_pdf_grobid(paper_id, pdf_path)
 
+        # Phase 65 Plan A.4: cross-figure linker — link each plate panel
+        # to the paper's strat column / litholog / paleogeographic map
+        # via Sample ID direct match → Locality share → M3 inference.
+        # Runs after all figure extraction so the linker sees the
+        # complete geology-link context. No-op if the config flag is off
+        # (default on).
+        if self.config.extra.get("cross_figure_linker_enabled", True):
+            try:
+                rows = self._apply_cross_figure_linker(rows, paper_id)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "cross_figure_linker failed for paper=%s: %s",
+                    paper_id,
+                    exc,
+                )
+
         self._emit_progress(1, 1, f"Finished {pdf_path.name} ({len(rows)} matches)")
         return rows
 
@@ -2085,6 +2101,161 @@ class RadiolarianPipeline:
             md["geo_vision_figure_type"] = figure_type
             r["metadata"] = md
         return results
+
+    # -----------------------------------------------------------------------
+    # Phase 65 Plan A.4 — cross-figure linker (plate → strat/litholog/map)
+    # -----------------------------------------------------------------------
+    def _apply_cross_figure_linker(
+        self,
+        rows: list[dict[str, Any]],
+        paper_id: str,
+    ) -> list[dict[str, Any]]:
+        """Run the 3-strategy cross-figure linker on a paper's rows.
+
+        Phase 65 Plan A.4. Strategy 1 (sample-ID direct match) and
+        Strategy 2 (locality share) are pure-Python and always run.
+        Strategy 3 (M3 inference) only runs when ``self.m3_engine`` is
+        present — typical smoke / unit tests use ``FakeM3Backend`` so
+        the M3 path is exercised without HTTP traffic.
+
+        For each panel row we:
+          1. Build the panel-facing view (MatchResult-like dict).
+          2. Build the paper-figure index from rows whose figure_type is
+             strat_column / litholog_column / paleogeographic_map /
+             range_chart. These rows already carry ``geology_links``
+             from ``_apply_geo_vision``.
+          3. Call ``link_species_to_geology`` to get one ``LinkResult``
+             per panel.
+          4. Append the new link as a ``geology_links`` entry tagged
+             with ``coord_source = "cross_figure_linker:<source>"``
+             (the four-valued tag ``sample_match`` / ``locality_match`` /
+             ``m3_inference`` / ``unlinked`` lets the export layer and
+             the GUI Results tab distinguish the four cases without
+             adding a new schema field).
+
+        The function mutates and returns ``rows`` so the caller's
+        variable is updated in place; downstream stages see the
+        appended links.
+        """
+        # Lazy import: the linker module pulls in only stdlib + our own
+        # sample_id_extractor, so it's cheap, but deferring keeps the
+        # import cost off the cold-start path when the linker is off.
+        from .cross_figure_linker import link_species_to_geology
+
+        # Split rows by figure_type. Plates are what we LINK FROM; the
+        # rest are the index source.
+        plate_rows: list[dict[str, Any]] = []
+        paper_figures: list[dict[str, Any]] = []
+        for row in rows:
+            md = row.get("metadata") or {}
+            ftype = str(md.get("figure_type") or row.get("figure_type") or "").lower()
+            if ftype in (
+                "strat_column", "litholog_column", "paleogeographic_map", "range_chart",
+            ):
+                paper_figures.append(row)
+            elif ftype in ("plate", "") or ftype.startswith("plate"):
+                plate_rows.append(row)
+            else:
+                # Schematic / diagram / etc. are not plates either;
+                # leave them alone for now (could link them later).
+                pass
+
+        if not plate_rows:
+            return rows
+
+        # Build the figure-index view. We pull fields from each row's
+        # metadata + the row itself. The linker's figure-shape helpers
+        # accept any dict-like, so we feed it a normalised view.
+        figure_views: list[dict[str, Any]] = []
+        for row in paper_figures:
+            md = row.get("metadata") or {}
+            # If the row has extracted geology_links, surface the top
+            # entry's formation/age/locality so the linker can use them
+            # as fallback evidence if the caption alone is empty.
+            gl = md.get("geology_links") or []
+            formation = None
+            age = None
+            locality = None
+            if gl and isinstance(gl[0], dict):
+                formation = gl[0].get("formation")
+                age = gl[0].get("age") or gl[0].get("chronostratigraphy")
+                locality = gl[0].get("locality")
+            figure_views.append({
+                "figure_id": row.get("figure_id") or md.get("figure_id") or "",
+                "paper_id": paper_id,
+                "figure_type": str(md.get("figure_type") or row.get("figure_type") or ""),
+                "caption": md.get("caption_text") or md.get("caption") or "",
+                "formation": formation,
+                "age": age,
+                "locality": locality,
+            })
+
+        # Build panel views. The linker accepts MatchResult-shaped dicts.
+        panel_views: list[dict[str, Any]] = []
+        for row in plate_rows:
+            md = row.get("metadata") or {}
+            panel_views.append({
+                "paper_id": paper_id,
+                "figure_id": row.get("figure_id") or md.get("figure_id") or "",
+                "panel_id": row.get("panel_id") or row.get("canonical_panel_id"),
+                "species": row.get("species"),
+                "caption_snippet": (
+                    row.get("caption_snippet") or md.get("caption_snippet")
+                    or md.get("caption") or ""
+                ),
+                "metadata": md,
+            })
+
+        # Run the linker.
+        results = link_species_to_geology(
+            panels=panel_views,
+            paper_figures=figure_views,
+            m3_engine=getattr(self, "m3_engine", None),
+        )
+
+        # Map panel_id -> LinkResult for quick lookup.
+        by_panel_id: dict[str, Any] = {}
+        for pv, lr in zip(panel_views, results):
+            pid = pv.get("panel_id") or ""
+            if pid:
+                by_panel_id[pid] = lr
+
+        # Append each LinkResult as a geology_links entry on the row.
+        for row in plate_rows:
+            md = row.setdefault("metadata", {})
+            pid = row.get("panel_id") or row.get("canonical_panel_id") or ""
+            lr = by_panel_id.get(pid)
+            if lr is None:
+                continue
+            existing = list(md.get("geology_links") or [])
+            existing.append({
+                "age": lr.age,
+                "formation": lr.formation,
+                "locality": lr.locality,
+                "confidence": lr.confidence,
+                "evidence_text": lr.evidence,
+                "section_type": "cross_figure_link",
+                "coord_source": f"cross_figure_linker:{lr.source}",
+            })
+            md["geology_links"] = existing
+            # Surface a per-row "link_source" tag so the GUI can
+            # badge Strategy 1/2/3/unlinked without parsing the
+            # geology_links list.
+            md["link_source"] = lr.source
+            md["link_confidence"] = float(lr.confidence)
+            md["link_figure_id"] = lr.figure_id
+            # Also flag for review when M3 was the source and the
+            # confidence is at the low end of the band — operators
+            # typically want to spot-check these.
+            if lr.source == "m3_inference" and lr.confidence < 0.4:
+                md.setdefault("needs_review", True)
+                reasons = list(md.get("review_reasons") or [])
+                if "cross_figure_linker_low_confidence" not in reasons:
+                    reasons.append("cross_figure_linker_low_confidence")
+                md["review_reasons"] = reasons
+            row["metadata"] = md
+
+        return rows
 
     # -----------------------------------------------------------------------
     # Original GROBID + layout path
