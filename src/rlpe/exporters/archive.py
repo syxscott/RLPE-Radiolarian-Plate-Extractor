@@ -219,26 +219,30 @@ def _linker_dynamic_properties(metadata: Any) -> str:
 
 
 def _merged_dynamic_properties(metadata: Any) -> str:
-    """Phase 65 Plan A.5: combine schematic + linker payloads into
-    a single DwC ``dynamicProperties`` blob.
+    """Phase 65 Plan A.5 + Phase 66 Plan C.5: combine schematic +
+    Phase A linker + Phase C visual-linker payloads into a single
+    DwC ``dynamicProperties`` blob.
 
     Behaviour:
     * If only the schematic block is present -> serialise it alone
       (back-compat for Phase 64 Plan B).
     * If only the linker block is present -> serialise a small
       wrapper ``{"cross_figure_link": {...}}``.
-    * If both are present -> merge them under one JSON object so
-      the row carries a single self-describing payload (preferred
-      for downstream consumers).
-    * If neither is present -> empty string.
+    * If only the visual-links block is present -> serialise a small
+      wrapper ``{"cross_figure_visual_links": [...]}`` (Phase C).
+    * If any combination is present -> merge them under one JSON
+      object so the row carries a single self-describing payload
+      (preferred for downstream consumers).
+    * If none is present -> empty string.
 
     Empty string on any serialisation error so the export never
     crashes mid-row.
     """
     sch = getattr(metadata, "figure_schematic_data", None)
     link_src = getattr(metadata, "link_source", None)
+    visual_links = getattr(metadata, "cross_figure_visual_links", None)
 
-    if not sch and not link_src:
+    if not sch and not link_src and not visual_links:
         return ""
     try:
         import json as _json
@@ -261,6 +265,13 @@ def _merged_dynamic_properties(metadata: Any) -> str:
             "confidence": conf,
             "figure_id": getattr(metadata, "link_figure_id", None),
         }
+    # Phase 66 Plan C.5: visual-linker block — only include when the
+    # list is non-empty AND each entry is a dict. Same shape as the
+    # panel_metadata field, so downstream consumers can re-parse it.
+    if isinstance(visual_links, list) and visual_links:
+        clean = [e for e in visual_links if isinstance(e, dict)]
+        if clean:
+            payload["cross_figure_visual_links"] = clean
     if not payload:
         return ""
     try:

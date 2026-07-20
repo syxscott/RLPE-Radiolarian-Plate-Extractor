@@ -186,6 +186,17 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
     except (TypeError, ValueError):
         link_confidence_val = 0.0
     link_confidence_val = max(0.0, min(1.0, link_confidence_val))
+    # Phase 66 Plan C.5: forward cross_figure_visual_links from the
+    # match metadata. Each entry is the dict shape the linker emits
+    # (target_figure_id / target_layer / target_age / target_formation
+    # / confidence / source). We filter to dicts only so a corrupted
+    # list doesn't break the export.
+    raw_visual_links = meta.get("cross_figure_visual_links")
+    visual_links: list[dict[str, Any]] = []
+    if isinstance(raw_visual_links, list):
+        for entry in raw_visual_links:
+            if isinstance(entry, dict):
+                visual_links.append(entry)
     return PanelMetadata(
         panel_score=meta.get("panel_score"),
         ocr_count=int(meta.get("ocr_count", 0) or 0),
@@ -208,6 +219,7 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
         link_source=link_source_val,
         link_confidence=link_confidence_val,
         link_figure_id=link_figure_id_val,
+        cross_figure_visual_links=visual_links,
     )
 
 
