@@ -116,6 +116,11 @@ class ImagePreviewWidget(QWidget):
         self._view.setRenderHint(QPainter.SmoothPixmapTransform)
         self._view.setBackgroundBrush(QBrush(QColor("#1f2937")))
         self._view.setMinimumSize(*IMAGE_PREVIEW_MIN_SIZE)
+        # Phase 64: cap the preview width so the SEM image doesn't
+        # dominate the bottom pane on widescreen displays. The
+        # QGraphicsView still scales via Qt.KeepAspectRatio so the
+        # image stays crisp at any width up to the cap.
+        self._view.setMaximumWidth(IMAGE_PREVIEW_MIN_SIZE[0] * 2)
         self._view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         outer.addWidget(self._view, 1)
 
