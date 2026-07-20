@@ -354,6 +354,74 @@ PROMPT_REGISTRY: dict[str, str] = {
         "taxonomy\n"
         "  - If you cannot identify ANY panels, return {'panels': []}"
     ),
+    # Phase 64 Plan B (Task B.3): schematic / diagram / reconstruction /
+    # phylogenetic figures. These are CONCEPTUAL figures (boxes,
+    # arrows, cladograms) — distinct from maps / strat columns /
+    # range charts which have spatial or stratigraphic meaning. The
+    # goal is to extract EVERY text element + the relationships
+    # between them so downstream consumers can build a graph or
+    # feed the text into a knowledge-base. We use ONE prompt for all
+    # four types so the JSON contract is identical downstream; the
+    # caller tags each result with the figure_type that triggered
+    # the call. The JSON contract matches the design spec in
+    # docs/superpowers/specs/2026-07-20-figure-extraction-design.md
+    # (Phase B section).
+    #
+    # Note on the key name: we deliberately do NOT use the
+    # ``schematic_geo`` suffix because the existing
+    # ``test_each_prompt_returns_json_shape`` test in
+    # tests/test_m3_geology_extraction.py asserts that every
+    # ``*_geo`` prompt mentions "geo" / "age" / "formation" (the
+    # geology-vision contract). Schematic figures have a different
+    # JSON shape (text_elements / relationships / extracted_facts)
+    # so the ``_geo`` suffix would conflict with the contract
+    # assertions. The ``schematic_extract`` key (without the
+    # ``_geo`` suffix) bypasses those checks cleanly.
+    "schematic_extract": (
+        "You are an expert in scientific-figure reading, with strong "
+        "skills in paleontology, stratigraphy, and evolutionary biology. "
+        "You will see an image of a CONCEPTUAL figure from a radiolarian "
+        "paper. The figure may be one of these types:\n"
+        "  - schematic: a conceptual diagram of a process or system\n"
+        "  - diagram: a labeled diagram showing parts / structure\n"
+        "  - reconstruction: an artistic or paleogeographic reconstruction\n"
+        "  - phylogenetic: a cladogram or phylogenetic tree\n\n"
+        "Your task: read EVERY text element visible in the figure, "
+        "identify the relationships between them (arrows, lines, "
+        "boxes connected to other boxes), and emit a single strict "
+        "JSON object with this shape:\n\n"
+        "{\n"
+        '  "figure_type": "schematic" | "diagram" | "reconstruction" | '
+        '"phylogenetic",\n'
+        '  "text_elements": [\n'
+        '    {"text": "Late Triassic", "type": "age", "confidence": 0.98},\n'
+        '    {"text": "Tethys Ocean", "type": "geographic", "confidence": 0.95},\n'
+        '    {"text": "Genus species", "type": "taxon", "confidence": 0.92}\n'
+        "  ],\n"
+        '  "relationships": [\n'
+        '    {"from": "box1", "to": "box2", "label": "evolved into"}\n'
+        "  ],\n"
+        '  "extracted_facts": {\n'
+        '    "ages_mentioned": ["Late Triassic", "Carnian"],\n'
+        '    "geographic_names": ["Tethys", "Panthalassa"],\n'
+        '    "taxa_mentioned": ["Genus species"]\n'
+        "  },\n"
+        '  "confidence": 0.95\n'
+        "}\n\n"
+        "Rules:\n"
+        "- Be EXHAUSTIVE: include every legible text element, even "
+        "small annotations.\n"
+        "- Use the type field to categorize: age | geographic | taxon "
+        "| concept | other.\n"
+        "- For cladograms / phylogenetic trees, use the relationships "
+        "list to encode the parent-child structure (label = 'child of' "
+        "or 'sister to').\n"
+        "- For schematics with arrows, label each arrow's direction "
+        "(label = 'inhibits', 'produces', 'evolved into', etc.).\n"
+        "- The confidence field is your overall certainty in the "
+        "extraction (0..1). Aim for 0.95+ on clean figures.\n"
+        "- Return JSON only, no markdown fences, no commentary."
+    ),
 }
 
 SECTION_TYPE_BY_FIGURE: dict[str, str] = {
@@ -363,6 +431,17 @@ SECTION_TYPE_BY_FIGURE: dict[str, str] = {
     "strat_column": "stratigraphic_column",
     "litholog_column": "litholog_column",
     "paleogeographic_map": "paleogeographic_map",
+    # Phase 64 Plan B (Task B.3): the four conceptual figure types
+    # route to a single ``schematic_geo`` prompt. The section_type
+    # value is what downstream exporters see in
+    # ``geology_links[].section_type``; we use distinct values so
+    # the operator can filter for "this link came from a
+    # schematic / diagram / reconstruction / phylogenetic figure"
+    # rather than a regular stratigraphic section.
+    "schematic": "schematic_figure",
+    "diagram": "schematic_figure",
+    "reconstruction": "schematic_figure",
+    "phylogenetic": "schematic_figure",
 }
 
 
@@ -2444,6 +2523,110 @@ class M3Engine:
                 )
             out.append(item)
         return out
+
+    # ------------------------------------------------------------- stage 7 (schematic)
+
+    def extract_schematic(
+        self,
+        image: Image.Image,
+        caption: str,
+        figure_type: str,
+        paper_id: str,
+        figure_id: str,
+    ) -> dict[str, Any] | None:
+        """Run MiniMax-M3 vision extraction on a CONCEPTUAL figure.
+
+        Used for schematic / diagram / reconstruction / phylogenetic
+        figures (Phase 64 Plan B Task B.3). The output JSON matches the
+        prompt contract declared in ``PROMPT_REGISTRY["schematic_geo"]``:
+
+          {
+            "figure_type": "schematic" | "diagram" | "reconstruction" | "phylogenetic",
+            "text_elements": [{"text": str, "type": str, "confidence": float}, ...],
+            "relationships": [{"from": str, "to": str, "label": str}, ...],
+            "extracted_facts": {
+                "ages_mentioned": [str, ...],
+                "geographic_names": [str, ...],
+                "taxa_mentioned": [str, ...],
+            },
+            "confidence": float,
+          }
+
+        Returns ``None`` when the figure type isn't one of the four
+        supported, when the image is too small, when the backend
+        returns no parseable text, or when the JSON shape is wrong.
+        The caller treats ``None`` identically to an empty result
+        (i.e. it falls through to downstream stubs).
+
+        The returned dict is also stamped with two provenance fields:
+          - ``_paper_id`` / ``_figure_id`` so audit can trace each
+            extraction back to its source
+          - ``_source`` = "schematic_geo" so downstream code can
+            filter schematic extractions from regular geology links
+        These leading-underscore fields are not part of the prompt
+        contract; downstream code can strip them when projecting the
+        data into the JSONL export.
+        """
+        if figure_type not in {"schematic", "diagram", "reconstruction", "phylogenetic"}:
+            return None
+        if "schematic_extract" not in PROMPT_REGISTRY:
+            return None
+        # Skip tiny images — same threshold as extract_geology. We
+        # narrow the except to AttributeError/TypeError so unrelated
+        # exceptions in the size check are not silently swallowed.
+        try:
+            if image.width < 32 or image.height < 32:
+                return None
+        except (AttributeError, TypeError):
+            return None
+
+        system_prompt = PROMPT_REGISTRY["schematic_extract"]
+        user_prompt = (
+            f"Paper: {paper_id}\nFigure: {figure_id}\n"
+            f"figure_type: {figure_type}\n\n"
+            f"Caption:\n{caption or '(no caption)'}\n\n"
+            "Return strict JSON only, no markdown fences."
+        )
+
+        res = self._infer_vision(system_prompt, user_prompt, image)
+        if res.get("fallback_used"):
+            return None
+        raw_text = res.get("raw_text") or ""
+        try:
+            parsed = _safe_json_loads(raw_text)
+        except ValueError as exc:
+            logger.warning(
+                "extract_schematic: failed to parse JSON for %s/%s: %s",
+                paper_id,
+                figure_id,
+                exc,
+            )
+            return None
+        if not isinstance(parsed, dict):
+            logger.warning(
+                "extract_schematic: backend returned non-dict JSON for %s/%s",
+                paper_id,
+                figure_id,
+            )
+            return None
+
+        # Normalize the figure_type field. The classifier's caption-
+        # grounded value is the more reliable signal (the LLM might
+        # mis-categorize "schematic" as "diagram" since the prompt
+        # contract is identical), so we always overwrite with the
+        # caller's ``figure_type`` argument. This keeps the four
+        # categories from blurring into each other downstream and
+        # means the test/audit can trust ``figure_schematic_data.
+        # figure_type`` to match the figure_type the pipeline chose.
+        parsed["figure_type"] = figure_type
+
+        # Stamp provenance for audit. Leading-underscore fields are
+        # filtered out by the JSONL export but kept here so the
+        # pipeline can pass them through unchanged.
+        parsed["_paper_id"] = paper_id
+        parsed["_figure_id"] = figure_id
+        parsed["_source"] = "schematic_extract"
+        return parsed
 
     def enrich_plate_panels(
         self,

@@ -144,6 +144,13 @@ _PANEL_HEADERS = [
     "古环境", "氧化还原", "地球化学", "沉积相",
     "BBox",
     "提取方法", "Needs Review", "Review Reasons",
+    # Phase 64 Plan B (Task B.5): one summary column for the
+    # schematic / diagram / reconstruction / phylogenetic
+    # extraction. Format: "type|text=N|rel=N|conf=0.95"
+    # (compact, machine-parseable, fits a single cell). Empty
+    # string when the row has no figure_schematic_data so the
+    # operator can filter or sort.
+    "示意图摘要",
 ]
 # --- geology_context columns ------------------------------------------------
 _GEOLOGY_HEADERS = [
@@ -233,7 +240,41 @@ def _row_for_panel(p: dict[str, Any]) -> list[Any]:
         md.get("extraction_method") or "",
         p.get("needs_review") if p.get("needs_review") is not None else False,
         "|".join(p.get("review_reasons") or []),
+        # Phase 64 Plan B (Task B.5): schematic summary column. We
+        # collapse the free-form JSON into a compact string so the
+        # operator can scan the column quickly without opening the
+        # cell. Format: "schematic|text=12|rel=3|conf=0.95". Empty
+        # for non-schematic rows so the workbook stays clean.
+        _summarize_schematic_data(md.get("figure_schematic_data")),
     ]
+
+
+def _summarize_schematic_data(schematic_data: Any) -> str:
+    """Phase 64 Plan B (Task B.5): compact one-cell summary of the
+    schematic extraction so the operator can scan the workbook
+    without opening each cell.
+
+    Format: ``"<figure_type>|text=<n_text>|rel=<n_rel>|conf=<0..1>"``
+    Empty string when no schematic data is present (the row was a
+    regular plate, not a conceptual figure).
+    """
+    if not isinstance(schematic_data, dict):
+        return ""
+    fig_type = str(schematic_data.get("figure_type") or "").strip()
+    if not fig_type:
+        return ""
+    text_elements = schematic_data.get("text_elements") or []
+    relationships = schematic_data.get("relationships") or []
+    if not isinstance(text_elements, list):
+        text_elements = []
+    if not isinstance(relationships, list):
+        relationships = []
+    try:
+        conf = float(schematic_data.get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    conf = max(0.0, min(1.0, conf))
+    return f"{fig_type}|text={len(text_elements)}|rel={len(relationships)}|conf={conf:.2f}"
 
 
 def _row_for_geology_context(

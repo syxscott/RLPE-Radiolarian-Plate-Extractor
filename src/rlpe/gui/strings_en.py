@@ -215,6 +215,16 @@ STRINGS = {
     "restab.detail.phylum": "Phylum",
     "restab.detail.class": "Class",
     "restab.detail.order": "Order",
+    # Phase 64 Plan B (Task B.7): schematic figure content.
+    "restab.detail.schematic": "Schematic content",
+    "restab.detail.schematic_type": "Figure type",
+    "restab.detail.schematic_text_count": "Text elements",
+    "restab.detail.schematic_rel_count": "Relationships",
+    "restab.detail.schematic_facts": "Extracted facts",
+    "restab.detail.schematic_ages": "Ages",
+    "restab.detail.schematic_geo": "Geographic",
+    "restab.detail.schematic_taxa": "Taxa",
+    "restab.detail.schematic_confidence": "Confidence",
 
     # ============================================================
     # Settings tab

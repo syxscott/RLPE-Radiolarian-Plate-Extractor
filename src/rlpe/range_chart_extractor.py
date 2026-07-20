@@ -218,6 +218,51 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
         "outcrop photo",
         "field exposure",
     ),
+    # Phase 64 Plan B: schematic / diagram / reconstruction /
+    # phylogenetic figure types. These four new types route to a
+    # dedicated M3 prompt (``PROMPT_REGISTRY["schematic_geo"]``) that
+    # extracts text elements + concept relationships (e.g. "evolved
+    # into") + extracted facts (ages, geography, taxa). They are
+    # distinct from the existing map / range_chart / strat_column /
+    # litholog_column / paleogeographic_map types because their
+    # primary content is *conceptual* — boxes, arrows, and labels —
+    # not measured stratigraphic sections or geographic shapes.
+    #
+    # Detection order matters: ``paleogeographic_map`` and ``map``
+    # are checked BEFORE ``reconstruction`` so a "paleogeographic
+    # reconstruction" caption routes to the existing
+    # paleogeographic-map vision path (it carries geographic /
+    # continent context that ``reconstruction`` would lose). The
+    # plain "reconstruction" keywords below fire only when none of
+    # the geographic-map / stratigraphic-column keywords match.
+    "schematic": (
+        "schematic",
+        "schematic diagram",
+        "conceptual diagram",
+        "schematic reconstruction",
+    ),
+    "diagram": (
+        "diagram",
+        "block diagram",
+        "flow diagram",
+        "schematic diagram",
+    ),
+    "reconstruction": (
+        "reconstruction",
+        # Note: "paleogeographic reconstruction" / "palaeogeographic
+        # reconstruction" intentionally NOT listed here — those
+        # route to the more specific ``paleogeographic_map`` type.
+        "artistic reconstruction",
+        "life reconstruction",
+    ),
+    "phylogenetic": (
+        "phylogenetic tree",
+        "cladogram",
+        "phylogeny",
+        "evolutionary tree",
+        "phylogenetic",
+        "cladistic",
+    ),
 }
 
 
@@ -226,7 +271,8 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
 
     Returns one of: ``plate``, ``range_chart``, ``map``,
     ``strat_column``, ``litholog_column``, ``paleogeographic_map``,
-    ``photo``, ``other``.
+    ``photo``, ``schematic``, ``diagram``, ``reconstruction``,
+    ``phylogenetic``, ``other``.
 
     The classifier is caption-only (no vision) and intentionally
     conservative — the default for any caption that doesn't clearly match
@@ -244,7 +290,9 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
          specific than range_chart, so they take priority)
       4. range_chart (catch-all for distribution/range/biozone)
       5. photo
-      6. other (fallback → treated as plate downstream)
+      6. schematic / diagram / reconstruction / phylogenetic
+         (Phase 64 Plan B: conceptual / non-geographic figures)
+      7. other (fallback → treated as plate downstream)
     """
     if not caption:
         return "other"
@@ -290,7 +338,19 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
     for kw in _FIGURE_TYPE_PROMPT_KEYWORDS["photo"]:
         if kw in low:
             return "photo"
-    # 6. Fallback.
+    # 6. Phase 64 Plan B: schematic / diagram / reconstruction /
+    # phylogenetic. These are CONCEPTUAL figures — boxes, arrows,
+    # cladograms — distinct from the geographic / stratigraphic /
+    # photographic types above. We check phylogenetic first because
+    # the keyword "phylogeny" is the most specific signal of the
+    # group ("a phylogenetic diagram" should still classify as
+    # phylogenetic, not diagram). Then reconstruction / schematic /
+    # diagram in order of specificity.
+    for specific in ("phylogenetic", "schematic", "diagram", "reconstruction"):
+        for kw in _FIGURE_TYPE_PROMPT_KEYWORDS[specific]:
+            if kw in low:
+                return specific
+    # 7. Fallback.
     return "other"
 
 

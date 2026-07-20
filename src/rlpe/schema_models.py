@@ -386,6 +386,25 @@ class PanelMetadata(BaseModel):
     # level data, so the operator sees a data gap rather than
     # fabricated per-panel data.
     geology_scope: str = ""
+    # Phase 64 Plan B (Task B.2): per-panel storage for the
+    # ``extract_schematic`` output on schematic / diagram /
+    # reconstruction / phylogenetic figures. The shape is the same
+    # JSON the M3 prompt contract emits:
+    #   {
+    #     "figure_type": str,
+    #     "text_elements": [{text, type, confidence}, ...],
+    #     "relationships": [{from, to, label}, ...],
+    #     "extracted_facts": {
+    #       "ages_mentioned": [...],
+    #       "geographic_names": [...],
+    #       "taxa_mentioned": [...],
+    #     },
+    #     "confidence": float,
+    #   }
+    # We keep the value free-form (dict[str, Any]) rather than
+    # building a nested Pydantic model so the downstream export
+    # path can iterate the same shape without re-marshalling.
+    figure_schematic_data: dict[str, Any] | None = None
 
 
 class PanelRecord(BaseModel):

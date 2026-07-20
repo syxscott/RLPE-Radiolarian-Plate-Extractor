@@ -63,6 +63,14 @@ DWC_FIELDS: list[tuple[str, str]] = [
     ("identifiedBy", "http://rs.tdwg.org/dwc/terms/identifiedBy"),
     ("associatedReferences", "http://rs.tdwg.org/dwc/terms/associatedReferences"),
     ("associatedMedia", "http://rs.tdwg.org/dwc/terms/associatedMedia"),
+    # Phase 64 Plan B (Task B.5): dynamicProperties carries the
+    # schematic / diagram / reconstruction / phylogenetic
+    # extraction JSON as a single-string blob. DwC-A's
+    # ``dynamicProperties`` is the canonical extension point for
+    # non-DwC terms; consumers like GBIF accept it unchanged and
+    # preserve the original JSON shape. Empty when the row has
+    # no figure_schematic_data so the column stays clean.
+    ("dynamicProperties", "http://rs.tdwg.org/dwc/terms/dynamicProperties"),
 ]
 
 
@@ -122,7 +130,44 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         "identifiedBy": ("; ".join(pm.authors) if pm and pm.authors else ""),
         "associatedReferences": (pm.doi if pm and pm.doi else ""),
         "associatedMedia": media,
+        # Phase 64 Plan B (Task B.5): schematic / diagram /
+        # reconstruction / phylogenetic extractions ride on
+        # DwC's ``dynamicProperties`` extension term as a
+        # JSON-encoded blob. We serialise the same prompt-
+        # contract shape M3 produced so GBIF / DwC consumers
+        # can re-parse the JSON without needing our schema.
+        # Empty when no figure_schematic_data so the column
+        # stays clean for non-schematic rows.
+        "dynamicProperties": _schematic_dynamic_properties(
+            panel.metadata.figure_schematic_data
+        ),
     }
+
+
+def _schematic_dynamic_properties(schematic_data: Any) -> str:
+    """Phase 64 Plan B (Task B.5): serialise the schematic
+    extraction as a single JSON blob for DwC's
+    ``dynamicProperties`` column.
+
+    Returns an empty string when no schematic data is present
+    (regular plate row). The JSON shape mirrors the M3 prompt
+    contract (figure_type / text_elements / relationships /
+    extracted_facts / confidence) so a downstream consumer can
+    re-parse it identically.
+    """
+    if not isinstance(schematic_data, dict):
+        return ""
+    if not schematic_data.get("figure_type"):
+        return ""
+    try:
+        import json as _json
+
+        # sort_keys=True keeps the output deterministic so two
+        # equal dicts produce byte-identical blobs (helps test
+        # snapshots and idempotent exports).
+        return _json.dumps(schematic_data, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return ""
 
 
 def _build_meta_xml(opts: DwCAOptions) -> str:
