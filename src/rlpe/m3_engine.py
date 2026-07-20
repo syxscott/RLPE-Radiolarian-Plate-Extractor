@@ -422,6 +422,43 @@ PROMPT_REGISTRY: dict[str, str] = {
         "extraction (0..1). Aim for 0.95+ on clean figures.\n"
         "- Return JSON only, no markdown fences, no commentary."
     ),
+    # Phase 65 Plan A.3 — cross-figure inference prompt used by the
+    # 3-strategy linker (sample_id -> locality -> m3_inference). The
+    # model sees a plate caption + paper-level figure summary and
+    # returns the most likely formation / age / locality / figure_id
+    # for the plate's species. Confidence is intentionally bounded to
+    # 0.3-0.6 by the caller because this is a TEXT-ONLY reasoning path
+    # with no visual grounding (Phase C covers image-based linking).
+    "cross_figure_inference": (
+        "You are an expert radiolarian paleontologist. You will be given:\n"
+        "1. A plate caption (text describing a SEM plate).\n"
+        "2. A summary of the same paper's other figures (strat columns,\n"
+        "   lithologs, paleogeographic maps, range charts).\n\n"
+        "Your job: infer which formation / age / locality the species on\n"
+        "the plate most likely came from. Use ONLY information present in\n"
+        "the supplied text. If the plate caption already mentions a\n"
+        "formation/age, propagate that. If not, use the paper's other\n"
+        "figures to infer (e.g. if the only strat column is Late\n"
+        "Cretaceous Italy, and the plate caption mentions Italy without\n"
+        "an age, infer Late Cretaceous). If you truly cannot infer\n"
+        "anything, set the relevant fields to null.\n\n"
+        "Return strict JSON only, with this shape:\n\n"
+        "{\n"
+        '  "species": str|null,\n'
+        '  "age": str|null,\n'
+        '  "formation": str|null,\n'
+        '  "locality": str|null,\n'
+        '  "figure_id": str|null,\n'
+        '  "confidence": 0.0-1.0\n'
+        "}\n\n"
+        "Rules:\n"
+        "- figure_id must be one of the figure_ids in the paper summary,\n"
+        "  or null if no specific figure can be tied.\n"
+        "- confidence reflects how certain you are; the caller clamps it\n"
+        "  to 0.3-0.6, so emit your true 0-1 confidence for transparency.\n"
+        "- Never invent fields not in the schema above.\n"
+        "- Output JSON only, no markdown fences, no commentary."
+    ),
 }
 
 SECTION_TYPE_BY_FIGURE: dict[str, str] = {
@@ -2627,6 +2664,142 @@ class M3Engine:
         parsed["_figure_id"] = figure_id
         parsed["_source"] = "schematic_extract"
         return parsed
+
+    # ------------------------------------------------------------- phase 65 plan a.3
+    def infer_species_age_formation(
+        self,
+        panel_caption: str,
+        paper_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Cross-figure inference (Strategy 3 of the Phase 65 linker).
+
+        Given a plate's caption snippet and a paper-level summary of
+        every non-plate figure (strat column / litholog / paleogeographic
+        map / range chart), ask MiniMax-M3 to infer which formation /
+        age / locality the plate's species most likely came from.
+
+        Parameters
+        ----------
+        panel_caption : str
+            The caption text for the plate (or panel) we are trying to
+            link. Usually the ``MatchResult.caption_snippet`` field.
+        paper_context : dict, optional
+            Free-form paper-level context. The linker passes
+            ``{"figures": [...]}`` where each entry has at minimum
+            ``figure_id``, ``figure_type``, ``caption``, ``formation``,
+            ``age``, ``locality``. May also be ``{}`` or ``None``.
+
+        Returns
+        -------
+        dict
+            Shape:
+              ``{
+                  "species": str | None,
+                  "age": str | None,
+                  "formation": str | None,
+                  "locality": str | None,
+                  "figure_id": str | None,
+                  "confidence": float (0.3-0.6),
+              }``
+
+            Empty / fallback dict (``{"confidence": 0.0, ...}``) on
+            backend failure so the caller can distinguish "M3 said no"
+            from "M3 didn't run".
+
+        Notes
+        -----
+        * Text-only call (no image). The cross-figure reasoning is over
+          the paper's figure caption summary, not the figures' pixels;
+          sending images would dramatically increase cost without much
+          accuracy gain at this stage (Phase C covers image-based
+          cross-figure linking).
+        * Falls back to ``{"confidence": 0.0}`` (not raises) when the
+          backend is unavailable / returns malformed JSON, so the
+          cross_figure_linker can drop back to the ``unlinked`` source.
+        """
+        if self.backend is None:
+            return {
+                "species": None, "age": None, "formation": None,
+                "locality": None, "figure_id": None, "confidence": 0.0,
+            }
+        paper_context = paper_context or {}
+        figures = paper_context.get("figures") or []
+        # Truncate each caption so the prompt stays within budget.
+        # ~5 figures × 200 chars + plate caption (~400 chars) ≈ 1.4KB,
+        # well within M3's text window.
+        figure_lines: list[str] = []
+        for fig in figures[:8]:  # cap at 8 to keep prompt small
+            fid = str(fig.get("figure_id") or "?")
+            ftype = str(fig.get("figure_type") or "?")
+            cap = str(fig.get("caption") or "")
+            if len(cap) > 200:
+                cap = cap[:200] + "..."
+            formation = fig.get("formation")
+            age = fig.get("age")
+            locality = fig.get("locality")
+            bits = [f"[{fid} type={ftype}]"]
+            if cap:
+                bits.append(f"caption={cap!r}")
+            if formation:
+                bits.append(f"formation={formation}")
+            if age:
+                bits.append(f"age={age}")
+            if locality:
+                bits.append(f"locality={locality}")
+            figure_lines.append(" ".join(bits))
+        figures_blob = "\n".join(figure_lines) if figure_lines else "(none)"
+        panel_blob = (panel_caption or "").strip()
+        if len(panel_blob) > 400:
+            panel_blob = panel_blob[:400] + "..."
+
+        system_prompt = PROMPT_REGISTRY["cross_figure_inference"]
+        user_prompt = (
+            f"Plate caption:\n{panel_blob or '(no caption)'}\n\n"
+            f"Paper figures:\n{figures_blob}\n\n"
+            "Return strict JSON only, no markdown fences."
+        )
+
+        try:
+            res = self._infer_text(system_prompt, user_prompt)
+        except Exception:
+            logger.exception("infer_species_age_formation: backend call failed")
+            return {
+                "species": None, "age": None, "formation": None,
+                "locality": None, "figure_id": None, "confidence": 0.0,
+            }
+        if res.get("fallback_used") or not (res.get("raw_text") or "").strip():
+            return {
+                "species": None, "age": None, "formation": None,
+                "locality": None, "figure_id": None, "confidence": 0.0,
+            }
+        try:
+            parsed = _safe_json_loads(res.get("raw_text") or "")
+        except ValueError:
+            logger.warning("infer_species_age_formation: failed to parse JSON")
+            return {
+                "species": None, "age": None, "formation": None,
+                "locality": None, "figure_id": None, "confidence": 0.0,
+            }
+        if not isinstance(parsed, dict):
+            return {
+                "species": None, "age": None, "formation": None,
+                "locality": None, "figure_id": None, "confidence": 0.0,
+            }
+        # Clamp confidence to the spec band [0.3, 0.6] for this strategy.
+        conf = parsed.get("confidence", 0.4)
+        try:
+            conf = float(conf)
+        except (TypeError, ValueError):
+            conf = 0.4
+        conf = max(0.3, min(0.6, conf))
+        return {
+            "species": parsed.get("species"),
+            "age": parsed.get("age"),
+            "formation": parsed.get("formation"),
+            "locality": parsed.get("locality"),
+            "figure_id": parsed.get("figure_id"),
+            "confidence": conf,
+        }
 
     def enrich_plate_panels(
         self,
