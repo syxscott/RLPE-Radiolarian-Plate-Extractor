@@ -213,10 +213,18 @@ class SettingsTab(QWidget):
 
         self._grobid_url = QLineEdit(DEFAULT_GROBID_URL)
         # Phase 56 audit: validate URL format (must start with http:// or https://)
+        # PySide6 ≥ 6.5 removed QRegExpValidator in favour of
+        # QRegularExpressionValidator (Qt6's regex engine). Wrap the
+        # re.Pattern so we keep the same semantics; the wildcard `.`
+        # matches any char (incl. newline-free URL chars) the same way.
         import re as _re
-        from PySide6.QtGui import QRegExpValidator
+        from PySide6.QtCore import QRegularExpression
+        from PySide6.QtGui import QRegularExpressionValidator
         self._grobid_url.setValidator(
-            QRegExpValidator(_re.compile(r"^https?://[^\s/$.?#].[^\s]*$"), self._grobid_url)
+            QRegularExpressionValidator(
+                QRegularExpression(r"^https?://[^\s/$.?#].[^\s]*$"),
+                self._grobid_url,
+            )
         )
         glayout.addRow(tr_label("settab.grobid.url"), self._grobid_url)
 
@@ -253,10 +261,13 @@ class SettingsTab(QWidget):
         # being saved and passed to the OCR engine. Valid inputs look
         # like "en", "ch_sim", "en,ja" (comma-separated ISO codes).
         import re
-        from PySide6.QtGui import QRegExpValidator
+        from PySide6.QtCore import QRegularExpression
+        from PySide6.QtGui import QRegularExpressionValidator
         # Digits allowed for codes like en_GB_sim (future-proofing).
         ocr_lang_rx = re.compile(r"^[a-zA-Z0-9_]+(\s*,\s*[a-zA-Z0-9_]+)*$")
-        validator = QRegExpValidator(ocr_lang_rx, self._ocr_lang)
+        validator = QRegularExpressionValidator(
+            QRegularExpression(ocr_lang_rx.pattern), self._ocr_lang
+        )
         self._ocr_lang.setValidator(validator)
         olayout.addRow(tr_label("settab.ocr.lang"), self._ocr_lang)
 
@@ -336,8 +347,14 @@ class SettingsTab(QWidget):
         self._pbdb_endpoint = QLineEdit("https://paleobiodb.org/data1.2")
         self._pbdb_endpoint.setPlaceholderText("(leave blank for default)")
         # Phase 56 audit: validate URL format; empty is OK (uses default).
+        # PySide6 ≥ 6.5: QRegExpValidator removed; use QRegularExpressionValidator.
+        from PySide6.QtCore import QRegularExpression
+        from PySide6.QtGui import QRegularExpressionValidator
         self._pbdb_endpoint.setValidator(
-            QRegExpValidator(_re.compile(r"^$|^https?://[^\s/$.?#].[^\s]*$"), self._pbdb_endpoint)
+            QRegularExpressionValidator(
+                QRegularExpression(r"^$|^https?://[^\s/$.?#].[^\s]*$"),
+                self._pbdb_endpoint,
+            )
         )
         playout.addRow(tr_label("settab.pbdb.endpoint"), self._pbdb_endpoint)
 
