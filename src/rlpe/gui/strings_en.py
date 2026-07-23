@@ -230,6 +230,15 @@ STRINGS = {
     "restab.detail.link_source.locality_match": "Locality match",
     "restab.detail.link_source.m3_inference": "M3 inference",
     "restab.detail.link_source.unlinked": "Unlinked",
+    # Phase 66 Plan C.6: visual-coordinate cross-reference section
+    # labels (Phase C fires only when Phase A Strategy-1 didn't match).
+    "restab.detail.visual_links": "Visual coordinate links",
+    "restab.detail.visual_target": "Target figure",
+    "restab.detail.visual_layer": "Strat layer",
+    "restab.detail.visual_age": "Age",
+    "restab.detail.visual_formation": "Formation",
+    "restab.detail.visual_confidence": "Confidence",
+    "restab.detail.visual_empty": "(no visual links)",
 
     # ============================================================
     # Settings tab

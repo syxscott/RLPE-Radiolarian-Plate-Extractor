@@ -861,6 +861,80 @@ class ResultsTab(QWidget):
         if link_src:
             _emit_link_summary_badge(html, link_src, md.get("link_confidence") or 0.0)
 
+        # ── Visual-coordinate links (Phase 66 Plan C.6) ──────────
+        # Phase C fires only when Phase A Strategy-1 didn't reach
+        # confidence 1.0 AND the paper has both a plate and a strat
+        # column / paleogeographic map. Surface the visual links in
+        # a dedicated section so operators can audit Phase C's
+        # precision refinements next to Phase A's text-only chips.
+        visual_links = md.get("cross_figure_visual_links")
+        if isinstance(visual_links, list) and visual_links:
+            html.append(
+                f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
+                f"<b style='font-size:12px'>"
+                f"{i18n._tr('restab.detail.visual_links')}</b>"
+            )
+            html.append(
+                "<table style='font-size:12px;margin-top:4px;border-collapse:collapse'>"
+            )
+            for vl in visual_links:
+                if not isinstance(vl, dict):
+                    continue
+                target = vl.get("target_figure_id") or "—"
+                layer = vl.get("target_layer")
+                layer_str = str(layer) if layer is not None else "—"
+                age = vl.get("target_age") or "—"
+                formation = vl.get("target_formation") or "—"
+                try:
+                    conf_val = float(vl.get("confidence", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    conf_val = 0.0
+                conf_val = max(0.0, min(1.0, conf_val))
+                conf_pct = f"{conf_val * 100:.0f}%"
+                row_html = (
+                    "<tr>"
+                    f"<td style='padding:1px 6px;color:#666'>"
+                    f"{html_escape(i18n._tr('restab.detail.visual_target'))}</td>"
+                    f"<td style='padding:1px 6px'>"
+                    f"{html_escape(str(target))}</td>"
+                    "</tr>"
+                    "<tr>"
+                    f"<td style='padding:1px 6px;color:#666'>"
+                    f"{html_escape(i18n._tr('restab.detail.visual_layer'))}</td>"
+                    f"<td style='padding:1px 6px'>{html_escape(layer_str)}</td>"
+                    "</tr>"
+                    "<tr>"
+                    f"<td style='padding:1px 6px;color:#666'>"
+                    f"{html_escape(i18n._tr('restab.detail.visual_age'))}</td>"
+                    f"<td style='padding:1px 6px'>{html_escape(str(age))}</td>"
+                    "</tr>"
+                    "<tr>"
+                    f"<td style='padding:1px 6px;color:#666'>"
+                    f"{html_escape(i18n._tr('restab.detail.visual_formation'))}</td>"
+                    f"<td style='padding:1px 6px'>{html_escape(str(formation))}</td>"
+                    "</tr>"
+                    "<tr>"
+                    f"<td style='padding:1px 6px;color:#666'>"
+                    f"{html_escape(i18n._tr('restab.detail.visual_confidence'))}</td>"
+                    f"<td style='padding:1px 6px'>"
+                    f"<span class='badge-info' style='padding:1px 5px;"
+                    f"border-radius:3px;font-size:11px'>{conf_pct}</span></td>"
+                    "</tr>"
+                )
+                html.append(row_html)
+            html.append("</table></div>")
+        elif isinstance(visual_links, list) and link_src not in (
+            "sample_match", None,
+        ):
+            # Empty visual_links on a panel whose Phase A didn't nail
+            # it via Strategy 1 — operators want a one-liner confirming
+            # Phase C considered and rejected the visual link.
+            html.append(
+                f"<div style='padding:4px 8px;border-top:1px solid #eee;"
+                f"font-size:11px;color:#888'>"
+                f"{i18n._tr('restab.detail.visual_empty')}</div>"
+            )
+
         # ── Schematic content (Phase 64 Plan B Task B.7) ─────────
         # When the figure was classified as schematic / diagram /
         # reconstruction / phylogenetic, the M3 ``extract_schematic``

@@ -1041,6 +1041,14 @@
           "title": "Caption Pairs Used",
           "type": "boolean"
         },
+        "cross_figure_visual_links": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Cross Figure Visual Links",
+          "type": "array"
+        },
         "extraction_method": {
           "default": "",
           "title": "Extraction Method",

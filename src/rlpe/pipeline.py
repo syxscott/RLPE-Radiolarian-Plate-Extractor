@@ -2255,6 +2255,57 @@ class RadiolarianPipeline:
                 md["review_reasons"] = reasons
             row["metadata"] = md
 
+        # Phase 66 Plan C.4: VISION-coordinate cross-reference linking.
+        # Fires for panels whose Phase A Strategy-1 (sample_match) didn't
+        # reach confidence 1.0 AND the paper has BOTH a plate figure
+        # AND a strat column / paleogeographic-map. The visual links
+        # are stored on the row's ``metadata.cross_figure_visual_links``
+        # field (Phase C.2 schema). They DON'T replace the Phase A
+        # geology_links — they're a precision refinement that the GUI
+        # / export layer surfaces when present.
+        try:
+            from .cross_figure_linker import link_visual_coordinates
+
+            # The trigger function looks at the FULL set of paper
+            # figures (plate + strat + map) to confirm the paper has
+            # both kinds. ``figure_views`` only has the strat/map side
+            # so we supplement with the plate figures extracted above.
+            all_figure_views = list(figure_views)
+            for prow in plate_rows:
+                pmd = prow.get("metadata") or {}
+                all_figure_views.append({
+                    "figure_id": prow.get("figure_id") or pmd.get("figure_id") or "",
+                    "paper_id": paper_id,
+                    "figure_type": str(pmd.get("figure_type") or "plate"),
+                    "caption": pmd.get("caption") or pmd.get("caption_text") or "",
+                })
+
+            visual_per_panel = link_visual_coordinates(
+                panels=panel_views,
+                paper_figures=all_figure_views,
+                m3_engine=getattr(self, "m3_engine", None),
+            )
+            for pv, links in zip(panel_views, visual_per_panel):
+                pid = pv.get("panel_id") or ""
+                if not pid or not links:
+                    continue
+                # Find the matching plate row and write the links.
+                for row in plate_rows:
+                    row_pid = row.get("panel_id") or row.get("canonical_panel_id") or ""
+                    if row_pid == pid:
+                        md = row.setdefault("metadata", {})
+                        existing = list(md.get("cross_figure_visual_links") or [])
+                        existing.extend(links)
+                        md["cross_figure_visual_links"] = existing
+                        row["metadata"] = md
+                        break
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "visual coordinate linker failed for paper=%s: %s",
+                paper_id,
+                exc,
+            )
+
         return rows
 
     # -----------------------------------------------------------------------

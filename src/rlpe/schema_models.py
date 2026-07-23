@@ -416,6 +416,27 @@ class PanelMetadata(BaseModel):
     link_source: str | None = None
     link_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     link_figure_id: str | None = None
+    # Phase 66 Plan C.2: VISION-coordinate cross-reference links.
+    # Populated by ``link_visual_coordinates`` for panels whose
+    # Phase A Strategy-1 (sample_match) didn't reach confidence 1.0
+    # AND the paper has BOTH a plate figure AND a strat column /
+    # paleogeographic-map figure. Each entry is a free-form dict
+    # with keys:
+    #   target_figure_id: str — paper-level figure id of the linked
+    #                          strat column / map
+    #   target_layer: int | None — 1-based strat-column layer index
+    #                              (top = 1); None if not determinable
+    #   target_age: str | None — chronostratigraphy string from the
+    #                             linked layer
+    #   target_formation: str | None — formation name on the linked
+    #                                  layer
+    #   confidence: float (0.0-1.0) — M3's own visual-link confidence
+    #                                  (unclamped; vision grounding is
+    #                                  intrinsically more reliable
+    #                                  than the text-only Strategy 3)
+    #   source: str — always "m3_visual" for Phase C entries
+    # Default empty list so legacy Phase A records remain valid.
+    cross_figure_visual_links: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PanelRecord(BaseModel):

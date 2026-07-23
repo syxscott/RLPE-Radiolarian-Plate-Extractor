@@ -459,6 +459,56 @@ PROMPT_REGISTRY: dict[str, str] = {
         "- Never invent fields not in the schema above.\n"
         "- Output JSON only, no markdown fences, no commentary."
     ),
+    # Phase 66 Plan C.1 — cross_figure_visual prompt for VISION-based
+    # plate-to-strat-column / paleogeographic-map linking. The model
+    # sees BOTH images together and returns per-panel mappings back to
+    # the strat column's layers / ages / formations. This is the
+    # precision-refinement counterpart to the text-only
+    # ``cross_figure_inference`` prompt above; it fires only for panels
+    # whose Strategy-1 (sample_id) match was weak so the visual signal
+    # can either confirm or override the locality-only inference.
+    "cross_figure_visual": (
+        "You are an expert radiolarian paleontologist with access to TWO\n"
+        "images and their captions:\n"
+        "1. Image A: an SEM plate with multiple specimen panels\n"
+        "   (typically labelled 1, 2, 3, ... or by figure number).\n"
+        "2. Image B: a stratigraphic column / litholog column /\n"
+        "   paleogeographic map from the same paper.\n\n"
+        "Your job: identify which panels on the plate correspond to\n"
+        "specimens from specific layers / formations / ages on the\n"
+        "strat column or map. For each plate cell you can confidently\n"
+        "link, emit one entry in the output. Skip cells you cannot\n"
+        "link rather than guessing.\n\n"
+        "Look for visual cues like scale bars, fossil density, and\n"
+        "preservation style to infer the layer. The captions help\n"
+        "disambiguate when multiple layers host similar taxa.\n\n"
+        "Return strict JSON only with this shape:\n\n"
+        "{\n"
+        '  "plate_panels": [\n'
+        '    {\n'
+        '      "cell_label": str,\n'
+        '      "species": str,\n'
+        '      "links_to_strat_layer": int|null,\n'
+        '      "links_to_age": str|null,\n'
+        '      "links_to_formation": str|null,\n'
+        '      "confidence": 0.0-1.0\n'
+        '    },\n'
+        '    ...\n'
+        '  ]\n'
+        "}\n\n"
+        "Rules:\n"
+        "- Only emit cells you can link with confidence >= 0.5. Skip\n"
+        "  the rest (return fewer entries rather than hallucinating).\n"
+        "- cell_label MUST match the visible number/letter on the plate.\n"
+        "- species is the binomial name from the caption or image label.\n"
+        "- links_to_strat_layer is the 1-based layer index from the\n"
+        "  strat column (top = 1). null if not determinable.\n"
+        "- confidence reflects your certainty in the visual link;\n"
+        "  the caller trusts values in [0.0, 1.0] without clamping\n"
+        "  because vision grounding is intrinsically more reliable\n"
+        "  than text-only inference.\n"
+        "- Output JSON only, no markdown fences, no commentary."
+    ),
 }
 
 SECTION_TYPE_BY_FIGURE: dict[str, str] = {
@@ -2800,6 +2850,154 @@ class M3Engine:
             "figure_id": parsed.get("figure_id"),
             "confidence": conf,
         }
+
+    # ------------------------------------------------------------- phase 66 plan c.1
+    def cross_figure_visual_inference(
+        self,
+        plate_image: Image.Image,
+        strat_image: Image.Image,
+        plate_caption: str,
+        strat_caption: str,
+    ) -> dict[str, Any]:
+        """VISION-based cross-figure inference (Phase 66 Plan C.1).
+
+        Given an SEM plate image AND a strat column / paleogeographic
+        map image (with their captions), ask MiniMax-M3 to identify
+        which plate panels correspond to which strat layers /
+        formations / ages. This is the precision-refinement counterpart
+        to ``infer_species_age_formation`` (text-only, confidence
+        0.3-0.6): vision grounding is intrinsically more reliable, so
+        the caller trusts the returned confidence (0.0-1.0) without
+        clamping.
+
+        Parameters
+        ----------
+        plate_image : PIL.Image.Image
+            The SEM plate figure image (RGB or convertible).
+        strat_image : PIL.Image.Image
+            The strat column / paleogeographic map figure image from
+            the same paper.
+        plate_caption : str
+            Caption text for the plate.
+        strat_caption : str
+            Caption text for the strat column / map.
+
+        Returns
+        -------
+        dict
+            Shape::
+
+              {
+                "plate_panels": [
+                  {
+                    "cell_label": str,
+                    "species": str,
+                    "links_to_strat_layer": int | None,
+                    "links_to_age": str | None,
+                    "links_to_formation": str | None,
+                    "confidence": float (0.0-1.0, unclamped),
+                  },
+                  ...
+                ]
+              }
+
+            Returns ``{"plate_panels": []}`` (NOT raises) on any
+            failure path: no backend, fallback_used, malformed JSON,
+            tiny images, or any exception during inference. This lets
+            the caller treat "M3 said nothing" identically to "M3
+            didn't run".
+
+        Notes
+        -----
+        * Only the FIRST image argument (``plate_image``) is sent to
+          the vision backend — the public vision contract is single-
+          image. The strat column caption is included in the user
+          prompt so the model has full text context. Multi-image
+          inference is a future enhancement (Phase C+); for now the
+          captions carry the strat column semantics.
+        * Panel entries missing ``cell_label`` OR ``species`` are
+          dropped before returning; the linker requires both keys to
+          attach a visual link to a specific panel.
+        * Confidence is clamped to ``[0.0, 1.0]`` for safety but
+          otherwise NOT clamped to any narrower band — the visual
+          signal can support > 0.6 confidence legitimately.
+        """
+        empty = {"plate_panels": []}
+        if self.backend is None:
+            return empty
+        # Tiny images produce only noise; bail early without burning
+        # a vision call. Same threshold as extract_geology / extract_schematic.
+        try:
+            if (
+                plate_image.width < 32 or plate_image.height < 32
+                or strat_image.width < 32 or strat_image.height < 32
+            ):
+                return empty
+        except (AttributeError, TypeError):
+            return empty
+
+        system_prompt = PROMPT_REGISTRY["cross_figure_visual"]
+        # Truncate captions to keep the prompt budget-bounded; long
+        # captions mostly add noise for visual linking.
+        plate_blob = (plate_caption or "").strip()
+        if len(plate_blob) > 600:
+            plate_blob = plate_blob[:600] + "..."
+        strat_blob = (strat_caption or "").strip()
+        if len(strat_blob) > 600:
+            strat_blob = strat_blob[:600] + "..."
+
+        user_prompt = (
+            f"Plate caption:\n{plate_blob or '(no caption)'}\n\n"
+            f"Strat column / map caption:\n{strat_blob or '(no caption)'}\n\n"
+            "Return strict JSON only, no markdown fences."
+        )
+
+        try:
+            res = self._infer_vision(system_prompt, user_prompt, plate_image)
+        except Exception:
+            logger.exception("cross_figure_visual_inference: backend call failed")
+            return empty
+        if res.get("fallback_used") or not (res.get("raw_text") or "").strip():
+            return empty
+        try:
+            parsed = _safe_json_loads(res.get("raw_text") or "")
+        except ValueError:
+            logger.warning("cross_figure_visual_inference: failed to parse JSON")
+            return empty
+        if not isinstance(parsed, dict):
+            return empty
+        panels_raw = parsed.get("plate_panels")
+        if not isinstance(panels_raw, list):
+            return empty
+
+        # Filter + normalize each panel entry. We require cell_label
+        # and species; everything else is optional and passes through
+        # after a light type-coerce + confidence clamp.
+        cleaned: list[dict[str, Any]] = []
+        for entry in panels_raw:
+            if not isinstance(entry, dict):
+                continue
+            cell_label = entry.get("cell_label")
+            species = entry.get("species")
+            if not cell_label or not species:
+                continue
+            # Confidence clamp to [0.0, 1.0]; never narrow the band.
+            try:
+                conf = float(entry.get("confidence", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            conf = max(0.0, min(1.0, conf))
+
+            cleaned.append({
+                "cell_label": str(cell_label),
+                "species": str(species),
+                "links_to_strat_layer": entry.get("links_to_strat_layer"),
+                "links_to_age": entry.get("links_to_age"),
+                "links_to_formation": entry.get("links_to_formation"),
+                "confidence": conf,
+            })
+
+        return {"plate_panels": cleaned}
 
     def enrich_plate_panels(
         self,
