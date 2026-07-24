@@ -460,6 +460,18 @@
           "default": null,
           "title": "Facies"
         },
+        "figure_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Figure Id"
+        },
         "formation": {
           "anyOf": [
             {
@@ -497,6 +509,18 @@
           ],
           "default": null,
           "title": "Latitude"
+        },
+        "link_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Link Source"
         },
         "lithology": {
           "anyOf": [

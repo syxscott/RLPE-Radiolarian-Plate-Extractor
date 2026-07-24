@@ -2213,18 +2213,27 @@ class RadiolarianPipeline:
             m3_engine=getattr(self, "m3_engine", None),
         )
 
-        # Map panel_id -> LinkResult for quick lookup.
-        by_panel_id: dict[str, Any] = {}
+        # Map (figure_id, panel_id) -> LinkResult for quick lookup.
+        # Audit fix 2026-07-24 (Agent B M5): key by tuple, not just
+        # panel_id. Two plates in the same paper can both carry
+        # panel "5" or "1" (Bandini 2011 pl07/pl09 share label
+        # "1" through "27"); using panel_id alone caused the
+        # second plate's panel to overwrite the first's entry in
+        # this dict, so the wrong LinkResult (from the wrong
+        # figure) was attached downstream.
+        by_panel_id: dict[tuple[str, str], Any] = {}
         for pv, lr in zip(panel_views, results):
             pid = pv.get("panel_id") or ""
+            fid = pv.get("figure_id") or ""
             if pid:
-                by_panel_id[pid] = lr
+                by_panel_id[(fid, pid)] = lr
 
         # Append each LinkResult as a geology_links entry on the row.
         for row in plate_rows:
             md = row.setdefault("metadata", {})
             pid = row.get("panel_id") or row.get("canonical_panel_id") or ""
-            lr = by_panel_id.get(pid)
+            fid = row.get("figure_id") or md.get("figure_id") or ""
+            lr = by_panel_id.get((fid, pid))
             if lr is None:
                 continue
             existing = list(md.get("geology_links") or [])
@@ -2236,6 +2245,17 @@ class RadiolarianPipeline:
                 "evidence_text": lr.evidence,
                 "section_type": "cross_figure_link",
                 "coord_source": f"cross_figure_linker:{lr.source}",
+                # Audit fix 2026-07-24 (Agent B H3): propagate
+                # LinkResult.figure_id so downstream consumers
+                # (Darwin Core archives, GBIF/PBDB audits, the
+                # GUI's "Link source" badge) can trace each link
+                # back to the figure that produced it. Without
+                # this, a geologist auditing the output cannot
+                # tell whether a panel's age came from Figure 3
+                # (strat column) or Figure 7 (paleogeographic
+                # map), making reproduction impossible.
+                "figure_id": lr.figure_id,
+                "link_source": lr.source,
             })
             md["geology_links"] = existing
             # Surface a per-row "link_source" tag so the GUI can

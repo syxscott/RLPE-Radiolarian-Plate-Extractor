@@ -1,5 +1,13 @@
 """Phase 66 Plan C.7 — 20-paper visual-linker precision smoke test.
 
+AUDIT CAVEAT (2026-07-24, audit Agent C):
+The reported "precision" is computed against canned M3 responses
+that tautologically agree with Phase A. The 2/2 "100% precision"
+in the original run included only the determinable subset;
+panels where ``lr.figure_id is None`` were silently dropped from
+the denominator, inflating the apparent precision. For a real
+benchmark, replace FakeM3Backend with recorded or live responses.
+
 Phase A's smoke_linker.py measured RECALL ("how many panels did the
 linker find a link for?"). Phase C is a precision refinement, so the
 equivalent measurement is PRECISION ("when Phase A used Strategy 2 /

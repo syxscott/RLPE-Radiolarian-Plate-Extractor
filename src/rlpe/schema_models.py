@@ -91,6 +91,17 @@ class GeologyLinkRecord(BaseModel):
     # centroid -> 25000m, paleodb-derived -> 5000m. ``None`` means
     # the coordinate is missing / not provided.
     coordinate_uncertainty_in_meters: float | None = None
+    # Phase 65 / audit 2026-07-24 (P1-1): track the cross-figure
+    # link provenance so a Darwin Core / GBIF auditor can trace
+    # each link back to its source figure. ``link_source`` is
+    # one of ``"sample_match" | "locality_match" | "m3_inference"
+    # | "unlinked"``. ``figure_id`` is the source figure's id
+    # (None for unlinked fallbacks). Required for Phase A's
+    # provenance contract — downstream consumers can't tell
+    # whether a panel's age came from Figure 3 (strat column)
+    # or Figure 7 (paleogeographic map) without these.
+    figure_id: str | None = None
+    link_source: str | None = None
     # Round 24: environment / geochem / facies fields. The
     # radiolarian-extraction user requested these to support
     # Permian–Triassic extinction / recovery studies (P/T
