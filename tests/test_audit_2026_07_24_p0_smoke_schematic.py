@@ -54,16 +54,26 @@ def test_matcher_does_not_use_legacy_schematic_geo_key():
         r'"\s*schematic_geo\s*"\s*,?\s*\)?', src, re.MULTILINE
     )
     # Allow zero matches in non-comment lines (we removed the lambda body).
-    # Strip comments before counting active code occurrences.
-    code_lines = [
-        line for line in src.splitlines()
-        if not line.strip().startswith("#")
-    ]
-    code_only = "\n".join(code_lines)
+    # Strip both # comments and triple-quoted docstrings before counting
+    # active code occurrences.
+    import re as _re
+    code_only = _re.sub(r'"""[\s\S]*?"""', "", src)
+    code_only = _re.sub(r"'''[\s\S]*?'''", "", code_only)
+    code_only = "\n".join(
+        line for line in code_only.splitlines()
+        if not line.lstrip().startswith("#")
+    )
     code_occurrences = re.findall(
         r'"\s*schematic_geo\s*"', code_only
     )
     assert code_occurrences == [], (
         f"Active code still references the legacy 'schematic_geo' key: "
         f"{code_occurrences}. This is the typo that made the smoke test a no-op."
+    )
+    # Sanity: ensure the comment that documents the typo exists, otherwise
+    # this test loses its teaching value for future readers.
+    assert "schematic_geo" in src, (
+        "Expected a comment mentioning the legacy 'schematic_geo' key as "
+        "anti-pattern documentation; remove this assertion if intentionally "
+        "scrubbing comments."
     )
