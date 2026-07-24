@@ -154,11 +154,19 @@ _PAPER_PLANS = [
 
 def _make_engine(canned_for_match: dict) -> M3Engine:
     """Build an M3Engine whose backend serves the given canned
-    response when the schematic_geo prompt fires."""
+    response when the schematic_extract prompt fires.
+
+    Audit fix 2026-07-24: the original matcher checked
+    ``"schematic_geo" in sp`` but PROMPT_REGISTRY uses the
+    ``schematic_extract`` key (renamed in Phase 64 commit eb3c728).
+    The old matcher NEVER fired, so the 5-paper smoke test was a
+    no-op. Now matches ``schematic_extract`` so canned responses
+    actually reach ``extract_schematic``.
+    """
     backend = FakeM3Backend(
         canned_responses=[
             {
-                "match": lambda sp: "schematic_geo" in sp,
+                "match": lambda sp: "schematic_extract" in sp,
                 **canned_for_match,
             }
         ]
