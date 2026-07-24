@@ -47,6 +47,7 @@ from typing import Any, Iterable, Mapping, Protocol
 
 from .sample_id_extractor import (
     SampleID,
+    _LOCALITY_BLOCKLIST,
     extract_age_terms,
     extract_locality,
     extract_sample_ids,
@@ -272,24 +273,7 @@ _BARE_CAPITALIZED_RE = re.compile(
 
 # Same blocklist as in sample_id_extractor but redefined here to keep
 # cross_figure_linker.py self-contained.
-_LOCALITY_BLOCKLIST: frozenset[str] = frozenset({
-    "late cretaceous", "early cretaceous", "middle cretaceous",
-    "early jurassic", "middle jurassic", "late jurassic",
-    "early triassic", "middle triassic", "late triassic",
-    "early devonian", "middle devonian", "late devonian",
-    "early permian", "middle permian", "late permian",
-    "early carboniferous", "late carboniferous",
-    "early cambrian", "middle cambrian", "late cambrian",
-    "early ordovician", "middle ordovician", "late ordovician",
-    "early silurian", "middle silurian", "late silurian",
-    "early paleocene", "middle paleocene", "late paleocene",
-    "early eocene", "middle eocene", "late eocene",
-    "early miocene", "middle miocene", "late miocene",
-    "early oligocene", "late oligocene",
-    "early pliocene", "late pliocene",
-    "this paper", "the paper", "this study", "the study",
-    "figure", "plate", "section", "sample", "locality", "localities",
-})
+_LOCALITY_BLOCKLIST: frozenset[str] = _LOCALITY_BLOCKLIST  # re-exported name imported above
 
 
 def _extract_locality_phrases(caption: str) -> list[str]:
