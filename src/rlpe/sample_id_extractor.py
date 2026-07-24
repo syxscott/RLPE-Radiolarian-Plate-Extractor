@@ -80,10 +80,19 @@ _SAMPLE_RE = re.compile(
 # ``Loc. Tunisia``, ``Loc Tunisia``, ``Locality: Greece``,
 # ``Localities: Tunisia and Greece`` (the ``and <Name>`` tail is handled
 # by an optional non-capturing group below).
+#
+# Audit fix 2026-07-24 (Agent A C4): the regex was case-sensitive on
+# the locality phrase. OCR frequently emits ``loc. tunisia`` (lower
+# keyword kept upper but locality normalized to lower), or all-caps
+# headers like ``LOCALITY: TUNISIA``. The original required the
+# first letter to be ``[A-Z]``, silently dropping lowercased outputs.
+# re.IGNORECASE on the whole regex fixes both the keyword prefix
+# (Loc. vs loc. vs LOC.) and the locality body.
 _LOC_RE = re.compile(
     r"(?<![A-Za-z])(?:Loc\.?|Localit(?:y|ies))\s*[:\-]?\s+"
-    r"([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+){0,3})"
-    r"(?:\s*,?\s*and\s+([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+){0,3}))?"
+    r"([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3})"
+    r"(?:\s*,?\s*and\s+([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3}))?",
+    re.IGNORECASE,
 )
 
 # Bare ``ID-203``, ``ID:42`` when not already captured by the sample regex.
@@ -103,9 +112,10 @@ _ID_RE = re.compile(
 # consistent.
 _LOCALITY_PHRASE_RE = re.compile(
     r"\b(?:from|at|in|of|near)\s+"
-    r"([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+){0,3})"
+    r"([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3})"
     r"(?=\s*[,.;:()]|\s+(?:and|the|of|a|an|is|are|was|were|in|at|"
-    r"we|to|by|for|on|as|which|that|where)\b|$)"
+    r"we|to|by|for|on|as|which|that|where)\b|$)",
+    re.IGNORECASE,
 )
 
 # Reject common false-positive locality phrases (chronostratigraphy terms,
@@ -288,7 +298,7 @@ def extract_locality(caption: str) -> list[str]:
     # Run a second-pass over the caption that also captures trailing
     # ``and <Locality>`` and ``, <Locality>`` so we get both halves of
     # "from Tunisia and Greece".
-    tail_re = re.compile(r"(?:,|and)\s+([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+){0,3})")
+    tail_re = re.compile(r"(?:,|and)\s+([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3})", re.IGNORECASE)
     for m in _LOCALITY_PHRASE_RE.finditer(caption):
         phrase = m.group(1).strip()
         if not phrase:
