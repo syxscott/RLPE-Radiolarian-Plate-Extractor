@@ -72,8 +72,17 @@ class SampleID:
 # ``Sample ZX-9`` (both word chars). The lookarounds give us proper
 # case-insensitive keyword isolation.
 _SAMPLE_RE = re.compile(
-    r"(?<![A-Za-z])Sample\s+(?:ID[-:]\s*)?"
-    r"([A-Za-z]+[-]?[A-Za-z]*\d[A-Za-z0-9\-]*|[A-Za-z]{1,6})",
+    # Audit fix 2026-07-24 (Agent A H1 + H7):
+    #   - H1: accept ``Samples`` (plural) keyword too — real captions
+    #     say "Samples S1–S3 from Tunisia" where the regex previously
+    #     missed the whole phrase.
+    #   - H7: also accept purely numeric sample IDs like "Sample 203".
+    #     The original required the value to start with a letter
+    #     (``[A-Za-z]+[-]?[A-Za-z]*\d``), silently dropping bare-digit
+    #     IDs. Added a third alternation branch ``\d{2,}`` (2+ digits
+    #     to avoid matching years like 2024).
+    r"(?<![A-Za-z])Samples?\s+(?:ID[-:]\s*)?"
+    r"([A-Za-z]+[-]?[A-Za-z]*\d[A-Za-z0-9\-]*|[A-Za-z]{1,6}|\d{2,})",
     re.IGNORECASE,
 )
 
