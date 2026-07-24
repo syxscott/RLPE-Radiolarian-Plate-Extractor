@@ -2236,6 +2236,17 @@ class RadiolarianPipeline:
                 "evidence_text": lr.evidence,
                 "section_type": "cross_figure_link",
                 "coord_source": f"cross_figure_linker:{lr.source}",
+                # Audit fix 2026-07-24 (Agent B H3): propagate
+                # LinkResult.figure_id so downstream consumers
+                # (Darwin Core archives, GBIF/PBDB audits, the
+                # GUI's "Link source" badge) can trace each link
+                # back to the figure that produced it. Without
+                # this, a geologist auditing the output cannot
+                # tell whether a panel's age came from Figure 3
+                # (strat column) or Figure 7 (paleogeographic
+                # map), making reproduction impossible.
+                "figure_id": lr.figure_id,
+                "link_source": lr.source,
             })
             md["geology_links"] = existing
             # Surface a per-row "link_source" tag so the GUI can
