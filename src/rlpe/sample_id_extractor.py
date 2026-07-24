@@ -316,14 +316,23 @@ def extract_age_terms(caption: str) -> list[str]:
     """Extract geological-period / epoch names from a caption.
 
     Returns phrases like ``"Late Cretaceous"``, ``"Carnian"`` in the
-    order they appear in the caption, deduplicated.
+    **original source casing** (sliced from the caption via
+    ``caption[m.start(1):m.end(1)]``, NOT taken from the lowercased
+    regex alternation). Deduplicated case-insensitively while
+    preserving the first-seen casing.
+
+    Audit fix 2026-07-24: the previous implementation used
+    ``m.group(1)`` which always returned the lowercased string from
+    the regex alternation (since ``_AGE_TERMS`` is all lowercase).
+    The docstring always promised "preserve original casing" but the
+    output never honored it.
     """
     if not caption:
         return []
 
     raw: list[str] = []
     for m in _AGE_ROOT_RE.finditer(caption):
-        phrase = m.group(1).strip()
+        phrase = caption[m.start(1):m.end(1)].strip()
         if not phrase:
             continue
         raw.append(phrase)
