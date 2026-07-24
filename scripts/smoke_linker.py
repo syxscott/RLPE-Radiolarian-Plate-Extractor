@@ -1,5 +1,18 @@
 """Phase 65 Plan A.7 — 20-paper linker recall smoke test.
 
+AUDIT CAVEAT (2026-07-24, audit Agent C):
+This script measures the *wiring* of the cross-figure linker (no
+exceptions, correct strategy ordering, correct dataclass shapes)
+but does NOT constitute empirical evidence of "100% recall on 20
+real papers". The synthetic-paper scenarios use hand-crafted
+canned M3 responses that tautologically produce 100% recall; the
+9 real papers use synthetic figure captions (the gold JSONL only
+captures panel-level species, not figure-level formation/age).
+For a real-data recall benchmark, the gold standard must be
+extended to include per-figure formation/age/locality strings
+extracted from the actual PDF text, and the M3 backend must be
+replaced with recorded or live responses.
+
 End-to-end recall measurement on synthetic + real-paper data:
 
   * 9 real papers come from ``data/gold/*.jsonl`` (the Phase 25+ gold
