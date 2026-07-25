@@ -144,6 +144,7 @@ STRINGS = {
     'restab.detail.ocr.positional': '位置',
     'restab.detail.ocr.no_image': '无图像',
     'restab.detail.pbdb_tax': 'PBDB 分类',
+    'restab.detail.evidence': '提取证据',
     'restab.detail.phylum': '门',
     # Phase 64 Plan B (Task B.7): schematic figure content.
     'restab.detail.schematic': '示意图内容',

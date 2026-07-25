@@ -222,10 +222,14 @@ class GrobidClient:
                     # takes effect within ``delay`` seconds instead
                     # of waiting for the full sleep.
                     if self.cancel_event is not None:
-                        if not self.cancel_event.wait(timeout=delay):
-                            # delay elapsed without cancel; fall
-                            # through to next iteration's cancel check.
-                            pass
+                        if self.cancel_event.wait(timeout=delay):
+                            # Cancel was set; abort the retry loop.
+                            raise PipelineCancelledError(
+                                f"Cancellation requested during retry backoff (attempt {attempt})"
+                            )
+                        # Timeout elapsed without cancel; sleep the remainder
+                        # as a cooperative yield to avoid busy-waiting.
+                        time.sleep(delay)
                     else:
                         time.sleep(delay)
         # All retries exhausted. Return a structured failure.

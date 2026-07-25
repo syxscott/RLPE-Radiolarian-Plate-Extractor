@@ -186,6 +186,10 @@ class PaperRecord(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     publisher: str | None = None
     page_count: int | None = None
+    # P3-3 fix: docstring noting these fields are not yet populated.
+    # Wiring requires passing PDF path from PipelineConfig through
+    # MatchResult → PaperMetadata → PaperRecord. Consumers should
+    # not rely on these fields until that chain is implemented.
     source_pdf: str | None = None
     pdf_sha256: str | None = None
     source: str = ""

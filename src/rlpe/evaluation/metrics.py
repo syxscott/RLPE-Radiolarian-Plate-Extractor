@@ -112,6 +112,13 @@ def _strict_norm_species(s: str | None) -> str:
 
 
 def _norm_species(s: str | None) -> str:
+    """P2-2 note: the six normalisation rules below were tuned on the
+    4–9 paper gold set. If new papers use caption conventions that
+    differ from this corpus, some rules may over-collapse genuinely
+    distinct species (e.g. subspecies with different morphotypes) or
+    under-collapse variants that should be merged. Monitor F1 on new
+    papers and revise rules only with documented taxonomic justification.
+    """
     if not s:
         return ""
     # Normalize whitespace, strip a single leading "?" uncertainty marker
@@ -531,13 +538,14 @@ def compare_before_after(
     if len(merged) > 0:
         # Phase 55 audit: use _norm_species for case-insensitive comparison,
         # matching the logic used in evaluate()
+        # Fix: fillna("") before .str.lower() to prevent AttributeError on NaN
         merged["correct_before"] = (
-            merged["species_before"].apply(_norm_species).str.lower()
-            == merged["gold_species"].apply(_norm_species).str.lower()
+            merged["species_before"].fillna("").apply(_norm_species).str.lower()
+            == merged["gold_species"].fillna("").apply(_norm_species).str.lower()
         )
         merged["correct_after"] = (
-            merged["species_after"].apply(_norm_species).str.lower()
-            == merged["gold_species"].apply(_norm_species).str.lower()
+            merged["species_after"].fillna("").apply(_norm_species).str.lower()
+            == merged["gold_species"].fillna("").apply(_norm_species).str.lower()
         )
 
     before_acc = (
@@ -570,3 +578,50 @@ def compare_before_after(
         "match_improvement": round(after_acc - before_acc, 4),
         "gemma_confidence_mean": round(gemma_mean, 4),
     }
+
+
+def bootstrap_confidence_interval(
+    paper_metrics: list["PaperMetrics"],
+    n_bootstrap: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> tuple[float, float, float]:
+    """Bootstrap resampling of aggregate F1 across papers.
+
+    Resamples with replacement at the PAPER level — the correct unit for
+    estimating pipeline generalization uncertainty to unseen papers.
+    Returns ``(lower, upper, point_estimate)`` for the given confidence level.
+
+    If fewer than 2 papers are available, returns the point estimate as both
+    bounds (bootstrap is undefined with N<2).
+
+    P2-3 fix: adds uncertainty quantification to evaluation output for
+    scientific publication credibility.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        # numpy unavailable: fall back to point estimate only
+        if paper_metrics:
+            fe = paper_metrics[0].f1 if hasattr(paper_metrics[0], "f1") else paper_metrics[0].species_f1
+            return (fe, fe, fe)
+        return (0.0, 0.0, 0.0)
+
+    paper_f1s = np.array([m.species_f1 for m in paper_metrics])
+    n = len(paper_f1s)
+    if n < 2:
+        # Cannot bootstrap with N<2; return point estimate as both bounds.
+        pe = float(paper_f1s[0]) if n == 1 else 0.0
+        return (pe, pe, pe)
+
+    rng = np.random.default_rng(seed)
+    boot_means = np.empty(n_bootstrap)
+    for i in range(n_bootstrap):
+        sample = rng.choice(paper_f1s, size=n, replace=True)
+        boot_means[i] = sample.mean()
+
+    point_estimate = float(paper_f1s.mean())
+    alpha = 1.0 - confidence
+    lower = float(np.percentile(boot_means, alpha / 2 * 100))
+    upper = float(np.percentile(boot_means, (1.0 - alpha / 2) * 100))
+    return (lower, upper, point_estimate)

@@ -10,6 +10,17 @@ The species is the canonical Latin binomial or genus+sp abbreviation. Empty
 species means "no species assigned in the gold" (some panels are unlabelled
 or are scale bars).
 
+IMPORTANT — gold derivation caveat
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The current gold standard is derived from caption-parser output (see
+``scripts/build_gold_from_captions.py``), NOT from visual inspection of
+panel images. This means F1 scores measure **parser self-consistency**,
+not ground-truth accuracy against manually verified panel labels. The
+``image_label_check`` module exists precisely because of this limitation.
+For publication, the gold should be image-verified by a human annotator.
+The ``source`` field on GoldPanel distinguishes "caption-parsed" from
+"manual" entries.
+
 The gold files are stored in ``data/gold/<paper>.jsonl`` and are also
 published in the same schemas/ directory for downstream consumers.
 """
@@ -30,6 +41,8 @@ class GoldPanel:
     figure_id: str
     panel_id: str | None
     species: str | None
+    # P2-1 fix: provenance field — "caption-parsed" (current) or "manual"
+    source: str = "caption-parsed"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -37,6 +50,7 @@ class GoldPanel:
             "figure_id": self.figure_id,
             "panel_id": self.panel_id,
             "species": self.species,
+            "source": self.source,
         }
 
 
@@ -54,6 +68,7 @@ def load_gold(path: Path) -> list[GoldPanel]:
                     figure_id=str(d["figure_id"]),
                     panel_id=d.get("panel_id"),
                     species=d.get("species"),
+                    source=d.get("source", "caption-parsed"),
                 )
             )
     return out

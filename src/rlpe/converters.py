@@ -479,6 +479,14 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
             qualifier_idx = i
             break
         bare = token.rstrip(".,;?")
+        # P1-2 fix: "n. sp." is ICZN "new species" — token "n" followed
+        # by "sp" (stripped) forms a unit qualifier.  Do NOT treat bare="n"
+        # as an epithet; instead emit the whole "n. sp." as the qualifier.
+        if bare.lower() == "n" and i + 1 < len(tokens):
+            next_bare = tokens[i + 1].rstrip(".,;?").lower()
+            if next_bare == "sp":
+                qualifier_idx = i
+                break
         if bare and bare[0].islower():
             epithet = bare
             # Continue scanning to see if a qualifier follows.
@@ -555,6 +563,9 @@ def _coordinate_uncertainty_for(coord_source: str | None) -> float | None:
       * ``paleo_reconstructed``: paleocoord, ~10000m
       * None: missing
     """
+    if not coord_source:
+        return None
+    coord_source = coord_source.strip()
     if not coord_source:
         return None
     table = {
@@ -974,6 +985,10 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             if extraction_method
             else None
         )
+        # P3-4 fix: when PBDB provides taxonomy, tag source as "paleodb"
+        pbdb_provided_taxonomy = bool(
+            pbdb_tax.get("family") or pbdb_tax.get("order") or pbdb_tax.get("class")
+        )
         rec = TaxonRecord(
             taxon_id=taxon_id,
             verbatim_name=sp,
@@ -986,13 +1001,13 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
                 pbdb_tax.get("rank")
                 or ("species" if parts["specific_epithet"] else "genus_or_other")
             ),
-            # Round 25: PBDB fills family / order / class_name when
-            # available. Without PBDB these are None — the
-            # Round 25 source-guard test verifies the path.
+            # P3-4 fix: when PBDB provides taxonomy, tag source as "paleodb"
+            # so consumers can distinguish PBDB-sourced family/order from
+            # caption-parsed values.
             family=pbdb_tax.get("family"),
             order=pbdb_tax.get("order"),
             class_name=pbdb_tax.get("class"),
-            source=meta.get("extraction_method") or None,
+            source="paleodb" if pbdb_provided_taxonomy else (meta.get("extraction_method") or None),
             confidence=float(m.confidence),
             needs_review=bool(meta.get("needs_review", False)),
             review_reasons=list(meta.get("review_reasons", []) or []),
@@ -1234,7 +1249,7 @@ def _pbdb_enrich_geology(
         if not sp or sp not in species_top:
             continue
         top = species_top[sp]
-        for g in (m.metadata.get("geology_links") or []):
+        for g in ((m.metadata or {}).get("geology_links") or []):
             if not isinstance(g, dict):
                 continue
             if not g.get("biozone") and top.get("early_interval"):

@@ -88,6 +88,18 @@ from ._llm_caption import (  # noqa: E402  (import after logger setup)
 )
 
 
+class FallbackRecommendedError(Exception):
+    """Phase 61 Plan 4 (Bug 4.10): raised when a 4xx error suggests switching to the fallback backend.
+
+    The ``recommended_backend`` attribute carries the name of the backend
+    to switch to (from ``PipelineConfig.extra["fallback_llm_backend"]``).
+    """
+
+    def __init__(self, message: str, recommended_backend: str | None = None):
+        super().__init__(message)
+        self.recommended_backend = recommended_backend
+
+
 def select_backend_after_4xx(
     current_backend: str,
     configured_fallback: str | None,
@@ -793,6 +805,21 @@ class MiniMaxM3Backend(BaseLLMBackend):
         content: list[dict[str, Any]] = []
         if panel_image is not None:
             content.append(_encode_image_anthropic_block(panel_image))
+        # P2-9 fix (Plan B): prepend OCR-detected panel labels and figure
+        # caption to the user prompt when available. This enriches the LLM's
+        # context with text that was detected independently of the user_prompt
+        # (which is constructed by m3_engine with its own caption parsing).
+        # Only prepend if not already embedded in user_prompt to avoid duplication.
+        extra_parts: list[str] = []
+        ocr_labels = getattr(self, "_ocr_labels", None) or []
+        if ocr_labels:
+            labels_str = ", ".join(sorted(set(ocr_labels)))
+            extra_parts.append(f"[Panel labels (OCR): {labels_str}]")
+        caption_text = getattr(self, "_caption_text", None) or ""
+        if caption_text and caption_text not in user_prompt:
+            extra_parts.append(f"[Figure caption: {caption_text}]")
+        if extra_parts:
+            user_prompt = "\n".join(extra_parts) + "\n" + user_prompt
         content.append({"type": "text", "text": user_prompt})
         return content
 
@@ -924,17 +951,11 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     )
                     raise
                 else:
-                    # 4xx (not retryable) -> count and re-raise immediately.
-                    # Phase 61 Plan 4 (Bug 4.10): also surface a fallback
+                    # 4xx (not retryable) -> raise with fallback recommendation.
+                    # Phase 61 Plan 4 (Bug 4.10): surface a fallback
                     # recommendation so a higher-level orchestrator can
                     # retry once with a different backend (configured via
                     # PipelineConfig.extra["fallback_llm_backend"]).
-                    # The retry loop itself cannot swap backends mid-flight
-                    # because the Anthropic client + prompt templates are
-                    # baked in at construction; instead we log the
-                    # recommendation and stamp the per-backend counter so
-                    # the dashboard can surface how often 4xx retries
-                    # *should* have used the fallback.
                     try:
                         recommended = select_backend_after_4xx(
                             current_backend=self.backend_name,
@@ -945,20 +966,24 @@ class MiniMaxM3Backend(BaseLLMBackend):
                         )
                         if recommended != self.backend_name:
                             logger.info(
-                                "MiniMax 4xx: consider switching to fallback "
-                                "backend %r on next attempt (current=%r, "
-                                "attempts=%d)",
+                                "MiniMax 4xx: switching to fallback "
+                                "backend %r (current=%r, attempts=%d)",
                                 recommended,
                                 self.backend_name,
                                 attempt + 1,
                             )
                             with self._lock:
                                 self.fallback_4xx_hints += 1
-                    except Exception:
-                        pass
-                    with self._lock:
-                        self.total_errors += 1
-                    raise
+                            with self._lock:
+                                self.total_errors += 1
+                            raise FallbackRecommendedError(
+                                f"MiniMax 4xx error, fallback {recommended} recommended",
+                                recommended_backend=recommended,
+                            ) from exc
+                    except FallbackRecommendedError:
+                        with self._lock:
+                            self.total_errors += 1
+                        raise
         # Retry exhaustion. ``total_calls`` already reflects every
         # attempt (bumped at entry above); just bump errors once.
         with self._lock:
@@ -1160,6 +1185,12 @@ class MiniMaxM3Backend(BaseLLMBackend):
     ) -> dict[str, Any]:
         if self.data_outbound_policy == "local_only":
             return self._local_only_noop("MiniMax disabled (data_outbound_policy=local_only)")
+        # P2-9 fix (Plan B): store caption_text / ocr_labels so _build_user_content
+        # can prepend them to the user prompt. This keeps all callers (including
+        # m3_engine which passes empty strings) working while enabling future callers
+        # to pass actual caption / OCR context through these parameters.
+        self._caption_text = caption_text or ""
+        self._ocr_labels = ocr_labels or []
         try:
             img, up = self._apply_outbound_policy(
                 panel_image, caption_text, ocr_labels, user_prompt
@@ -1167,6 +1198,10 @@ class MiniMaxM3Backend(BaseLLMBackend):
             messages = self._build_messages(img, up)
             resp = self._call_api(system_prompt, messages)
             return self._make_result(resp)
+        except FallbackRecommendedError:
+            # Let FallbackRecommendedError propagate to the caller (m3_engine)
+            # so it can switch to the configured fallback backend.
+            raise
         except Exception as exc:
             return self._make_error_result(exc)
 
@@ -1178,6 +1213,8 @@ class MiniMaxM3Backend(BaseLLMBackend):
             messages = self._build_text_messages(up)
             resp = self._call_api(system_prompt, messages)
             return self._make_result(resp)
+        except FallbackRecommendedError:
+            raise
         except Exception as exc:
             return self._make_error_result(exc)
 

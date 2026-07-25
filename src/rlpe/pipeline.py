@@ -407,11 +407,11 @@ class RadiolarianPipeline:
                         continue
                     try:
                         result_rows = fut.result()
-                    except (KeyboardInterrupt, SystemExit):
-                        # User-initiated cancellation. Cancel in-flight
-                        # workers and propagate so the CLI exits with a
-                        # proper traceback and the API can flip the job to
-                        # ``cancelled`` (the API's own cancel path doesn't
+                    except (KeyboardInterrupt, SystemExit, PipelineCancelledError):
+                        # User-initiated cancellation or PipelineCancelledError.
+                        # Cancel in-flight workers and propagate so the CLI exits
+                        # with a proper traceback and the API can flip the job
+                        # to ``cancelled`` (the API's own cancel path doesn't
                         # go through ``run()``, but the API may also be
                         # wrapping this method).
                         pool.shutdown(wait=False, cancel_futures=True)
@@ -2305,6 +2305,14 @@ class RadiolarianPipeline:
                 paper_figures=all_figure_views,
                 m3_engine=getattr(self, "m3_engine", None),
             )
+            # P2-8 fix: guard against link_visual_coordinates returning fewer
+            # results than panel_views (zip would silently drop trailing panels).
+            if len(visual_per_panel) < len(panel_views):
+                logger.warning(
+                    "visual linker returned %d < %d panels — some panels may lack visual links",
+                    len(visual_per_panel),
+                    len(panel_views),
+                )
             for pv, links in zip(panel_views, visual_per_panel):
                 pid = pv.get("panel_id") or ""
                 if not pid or not links:
@@ -2817,12 +2825,16 @@ class RadiolarianPipeline:
             # LLM-first rows where M3 said "not a radiolarian" and
             # the caption-parser couldn't fill in a species either.)
             if not r.get("species") and not r.get("panel_path"):
-                logger.debug(
-                    "Drop empty row (no species, no panel_path): fig=%s pid=%s",
-                    r.get("figure_id"),
-                    pid,
-                )
-                continue
+                # P2-7 fix: preserve ingestion-failed stubs (they have
+                # ingestion_warning=True in metadata so they appear in
+                # run_output.warnings even when species/panel_path are empty).
+                if not (r.get("metadata") or {}).get("ingestion_warning"):
+                    logger.debug(
+                        "Drop empty row (no species, no panel_path): fig=%s pid=%s",
+                        r.get("figure_id"),
+                        pid,
+                    )
+                    continue
             kept.append(r)
 
         dropped_real = len(real_rows) - len(kept)

@@ -135,7 +135,8 @@ def run_image_label_check(
     if reader is None:
         import easyocr
 
-        reader = easyocr.Reader(["en"], gpu=False)
+        # P4-1 fix: add Latin (taxonomic terms), German, French for European papers.
+        reader = easyocr.Reader(["en", "la", "de", "fr"], gpu=False)
     import numpy as np
     from PIL import Image
 

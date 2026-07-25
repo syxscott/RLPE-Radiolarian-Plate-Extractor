@@ -208,6 +208,7 @@ STRINGS = {
     "restab.detail.ocr.positional": "Positional",
     "restab.detail.ocr.no_image": "No image",
     "restab.detail.pbdb_tax": "PBDB taxonomy",
+    "restab.detail.evidence": "Extraction evidence",
     "restab.detail.geo_links": "Geology links ({count})",
     "restab.detail.geo_links_more": "… and {n} more",
     "restab.detail.family": "family: {value}",

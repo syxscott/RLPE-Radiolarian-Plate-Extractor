@@ -157,7 +157,13 @@ def _iso_to_country(code: str | None) -> str | None:
     if not code:
         return None
     s = str(code).strip().upper()
-    return _ISO_TO_COUNTRY.get(s)
+    result = _ISO_TO_COUNTRY.get(s)
+    # P2-5 fix: warn when a PBDB country code is not in our curated table
+    if result is None:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("PBDB country code %r not in _ISO_TO_COUNTRY table", s)
+    return result
 
 
 class PaleoDB:
@@ -498,90 +504,110 @@ class PaleoDB:
             # for occs — PBDB silently returns records where every
             # non-core field is ``None``.
             "show": "full",
-            "limit": int(max_n),
         }
-        payload = self._http_get_json(f"{self.endpoint}/occs/list.json", params, cache_key)
-        if not payload:
-            return []
-        records = payload.get("records") or []
+        # P2-4 fix: PBDB /occs/list.json returns max 25 records per page.
+        # Use offset-based pagination to fetch up to max_n records.
+        # For pages, request only as many as we still need (capped at 25 by PBDB).
+        _PAGE_SIZE = 25
+        remaining = int(max_n)
         out: list[OccurrenceSummary] = []
-        for rec in records[:max_n]:
-            # Field alias: PBDB returns short codes; we want long names
-            # so the rest of the pipeline (and the OccurrenceSummary
-            # schema) sees a single canonical shape. We use closures
-            # with ``rec`` as a default-arg capture so ruff's ``B023``
-            # ("function definition does not bind loop variable") is
-            # satisfied — each iteration defines fresh closures that
-            # see the right record.
-            def _alias(*keys: str, _rec: dict[str, Any] = rec) -> Any:
-                for k in keys:
-                    v = _rec.get(k)
-                    if v is not None and v != "" and v != "__":
-                        return v
-                return None
-
-            def _alias_float(*keys: str) -> float | None:
-                v = _alias(*keys)
-                if v is None:
-                    return None
-                try:
-                    return float(v)
-                except (TypeError, ValueError):
-                    return None
-
-            lat_v = _alias_float("lat")
-            lon_v = _alias_float("lng")  # PBDB uses "lng" only; "lon" is not a PBDB field
-            max_ma = _alias_float("eag", "max_ma")
-            min_ma = _alias_float("lag", "min_ma")
-            early_interval = _alias("oei", "early_interval")
-            late_interval = _alias("oli", "late_interval")
-            formation = _alias("sfm", "formation")
-            member = _alias("smb", "member")
-            # ``cnm`` = collection name (e.g. "The Almoloya Phyllite
-            # Unit") — the most descriptive locality PBDB offers.
-            locality = _alias("cnm", "locality", "loc_name")
-            # ``cc2`` is a 2-letter ISO code (e.g. "MX"). Convert to
-            # full name so downstream fields show readable values like
-            # "Mexico" rather than "MX".
-            # Phase 55 audit: PBDB uses "cc2" for ISO country codes. "cc" is
-            # not a PBDB field — remove it from the alias chain.
-            country_code = _alias("cc2")
-            country_raw = _alias("cc2", "country")
-            country = _iso_to_country(country_code) if country_code else None
-            # Round 25 backwards compat: if the payload already carries
-            # a full country name (not a 2-letter ISO code), pass it
-            # through unchanged. PBDB today returns codes; older cached
-            # payloads / different PBDB proxies may already have a
-            # readable name in ``country``. Treat any value that's
-            # longer than 2 chars (and not in the ISO table) as a
-            # full-name fallback rather than dropping it to None.
-            if country is None and country_code:
-                # Phase 55 audit: _iso_to_country returned None because the
-                # ISO code wasn't in our table. Use the raw code so the
-                # operator at least sees "XX" instead of losing it to None.
-                country = country_code
-            elif country is None and country_raw:
-                if len(country_raw) > 2:
-                    country = country_raw
-            out.append(
-                OccurrenceSummary(
-                    species_name=clean,
-                    occurrence_id=str(_alias("oid", "occurrence_no") or "") or None,
-                    collection_id=str(_alias("cid", "collection_no") or "") or None,
-                    early_interval=early_interval,
-                    late_interval=late_interval,
-                    max_ma=max_ma,
-                    min_ma=min_ma,
-                    locality=locality,
-                    country=country,
-                    latitude=lat_v,
-                    longitude=lon_v,
-                    formation=formation,
-                    member=member,
-                    country_code=country_code,
-                    source=payload.get("_source", "paleodb"),
-                )
+        page_idx = 0
+        while remaining > 0:
+            page_limit = min(remaining, _PAGE_SIZE)
+            offset = page_idx * _PAGE_SIZE
+            page_params = {**params, "limit": page_limit, "offset": offset}
+            page_key = cache_key + f"_off{offset}_lim{page_limit}"
+            payload = self._http_get_json(
+                f"{self.endpoint}/occs/list.json", page_params, page_key
             )
+            if not payload:
+                break
+            page_records = payload.get("records") or []
+            if not page_records:
+                break
+            for rec in page_records:
+                # Field alias: PBDB returns short codes; we want long names
+                # so the rest of the pipeline (and the OccurrenceSummary
+                # schema) sees a single canonical shape. We use closures
+                # with ``rec`` as a default-arg capture so ruff's ``B023``
+                # ("function definition does not bind loop variable") is
+                # satisfied — each iteration defines fresh closures that
+                # see the right record.
+                def _alias(*keys: str, _rec: dict[str, Any] = rec) -> Any:
+                    for k in keys:
+                        v = _rec.get(k)
+                        if v is not None and v != "" and v != "__":
+                            return v
+                    return None
+
+                def _alias_float(*keys: str) -> float | None:
+                    v = _alias(*keys)
+                    if v is None:
+                        return None
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        return None
+
+                lat_v = _alias_float("lat")
+                lon_v = _alias_float("lng")  # PBDB uses "lng" only; "lon" is not a PBDB field
+                max_ma = _alias_float("eag", "max_ma")
+                min_ma = _alias_float("lag", "min_ma")
+                early_interval = _alias("oei", "early_interval")
+                late_interval = _alias("oli", "late_interval")
+                formation = _alias("sfm", "formation")
+                member = _alias("smb", "member")
+                # ``cnm`` = collection name (e.g. "The Almoloya Phyllite
+                # Unit") — the most descriptive locality PBDB offers.
+                locality = _alias("cnm", "locality", "loc_name")
+                # ``cc2`` is a 2-letter ISO code (e.g. "MX"). Convert to
+                # full name so downstream fields show readable values like
+                # "Mexico" rather than "MX".
+                # Phase 55 audit: PBDB uses "cc2" for ISO country codes. "cc" is
+                # not a PBDB field — remove it from the alias chain.
+                country_code = _alias("cc2")
+                country_raw = _alias("cc2", "country")
+                country = _iso_to_country(country_code) if country_code else None
+                # Round 25 backwards compat: if the payload already carries
+                # a full country name (not a 2-letter ISO code), pass it
+                # through unchanged. PBDB today returns codes; older cached
+                # payloads / different PBDB proxies may already have a
+                # readable name in ``country``. Treat any value that's
+                # longer than 2 chars (and not in the ISO table) as a
+                # full-name fallback rather than dropping it to None.
+                if country is None and country_code:
+                    # Phase 55 audit: _iso_to_country returned None because the
+                    # ISO code wasn't in our table. Use the raw code so the
+                    # operator at least sees "XX" instead of losing it to None.
+                    country = country_code
+                elif country is None and country_raw:
+                    if len(country_raw) > 2:
+                        country = country_raw
+                out.append(
+                    OccurrenceSummary(
+                        species_name=clean,
+                        occurrence_id=str(_alias("oid", "occurrence_no") or "") or None,
+                        collection_id=str(_alias("cid", "collection_no") or "") or None,
+                        early_interval=early_interval,
+                        late_interval=late_interval,
+                        max_ma=max_ma,
+                        min_ma=min_ma,
+                        locality=locality,
+                        country=country,
+                        latitude=lat_v,
+                        longitude=lon_v,
+                        formation=formation,
+                        member=member,
+                        country_code=country_code,
+                        source=payload.get("_source", "paleodb"),
+                    )
+                )
+            # Decrement remaining by how many records this page returned.
+            remaining -= len(page_records)
+            page_idx += 1
+            if len(page_records) < _PAGE_SIZE:
+                # PBDB returned fewer than a full page — we've reached the end.
+                break
         return out
 
     def lookup_all(self, name: str, max_occurrences: int = 25) -> dict[str, Any]:

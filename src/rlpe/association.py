@@ -663,8 +663,15 @@ def match_panels(
             # this guard a Stage-3 over-segmentation producing 60
             # panels with the same first caption token was writing 60
             # rows all sharing panel_id="S".
+            # Audit P1-4: when panel_id is OCR garbage (e.g. single-letter
+            # "S/A/L"), still emit a MatchResult so no panel is silently
+            # dropped.  Use panel_id=None so the caller can distinguish
+            # "no label detected" from "valid label".  The main loop
+            # (line 831) emits MatchResult for ALL panels regardless of
+            # label validity — the placeholder branch must match that
+            # behaviour to avoid losing panel data.
             if panel_id is not None and not is_valid_panel_label(panel_id):
-                continue
+                panel_id = None
             matches.append(
                 MatchResult(
                     paper_id=paper_id,

@@ -233,20 +233,29 @@ class PanelSegmenter:
         # == 0) and unknown foreground (not yet covered by a seed)
         # both start at 0.
         markers = np.zeros(crop_bin.shape, dtype=np.int32)
+        # P1-4 fix: use a separate marker counter so that skipping small
+        # seeds (continue) does NOT create gaps in marker values.
+        # Previously seed_idx+1 drifted from seed_stats[seed_idx] when
+        # seeds were skipped, causing wrong boundary assignments in
+        # cv2.watershed and missing sub-regions in the post-watershed loop.
+        marker_val = 1
         for seed_idx in range(1, n_seeds):
             sx, sy, sw, sh, sa = seed_stats[seed_idx]
             if sa < min_seed_area:
                 # Tiny seed: skip — the watershed boundary will eat
                 # most of it and we'll over-segment.
                 continue
-            # Place this seed's marker value (seed_idx + 1) at the
-            # ridge's pixels.
-            markers[seed_labels == seed_idx] = seed_idx + 1
+            marker_val += 1
+            # Place this seed's marker value at the ridge's pixels.
+            markers[seed_labels == seed_idx] = marker_val
         # Apply watershed.
         cv2.watershed(crop_bgr, markers)
         # Collect sub-region bboxes from the post-watershed labels.
         sub_bboxes: list[tuple[int, int, int, int]] = []
-        for label in range(2, n_seeds + 1):
+        # P1-4 fix: max label is marker_val (not n_seeds), because skipped
+        # seeds leave gaps and the watershed output only contains marker_val
+        # labels that were actually placed.
+        for label in range(2, marker_val + 1):
             sub_mask = markers == label
             if not sub_mask.any():
                 continue

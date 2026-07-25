@@ -213,14 +213,15 @@ class ImagePreviewWidget(QWidget):
                 # Fallback: try PIL
                 from PIL import Image as PILImage
                 with PILImage.open(path) as im:
-                    arr = np.array(im.convert("RGB"))
+                    # GUI-BUG-M1 fix: copy BEFORE passing to QImage — PIL's
+                    # with-block may close the image buffer before QImage
+                    # uses the array if we pass the array directly.
+                    arr = np.array(im.convert("RGB")).copy()
             else:
                 arr = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
             h, w = arr.shape[:2]
             # Phase 56 audit: copy the numpy array first so QImage owns its buffer.
-            # QImage(arr.data, ...) shares the numpy memory which can be freed
-            # when the array goes out of scope.
-            qimg = QImage(arr.copy(), w, h, w * 3, QImage.Format_RGB888)
+            qimg = QImage(arr, w, h, w * 3, QImage.Format_RGB888)
             return QPixmap.fromImage(qimg)
         except Exception as exc:
             self._log.warning("Failed to load image %s: %s", path, exc)

@@ -144,7 +144,7 @@ def test_extract_first_coord_matches_degree_without_hemisphere():
     from rlpe.geology_extraction import _extract_first_coord
 
     # First number has hemisphere AND degree; second has only degree.
-    lat, lon = _extract_first_coord("Section at 38°N 14° elevation")
+    lat, lon, _, _ = _extract_first_coord("Section at 38°N 14° elevation")
     # We just check the function returns valid lat/lon (not None).
     # The exact values depend on regex group parsing.
     if lat is not None and lon is not None:

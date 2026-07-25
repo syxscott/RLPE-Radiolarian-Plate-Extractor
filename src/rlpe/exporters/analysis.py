@@ -101,6 +101,9 @@ CSV_COLUMNS: list[str] = [
     "figure_id",
     "panel_id",
     "scientificName",
+    # P3-1 fix: scientificNameAuthorship was extracted (Phase 63) but never
+    # exported in analysis view — add it so CSV consumers see the authority/year.
+    "scientificNameAuthorship",
     "basisOfRecord",
     "eventDate",
     "locality",
@@ -139,12 +142,20 @@ def _to_analysis_row(panel: PanelRecord) -> dict[str, Any]:
         else (geo.longitude if geo and geo.longitude is not None else None)
     )
 
+    # P3-1 fix: pull authorship from TaxonRecord if present.
+    # Use getattr since PanelRecord may be constructed without taxa field.
+    _taxa = getattr(panel, "taxa", None) or []
     return {
         "occurrenceID": occurrence_id,
         "paper_id": panel.paper_id,
         "figure_id": panel.figure_id,
         "panel_id": panel.panel_id or "",
         "scientificName": panel.species or "",
+        "scientificNameAuthorship": (
+            _taxa[0].scientific_name_authorship
+            if _taxa and _taxa[0].scientific_name_authorship
+            else ""
+        ),
         "basisOfRecord": "FossilSpecimen" if panel.species else "",
         "eventDate": str(pm.year) if pm and pm.year else "",
         "locality": (geo.locality if geo and geo.locality else "") or "",

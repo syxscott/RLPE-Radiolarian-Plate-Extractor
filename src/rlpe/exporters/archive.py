@@ -52,6 +52,9 @@ DWC_FIELDS: list[tuple[str, str]] = [
     ("family", "http://rs.tdwg.org/dwc/terms/family"),
     ("genus", "http://rs.tdwg.org/dwc/terms/genus"),
     ("specificEpithet", "http://rs.tdwg.org/dwc/terms/specificEpithet"),
+    # P3-1 fix: scientificNameAuthorship was extracted (Phase 63) but never
+    # exported — add it to DwC-A so GBIF consumers can see the authority/year.
+    ("scientificNameAuthorship", "http://rs.tdwg.org/dwc/terms/scientificNameAuthorship"),
     ("eventDate", "http://rs.tdwg.org/dwc/terms/eventDate"),
     ("year", "http://rs.tdwg.org/dwc/terms/year"),
     ("locality", "http://rs.tdwg.org/dwc/terms/locality"),
@@ -104,6 +107,10 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
     # authoritative entries; open-nomenclature rows carry only the
     # ``scientificName`` string.
     taxon = _taxon_parts(panel.species)
+    # P3-1 fix: pull authorship from TaxonRecord if present.
+    _taxa = getattr(panel, "taxa", None) or []
+    # P3-2 fix: getattr guard for geology_context_id.
+    _geo_ctx_id = getattr(panel, "geology_context_id", None)
     return {
         "occurrenceID": occ_id,
         "basisOfRecord": "FossilSpecimen" if panel.species else "",
@@ -115,6 +122,11 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         "family": "",
         "genus": (taxon.get("genus") or ""),
         "specificEpithet": (taxon.get("specific_epithet") or ""),
+        "scientificNameAuthorship": (
+            _taxa[0].scientific_name_authorship
+            if _taxa and _taxa[0].scientific_name_authorship
+            else ""
+        ),
         "eventDate": str(pm.year) if pm and pm.year else "",
         "year": str(pm.year) if pm and pm.year else "",
         "locality": (geo.locality if geo and geo.locality else ""),
@@ -125,7 +137,11 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         "country": (geo.country if geo and geo.country else ""),
         "decimalLatitude": (str(lat) if lat is not None else ""),
         "decimalLongitude": (str(lon) if lon is not None else ""),
-        "geologicalContextID": (geo.age if geo and geo.age else ""),
+        "geologicalContextID": (
+            _geo_ctx_id
+            if _geo_ctx_id
+            else (geo.age if geo and geo.age else "")
+        ),
         "formation": (geo.formation if geo and geo.formation else ""),
         "identifiedBy": ("; ".join(pm.authors) if pm and pm.authors else ""),
         "associatedReferences": (pm.doi if pm and pm.doi else ""),

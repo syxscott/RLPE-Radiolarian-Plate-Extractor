@@ -42,6 +42,7 @@ _PADDLE_LANG_MAP: dict[str, str] = {
     "ja": "japan",
     "ch_sim": "ch",
     "ch_tra": "chinese_cht",
+    "zh": "ch",          # zh (Simplified Chinese) -> ch for PaddleOCR
     "de": "german",
     # Note: "en", "fr", "ko", "ru", "japan", "ch" all pass through
     # unchanged (PaddleOCR accepts those spellings natively).
@@ -52,7 +53,7 @@ class OCRBackend:
     # Whitelist of internal lang short names. Anything outside this set
     # is silently dropped at construction time (with a warning) so a
     # typo in --ocr-lang never crashes the pipeline.
-    SUPPORTED_LANGS = {"en", "ja", "ch_sim", "ch_tra", "fr", "de", "ko", "ru"}
+    SUPPORTED_LANGS = {"en", "ja", "ch_sim", "ch_tra", "zh", "fr", "de", "ko", "ru"}
 
     def __init__(
         self,
@@ -373,8 +374,9 @@ class OCRBackend:
         label read.
 
         ``label_corner``: ``"tl"`` (top-left), ``"tr"``, ``"bl"``, ``"br"``,
-        ``"auto"`` (try all four corners), or ``"adaptive"`` (try the
-        explicit corner first, then auto if that returns nothing). The
+        ``"auto"`` (try all four corners), or ``"adaptive"`` (same as
+        ``"auto"`` — runs all four corners; the two-pass behaviour described
+        in older documentation was never implemented). The
         default is ``"tl"`` because the vast majority of radiolarian
         plates have their numeric labels in the top-left corner; pass
         ``"adaptive"`` for papers (e.g. bandini2011 plate 1) that put
@@ -448,8 +450,7 @@ class OCRBackend:
                 # comfortable input size, so upscaling brings no real
                 # benefit and just doubles the OCR cost.
                 if min(ph, pw) < 500:
-                    import cv2
-
+                    # cv2 already imported at function scope (line 334)
                     sh, sw = sub.shape[:2]
                     up = cv2.resize(sub, (sw * 2, sh * 2), interpolation=cv2.INTER_CUBIC)
                     # ``image`` came from cv2.imread (already BGR), so

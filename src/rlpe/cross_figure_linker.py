@@ -271,11 +271,7 @@ _BARE_CAPITALIZED_RE = re.compile(
     r"\b([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+){0,3})\b"
 )
 
-# Same blocklist as in sample_id_extractor but redefined here to keep
-# cross_figure_linker.py self-contained.
-_LOCALITY_BLOCKLIST: frozenset[str] = _LOCALITY_BLOCKLIST  # re-exported name imported above
-
-
+# _LOCALITY_BLOCKLIST is imported from sample_id_extractor above and used directly.
 def _extract_locality_phrases(caption: str) -> list[str]:
     """Figure-side locality extractor: any Capitalized phrase, deduped.
 

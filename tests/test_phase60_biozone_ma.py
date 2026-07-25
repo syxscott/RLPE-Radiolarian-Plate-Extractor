@@ -55,8 +55,9 @@ def test_biozone_to_ma_lookup():
         ("UAZ 5", 121.4, 132.6),
         # UAZ 11 = Campanian–Maastrichtian
         ("UAZ 11", 66.0, 83.6),
-        # Hollis 1997 NZ Permian radiolarian zone
-        ("Buryella clinata Zone", 254.14, 259.51),
+        # Hollis 1997 NZ Late Paleocene (Thanetian) radiolarian zone
+        # (corrected: was incorrectly set to Permian ~254 Ma)
+        ("Buryella clinata Zone", 56.0, 59.0),
         # Late Cretaceous Coniacian–Santonian zone
         ("Cryptocephalus nigricae Zone", 83.6, 86.3),
     ]

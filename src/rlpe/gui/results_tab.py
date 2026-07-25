@@ -112,10 +112,6 @@ def _emit_link_source_badge(html: list[str], coord_source: str) -> None:
             label = raw
     else:
         label = raw
-    try:
-        conf = float(coord_source.rsplit(":", 1)[-1]) if False else 0.0
-    except Exception:
-        conf = 0.0
     html.append(
         f"<div style='margin:4px 0 2px'>"
         f"<span class='{cls}' style='padding:1px 6px;border-radius:3px;font-size:10px'>"
@@ -734,7 +730,7 @@ class ResultsTab(QWidget):
         if ev_text:
             html.append(
                 f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
-                f"<b style='font-size:12px'>提取证据</b>"
+                f"<b style='font-size:12px'>{html_escape(i18n._tr('restab.detail.evidence'))}</b>"
                 f"<pre style='background:#fffbe5;padding:6px;border-radius:4px;margin:4px 0 0;"
                 f"white-space:pre-wrap;font-family:monospace;font-size:11px;border:1px solid #ffeaa7'>"
                 f"{html_escape(ev_text[:500])}"
@@ -745,7 +741,7 @@ class ResultsTab(QWidget):
         if tax:
             html.append(
                 f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
-                f"<b style='font-size:12px'>PBDB taxonomy</b>"
+                f"<b style='font-size:12px'>{html_escape(i18n._tr('restab.detail.pbdb_tax'))}</b>"
                 f"<table style='font-size:12px;margin-top:4px'>"
             )
             tax_rows = [

@@ -723,17 +723,11 @@ class JobsTab(QWidget):
                 )
         # Translate any active context menu actions (QAction isn't
         # a QWidget so the i18n registry's allWidgets() loop misses
-        # them — we update them here explicitly). Iterate over a copy
-        # so RuntimeError-induced remove() doesn't corrupt the iterator.
-        for action, key in list(getattr(self, "_ctx_actions", [])):
-            try:
-                action.setText(i18n._tr(key))
-            except RuntimeError:
-                # Action may have been destroyed if the menu closed
-                try:
-                    self._ctx_actions.remove((action, key))
-                except ValueError:
-                    pass
+        # them — we update them here explicitly). GUI-m3 fix: just clear
+        # the stale list; _show_context_menu rebuilds it fresh.
+        ctx_actions = getattr(self, "_ctx_actions", None)
+        if ctx_actions:
+            ctx_actions.clear()
 
     def _on_language_changed(self, _lang: str) -> None:
         """Rebuild UI texts on language switch (i18n listener)."""

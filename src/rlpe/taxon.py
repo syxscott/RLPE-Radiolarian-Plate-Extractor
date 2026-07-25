@@ -68,12 +68,10 @@ _KNOWN_AUTHOR_SURNAMES: frozenset[str] = frozenset(
         "jackson",
         "white",
         "harris",
-        "martin",
         "thompson",
         "garcia",
         "martinez",
         "robinson",
-        "clark",
         "rodriguez",
         "lewis",
         "lee",
@@ -108,7 +106,6 @@ _KNOWN_AUTHOR_SURNAMES: frozenset[str] = frozenset(
         "morgan",
         "bell",
         "murphy",
-        "bailey",
         "rivera",
         "cooper",
         "richardson",
@@ -141,7 +138,6 @@ _KNOWN_AUTHOR_SURNAMES: frozenset[str] = frozenset(
         "washington",
         "butler",
         "simmons",
-        "foster",
         "hendricks",
         "cole",
         "russell",
@@ -188,6 +184,9 @@ def _is_valid_species(species: str | None) -> bool:
         "n. sp.",
         "new genus",
         "new species",
+        "gen.",           # open nomenclature (without "n." prefix)
+        "sp.",            # open nomenclature (without "n." prefix)
+        "spp.",           # plural open nomenclature
     }
     first = s.split(maxsplit=1)[0].lower().rstrip(".,;:?!")
     if first in placeholder_tokens:
@@ -215,10 +214,16 @@ def _is_valid_species(species: str | None) -> bool:
         return False
     # Must have either a real epithet OR a recognised open-nom shape.
     has_epithet = bool(epithet and epithet.strip())
+    qual_lower = (qualifier or "").strip().rstrip(".").lower()
+    # "n." (new species) is only valid when paired with "sp." — bare "n."
+    # without a following epithet is incomplete ICZN nomenclature.
+    if qual_lower == "n":
+        # bare "n." alone — reject; caller should use "n. sp." form instead
+        return False
     has_open_nom = bool(
         qualifier
-        and qualifier.strip().rstrip(".").lower()
-        in {"sp", "spp", "indet", "gr", "group", "subsp", "var", "n", "nom", "cf", "aff"}
+        and qual_lower
+        in {"sp", "spp", "indet", "gr", "group", "subsp", "var", "nom", "cf", "aff"}
     )
     return has_epithet or has_open_nom
 
@@ -406,8 +411,12 @@ class TaxonRecognizer:
         # → ASCII encode (they get dropped). The Greek-letter shape
         # ``Genus α`` is therefore matched by a separate scan on the
         # pre-normalised ``cleaned`` string (Bug 3.5).
+        # Phase 60 Plan 3 (Bug 3.3): NFKD+ASCIIignore drops æ/œ ligatures
+        # entirely (they decompose to a+e but encode("ascii","ignore") removes
+        # both). Fix: explicit replacement before NFKD+ASCII.
         cleaned_ascii = (
-            unicodedata.normalize("NFKD", cleaned)
+            cleaned.replace("æ", "ae").replace("œ", "oe")
+            .replace("Æ", "Ae").replace("Œ", "Oe")
             .encode("ascii", "ignore")
             .decode("ascii")
         )

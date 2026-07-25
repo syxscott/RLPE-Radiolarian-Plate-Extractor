@@ -847,7 +847,9 @@ def _norm(s: str | None) -> str:
         return ""
     s = str(s).strip()
     s = re.sub(r"\s+sp\.?$", "", s, flags=re.IGNORECASE).strip()
-    s = re.sub(r"\s+cf\.?\s+", " ", s, flags=re.IGNORECASE).strip()
+    # Phase 64 audit: cf. and aff. are both ICZN qualification markers
+    # that must be stripped before species epithet comparison.
+    s = re.sub(r"\s+(?:cf\.|aff\.)\s+", " ", s, flags=re.IGNORECASE).strip()
     return s.lower()
 
 
@@ -940,7 +942,8 @@ def build_geology_links_for_panels(
                 "latitude": None,
                 "longitude": None,
                 "section_type": "stratigraphic_column",
-                "section_title": chart.figure_id,
+                # P1-5 fix: use actual section name, not figure ID
+                "section_title": sr.section or chart.figure_id,
                 "evidence_text": (
                     f"range_chart_vision[{chart.figure_id}]: {sr.species} "
                     f"in section {sr.section or '?'}, range {sr.range_base} → {sr.range_top}, "

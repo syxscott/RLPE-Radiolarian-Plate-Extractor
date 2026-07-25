@@ -99,8 +99,8 @@ _SAMPLE_RE = re.compile(
 # (Loc. vs loc. vs LOC.) and the locality body.
 _LOC_RE = re.compile(
     r"(?<![A-Za-z])(?:Loc\.?|Localit(?:y|ies))\s*[:\-]?\s+"
-    r"([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3})"
-    r"(?:\s*,?\s*and\s+([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3}))?",
+    r"([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3}?)"
+    r"(?:\s*,?\s*and\s+([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3}?))?",
     re.IGNORECASE,
 )
 
@@ -121,7 +121,7 @@ _ID_RE = re.compile(
 # consistent.
 _LOCALITY_PHRASE_RE = re.compile(
     r"\b(?:from|at|in|of|near)\s+"
-    r"([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3})"
+    r"([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3}?)"
     r"(?=\s*[,.;:()]|\s+(?:and|the|of|a|an|is|are|was|were|in|at|"
     r"we|to|by|for|on|as|which|that|where)\b|$)",
     re.IGNORECASE,

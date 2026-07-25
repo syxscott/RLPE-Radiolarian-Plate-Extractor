@@ -79,7 +79,7 @@ _LITHOLOGY_TERMS = (
     "dolomite", "dolostone", "micrite", "biomicrite",
     "calcarenite", "calcilutite", "tuff", "tuffaceous",
     "basalt", "basaltic", "andesite", "rhyolite",
-    "ophiolite", "serpentinite", "chalk", "marlstone",
+    "ophiolite", "serpentinite", "chalk",
     "glauconitic sandstone", "phosphorite", "ironstone",
     "black shale", "organic-rich shale",
 )
@@ -739,7 +739,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         # regex and overwrote lat/lon with values that BYPASSED the
         # range check, which let invalid coordinates leak into
         # GeologyRecord.latitude/longitude.
-        lat, lon = _extract_first_coord(text)
+        lat, lon, coord_start, coord_end = _extract_first_coord(text)
         # Round 21: country-centroid fallback. When the section text
         # has no explicit coordinates (only a country name like
         # "Greece" or "Tunisia"), look up the centroid as a low-
@@ -766,10 +766,9 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         # modern_latitude and paleo_latitude hold the same value
         # and the user can't tell which is which.
         if lat is not None and lon is not None:
-            coord_match = COORDINATE_PATTERN.search(text)
-            if coord_match is not None:
+            if coord_start is not None and coord_end is not None:
                 coord_age = _classify_coordinate_age(
-                    text, coord_match.start(), coord_match.end()
+                    text, coord_start, coord_end
                 )
             else:
                 coord_age = "modern"
@@ -848,77 +847,79 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 coord_source=centroid_source,
             )
             out.append(rec)
-        # If no ages were found but chrono was, still emit a record
+        # If no ages were found but chrono was, still emit a record.
+        # Build the dedup key first to avoid creating a record that
+        # duplicates the one already emitted by the loop above.
         if not ages and chrono:
-            rec = GeologyRecord(
-                age=primary_age,
-                chronostratigraphy=chrono,
-                chronostratigraphy_rank=chrono_rank,
-                ma_top=ma_top,
-                ma_base=ma_base,
-                ma_mid=ma_mid,
-                group=_strip_leading_article(groups[0]) if groups else None,
-                formation=_strip_leading_article(formations[0]) if formations else None,
-                member=_strip_leading_article(members[0]) if members else None,
-                lithology=lithology,
-                # Round 24: environment / geochem proxies.
-                paleoenvironment=paleoenvironment,
-                redox=redox,
-                chemostrat=chemostrat,
-                facies=facies,
-                locality=locs[0] if locs else None,
-                country=country,
-                biozone=biozone,
-                latitude=lat,
-                longitude=lon,
-                modern_latitude=lat if coord_age == "modern" else None,
-                modern_longitude=lon if coord_age == "modern" else None,
-                paleo_latitude=lat if coord_age == "paleo" else None,
-                paleo_longitude=lon if coord_age == "paleo" else None,
-                section_type=sec.get("section_type"),
-                section_title=sec.get("title"),
-                # Round 25: append the captured isotope value to
-                # the evidence text so the operator can see
-                # "δ13C = -3.2 ‰" without re-parsing the paper.
-                # Truncated to 300 chars to keep the cell small.
-                evidence_text=(
-                    (text + (f"  [isotope: {isotope_value}]" if isotope_value else ""))[:300]
-                ),
-                confidence=0.3 if centroid_source else 0.7,
-                coord_source=centroid_source,
-            )
-            # Compare on a stable key tuple instead of the full dataclass.
-            # `dataclass(slots=True)` gives an auto-generated __eq__ that
-            # works today, but ``rec not in out`` does linear scans and
-            # would silently fail (always True) if a future field was
-            # excluded from eq=. The key tuple is the same one
-            # ``dedup_geology_records`` uses below, so the two paths are
-            # consistent.
             key = (
-                rec.age,
-                rec.chronostratigraphy,
-                rec.formation,
-                rec.locality,
-                rec.section_title,
+                primary_age,
+                chrono,
+                formations[0] if formations else None,
+                locs[0] if locs else None,
+                sec.get("title"),
             )
             existing_keys = {
                 (r.age, r.chronostratigraphy, r.formation, r.locality, r.section_title) for r in out
             }
             if key not in existing_keys:
+                rec = GeologyRecord(
+                    age=primary_age,
+                    chronostratigraphy=chrono,
+                    chronostratigraphy_rank=chrono_rank,
+                    ma_top=ma_top,
+                    ma_base=ma_base,
+                    ma_mid=ma_mid,
+                    group=_strip_leading_article(groups[0]) if groups else None,
+                    formation=_strip_leading_article(formations[0]) if formations else None,
+                    member=_strip_leading_article(members[0]) if members else None,
+                    lithology=lithology,
+                    # Round 24: environment / geochem proxies.
+                    paleoenvironment=paleoenvironment,
+                    redox=redox,
+                    chemostrat=chemostrat,
+                    facies=facies,
+                    locality=locs[0] if locs else None,
+                    country=country,
+                    biozone=biozone,
+                    latitude=lat,
+                    longitude=lon,
+                    modern_latitude=lat if coord_age == "modern" else None,
+                    modern_longitude=lon if coord_age == "modern" else None,
+                    paleo_latitude=lat if coord_age == "paleo" else None,
+                    paleo_longitude=lon if coord_age == "paleo" else None,
+                    section_type=sec.get("section_type"),
+                    section_title=sec.get("title"),
+                    # Round 25: append the captured isotope value to
+                    # the evidence text so the operator can see
+                    # "δ13C = -3.2 ‰" without re-parsing the paper.
+                    # Truncated to 300 chars to keep the cell small.
+                    evidence_text=(
+                        (text + (f"  [isotope: {isotope_value}]" if isotope_value else ""))[:300]
+                    ),
+                    confidence=0.3 if centroid_source else 0.7,
+                    coord_source=centroid_source,
+                )
                 out.append(rec)
     return dedup_geology_records(out)
 
 
-def _extract_first_coord(text: str) -> tuple[float | None, float | None]:
-    """Best-effort coordinate extraction. Returns ``(lat, lon)`` or ``(None, None)``.
+def _extract_first_coord(
+    text: str,
+) -> tuple[float | None, float | None, int | None, int | None]:
+    """Best-effort coordinate extraction.
 
-    Requires at least one hemisphere indicator (N/S/E/W) or a degree symbol
-    (°) in the match. Without this filter, bare number pairs like "45, 90"
-    (page numbers, specimen dimensions, figure counts) would be falsely
-    parsed as coordinates.
+    Returns ``(lat, lon, start, end)`` or ``(None, None, None, None)``.
+    ``start`` and ``end`` are the character offsets of the matched
+    coordinate in ``text`` so callers can pass them directly to
+    ``_classify_coordinate_age`` without re-searching.
+
+    Requires at least one hemisphere indicator (N/S/E/W) or a degree
+    symbol (°) in the match. Without this filter, bare number pairs
+    like "45, 90" (page numbers, specimen dimensions, figure counts)
+    would be falsely parsed as coordinates.
     """
     if not text:
-        return None, None
+        return None, None, None, None
     for m in COORDINATE_PATTERN.finditer(text):
         # Require at least one hemisphere indicator or degree symbol to
         # reduce false positives from bare number pairs.
@@ -935,10 +936,10 @@ def _extract_first_coord(text: str) -> tuple[float | None, float | None]:
                 lon = -lon
             if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
                 continue
-            return lat, lon
+            return lat, lon, m.start(), m.end()
         except Exception:
             continue
-    return None, None
+    return None, None, None, None
 
 
 def link_species_to_geology(

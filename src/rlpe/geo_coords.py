@@ -91,18 +91,21 @@ def parse_coordinate(text: str) -> Coordinate | None:
             lat_m = int(m.group("lat_m"))
             lat_s = float(m.group("lat_s"))
             lat = lat_d + lat_m / 60.0 + lat_s / 3600.0
-            if m.group("lat_h") and m.group("lat_h").upper() in ("S", "W"):
+            if m.group("lat_h") and m.group("lat_h").upper() == "S":
                 lat = -lat
 
             lon_d = int(m.group("lon_d"))
             lon_m = int(m.group("lon_m"))
             lon_s = float(m.group("lon_s"))
             lon = lon_d + lon_m / 60.0 + lon_s / 3600.0
-            # Longitude hemisphere is W only — S/E/N are latitude
-            # markers. A previous version accepted ('W', 'S') here,
-            # which double-negated OCR-noisy inputs like '110°S'.
-            if m.group("lon_h") and m.group("lon_h").upper() == "W":
-                lon = -lon
+            # Longitude hemisphere: W → negate, E → keep positive (correct),
+            # N/S → don't negate (those are latitude markers).
+            if m.group("lon_h"):
+                h = m.group("lon_h").upper()
+                if h == "W":
+                    lon = -lon
+                elif h == "E":
+                    pass  # already positive; no flip needed
             if _valid(lat, lon):
                 return Coordinate(
                     latitude=lat,
@@ -128,11 +131,9 @@ def parse_coordinate(text: str) -> Coordinate | None:
         try:
             lat = float(m.group("lat"))
             lon = float(m.group("lon"))
-            if m.group("lat_h") and m.group("lat_h").upper() in ("S", "W"):
+            if m.group("lat_h") and m.group("lat_h").upper() == "S":
                 lat = -lat
-            # Longitude hemisphere is W only — S/E/N are latitude
-            # markers. A previous version accepted ('W', 'S') here,
-            # which double-negated OCR-noisy inputs like '110°S'.
+            # Longitude hemisphere is W only — S/E/N are latitude markers.
             if m.group("lon_h") and m.group("lon_h").upper() == "W":
                 lon = -lon
             if _valid(lat, lon):
@@ -158,6 +159,27 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
     if not text:
         return []
     out: list[Coordinate] = []
+    seen: list[tuple[float, float]] = []  # deduplication helper
+
+    def _add_unique(
+        lat: float, lon: float, raw: str, source: str, text: str, start: int
+    ) -> bool:
+        """Add coord if no prior entry is within 0.01° (avoids DMS+Decimal dupes)."""
+        for s_lat, s_lon in seen:
+            if abs(lat - s_lat) < 0.01 and abs(lon - s_lon) < 0.01:
+                return False
+        seen.append((lat, lon))
+        out.append(
+            Coordinate(
+                latitude=lat,
+                longitude=lon,
+                source=source,
+                raw=raw,
+                is_paleo=_is_paleo_text(text, start),
+            )
+        )
+        return True
+
     for m in _DMS_RE.finditer(text):
         try:
             lat = (
@@ -170,46 +192,26 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
                 + int(m.group("lon_m")) / 60.0
                 + float(m.group("lon_s")) / 3600.0
             )
-            if m.group("lat_h") and m.group("lat_h").upper() in ("S", "W"):
+            if m.group("lat_h") and m.group("lat_h").upper() == "S":
                 lat = -lat
-            # Longitude hemisphere is W only — S/E/N are latitude
-            # markers. A previous version accepted ('W', 'S') here,
-            # which double-negated OCR-noisy inputs like '110°S'.
+            # Longitude hemisphere is W only — S/E/N are latitude markers.
             if m.group("lon_h") and m.group("lon_h").upper() == "W":
                 lon = -lon
             if _valid(lat, lon):
-                out.append(
-                    Coordinate(
-                        latitude=lat,
-                        longitude=lon,
-                        source=text[:200],
-                        raw=m.group(0),
-                        is_paleo=_is_paleo_text(text, m.start()),
-                    )
-                )
+                _add_unique(lat, lon, m.group(0), text[:200], text, m.start())
         except Exception:
             pass
     for m in _DECIMAL_RE.finditer(text):
         try:
             lat = float(m.group("lat"))
             lon = float(m.group("lon"))
-            if m.group("lat_h") and m.group("lat_h").upper() in ("S", "W"):
+            if m.group("lat_h") and m.group("lat_h").upper() == "S":
                 lat = -lat
-            # Longitude hemisphere is W only — S/E/N are latitude
-            # markers. A previous version accepted ('W', 'S') here,
-            # which double-negated OCR-noisy inputs like '110°S'.
+            # Longitude hemisphere is W only — S/E/N are latitude markers.
             if m.group("lon_h") and m.group("lon_h").upper() == "W":
                 lon = -lon
             if _valid(lat, lon):
-                out.append(
-                    Coordinate(
-                        latitude=lat,
-                        longitude=lon,
-                        source=text[:200],
-                        raw=m.group(0),
-                        is_paleo=_is_paleo_text(text, m.start()),
-                    )
-                )
+                _add_unique(lat, lon, m.group(0), text[:200], text, m.start())
         except Exception:
             pass
     return out

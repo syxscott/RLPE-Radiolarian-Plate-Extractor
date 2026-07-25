@@ -33,6 +33,9 @@ from typing import Any
 
 from PIL import Image
 
+# Import FallbackRecommendedError to detect when backend recommends switching
+from .llm_backends import FallbackRecommendedError  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -1175,14 +1178,19 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         labels = _regex_expand_label_list(labels_raw)
         if not labels:
             continue
-        # Skip duplicates of labels (same label assigned to two species)
-        if any(lbl in seen_labels for lbl in labels):
+        # Phase 64 audit: skip labels already assigned to a previous
+        # species, but KEEP the non-conflicting ones so the partial
+        # overlap case (e.g. "1,2" followed by "2,3") doesn't silently
+        # drop label 3 — the previous "skip entire clause on any conflict"
+        # strategy caused valid species-label mappings to be lost.
+        new_labels = [lbl for lbl in labels if lbl not in seen_labels]
+        if not new_labels:
             continue
-        for lbl in labels:
+        for lbl in new_labels:
             seen_labels.add(lbl)
         pairs.append(
             CaptionPair(
-                labels=labels,
+                labels=new_labels,
                 species=species,
                 modifier=modifier,
                 confidence=0.7,
@@ -1223,32 +1231,32 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         labels = _regex_expand_label_list(labels_raw)
         if not labels:
             continue
-        # Dedup: skip if any of the expanded labels is already assigned
-        # to an earlier species. We dedup the base number (e.g. "14"
-        # from "14b") so a later clause that mentions "fig 14" can be
-        # safely skipped.
+        # Phase 64 audit: filter conflicting base labels instead of
+        # skipping the entire clause. "14b" consumes "14" as well so
+        # later "fig 14" mentions don't get a new species — but any
+        # OTHER base labels in the same clause are still valid.
         base_labels: set[str] = set()
         for lbl in labels:
             base = re.match(r"(\d+)", lbl)
             if base:
                 base_labels.add(base.group(1))
-        if base_labels & seen_labels:
-            continue
-        # Also: if any expanded label was already used as the base of
-        # another species, skip. This handles "fig 14" coming after
-        # "figs 12-14b" — "14" is the base of "14b" which was already
-        # taken.
-        if any(lbl in seen_labels for lbl in base_labels):
-            continue
-        for lbl in labels:
+        # Consuming a base label (e.g. "14" from "14b") also blocks
+        # bare "fig 14" references from creating a duplicate species.
+        conflicting_bases = base_labels & seen_labels
+        for lbl in conflicting_bases:
             seen_labels.add(lbl)
-        # And remember the base numbers so subsequent "fig 14" mentions
-        # don't get assigned too.
-        for lbl in base_labels:
+        # Filter to only the labels whose base is not yet consumed.
+        new_labels = [
+            lbl for lbl in labels
+            if not (re.match(r"(\d+)", lbl) and re.match(r"(\d+)", lbl).group(1) in conflicting_bases)
+        ]
+        if not new_labels:
+            continue
+        for lbl in new_labels:
             seen_labels.add(lbl)
         pairs.append(
             CaptionPair(
-                labels=labels,
+                labels=new_labels,
                 species=species,
                 modifier=modifier,
                 confidence=0.65,
@@ -1352,13 +1360,15 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             labels = _regex_expand_label_list(labels_raw)
             if not labels:
                 continue
-            if any(lbl in seen_labels for lbl in labels):
+            # Phase 64 audit: keep non-conflicting labels (same fix as above).
+            new_labels = [lbl for lbl in labels if lbl not in seen_labels]
+            if not new_labels:
                 continue
-            for lbl in labels:
+            for lbl in new_labels:
                 seen_labels.add(lbl)
             pairs.append(
                 CaptionPair(
-                    labels=labels,
+                    labels=new_labels,
                     species=species,
                     modifier=modifier,
                     confidence=0.65,
@@ -1420,9 +1430,11 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         labels = _regex_expand_label_list(labels_raw)
         if not labels:
             continue
-        if any(lbl in seen_labels for lbl in labels):
+        # Phase 64 audit: keep non-conflicting labels (same fix as above).
+        new_labels = [lbl for lbl in labels if lbl not in seen_labels]
+        if not new_labels:
             continue
-        for lbl in labels:
+        for lbl in new_labels:
             seen_labels.add(lbl)
         # Patch up missing A/B identifier for Spumellaria / Nassellaria
         # "gen. et sp. indet." forms. The regex stops at "gen" (because
@@ -1445,7 +1457,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
                 species = species + " " + m_id.group(1)
         pairs.append(
             CaptionPair(
-                labels=labels,
+                labels=new_labels,
                 species=species,
                 modifier="",
                 confidence=0.65,
@@ -2466,16 +2478,25 @@ class M3Engine:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
             )
+        except FallbackRecommendedError:
+            # Phase 61 Plan 4 (Bug 4.10): FallbackRecommendedError carries
+            # ``recommended_backend`` - let it propagate to the pipeline
+            # so it can switch to the configured fallback backend.
+            raise
         except Exception as exc:
             logger.exception("M3 vision inference failed")
             return {"fallback_used": True, "error": str(exc)}
         self._maybe_dump_diagnostic(image, system_prompt, user_prompt, res)
         # Retry without thinking if the first attempt produced no text
         # (known M3 issue when thinking exhausts the output budget).
+        # P2-10 fix: skip retry if thinking block has content — the valid
+        # structured output may be in the thinking block and should not be
+        # discarded by retrying without thinking.
         if (
             self.config.get("m3_retry_without_thinking", True)
             and (res.get("fallback_used") or not (res.get("raw_text") or "").strip())
             and enable_thinking_snapshot
+            and not (res.get("thinking") or "").strip()
         ):
             logger.info("M3 returned empty text; retrying with thinking disabled")
             # Round 9 (Bug-M3): hold the RLock for the entire
@@ -3197,7 +3218,11 @@ def _coerce_bbox(v: Any, img_w: int, img_h: int) -> tuple[int, int, int, int] | 
         nums = [float(x) for x in v]
     except Exception:
         return None
-    if max(nums) <= 1.01:
+    # P4-9 fix: require at least one value > 1.0 to classify as
+    # pixel coords. A 1x1 pixel bbox at the origin has max=1.0, which
+    # would incorrectly match the normalized threshold and get scaled
+    # by image dimensions (e.g. 4000x3000 → 40x30, wrong).
+    if max(nums) <= 1.01 and min(nums) >= 0:
         x, y, w, h = nums
         x_px = max(0, int(x * img_w))
         y_px = max(0, int(y * img_h))

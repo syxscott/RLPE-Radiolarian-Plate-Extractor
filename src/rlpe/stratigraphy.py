@@ -91,6 +91,39 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "ma_top": 419.2,
         "ma_base": 443.8,
     },
+    # Silurian ages (ICS 2023) — Phase 64 audit fix
+    {
+        "name": "Llandovery",
+        "cn": "兰多弗里期",
+        "rank": "age",
+        "parent": "Silurian",
+        "ma_top": 427.4,
+        "ma_base": 433.4,
+    },
+    {
+        "name": "Wenlock",
+        "cn": "文洛克期",
+        "rank": "age",
+        "parent": "Silurian",
+        "ma_top": 423.0,
+        "ma_base": 427.4,
+    },
+    {
+        "name": "Ludlow",
+        "cn": "卢德洛期",
+        "rank": "age",
+        "parent": "Silurian",
+        "ma_top": 418.7,
+        "ma_base": 423.0,
+    },
+    {
+        "name": "Pridoli",
+        "cn": "普里多利期",
+        "rank": "age",
+        "parent": "Silurian",
+        "ma_top": 416.0,
+        "ma_base": 418.7,
+    },
     {
         "name": "Devonian",
         "cn": "泥盆纪",
@@ -114,6 +147,81 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "parent": "Paleozoic",
         "ma_top": 251.9,
         "ma_base": 298.9,
+    },
+    # Carboniferous epochs / ages (ICS 2023)
+    # Mississippian (early Carboniferous)
+    {
+        "name": "Mississippian",
+        "cn": "密西西比纪",
+        "rank": "epoch",
+        "parent": "Carboniferous",
+        "ma_top": 323.2,
+        "ma_base": 358.9,
+    },
+    {
+        "name": "Tournaisian",
+        "cn": "图内期",
+        "rank": "age",
+        "parent": "Mississippian",
+        "ma_top": 346.7,
+        "ma_base": 358.9,
+    },
+    {
+        "name": "Visean",
+        "cn": "维宪期",
+        "rank": "age",
+        "parent": "Mississippian",
+        "ma_top": 330.9,
+        "ma_base": 346.7,
+    },
+    {
+        "name": "Serpukhovian",
+        "cn": "谢尔普霍夫期",
+        "rank": "age",
+        "parent": "Mississippian",
+        "ma_top": 323.2,
+        "ma_base": 330.9,
+    },
+    # Pennsylvanian (late Carboniferous)
+    {
+        "name": "Pennsylvanian",
+        "cn": "宾夕法尼亚纪",
+        "rank": "epoch",
+        "parent": "Carboniferous",
+        "ma_top": 298.9,
+        "ma_base": 323.2,
+    },
+    {
+        "name": "Bashkirian",
+        "cn": "巴什基尔期",
+        "rank": "age",
+        "parent": "Pennsylvanian",
+        "ma_top": 315.2,
+        "ma_base": 323.2,
+    },
+    {
+        "name": "Moscovian",
+        "cn": "莫斯科期",
+        "rank": "age",
+        "parent": "Pennsylvanian",
+        "ma_top": 307.0,
+        "ma_base": 315.2,
+    },
+    {
+        "name": "Kasimovian",
+        "cn": "卡西莫夫期",
+        "rank": "age",
+        "parent": "Pennsylvanian",
+        "ma_top": 303.7,
+        "ma_base": 307.0,
+    },
+    {
+        "name": "Gzhelian",
+        "cn": "格热尔期",
+        "rank": "age",
+        "parent": "Pennsylvanian",
+        "ma_top": 298.9,
+        "ma_base": 303.7,
     },
     # Mesozoic periods
     {
@@ -209,7 +317,7 @@ _ICS_ROWS: list[dict[str, Any]] = [
     {
         "name": "Pleistocene",
         "cn": "更新世",
-        "rank": "epoch",
+        "rank": "age",       # P1-6 fix: was "epoch" — ICS 2023 places Pleistocene as an age under Quaternary period
         "parent": "Quaternary",
         "ma_top": 0.0117,
         "ma_base": 2.58,
@@ -217,7 +325,7 @@ _ICS_ROWS: list[dict[str, Any]] = [
     {
         "name": "Holocene",
         "cn": "全新世",
-        "rank": "epoch",
+        "rank": "age",       # P1-6 fix: was "epoch" — ICS 2023 places Holocene as an age under Quaternary period
         "parent": "Quaternary",
         "ma_top": 0.0,
         "ma_base": 0.0117,
@@ -625,7 +733,7 @@ def _normalise_modifier_sep(text: str) -> str:
 
 
 _MODIFIER_PATTERN = re.compile(
-    r"^\s*(Early|Middle|Late|Lower|Middle|Upper|E\.|M\.|L\.|上|中|下)\s+",
+    r"^\s*(Early|Middle|Late|Lower|Upper|E\.|M\.|L\.|上|中|下)\s+",
     re.IGNORECASE,
 )
 
@@ -728,6 +836,7 @@ def _midpoint(a: float | None, b: float | None) -> float | None:
 
 _PBDB_INTERVALS_CACHE: list[dict[str, Any]] | None = None
 _PBDB_LAST_FETCH: float = 0.0
+_PBDB_CACHE_TTL_SECONDS: float = 30 * 24 * 60 * 60  # 30 days
 
 
 def fetch_pbdb_intervals(
@@ -744,24 +853,26 @@ def fetch_pbdb_intervals(
     cache_dir = cache_dir or Path.home() / ".cache" / "rlpe" / "paleodb"
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "intervals.json"
+    # Check if cached data is still valid (within TTL)
     if cache_path.exists() and not force:
-        try:
-            _PBDB_INTERVALS_CACHE = json.loads(cache_path.read_text(encoding="utf-8"))
-            _PBDB_LAST_FETCH = cache_path.stat().st_mtime
-            return _PBDB_INTERVALS_CACHE
-        except (OSError, json.JSONDecodeError) as exc:
-            # Corrupted intervals cache — fall through to a live
-            # fetch (the right behaviour), but log at warning so the
-            # operator can clean up the bad file. Silent corruption
-            # used to make the live fetch look like a network
-            # regression.
-            import logging
+        age = time.time() - _PBDB_LAST_FETCH
+        if age < _PBDB_CACHE_TTL_SECONDS:
+            try:
+                _PBDB_INTERVALS_CACHE = json.loads(cache_path.read_text(encoding="utf-8"))
+                return _PBDB_INTERVALS_CACHE
+            except (OSError, json.JSONDecodeError) as exc:
+                # Corrupted intervals cache — fall through to a live
+                # fetch (the right behaviour), but log at warning so the
+                # operator can clean up the bad file. Silent corruption
+                # used to make the live fetch look like a network
+                # regression.
+                import logging
 
-            logging.getLogger(__name__).warning(
-                "PBDB intervals cache at %s is unreadable (%s); falling through to live fetch",
-                cache_path,
-                exc,
-            )
+                logging.getLogger(__name__).warning(
+                    "PBDB intervals cache at %s is unreadable (%s); falling through to live fetch",
+                    cache_path,
+                    exc,
+                )
     try:
         import requests  # type: ignore
 
@@ -856,29 +967,40 @@ _BIOZONE_TO_MA: dict[str, tuple[float, float]] = {
     "UAZ 5": (121.4, 132.6),     # Hauterivian–Barremian
     "UAZ 6": (113.0, 121.4),     # Aptian
     "UAZ 7": (100.5, 113.0),     # Albian
-    "UAZ 8": (89.0, 100.5),      # Cenomanian–Albian top
-    "UAZ 9": (83.6, 89.0),       # Turonian–Coniacian
-    "UAZ 10": (74.0, 83.6),      # Santonian–Campanian
+    # UAZ 8: Albian-Cenomanian boundary interval (~100.5-93.9 Ma)
+    # (fixed: was incorrectly set to (89.0, 100.5) which spans Turonian)
+    "UAZ 8": (93.9, 100.5),      # Albian–Cenomanian boundary
+    "UAZ 9": (83.6, 93.9),       # Turonian (fixed: was (83.6, 89.0))
+    # UAZ 10: Santonian-Campanian (86.3-72.1 Ma).  Fixed: was (74.0, 83.6)
+    # which excluded the Santonian stage entirely (86.3-83.6 Ma).
+    "UAZ 10": (72.1, 86.3),      # Santonian–Campanian (corrected)
+    # UAZ 11: Campanian-Maastrichtian (83.6-66.0 Ma)
     "UAZ 11": (66.0, 83.6),      # Campanian–Maastrichtian
     # Hollis 1997 NZ Late Cretaceous radiolarian zones
-    "Buryella clinata Zone": (254.14, 259.51),    # Wuchiapingian
+    # Buryella clinata Zone: Thanetian (late Paleocene), ~56-59 Ma
+    # (corrected: was incorrectly set to Wuchiapingian ~254-259 Ma)
+    "Buryella clinata Zone": (56.0, 59.0),          # Thanetian
     "Cryptocephalus nigricae Zone": (83.6, 86.3),  # Coniacian–Santonian
     # O'Dogherty 1994 Betic Cordillera zones (mid-Cretaceous subset)
-    "Pessagno Zone A": (121.4, 132.6),            # Valanginian–Hauterivian
-    "Pessagno Zone B": (113.0, 121.4),            # Barremian
-    "Pessagno Zone C": (100.5, 113.0),            # Aptian–Albian
+    # P1-7 fix: corrected to ICS 2023 stage boundaries.
+    # Valanginian: 139.8-132.6 Ma; Hauterivian: 132.6-125.77 Ma
+    # Barremian: 125.77-121.4 Ma; Aptian: 121.4-113.0 Ma; Albian: 113.0-100.5 Ma
+    "Pessagno Zone A": (125.77, 132.6),            # Hauterivian
+    "Pessagno Zone B": (121.4, 125.77),           # Barremian (lower Aptian boundary at 125.77)
+    "Pessagno Zone C": (113.0, 121.4),            # Aptian
     # Legacy radiolarian zonation (Riedel & Sanfilippo 1978)
     # — commonly cited in older bandini / pouille papers.
-    "Buryella tetradica Zone": (247.2, 251.9),    # Olenekian–Anisian
+    # Buryella tetradica Zone: Coniacian-Santonian (Late Cretaceous), ~83-89 Ma
+    # (corrected: was incorrectly set to Olenekian-Anisian ~247-251 Ma)
+    "Buryella tetradica Zone": (83.6, 89.0),       # Coniacian–Santonian
     "Triassocampe deweveri Zone": (208.5, 227.0), # Carnian–Norian
     # Bare-name aliases (no trailing "Zone") so callers that already
     # stripped the suffix don't pay an extra re-lookup cost. Both
     # forms resolve to the same (ma_top, ma_base) tuple.
-    "Buryella clinata": (254.14, 259.51),
+    "Buryella clinata": (56.0, 59.0),              # Thanetian (corrected)
     "Cryptocephalus nigricae": (83.6, 86.3),
-    "Buryella tetradica": (247.2, 251.9),
+    "Buryella tetradica": (83.6, 89.0),            # Coniacian–Santonian (corrected)
     "Triassocampe deweveri": (208.5, 227.0),
-    "Pessagno Zone A": (121.4, 132.6),  # canonical key already, kept for symmetry
 }
 
 
