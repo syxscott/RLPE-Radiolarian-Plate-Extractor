@@ -386,12 +386,13 @@ class SettingsTab(QWidget):
         body_layout.addWidget(diag)
 
         # ---- YOLO figure detection ----
-        yolo_gb = tr_groupbox("settab.yolo")
-        ylayout = QFormLayout(yolo_gb)
+        self._yolo_gb = tr_groupbox("settab.yolo")
+        ylayout = QFormLayout(self._yolo_gb)
         ylayout.setHorizontalSpacing(SPACE_L)
         ylayout.setVerticalSpacing(SPACE_S)
 
         self._yolo_enable = tr_checkbox("settab.yolo.enable")
+        self._yolo_enable.toggled.connect(lambda checked: self._yolo_gb.setEnabled(checked))
         ylayout.addRow("", self._yolo_enable)
 
         self._yolo_model_path = QLineEdit(DEFAULT_YOLO_MODEL_PATH)
@@ -424,7 +425,7 @@ class SettingsTab(QWidget):
         self._yolo_iou.setValue(DEFAULT_YOLO_IOU)
         ylayout.addRow(tr_label("settab.yolo.iou"), self._yolo_iou)
 
-        body_layout.addWidget(yolo_gb)
+        body_layout.addWidget(self._yolo_gb)
 
         # ---- Action bar ----
         actions = QHBoxLayout()

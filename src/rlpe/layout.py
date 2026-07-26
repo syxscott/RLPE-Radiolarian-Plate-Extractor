@@ -238,8 +238,9 @@ def detect_figure_regions_yolo(
         if result.boxes is None:
             continue
         for box in result.boxes:
-            # xyxy: (x1, y1, x2, y2) in pixel coordinates
-            x1, y1, x2, y2 = map(int, box.xyxy.cpu().numpy())
+            # xyxy: (x1, y1, x2, y2) in pixel coordinates; the Boxes
+            # object exposes it as shape (1, 4), so index [0] to get (4,).
+            x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
             w = x2 - x1
             ht = y2 - y1
             area = w * ht
@@ -271,8 +272,25 @@ def detect_figure_regions_yolo(
             )
 
     regions.sort(key=lambda r: (r.page_index, r.bbox[1], r.bbox[0]))
-    # YOLO is precise — no full-page fallback. If YOLO finds nothing,
-    # let the caller decide what to do.
+    # Full-page fallback (same as OpenCV path): if YOLO finds nothing,
+    # the page is not silently dropped — it contributes a full-page region.
+    if not regions:
+        h, w = image.shape[:2]
+        crop_dir = ensure_dir(Path(page.image_path).parent / "regions")
+        region_id = f"p{page.page_index:03d}_yolo_fullpage"
+        crop_path = crop_dir / f"{region_id}.png"
+        cv2.imwrite(str(crop_path), image)
+        regions.append(
+            FigureRegion(
+                page_index=page.page_index,
+                bbox=(0, 0, w, h),
+                crop_path=str(crop_path),
+                score=0.5,
+                region_id=region_id,
+                kind="page",
+                metadata={"fallback": True, "detector": "yolo"},
+            )
+        )
     return regions
 
 

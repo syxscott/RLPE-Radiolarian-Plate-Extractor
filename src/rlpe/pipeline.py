@@ -4637,7 +4637,7 @@ Rules:
                 continue
 
             self._emit_progress(
-                done,
+                done + 1,
                 n_total,
                 f"[{done + 1}/{n_total}] p{page.page_index:02d} region {ridx}",
             )
