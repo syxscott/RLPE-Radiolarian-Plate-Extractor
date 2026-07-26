@@ -170,23 +170,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             i18n._tr("main.recent_loaded").format(n=n), 5000
         )
-        # the Results tab. Sort by finished_at (descending); fall
-        # back to job_id if finished_at is missing.
-        try:
-            jobs = self._jobs_tab._jobs
-            if not jobs:
-                return
-            latest = max(
-                jobs.values(),
-                key=lambda j: (j.finished_at or -1, j.job_id),
-            )
-            self._results_tab.load_job(
-                latest.job_id, latest.rows, latest.output_dir,
-            )
-            self._tabs.setCurrentIndex(TAB_RESULTS)
-        except Exception as exc:
-            # Never let auto-load block GUI startup.
-            self._log.warning("Phase 51 auto-open most recent failed: %s", exc)
+        # Phase 51 auto-open was removed: startup now defaults to the Run tab.
+        # Users can manually switch to Results/Jobs tabs to see loaded jobs.
 
     # ------------------------------------------------------------------
     # Settings cache

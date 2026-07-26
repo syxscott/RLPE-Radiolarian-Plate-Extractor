@@ -51,6 +51,13 @@ scikit-learn>=1.5.0
 scipy>=1.13.0
 
 # -------------------------
+# YOLO figure detection (optional)
+# Brings ~150 MB of torch + ultralytics dependencies.
+# Enable via Settings tab or --use-yolo-figures flag.
+# -------------------------
+ultralytics>=8.1.0
+
+# -------------------------
 # -------------------------
 # OpenDataLoader (alternative PDF parsing, requires Java 11+)
 # -------------------------

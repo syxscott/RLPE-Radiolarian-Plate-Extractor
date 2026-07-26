@@ -134,6 +134,13 @@ RANGE_M3_OUTPUT_TOKENS: Final[tuple[int, int]] = (1, 32000)
 RANGE_M3_TIMEOUT: Final[tuple[int, int]] = (1, 3600)
 RANGE_M3_MAX_RETRIES: Final[tuple[int, int]] = (1, 20)
 
+# YOLO figure detection defaults
+DEFAULT_YOLO_MODEL_PATH: Final[str] = "models/yolo11x.pt"
+DEFAULT_YOLO_CONF: Final[float] = 0.25
+DEFAULT_YOLO_IOU: Final[float] = 0.45
+RANGE_YOLO_CONF: Final[tuple[float, float]] = (0.01, 1.0)
+RANGE_YOLO_IOU: Final[tuple[float, float]] = (0.01, 1.0)
+
 # Status colour mapping (used by QSS / QPalette)
 STATUS_COLORS: Final[dict[str, str]] = {
     STATUS_QUEUED:   "#7f7f7f",  # grey

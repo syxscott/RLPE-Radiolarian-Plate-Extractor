@@ -54,6 +54,9 @@ from .constants import (
     DEFAULT_PALEO_MAX_OCC,
     DEFAULT_RENDER_DPI,
     DEFAULT_THEME,
+    DEFAULT_YOLO_CONF,
+    DEFAULT_YOLO_IOU,
+    DEFAULT_YOLO_MODEL_PATH,
     QS_KEY_LAST_DIR,
     QS_KEY_LAST_EXPORT_DIR,
     QS_KEY_THEME,
@@ -67,6 +70,8 @@ from .constants import (
     RANGE_CAPTION_WINDOW,
     RANGE_OD_CAPTION_WINDOW,
     RANGE_PALEO_OCC,
+    RANGE_YOLO_CONF,
+    RANGE_YOLO_IOU,
     THEME_DARK,
     THEME_LIGHT,
     THEME_SYSTEM,
@@ -380,6 +385,47 @@ class SettingsTab(QWidget):
 
         body_layout.addWidget(diag)
 
+        # ---- YOLO figure detection ----
+        yolo_gb = tr_groupbox("settab.yolo")
+        ylayout = QFormLayout(yolo_gb)
+        ylayout.setHorizontalSpacing(SPACE_L)
+        ylayout.setVerticalSpacing(SPACE_S)
+
+        self._yolo_enable = tr_checkbox("settab.yolo.enable")
+        ylayout.addRow("", self._yolo_enable)
+
+        self._yolo_model_path = QLineEdit(DEFAULT_YOLO_MODEL_PATH)
+        self._yolo_model_path.setPlaceholderText("models/yolo11x.pt")
+        yolo_row = QHBoxLayout()
+        yolo_row.setSpacing(SPACE_S)
+        yolo_row.addWidget(self._yolo_model_path, 1)
+        yolo_browse_btn = tr_button("settab.yolo.browse")
+        yolo_browse_btn.clicked.connect(
+            lambda: self._pick_file(
+                self._yolo_model_path,
+                "settab.yolo.model_path",
+                "YOLO model (*.pt *.pth);;All files (*)",
+            )
+        )
+        yolo_row.addWidget(yolo_browse_btn)
+        ylayout.addRow(tr_label("settab.yolo.model_path"), yolo_row)
+
+        self._yolo_conf = QDoubleSpinBox()
+        self._yolo_conf.setRange(*RANGE_YOLO_CONF)
+        self._yolo_conf.setDecimals(2)
+        self._yolo_conf.setSingleStep(0.05)
+        self._yolo_conf.setValue(DEFAULT_YOLO_CONF)
+        ylayout.addRow(tr_label("settab.yolo.conf"), self._yolo_conf)
+
+        self._yolo_iou = QDoubleSpinBox()
+        self._yolo_iou.setRange(*RANGE_YOLO_IOU)
+        self._yolo_iou.setDecimals(2)
+        self._yolo_iou.setSingleStep(0.05)
+        self._yolo_iou.setValue(DEFAULT_YOLO_IOU)
+        ylayout.addRow(tr_label("settab.yolo.iou"), self._yolo_iou)
+
+        body_layout.addWidget(yolo_gb)
+
         # ---- Action bar ----
         actions = QHBoxLayout()
         actions.setSpacing(SPACE_S)
@@ -432,6 +478,21 @@ class SettingsTab(QWidget):
             self,
             i18n._tr("common.choose_dir").format(kind=kind),
             initial,
+        )
+        if path:
+            line_edit.setText(path)
+
+    def _pick_file(self, line_edit: QLineEdit, file_kind: str, file_filter: str) -> None:
+        """Open a file picker dialog for a specific file type."""
+        from pathlib import Path
+        initial = line_edit.text()
+        if not initial or not Path(initial).is_file():
+            initial = str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            i18n._tr(file_kind),
+            initial,
+            file_filter,
         )
         if path:
             line_edit.setText(path)
@@ -503,6 +564,16 @@ class SettingsTab(QWidget):
                 val = max(valid_range[0], min(val, valid_range[1]))
             return val
 
+        def _qfloat(key: str, default: float, valid_range: tuple[float, float] | None = None) -> float:
+            raw = self._qsettings.value(key, default)
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                return default
+            if valid_range is not None:
+                val = max(valid_range[0], min(val, valid_range[1]))
+            return val
+
         # GROBID
         self._grobid_url.setText(self._qsettings.value("grobid_url", DEFAULT_GROBID_URL))
         self._grobid_retries.setValue(_qint("grobid_max_retries", DEFAULT_GROBID_MAX_RETRIES))
@@ -541,6 +612,12 @@ class SettingsTab(QWidget):
         # Diagnostics
         self._dpi.setValue(_qint("render_dpi", DEFAULT_RENDER_DPI))
         self._save_intermediate.setChecked(self._qsettings.value("save_intermediate", False, type=bool))
+
+        # YOLO
+        self._yolo_enable.setChecked(self._qsettings.value("use_yolo_figures", False, type=bool))
+        self._yolo_model_path.setText(self._qsettings.value("yolo_model_path", DEFAULT_YOLO_MODEL_PATH))
+        self._yolo_conf.setValue(_qfloat("yolo_conf_threshold", DEFAULT_YOLO_CONF))
+        self._yolo_iou.setValue(_qfloat("yolo_iou_threshold", DEFAULT_YOLO_IOU))
 
     def _save(self) -> None:
         """Write the current settings to QSettings + in-memory cache."""
@@ -587,6 +664,12 @@ class SettingsTab(QWidget):
         # Diagnostics
         self._qsettings.setValue("render_dpi", self._dpi.value())
         self._qsettings.setValue("save_intermediate", self._save_intermediate.isChecked())
+
+        # YOLO
+        self._qsettings.setValue("use_yolo_figures", self._yolo_enable.isChecked())
+        self._qsettings.setValue("yolo_model_path", self._yolo_model_path.text())
+        self._qsettings.setValue("yolo_conf_threshold", self._yolo_conf.value())
+        self._qsettings.setValue("yolo_iou_threshold", self._yolo_iou.value())
 
         self._qsettings.sync()
         # Phase 37 audit fix: refresh in-memory cache so Run tab
@@ -771,4 +854,8 @@ class SettingsTab(QWidget):
             "paleodb_endpoint": self._pbdb_endpoint.text(),
             "render_dpi": self._dpi.value(),
             "save_intermediate": self._save_intermediate.isChecked(),
+            "use_yolo_figures": self._yolo_enable.isChecked(),
+            "yolo_model_path": self._yolo_model_path.text(),
+            "yolo_conf_threshold": self._yolo_conf.value(),
+            "yolo_iou_threshold": self._yolo_iou.value(),
         })

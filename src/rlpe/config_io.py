@@ -118,5 +118,9 @@ def load_config(path: Path) -> PipelineConfig:
         save_intermediate=_coerce(
             "save_intermediate", payload.get("save_intermediate", True), True
         ),
+        use_yolo_figures=_coerce("use_yolo_figures", payload.get("use_yolo_figures", False), False),
+        yolo_model_path=_coerce("yolo_model_path", payload.get("yolo_model_path", ""), ""),
+        yolo_conf_threshold=_coerce("yolo_conf_threshold", payload.get("yolo_conf_threshold", 0.25), 0.25),
+        yolo_iou_threshold=_coerce("yolo_iou_threshold", payload.get("yolo_iou_threshold", 0.45), 0.45),
         extra=payload.get("extra", {}) or {},
     )

@@ -288,6 +288,7 @@ class ResultsTab(QWidget):
         # another layout) so it receives the full width.
         self._preview = ImagePreviewWidget()
         right_panel = QWidget()
+        right_panel.setMinimumWidth(500)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(SPACE_M, 0, 0, 0)
         right_layout.setSpacing(SPACE_S)
@@ -302,9 +303,14 @@ class ResultsTab(QWidget):
         bottom_splitter.addWidget(self._preview)
         bottom_splitter.addWidget(right_panel)
         # Phase 64: image:detail ~30:70 (still user-draggable).
+        # Fix (Phase audit 2026-07-25): detail pane was collapsing when
+        # clicked because setSizes was called before the window was shown,
+        # giving Qt wrong base geometry. Also right_panel had no min-width
+        # so the splitter could squeeze it to ~0. Use only stretch factors
+        # here (no setSizes) and let right_panel.setMinimumWidth guard
+        # the collapse threshold.
         bottom_splitter.setStretchFactor(0, 3)
         bottom_splitter.setStretchFactor(1, 7)
-        bottom_splitter.setSizes([360, 840])
         splitter.addWidget(bottom_splitter)
 
         # Phase 64 (round 2): the table-on-top splitter was given

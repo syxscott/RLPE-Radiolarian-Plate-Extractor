@@ -2505,8 +2505,14 @@ class RadiolarianPipeline:
                     candidate_pages.append(pages[next_idx])
 
             chosen_regions = []
+            yolo_path = self.config.yolo_model_path if self.config.use_yolo_figures else None
             for page in candidate_pages:
-                regions = detect_figure_regions(page)
+                regions = detect_figure_regions(
+                    page,
+                    yolo_model_path=yolo_path,
+                    yolo_conf=self.config.yolo_conf_threshold,
+                    yolo_iou=self.config.yolo_iou_threshold,
+                )
                 if regions:
                     chosen_regions.extend(regions)
             if not chosen_regions:
@@ -4607,8 +4613,17 @@ Rules:
         # Two-pass: enumerate total regions across all pages so the progress
         # callback can map (current, total) onto a smooth 30-90% band.
         all_regions: list[tuple[Any, Any, int]] = []  # (page, region, region_idx_on_page)
+        yolo_path = self.config.yolo_model_path if self.config.use_yolo_figures else None
         for page in pages:
-            for ridx, region in enumerate(detect_figure_regions(page), start=1):
+            for ridx, region in enumerate(
+                detect_figure_regions(
+                    page,
+                    yolo_model_path=yolo_path,
+                    yolo_conf=self.config.yolo_conf_threshold,
+                    yolo_iou=self.config.yolo_iou_threshold,
+                ),
+                start=1,
+            ):
                 all_regions.append((page, region, ridx))
         n_total = max(1, len(all_regions))
         done = 0

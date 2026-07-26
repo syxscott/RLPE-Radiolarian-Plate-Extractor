@@ -101,6 +101,11 @@ _KNOWN_EXTRA_KEYS = {
     # Phase 61 Plan 4 (Bug 4.10): optional name of a fallback LLM backend
     # for 4xx-then-retry.
     "fallback_llm_backend",
+    # YOLO-based figure detection (replaces OpenCV detect_figure_regions)
+    "use_yolo_figures",
+    "yolo_model_path",
+    "yolo_conf_threshold",
+    "yolo_iou_threshold",
 }
 
 
@@ -130,6 +135,15 @@ class PipelineConfig:
     # page from the figure) without enlarging enough to cause
     # cross-plate theft. Operators can widen via ``--od-caption-window N``.
     od_caption_window: int = 5
+    # YOLO-based figure detection (alternative to OpenCV detect_figure_regions).
+    # When ``use_yolo_figures=True``, ``yolo_model_path`` must point to a
+    # trained YOLO ``.pt`` file. ``yolo_conf_threshold`` (default 0.25) discards
+    # detections below this confidence; ``yolo_iou_threshold`` (default 0.45)
+    # merges overlapping detections via Non-Maximum Suppression.
+    use_yolo_figures: bool = False
+    yolo_model_path: str = ""
+    yolo_conf_threshold: float = 0.25
+    yolo_iou_threshold: float = 0.45
     num_workers: int = 4
     render_dpi: int = 200
     save_intermediate: bool = False
@@ -178,6 +192,13 @@ class PipelineConfig:
             raise ValueError(
                 f"caption_window / od_caption_window must be integers ({exc})"
             ) from exc
+        try:
+            self.yolo_conf_threshold = float(self.yolo_conf_threshold)
+            self.yolo_iou_threshold = float(self.yolo_iou_threshold)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"yolo_conf_threshold / yolo_iou_threshold must be floats ({exc})"
+            ) from exc
 
         # Phase 38: validation. Bad config values used to silently
         # produce zero-panel runs (min_panel_score out of range) or
@@ -199,6 +220,24 @@ class PipelineConfig:
         if self.od_caption_window < 1 or self.od_caption_window > 50:
             raise ValueError(
                 f"od_caption_window must be in [1, 50], got {self.od_caption_window}"
+            )
+        if self.use_yolo_figures:
+            if not self.yolo_model_path:
+                raise ValueError(
+                    "use_yolo_figures=True requires yolo_model_path to be set"
+                )
+            model_path = Path(self.yolo_model_path)
+            if not model_path.is_file():
+                raise ValueError(
+                    f"yolo_model_path={model_path!r} does not exist or is not a file"
+                )
+        if not (0.0 <= self.yolo_conf_threshold <= 1.0):
+            raise ValueError(
+                f"yolo_conf_threshold must be in [0.0, 1.0], got {self.yolo_conf_threshold}"
+            )
+        if not (0.0 <= self.yolo_iou_threshold <= 1.0):
+            raise ValueError(
+                f"yolo_iou_threshold must be in [0.0, 1.0], got {self.yolo_iou_threshold}"
             )
 
         # Phase 38: warn (don't raise) for unknown extra-config keys.

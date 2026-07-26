@@ -92,7 +92,27 @@ def find_caption_pages(
     return pages[: min(len(pages), window + 1)]
 
 
-def detect_figure_regions(page: PageRecord, min_area: int = 8000) -> list[FigureRegion]:
+def detect_figure_regions(
+    page: PageRecord,
+    min_area: int = 8000,
+    *,
+    yolo_model_path: str | Path | None = None,
+    yolo_conf: float = 0.25,
+    yolo_iou: float = 0.45,
+) -> list[FigureRegion]:
+    """Detect figure regions in a rendered PDF page.
+
+    Uses YOLO when ``yolo_model_path`` is set, otherwise falls back to
+    the OpenCV connected-component detector.
+    """
+    if yolo_model_path:
+        return detect_figure_regions_yolo(
+            page,
+            model_path=yolo_model_path,
+            conf=yolo_conf,
+            iou=yolo_iou,
+            min_area=min_area,
+        )
     image = cv2.imread(page.image_path, cv2.IMREAD_UNCHANGED)
     if image is None:
         return []
@@ -159,6 +179,100 @@ def detect_figure_regions(page: PageRecord, min_area: int = 8000) -> list[Figure
                 metadata={"fallback": True},
             )
         )
+    return regions
+
+
+# ── YOLO-based figure detector ────────────────────────────────────────────────
+
+
+def detect_figure_regions_yolo(
+    page: PageRecord,
+    model_path: str | Path,
+    conf: float = 0.25,
+    iou: float = 0.45,
+    min_area: int = 5000,
+) -> list[FigureRegion]:
+    """Detect figure regions in a PDF page using a YOLO model.
+
+    Parameters
+    ----------
+    page:
+        PageRecord for the rendered page image.
+    model_path:
+        Path to the YOLO ``.pt`` model file.
+    conf:
+        Confidence threshold (0–1); detections below this are discarded.
+    iou:
+        IoU threshold for Non-Maximum Suppression (0–1); overlapping
+        detections with IoU > iou are merged.
+    min_area:
+        Minimum pixel area of a detection (below this is filtered out).
+
+    Returns
+    -------
+    list[FigureRegion]
+        Detected regions, each with ``kind="figure"`` and a saved crop.
+    """
+    image_path = Path(page.image_path)
+    image = cv2.imread(str(image_path))
+    if image is None:
+        return []
+
+    h_img, w_img = image.shape[:2]
+
+    # Lazy-load the YOLO model (loaded once per session, cached on the
+    # function object so repeated calls on the same path reuse it).
+    cache_key = f"_yolo_model_{model_path}"
+    if not hasattr(detect_figure_regions_yolo, cache_key):
+        from ultralytics import YOLO
+        model = YOLO(str(model_path))
+        # Warm up CUDA if available (first inference is slow).
+        model(image_path, verbose=False, conf=conf, iou=iou)
+        setattr(detect_figure_regions_yolo, cache_key, model)
+
+    model: "ultralytics.YOLO" = getattr(detect_figure_regions_yolo, cache_key)
+    results = model(image_path, verbose=False, conf=conf, iou=iou)
+
+    regions: list[FigureRegion] = []
+    for result in results:
+        if result.boxes is None:
+            continue
+        for box in result.boxes:
+            # xyxy: (x1, y1, x2, y2) in pixel coordinates
+            x1, y1, x2, y2 = map(int, box.xyxy.cpu().numpy())
+            w = x2 - x1
+            ht = y2 - y1
+            area = w * ht
+            if area < min_area:
+                continue
+            if area > w_img * h_img * 0.98:
+                continue
+            crop = image[y1:y2, x1:x2]
+            crop_dir = ensure_dir(image_path.parent / "regions")
+            region_id = f"p{page.page_index:03d}_{slugify(f'yolo_{x1}_{y1}_{w}_{ht}')}"
+            crop_path = crop_dir / f"{region_id}.png"
+            cv2.imwrite(str(crop_path), crop)
+            conf_score = float(box.conf.cpu().numpy()[0])
+            regions.append(
+                FigureRegion(
+                    page_index=page.page_index,
+                    bbox=(x1, y1, w, ht),
+                    crop_path=str(crop_path),
+                    score=conf_score,
+                    region_id=region_id,
+                    kind="figure",
+                    metadata={
+                        "area": int(area),
+                        "detector": "yolo",
+                        "model": str(model_path),
+                        "conf": conf_score,
+                    },
+                )
+            )
+
+    regions.sort(key=lambda r: (r.page_index, r.bbox[1], r.bbox[0]))
+    # YOLO is precise — no full-page fallback. If YOLO finds nothing,
+    # let the caller decide what to do.
     return regions
 
 
