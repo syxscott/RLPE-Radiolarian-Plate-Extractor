@@ -397,6 +397,329 @@ class TestExtractGeology:
             figure_id="fig3",
         )
         # paper_id / figure_id flow into evidence_text or section_title
-        # so downstream audit can trace each link back to source.
-        rec = result[0]
-        assert rec is not None
+
+    # ---- Phase X: localities / layers array parsing --------------------------
+
+
+@requires_cv2
+def test_paleogeographic_map_localities_creates_per_point_records():
+    """paleogeographic_map with ``localities`` array must emit one
+    GeologyLinkRecord per locality (species + coords + age), not just
+    the global geo entry.
+    """
+    from PIL import Image
+    backend = FakeM3Backend(
+        canned_responses=[
+            {
+                "match": lambda s: "paleogeographic map" in s,
+                "raw_text": (
+                    '{"geo":[{"age":"Late Cretaceous, Cenomanian",'
+                    '"chronostratigraphy":"Cenomanian",'
+                    '"chronostratigraphy_rank":"age","ma_top":100.5,'
+                    '"ma_base":93.9,"ma_mid":97.2,'
+                    '"formation":null,"member":null,"group":null,'
+                    '"lithology":null,"locality":"Tethys Ocean",'
+                    '"country":null,"latitude":null,"longitude":null,'
+                    '"biozone":null,"confidence":0.9}],'
+                    '"localities":['
+                    '{"species":"Archaeodictyomitra simplex",'
+                    '"label":"1","latitude":22.5,"longitude":115.2,'
+                    '"paleo_latitude":25.1,"paleo_longitude":113.8,'
+                    '"age":"Late Cretaceous, Cenomanian",'
+                    '"ma_top":100.5,"ma_base":93.9,'
+                    '"formation":"Wahrah Formation",'
+                    '"lithology":"chert","biozone":null,'
+                    '"evidence":"point 1 in map legend","confidence":0.88},'
+                    '{"species":"Crucella espartoensis",'
+                    '"label":"2","latitude":21.8,"longitude":114.7,'
+                    '"paleo_latitude":24.3,"paleo_longitude":113.2,'
+                    '"age":"Early Cretaceous, Albian",'
+                    '"ma_top":112.0,"ma_base":100.5,'
+                    '"formation":"Nahr Ibrah Formation",'
+                    '"lithology":"cherty limestone","biozone":"Tethysian-3",'
+                    '"evidence":"point 2 in map legend","confidence":0.85}'
+                    "]}"
+                ),
+                "fallback_used": False,
+            }
+        ]
+    )
+    engine = _engine_with(backend)
+    result = engine.extract_geology(
+        image=Image.new("RGB", (300, 300)),
+        caption="Paleogeographic map of the Tethys Ocean during the Cenomanian.",
+        figure_type="paleogeographic_map",
+        paper_id="Bandini_2006",
+        figure_id="fig7",
+    )
+    # Should get: 1 global geo entry + 2 locality entries = 3 total.
+    assert len(result) == 3, f"expected 3 records (1 geo + 2 localities), got {len(result)}"
+
+    geo_rec = result[0]
+    assert geo_rec["age"] == "Late Cretaceous, Cenomanian"
+    assert geo_rec["section_type"] == "paleogeographic_map"
+
+    locality_recs = result[1:]
+    species_found = {r.get("species") for r in locality_recs}
+    assert "Archaeodictyomitra simplex" in species_found
+    assert "Crucella espartoensis" in species_found
+
+    # Each locality record must carry point-level coords and link_source.
+    for rec in locality_recs:
+        assert rec["link_source"] == "geo_vision_point"
+        assert rec["section_type"] == "paleogeographic_map"
+        assert rec["latitude"] is not None
+        assert rec["longitude"] is not None
+        assert rec["paleo_latitude"] is not None
+        assert rec["paleo_longitude"] is not None
+        assert rec["confidence"] > 0
+
+
+@requires_cv2
+def test_paleogeographic_map_skips_localities_without_species():
+    """Locality entries without a species name must be skipped silently
+    (they carry no useful species-to-geology link).
+    """
+    from PIL import Image
+    backend = FakeM3Backend(
+        canned_responses=[
+            {
+                "match": lambda s: "paleogeographic map" in s,
+                "raw_text": (
+                    '{"geo":[{"age":"Cenomanian","chronostratigraphy":null,'
+                    '"chronostratigraphy_rank":null,"ma_top":null,'
+                    '"ma_base":null,"ma_mid":null,"formation":null,'
+                    '"member":null,"group":null,"lithology":null,'
+                    '"locality":null,"country":null,"latitude":null,'
+                    '"longitude":null,"biozone":null,"confidence":0.8}],'
+                    '"localities":['
+                    '{"species":"Archaeodictyomitra simplex","label":"1",'
+                    '"latitude":22.5,"longitude":115.2,'
+                    '"paleo_latitude":null,"paleo_longitude":null,'
+                    '"age":null,"ma_top":null,"ma_base":null,'
+                    '"formation":null,"lithology":null,"biozone":null,'
+                    '"evidence":null,"confidence":0.9},'
+                    '{"species":null,"label":"2",'
+                    '"latitude":21.8,"longitude":114.7,'
+                    '"paleo_latitude":null,"paleo_longitude":null,'
+                    '"age":null,"ma_top":null,"ma_base":null,'
+                    '"formation":null,"lithology":null,"biozone":null,'
+                    '"evidence":null,"confidence":0.8}'
+                    "]}"
+                ),
+                "fallback_used": False,
+            }
+        ]
+    )
+    engine = _engine_with(backend)
+    result = engine.extract_geology(
+        image=Image.new("RGB", (300, 300)),
+        caption="Paleogeographic map.",
+        figure_type="paleogeographic_map",
+        paper_id="p1",
+        figure_id="f1",
+    )
+    # 1 geo entry + 1 locality (species=null skipped) = 2
+    assert len(result) == 2
+    species_recs = [r for r in result if r.get("species")]
+    assert len(species_recs) == 1
+    assert species_recs[0]["species"] == "Archaeodictyomitra simplex"
+
+
+@requires_cv2
+def test_strat_column_layers_creates_per_layer_records():
+    """strat_column with ``layers`` array must emit one record per layer
+    (formation + lithology + age + ma range), separate from the global
+    geo entry.
+    """
+    from PIL import Image
+    backend = FakeM3Backend(
+        canned_responses=[
+            {
+                "match": lambda s: "stratigraphic column" in s,
+                "raw_text": (
+                    '{"geo":[{"age":"Albian","chronostratigraphy":"Albian",'
+                    '"chronostratigraphy_rank":"age","ma_top":100.5,'
+                    '"ma_base":113.0,"ma_mid":106.75,'
+                    '"formation":"Nahr Ibrah Formation",'
+                    '"member":null,"group":null,'
+                    '"lithology":null,"locality":"Nahr Ibrah",'
+                    '"country":"Oman","latitude":22.9,"longitude":57.1,'
+                    '"biozone":"Tethysian-4","confidence":0.85}],'
+                    '"layers":['
+                    '{"layer_index":0,'
+                    '"y_top_normalized":0.0,"y_base_normalized":0.15,'
+                    '"lithology":"shale","formation":"Nahr Ibrah Formation",'
+                    '"member":null,"age":"Albian","ma_top":100.5,'
+                    '"ma_base":104.0,"biozone":"Tethysian-3",'
+                    '"thickness_m":120,"evidence":null,"confidence":0.82},'
+                    '{"layer_index":1,'
+                    '"y_top_normalized":0.15,"y_base_normalized":0.35,'
+                    '"lithology":"cherty limestone","formation":"Nahr Ibrah Formation",'
+                    '"member":null,"age":"Albian","ma_top":104.0,'
+                    '"ma_base":113.0,"biozone":"Tethysian-4",'
+                    '"thickness_m":180,"evidence":null,"confidence":0.79}'
+                    "]}"
+                ),
+                "fallback_used": False,
+            }
+        ]
+    )
+    engine = _engine_with(backend)
+    result = engine.extract_geology(
+        image=Image.new("RGB", (300, 300)),
+        caption="Stratigraphic column of Nahr Ibrah Formation.",
+        figure_type="strat_column",
+        paper_id="p1",
+        figure_id="f1",
+    )
+    # 1 geo entry + 2 layer entries = 3
+    assert len(result) == 3, f"expected 3 (1 geo + 2 layers), got {len(result)}"
+
+    layer_recs = result[1:]
+    assert len(layer_recs) == 2
+    # First layer: shale, ma_top=100.5, ma_base=104.0
+    shale = next(r for r in layer_recs if r.get("lithology") == "shale")
+    assert shale["ma_top"] == 100.5
+    assert shale["ma_base"] == 104.0
+    assert shale["_y_top_normalized"] == 0.0
+    assert shale["_y_base_normalized"] == 0.15
+    assert shale["_thickness_m"] == 120
+    assert shale["link_source"] == "geo_vision_layer"
+    assert shale["section_type"] == "stratigraphic_column"
+
+    # Second layer: cherty limestone
+    limestone = next(r for r in layer_recs if "limestone" in str(r.get("lithology", "")))
+    assert limestone["ma_top"] == 104.0
+    assert limestone["ma_base"] == 113.0
+    assert limestone["_layer_index"] == 1
+
+
+@requires_cv2
+def test_litholog_column_layers_creates_per_layer_records():
+    """litholog_column with ``layers`` array emits per-layer records
+    with link_source='geo_vision_layer'.
+    """
+    from PIL import Image
+    backend = FakeM3Backend(
+        canned_responses=[
+            {
+                "match": lambda s: "lithological log" in s,
+                "raw_text": (
+                    '{"geo":[{"age":"Cenomanian","chronostratigraphy":"Cenomanian",'
+                    '"chronostratigraphy_rank":"age","ma_top":100.5,'
+                    '"ma_base":93.9,"ma_mid":97.2,'
+                    '"formation":"Warah Formation","member":"Upper",'
+                    '"group":null,"lithology":"chert","locality":"Warah",'
+                    '"country":"Oman","latitude":22.5,"longitude":57.0,'
+                    '"biozone":null,"confidence":0.8}],'
+                    '"layers":['
+                    '{"layer_index":0,'
+                    '"y_top_normalized":0.0,"y_base_normalized":0.5,'
+                    '"lithology":"chert","formation":"Warah Formation",'
+                    '"member":"Upper","age":"Cenomanian",'
+                    '"ma_top":93.9,"ma_base":100.5,'
+                    '"biozone":null,"thickness_m":null,'
+                    '"evidence":null,"confidence":0.75},'
+                    '{"layer_index":1,'
+                    '"y_top_normalized":0.5,"y_base_normalized":1.0,'
+                    '"lithology":"siliceous shale","formation":"Warah Formation",'
+                    '"member":"Lower","age":"Cenomanian",'
+                    '"ma_top":93.9,"ma_base":100.5,'
+                    '"biozone":null,"thickness_m":null,'
+                    '"evidence":null,"confidence":0.73}'
+                    "]}"
+                ),
+                "fallback_used": False,
+            }
+        ]
+    )
+    engine = _engine_with(backend)
+    result = engine.extract_geology(
+        image=Image.new("RGB", (300, 300)),
+        caption="Lithological log of Warah Formation.",
+        figure_type="litholog_column",
+        paper_id="p1",
+        figure_id="f1",
+    )
+    assert len(result) == 3, f"expected 3 (1 geo + 2 layers), got {len(result)}"
+    layer_recs = result[1:]
+    assert all(r.get("link_source") == "geo_vision_layer" for r in layer_recs)
+    assert all(r.get("section_type") == "litholog_column" for r in layer_recs)
+    lithologies = {r.get("lithology") for r in layer_recs}
+    assert "chert" in lithologies
+    assert "siliceous shale" in lithologies
+
+
+@requires_cv2
+def test_paleogeographic_map_without_localities_still_works():
+    """Old M3 responses (no ``localities`` key) must still produce exactly
+    one geo entry and not crash.
+    """
+    from PIL import Image
+    backend = FakeM3Backend(
+        canned_responses=[
+            {
+                "match": lambda s: "paleogeographic map" in s,
+                "raw_text": (
+                    '{"geo":[{"age":"Cenomanian","chronostratigraphy":null,'
+                    '"chronostratigraphy_rank":null,"ma_top":100.5,'
+                    '"ma_base":93.9,"ma_mid":97.2,'
+                    '"formation":null,"member":null,"group":null,'
+                    '"lithology":null,"locality":"Tethys Ocean",'
+                    '"country":"Tethys","latitude":null,"longitude":null,'
+                    '"biozone":null,"confidence":0.9}]}'
+                ),
+                "fallback_used": False,
+            }
+        ]
+    )
+    engine = _engine_with(backend)
+    result = engine.extract_geology(
+        image=Image.new("RGB", (300, 300)),
+        caption="Paleogeographic map.",
+        figure_type="paleogeographic_map",
+        paper_id="p1",
+        figure_id="f1",
+    )
+    assert len(result) == 1
+    assert result[0]["age"] == "Cenomanian"
+    assert result[0]["section_type"] == "paleogeographic_map"
+
+
+@requires_cv2
+def test_strat_column_without_layers_still_works():
+    """Old M3 responses (no ``layers`` key) must still produce exactly
+    one geo entry and not crash.
+    """
+    from PIL import Image
+    backend = FakeM3Backend(
+        canned_responses=[
+            {
+                "match": lambda s: "stratigraphic column" in s,
+                "raw_text": (
+                    '{"geo":[{"age":"Albian","chronostratigraphy":"Albian",'
+                    '"chronostratigraphy_rank":"age","ma_top":100.5,'
+                    '"ma_base":113.0,"ma_mid":106.75,'
+                    '"formation":"Nahr Ibrah Formation",'
+                    '"member":null,"group":null,"lithology":"cherty limestone",'
+                    '"locality":"Nahr Ibrah","country":"Oman",'
+                    '"latitude":22.9,"longitude":57.1,'
+                    '"biozone":"Tethysian-4","confidence":0.85}]}'
+                ),
+                "fallback_used": False,
+            }
+        ]
+    )
+    engine = _engine_with(backend)
+    result = engine.extract_geology(
+        image=Image.new("RGB", (300, 300)),
+        caption="Stratigraphic column.",
+        figure_type="strat_column",
+        paper_id="p1",
+        figure_id="f1",
+    )
+    assert len(result) == 1
+    assert result[0]["formation"] == "Nahr Ibrah Formation"
+    assert result[0]["section_type"] == "stratigraphic_column"
+

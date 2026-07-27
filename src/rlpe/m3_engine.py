@@ -277,47 +277,144 @@ PROMPT_REGISTRY: dict[str, str] = {
     "strat_column_geo": (
         "You are a geology assistant reading a stratigraphic column "
         "(columnar section, measured section). The figure shows layered "
-        "rock units on a vertical axis. Read formation / member / group "
-        "names, lithology, age, and any Ma range printed on the axis. "
-        "Return strict JSON only:\n\n"
-        '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
+        "rock units on a vertical axis. Extract TWO kinds of information:\n\n"
+        "1. GLOBAL CONTEXT (one entry in ``geo``): formation / member / group "
+        "names, overall age, and Ma range for the entire column.\n\n"
+        "2. PER-LAYER (one entry per visible layer in ``layers``): "
+        "the lithology, formation, member, age, and Ma range of each "
+        "distinct layer visible in the column (from top to bottom).\n\n"
+        "Return strict JSON only, no markdown fences:\n\n"
+        "{\n"
+        '  "geo": [{"age": str|null, "chronostratigraphy": str|null, '
         '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
         '"ma_base": float|null, "ma_mid": float|null, '
         '"formation": str|null, "member": str|null, "group": str|null, '
         '"lithology": str|null, "locality": str|null, "country": str|null, '
         '"latitude": float|null, "longitude": float|null, '
-        '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
-        "Prioritize formation / member / group / lithology. Output JSON only."
+        '"biozone": str|null, "confidence": 0.0-1.0}],\n'
+        '  "layers": [\n'
+        '    {\n'
+        '      "layer_index": int,\n'
+        '      "y_top_normalized": float|null,\n'
+        '      "y_base_normalized": float|null,\n'
+        '      "lithology": str|null,\n'
+        '      "formation": str|null,\n'
+        '      "member": str|null,\n'
+        '      "age": str|null,\n'
+        '      "ma_top": float|null,\n'
+        '      "ma_base": float|null,\n'
+        '      "biozone": str|null,\n'
+        '      "thickness_m": float|null,\n'
+        '      "evidence": str|null,\n'
+        '      "confidence": 0.0-1.0\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "Rules:\n"
+        "- ``y_top_normalized`` and ``y_base_normalized`` are floats 0.0–1.0, "
+        "where 0.0 = top of the column and 1.0 = base. Estimate from the "
+        "relative heights of layers as printed.\n"
+        "- ``layer_index`` starts at 0 (topmost layer).\n"
+        "- ``thickness_m`` is the estimated thickness in metres if printed on "
+        "the figure; otherwise null.\n"
+        "- Include all visible layers even if unlithified or poorly printed.\n"
+        "- Output JSON only, no markdown fences."
     ),
     "litholog_column_geo": (
         "You are a geology assistant reading a lithological log "
         "(litholog column). The figure is a vertical strip showing rock "
-        "type patterns and brief annotations. Extract lithology, "
-        "formation, member, age, and Ma range if visible. Return strict "
-        "JSON only:\n\n"
-        '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
+        "type patterns and brief annotations. Extract TWO kinds of "
+        "information:\n\n"
+        "1. GLOBAL CONTEXT (one entry in ``geo``): the overall formation, "
+        "member, age, and Ma range visible in the column header or legend.\n\n"
+        "2. PER-LAYER (one entry per visible layer in ``layers``): "
+        "the lithology, age, formation, and Ma range of each layer "
+        "(from top to bottom).\n\n"
+        "Return strict JSON only, no markdown fences:\n\n"
+        "{\n"
+        '  "geo": [{"age": str|null, "chronostratigraphy": str|null, '
         '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
         '"ma_base": float|null, "ma_mid": float|null, '
         '"formation": str|null, "member": str|null, "group": str|null, '
         '"lithology": str|null, "locality": str|null, "country": str|null, '
         '"latitude": float|null, "longitude": float|null, '
-        '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
-        "Prioritize lithology + formation. Output JSON only."
+        '"biozone": str|null, "confidence": 0.0-1.0}],\n'
+        '  "layers": [\n'
+        '    {\n'
+        '      "layer_index": int,\n'
+        '      "y_top_normalized": float|null,\n'
+        '      "y_base_normalized": float|null,\n'
+        '      "lithology": str|null,\n'
+        '      "formation": str|null,\n'
+        '      "member": str|null,\n'
+        '      "age": str|null,\n'
+        '      "ma_top": float|null,\n'
+        '      "ma_base": float|null,\n'
+        '      "biozone": str|null,\n'
+        '      "thickness_m": float|null,\n'
+        '      "evidence": str|null,\n'
+        '      "confidence": 0.0-1.0\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "Rules:\n"
+        "- ``y_top_normalized`` and ``y_base_normalized`` are floats 0.0–1.0, "
+        "where 0.0 = top and 1.0 = base of the column.\n"
+        "- ``layer_index`` starts at 0 (topmost layer).\n"
+        "- Include all visible lithology patterns even if unlabelled.\n"
+        "- Output JSON only, no markdown fences."
     ),
     "paleogeographic_map_geo": (
         "You are a geology assistant reading a paleogeographic map. The "
-        "figure shows reconstructed continents at a specific age. Extract "
-        "the reconstructed age (Ma), continent / plate names, paleo-"
-        "latitude / paleo-longitude, modern equivalents, and any "
-        "geological context (formation, lithology). Return strict JSON:\n\n"
-        '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
+        "figure shows reconstructed continents at a specific geological age, "
+        "and may contain labelled sampling localities (each labelled with a "
+        "species name and/or number). Extract TWO kinds of information:\n\n"
+        "1. GLOBAL CONTEXT (one entry in ``geo``): the overall map age, "
+        "continent/plate names, and any formation/lithology/country visible "
+        "in the map legend or labels.\n\n"
+        "2. POINT LOCALITIES (one entry per labelled point in ``localities``): "
+        "read EVERY labelled locality on the map — each has a label (number "
+        "or symbol), a species name (Latin binomial), and coordinates "
+        "(latitude/longitude or relative position). Also extract the age, "
+        "formation, and lithology associated with each point if visible.\n\n"
+        "Return strict JSON only, no markdown fences:\n\n"
+        "{\n"
+        '  "geo": [{"age": str|null, "chronostratigraphy": str|null, '
         '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
         '"ma_base": float|null, "ma_mid": float|null, '
         '"formation": str|null, "member": str|null, "group": str|null, '
         '"lithology": str|null, "locality": str|null, "country": str|null, '
         '"latitude": float|null, "longitude": float|null, '
-        '"biozone": str|null, "confidence": 0.0-1.0}]}\n\n'
-        "Prioritize age + country + locality. Output JSON only."
+        '"biozone": str|null, "confidence": 0.0-1.0}],\n'
+        '  "localities": [\n'
+        '    {\n'
+        '      "species": str|null,\n'
+        '      "label": str|null,\n'
+        '      "latitude": float|null,\n'
+        '      "longitude": float|null,\n'
+        '      "paleo_latitude": float|null,\n'
+        '      "paleo_longitude": float|null,\n'
+        '      "age": str|null,\n'
+        '      "ma_top": float|null,\n'
+        '      "ma_base": float|null,\n'
+        '      "formation": str|null,\n'
+        '      "lithology": str|null,\n'
+        '      "biozone": str|null,\n'
+        '      "evidence": str|null,\n'
+        '      "confidence": 0.0-1.0\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "Rules:\n"
+        "- For ``localities``: read EVERY visible point label (1, 2, 3… or "
+        "symbols). Include all species names even if partial or hand-written.\n"
+        "- Coordinates: use any printed lat/lon. If only relative position is "
+        "shown (e.g. dots on a continent outline), record ``latitude: null`` "
+        "``longitude: null`` and note the appearance in ``evidence``.\n"
+        "- ``age`` per locality overrides the global ``geo.age`` when different.\n"
+        "- ``confidence`` per locality reflects how clearly the species name "
+        "is legible (not the taxonomic correctness).\n"
+        "- Output JSON only, no markdown fences."
     ),
     # Multi-plate enrichment prompt (Round 7). Fires when the
     # OpenDataLoader caption-image pairing missed a plate (e.g. Bandini
@@ -2617,6 +2714,8 @@ class M3Engine:
 
         section_type = SECTION_TYPE_BY_FIGURE.get(figure_type, "figure_caption")
         out: list[dict[str, Any]] = []
+
+        # --- Phase X: parse global geo entries (backward-compatible) ---
         for item in geo_list:
             if not isinstance(item, dict):
                 continue
@@ -2630,6 +2729,81 @@ class M3Engine:
                     f"figure={figure_id} conf={item.get('confidence')}"
                 )
             out.append(item)
+
+        # --- Phase X: parse per-locality entries for paleogeographic maps ---
+        # Each locality carries its own species + coords + age, so it becomes
+        # a fully-independent GeologyLinkRecord with link_source="geo_vision_point".
+        if figure_type == "paleogeographic_map":
+            localities = parsed.get("localities")
+            if isinstance(localities, list):
+                for loc in localities:
+                    if not isinstance(loc, dict):
+                        continue
+                    loc = dict(loc)
+                    species = loc.get("species")
+                    if not species:
+                        # Skip entries without a species name — no useful link.
+                        continue
+                    evidence = (
+                        loc.get("evidence")
+                        or f"paleogeographic_map_vision[{figure_id}] "
+                        f"point '{loc.get('label')}' conf={loc.get('confidence')}"
+                    )
+                    out.append({
+                        "species": species,
+                        "section_type": "paleogeographic_map",
+                        "link_source": "geo_vision_point",
+                        "age": loc.get("age"),
+                        "ma_top": loc.get("ma_top"),
+                        "ma_base": loc.get("ma_base"),
+                        "formation": loc.get("formation"),
+                        "lithology": loc.get("lithology"),
+                        "biozone": loc.get("biozone"),
+                        "latitude": loc.get("latitude"),
+                        "longitude": loc.get("longitude"),
+                        "paleo_latitude": loc.get("paleo_latitude"),
+                        "paleo_longitude": loc.get("paleo_longitude"),
+                        "evidence_text": evidence,
+                        "confidence": loc.get("confidence", 0.0),
+                        "figure_id": figure_id,
+                    })
+
+        # --- Phase X: parse per-layer entries for strat / litholog columns ---
+        # Each layer carries its own formation/lithology/age/ma, forming
+        # independent GeologyLinkRecords so downstream can associate species
+        # to specific layers via the ma_top/ma_base range.
+        if figure_type in ("strat_column", "litholog_column"):
+            layers = parsed.get("layers")
+            if isinstance(layers, list):
+                for layer in layers:
+                    if not isinstance(layer, dict):
+                        continue
+                    layer = dict(layer)
+                    evidence = (
+                        layer.get("evidence")
+                        or f"{figure_type}_vision[{figure_id}] "
+                        f"layer {layer.get('layer_index')} conf={layer.get('confidence')}"
+                    )
+                    out.append({
+                        "section_type": section_type,
+                        "link_source": "geo_vision_layer",
+                        "age": layer.get("age"),
+                        "ma_top": layer.get("ma_top"),
+                        "ma_base": layer.get("ma_base"),
+                        "formation": layer.get("formation"),
+                        "member": layer.get("member"),
+                        "lithology": layer.get("lithology"),
+                        "biozone": layer.get("biozone"),
+                        "evidence_text": evidence,
+                        "confidence": layer.get("confidence", 0.0),
+                        # layer index is informational provenance, not a formal field
+                        "_layer_index": layer.get("layer_index"),
+                        "_y_top_normalized": layer.get("y_top_normalized"),
+                        "_y_base_normalized": layer.get("y_base_normalized"),
+                        "_thickness_m": layer.get("thickness_m"),
+                        "figure_id": figure_id,
+                    })
+
         return out
 
     # ------------------------------------------------------------- stage 7 (schematic)
