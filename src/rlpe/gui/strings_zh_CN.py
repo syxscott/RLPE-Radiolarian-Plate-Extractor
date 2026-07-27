@@ -295,6 +295,9 @@ STRINGS = {
     'settab.yolo.conf': '置信度阈值：',
     'settab.yolo.iou': 'NMS IoU 阈值：',
     'settab.yolo.browse': '浏览…',
+    # audit 2026-07-27 B3: YOLO model path validation warning
+    'settab.yolo.warn.title': '缺少模型文件',
+    'settab.yolo.warn.body': '请在启用 YOLO 检测前选择一个 YOLO 模型文件（.pt）。',
     'tab.jobs': '📋  任务',
     'tab.results': '📊  结果',
     'tab.run': '▶  运行',

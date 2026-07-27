@@ -217,9 +217,15 @@ class PipelineConfig:
             raise ValueError(
                 f"caption_window must be in [1, 50], got {self.caption_window}"
             )
-        if self.od_caption_window < 1 or self.od_caption_window > 50:
+        # Align with gui/constants.RANGE_OD_CAPTION_WINDOW=(1,200), the
+        # web JobOptions validator, and the CLI help text. Phase 28's
+        # rescue ×4 = 20 default already implies 200 is the design
+        # intent for appendix-style plate layouts; the previous cap of
+        # 50 crashed the pipeline for any GUI/web-submitted value in
+        # 51..200 (B1, audit 2026-07-26).
+        if self.od_caption_window < 1 or self.od_caption_window > 200:
             raise ValueError(
-                f"od_caption_window must be in [1, 50], got {self.od_caption_window}"
+                f"od_caption_window must be in [1, 200], got {self.od_caption_window}"
             )
         if self.use_yolo_figures:
             if not self.yolo_model_path:
@@ -231,13 +237,15 @@ class PipelineConfig:
                 raise ValueError(
                     f"yolo_model_path={model_path!r} does not exist or is not a file"
                 )
-        if not (0.0 <= self.yolo_conf_threshold <= 1.0):
+        # audit 2026-07-26: align with gui.constants.RANGE_YOLO_CONF/IOU
+        # (0.01 lower bound) and the settings_tab spinbox minimum 0.01.
+        if not (0.01 <= self.yolo_conf_threshold <= 1.0):
             raise ValueError(
-                f"yolo_conf_threshold must be in [0.0, 1.0], got {self.yolo_conf_threshold}"
+                f"yolo_conf_threshold must be in [0.01, 1.0], got {self.yolo_conf_threshold}"
             )
-        if not (0.0 <= self.yolo_iou_threshold <= 1.0):
+        if not (0.01 <= self.yolo_iou_threshold <= 1.0):
             raise ValueError(
-                f"yolo_iou_threshold must be in [0.0, 1.0], got {self.yolo_iou_threshold}"
+                f"yolo_iou_threshold must be in [0.01, 1.0], got {self.yolo_iou_threshold}"
             )
 
         # Phase 38: warn (don't raise) for unknown extra-config keys.

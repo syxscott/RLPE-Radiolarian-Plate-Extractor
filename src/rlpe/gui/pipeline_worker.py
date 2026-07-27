@@ -311,6 +311,14 @@ class PipelineWorker(QThread):
             render_dpi=render_dpi,
             caption_window=caption_window,
             od_caption_window=od_caption_window,
+            # Audit 2026-07-26 M5: forward YOLO config to PipelineConfig.
+            # Previously _build_config never passed these, so the GUI's
+            # YOLO settings were silently dropped (use_yolo_figures
+            # defaulted to False -> OpenCV detection always used).
+            use_yolo_figures=bool(s.get("use_yolo_figures", False)),
+            yolo_model_path=str(s.get("yolo_model_path", "")),
+            yolo_conf_threshold=float(s.get("yolo_conf_threshold", 0.25)),
+            yolo_iou_threshold=float(s.get("yolo_iou_threshold", 0.45)),
             extra=extra,
         )
         # Ensure the single input PDF is in the work_dir's input/

@@ -141,7 +141,7 @@ def _emit_link_summary_badge(html: list[str], source: str, confidence: float) ->
         conf_pct = "—"
     html.append(
         f"<div style='padding:4px 8px;border-top:1px solid #eee;font-size:11px'>"
-        f"<b>Cross-figure link:</b> "
+        f"<b>{i18n._tr('resultstab.detail.cross_figure_link', 'Cross-figure link')}:</b> "
         f"<span class='{cls}' style='padding:1px 6px;border-radius:3px;font-size:10px'>"
         f"{html_escape(label)}</span> "
         f"<span style='color:#888'>({conf_pct})</span></div>"
@@ -576,7 +576,14 @@ class ResultsTab(QWidget):
             geo = ((row.get("metadata") or {}).get("geology_links") or [])
             for g in geo:
                 if g.get("latitude") is not None and g.get("longitude") is not None:
-                    return f"{g['latitude']:.3f}, {g['longitude']:.3f}"
+                    # audit 2026-07-26 M10: lat/lon may arrive as strings
+                    # (e.g. "12.345N") from some extractors; :.3f on a str
+                    # raises TypeError. Coerce to float and fall back to
+                    # the raw value on failure.
+                    try:
+                        return f"{float(g['latitude']):.3f}, {float(g['longitude']):.3f}"
+                    except (TypeError, ValueError):
+                        return f"{g['latitude']}, {g['longitude']}"
             return None
         # pipeline output, NOT at the row top level (which is None).
         # Before the fix, the Page column always showed "—" because
@@ -725,7 +732,7 @@ class ResultsTab(QWidget):
             display = cap_snippet[:280] + ("…" if len(cap_snippet) > 280 else "")
             html.append(
                 f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
-                f"<b style='font-size:12px'>Caption</b>"
+                f"<b style='font-size:12px'>{i18n._tr('resultstab.detail.caption', 'Caption')}</b>"
                 f"<pre style='background:#f5f5f5;padding:6px;border-radius:4px;margin:4px 0 0;"
                 f"white-space:pre-wrap;font-family:monospace;font-size:11px'>"
                 f"{html_escape(display)}</pre></div>"
@@ -777,7 +784,7 @@ class ResultsTab(QWidget):
         if sample_ids:
             html.append(
                 f"<div style='padding:4px 8px;border-top:1px solid #eee;font-size:12px'>"
-                f"<b>Sample IDs</b>: "
+                f"<b>{i18n._tr('resultstab.detail.sample_ids', 'Sample IDs')}:</b> "
                 f"<code style='font-size:11px'>{html_escape(', '.join(sample_ids[:10]))}"
                 f"{' …' if len(sample_ids) > 10 else ''}</code></div>"
             )

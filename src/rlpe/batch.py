@@ -47,6 +47,13 @@ def _run_single(config: PipelineConfig, pdf_path: Path) -> list[dict[str, Any]]:
         num_workers=1,
         render_dpi=config.render_dpi,
         save_intermediate=config.save_intermediate,
+        # audit 2026-07-26: forward od_caption_window + YOLO fields
+        # (previously dropped, silently reverting to defaults).
+        od_caption_window=config.od_caption_window,
+        use_yolo_figures=config.use_yolo_figures,
+        yolo_model_path=config.yolo_model_path,
+        yolo_conf_threshold=config.yolo_conf_threshold,
+        yolo_iou_threshold=config.yolo_iou_threshold,
         extra=dict(config.extra),
     )
     pipeline = RadiolarianPipeline(local_config)

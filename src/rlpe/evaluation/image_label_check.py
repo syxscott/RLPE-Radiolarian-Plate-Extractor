@@ -37,7 +37,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-_NUM_RE = re.compile(r"^\d{1,3}$")
+# audit 2026-07-26 M13: accept an optional trailing letter so labels
+# like "7a", "12b", "A1" are not silently dropped from the OCR-token
+# filter (some plates use alphanumeric panel IDs).
+_NUM_RE = re.compile(r"^\d{1,3}[A-Za-z]?$")
 
 
 @dataclass(slots=True)

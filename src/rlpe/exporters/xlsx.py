@@ -196,10 +196,12 @@ def _row_for_panel(p: dict[str, Any]) -> list[Any]:
     gl0 = (md.get("geology_links") or [{}])[0] or {} if md.get("geology_links") else {}
     if isinstance(gl0, list):
         gl0 = gl0[0] if gl0 else {}
+    # audit 2026-07-26: geology_links may contain None entries; guard
+    # with isinstance(g, dict) so .get() doesn't raise AttributeError.
     sample_ids = [
         g.get("sample_id")
         for g in (md.get("geology_links") or [])
-        if g.get("sample_id")
+        if isinstance(g, dict) and g.get("sample_id")
     ]
     bbox = p.get("bbox")
     bbox_str = (
@@ -460,7 +462,11 @@ def write_xlsx(
     _write_header(ws3, _LOCALITY_HEADERS)
     loc_rows: list[list[Any]] = []
     for l in run_output.get("localities", []) or []:
-        loc_rows.append(_row_for_locality("", l))
+        # audit 2026-07-26: guard None entries (same null risk as
+        # geology_links) before calling .get() on the row.
+        if not isinstance(l, dict):
+            continue
+        loc_rows.append(_row_for_locality(l.get("paper_id") or "", l))
     _write_rows(ws3, _LOCALITY_HEADERS, loc_rows)
     _autosize_columns(ws3)
 
@@ -469,7 +475,9 @@ def write_xlsx(
     _write_header(ws4, _PALEO_HEADERS)
     paleo_rows: list[list[Any]] = []
     for p in run_output.get("paleo_coordinates", []) or []:
-        paleo_rows.append(_row_for_paleo("", p))
+        if not isinstance(p, dict):
+            continue
+        paleo_rows.append(_row_for_paleo(p.get("paper_id") or "", p))
     _write_rows(ws4, _PALEO_HEADERS, paleo_rows)
     _autosize_columns(ws4)
 

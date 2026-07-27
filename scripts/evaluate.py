@@ -64,11 +64,27 @@ def main() -> int:
         summary = evaluate_run(args.pred, args.gold)
     else:
         pred = load_jsonl(args.pred)
-        gold = [GoldPanel(**g) for g in load_jsonl(args.gold)]
+        # audit 2026-07-26: gold jsonl may carry extra fields the
+        # dataclass doesn't know; filter to known fields to avoid
+        # TypeError on GoldPanel(**g).
+        import dataclasses as _dc
+        _gold_fields = {f.name for f in _dc.fields(GoldPanel)}
+        gold = [
+            GoldPanel(**{k: v for k, v in g.items() if k in _gold_fields})
+            for g in load_jsonl(args.gold)
+        ]
         summary = evaluate(pred, gold)
     summary_dict = summary.to_dict()
     if args.image_label_check:
-        cache_path = args.image_label_cache if str(args.image_label_cache) else None
+        # audit 2026-07-26: an empty --image-label-cache '' should
+        # disable the cache. Path('') becomes PosixPath('.'), whose
+        # str is '.', so the old truthiness check failed and wrote
+        # cache files into the CWD. Check .name instead.
+        cache_path = (
+            args.image_label_cache
+            if (args.image_label_cache and args.image_label_cache.name)
+            else None
+        )
         image_label_stats = run_image_label_check(
             predictions=load_jsonl(args.pred),
             root=ROOT,

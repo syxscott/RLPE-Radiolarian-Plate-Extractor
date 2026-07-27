@@ -855,7 +855,10 @@ def fetch_pbdb_intervals(
     cache_path = cache_dir / "intervals.json"
     # Check if cached data is still valid (within TTL)
     if cache_path.exists() and not force:
-        age = time.time() - _PBDB_LAST_FETCH
+        # audit 2026-07-26: base TTL on the cache file's mtime, not
+        # the in-process _PBDB_LAST_FETCH (which is 0.0 after a restart,
+        # making a fresh on-disk cache look stale and forcing a re-fetch).
+        age = time.time() - cache_path.stat().st_mtime
         if age < _PBDB_CACHE_TTL_SECONDS:
             try:
                 _PBDB_INTERVALS_CACHE = json.loads(cache_path.read_text(encoding="utf-8"))

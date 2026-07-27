@@ -489,11 +489,16 @@ class OpenDataLoaderExtractor:
             chosen_img = None
             same_page_imgs = page_to_images.get(page, [])
             if same_page_imgs:
+                # audit 2026-07-26: bbox is [left,bottom,right,top];
+                # area = (right-left)*(top-bottom), not right*top.
                 chosen_img = max(
                     same_page_imgs,
                     key=lambda el: (
                         int((el.get("bounding box") or [0, 0, 0, 0])[2] or 0)
-                        * int((el.get("bounding box") or [0, 0, 0, 0])[3] or 0)
+                        - int((el.get("bounding box") or [0, 0, 0, 0])[0] or 0)
+                    ) * (
+                        int((el.get("bounding box") or [0, 0, 0, 0])[3] or 0)
+                        - int((el.get("bounding box") or [0, 0, 0, 0])[1] or 0)
                     ),
                 )
             if chosen_img is None:
@@ -517,8 +522,10 @@ class OpenDataLoaderExtractor:
                         score = 1.0 / (1.0 + abs(offset))
                         # Slight bonus for a large image, since
                         # appendix figures tend to be big plate pages.
-                        area = int((img.get("bounding box") or [0, 0, 0, 0])[2] or 0) * int(
-                            (img.get("bounding box") or [0, 0, 0, 0])[3] or 0
+                        # audit 2026-07-26: area = (right-left)*(top-bottom).
+                        _bb = img.get("bounding box") or [0, 0, 0, 0]
+                        area = (int(_bb[2] or 0) - int(_bb[0] or 0)) * (
+                            int(_bb[3] or 0) - int(_bb[1] or 0)
                         )
                         score *= 1.0 + area / 1_000_000
                         candidates.append((score, img))
@@ -872,7 +879,14 @@ def _rescue_missing_images(
         if el.get("type") != "image":
             continue
         page = int(el.get("page number", 0) or 0)
-        img_id = int(el.get("id", -1) or -1)
+        # Audit 2026-07-26 B3: guard ``int()`` against non-numeric ``id``
+        # values (e.g. "p011f1" in Boughdiri 2007). Mirrors the Phase 54
+        # H3 fix at lines 1887-1889; without this the ValueError killed
+        # the entire PDF extraction via _extract_figures -> _rescue.
+        try:
+            img_id = int(el.get("id", -1) or -1)
+        except (TypeError, ValueError):
+            img_id = -1
         if (page, img_id) in rescued_used_keys:
             continue
         # Skip images already attached to a pair. We approximate by
@@ -893,7 +907,11 @@ def _rescue_missing_images(
 
     def _bbox_area(el: dict[str, Any]) -> int:
         bb = el.get("bounding box") or [0, 0, 0, 0]
-        return int(bb[2] or 0) * int(bb[3] or 0)
+        # bb = [left, bottom, right, top]; area = width * height.
+        # audit 2026-07-26: was bb[2]*bb[3] (right*top), not the area.
+        w = int(bb[2] or 0) - int(bb[0] or 0)
+        h = int(bb[3] or 0) - int(bb[1] or 0)
+        return max(0, w) * max(0, h)
 
     out_pairs: list[FigureCaptionPair] = []
     for p in pairs:
@@ -910,7 +928,10 @@ def _rescue_missing_images(
         best_img: dict[str, Any] | None = None
         for img in orphan_imgs:
             img_page = int(img.get("page number", 0) or 0)
-            img_id = int(img.get("id", -1) or -1)
+            try:
+                img_id = int(img.get("id", -1) or -1)
+            except (TypeError, ValueError):
+                img_id = -1
             # Skip images already attached to another stub pair in
             # THIS rescue call. We intentionally allow reuse of plate
             # images (see comment at top of function).
@@ -947,11 +968,12 @@ def _rescue_missing_images(
                 )
                 # The image is now used — mark it so a later pair
                 # doesn't try to grab the same image.
+                try:
+                    _rescued_id = int(best_img.get("id", -1) or -1)
+                except (TypeError, ValueError):
+                    _rescued_id = -1
                 rescued_used_keys.add(
-                    (
-                        int(best_img.get("page number", 0) or 0),
-                        int(best_img.get("id", -1) or -1),
-                    )
+                    (int(best_img.get("page number", 0) or 0), _rescued_id)
                 )
         out_pairs.append(p)
     return out_pairs
@@ -2013,12 +2035,16 @@ def _resolve_image_paths(
     # identity, which is NOT stable across re-reads of the JSON
     # (each ``json.load`` produces fresh dict objects). (page, id)
     # uniquely identifies an image element across reads.
-    full_index: dict[tuple[int, int], int] = {
-        (int(img.get("page number", 0) or 0), int(img.get("id", 0) or 0)): idx
+    # Audit 2026-07-26 B3: ``id`` may be a non-numeric string (e.g.
+    # "p011f1" in Boughdiri 2007); use str() so the key is stable
+    # across all_images construction and lookup without raising
+    # ValueError on int().
+    full_index: dict[tuple[int, str], int] = {
+        (int(img.get("page number", 0) or 0), str(img.get("id", 0) or 0)): idx
         for idx, img in enumerate(all_images, start=1)
     }
     for img in images:
-        key = (int(img.get("page number", 0) or 0), int(img.get("id", 0) or 0))
+        key = (int(img.get("page number", 0) or 0), str(img.get("id", 0) or 0))
         idx = full_index.get(key)
         if idx is None:
             continue

@@ -141,6 +141,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-panel-score", type=float, default=0.8)
     p.add_argument("--render-dpi", type=int, default=200)
     p.add_argument("--save-intermediate", action="store_true")
+    # audit 2026-07-26: --use-yolo-figures was advertised in
+    # requirements.txt but never wired into the CLI.
+    p.add_argument("--use-yolo-figures", action="store_true")
+    p.add_argument("--yolo-model-path", type=str, default=None)
+    p.add_argument("--yolo-conf", type=float, default=None)
+    p.add_argument("--yolo-iou", type=float, default=None)
     p.add_argument("--sam2-checkpoint", type=str, default=None)
     p.add_argument("--sam2-model-cfg", type=str, default=None)
     p.add_argument("--sam2-grid-size", type=int, default=6)
@@ -399,6 +405,15 @@ def main() -> int:
         min_panel_score=args.min_panel_score,
         render_dpi=args.render_dpi,
         save_intermediate=args.save_intermediate,
+        # audit 2026-07-26: forward YOLO flags (only override when set).
+        use_yolo_figures=args.use_yolo_figures,
+        yolo_model_path=(args.yolo_model_path or ""),
+        yolo_conf_threshold=(
+            args.yolo_conf if args.yolo_conf is not None else 0.25
+        ),
+        yolo_iou_threshold=(
+            args.yolo_iou if args.yolo_iou is not None else 0.45
+        ),
         # Phase 28: forward the two caption-window knobs. Both fields
         # have defaults on PipelineConfig (caption_window=2,
         # od_caption_window=5); we only override when the user passed

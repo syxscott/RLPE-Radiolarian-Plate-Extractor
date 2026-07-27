@@ -41,6 +41,14 @@ def save_config(config: PipelineConfig, path: Path) -> None:
         "num_workers": config.num_workers,
         "render_dpi": config.render_dpi,
         "save_intermediate": config.save_intermediate,
+        "od_caption_window": config.od_caption_window,
+        # audit 2026-07-26: persist YOLO fields so a saved config
+        # round-trips (previously load_config read them but save_config
+        # never wrote them, so they silently reset to defaults).
+        "use_yolo_figures": config.use_yolo_figures,
+        "yolo_model_path": config.yolo_model_path,
+        "yolo_conf_threshold": config.yolo_conf_threshold,
+        "yolo_iou_threshold": config.yolo_iou_threshold,
         "extra": sanitized_extra,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -67,8 +75,15 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
         if isinstance(value, bool):
             return value
         if isinstance(value, (int, float, str)):
-            if isinstance(value, str) and value.lower() in {"true", "false"}:
-                return value.lower() == "true"
+            if isinstance(value, str):
+                # audit 2026-07-26: bool("0") is True (non-empty str),
+                # which would flip a "0"/"false"-meaning flag on. Handle
+                # the common string spellings explicitly.
+                lv = value.strip().lower()
+                if lv in {"true", "1"}:
+                    return True
+                if lv in {"false", "0", ""}:
+                    return False
             return bool(value)
         return default
     if target_type is int and isinstance(value, int) and not isinstance(value, bool):
@@ -116,7 +131,10 @@ def load_config(path: Path) -> PipelineConfig:
         num_workers=_coerce("num_workers", payload.get("num_workers", 4), 4),
         render_dpi=_coerce("render_dpi", payload.get("render_dpi", 200), 200),
         save_intermediate=_coerce(
-            "save_intermediate", payload.get("save_intermediate", True), True
+            "save_intermediate", payload.get("save_intermediate", False), False
+        ),
+        od_caption_window=_coerce(
+            "od_caption_window", payload.get("od_caption_window", 5), 5
         ),
         use_yolo_figures=_coerce("use_yolo_figures", payload.get("use_yolo_figures", False), False),
         yolo_model_path=_coerce("yolo_model_path", payload.get("yolo_model_path", ""), ""),

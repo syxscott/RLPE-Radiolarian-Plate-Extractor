@@ -198,6 +198,15 @@ class MainWindow(QMainWindow):
             "ocr_lang": self._qsettings.value("ocr_lang", "en"),
             "caption_window": int(self._qsettings.value("caption_window", 2)),
             "od_caption_window": int(self._qsettings.value("od_caption_window", 5)),
+            # Audit 2026-07-26 M5: load YOLO keys from QSettings so the
+            # Run tab's collect_settings() can forward them to the
+            # worker. Previously only the Settings tab read these;
+            # _load_settings_cache omitted them, so the in-memory
+            # default (use_yolo_figures=False) silently won.
+            "use_yolo_figures": self._qbool(self._qsettings, "use_yolo_figures", False),
+            "yolo_model_path": str(self._qsettings.value("yolo_model_path", "")),
+            "yolo_conf_threshold": float(self._qsettings.value("yolo_conf_threshold", 0.25)),
+            "yolo_iou_threshold": float(self._qsettings.value("yolo_iou_threshold", 0.45)),
             "llm_backend": self._qsettings.value("llm_backend", "minimax"),
             "m3_prompt_lang": self._qsettings.value("m3_prompt_lang", "auto"),
             "m3_model": self._qsettings.value("m3_model", "MiniMax-M3"),
@@ -701,7 +710,10 @@ class MainWindow(QMainWindow):
             remaining = len(self._batch_pdfs) - self._batch_index
             self._batch_pdfs = []  # halt
             self._set_status("main.batch_stopped_on_error", failed=job_id, remaining=remaining)
-        QMessageBox.critical(self, "Pipeline error", f"Job {job_id} failed:\n\n{error[:1000]}")
+        # Audit 2026-07-26 M9: do NOT raise a second QMessageBox here -
+        # RunTab._on_failed already shows an i18n error dialog before
+        # emitting job_failed, so this was a duplicate (and hard-coded
+        # English) popup on every failure.
 
     # ------------------------------------------------------------------
     # Jobs tab → open in results / retry
@@ -725,7 +737,7 @@ class MainWindow(QMainWindow):
         job = jobs[job_id]
         path = Path(job.pdf_path)
         if not path.exists():
-            QMessageBox.warning(self, "Retry", f"Original file no longer exists:\n{path}")
+            QMessageBox.warning(self, i18n._tr("main.retry", "Retry"), f"Original file no longer exists:\n{path}")
             return
         # Re-push the PDF + settings into Run tab and start
         self._run_tab._set_pdf_path(path)

@@ -292,6 +292,9 @@ STRINGS = {
     "settab.yolo.conf": "Confidence threshold:",
     "settab.yolo.iou": "NMS IoU threshold:",
     "settab.yolo.browse": "Browse…",
+    # audit 2026-07-27 B3: YOLO model path validation warning
+    "settab.yolo.warn.title": "YOLO Model Required",
+    "settab.yolo.warn.body": "Please select a YOLO model file (.pt) before enabling YOLO detection.",
     "settab.log.open_fail": "Could not open: {error}\n\nPath: {path}",
     "settab.log.path": "Log file: {path}",
     "settab.log.not_yet": "No log file yet.\n\nThe log file is created on the first pipeline run.\n\nExpected path:\n{path}",

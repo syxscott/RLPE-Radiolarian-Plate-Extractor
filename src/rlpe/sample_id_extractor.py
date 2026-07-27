@@ -99,8 +99,12 @@ _SAMPLE_RE = re.compile(
 # (Loc. vs loc. vs LOC.) and the locality body.
 _LOC_RE = re.compile(
     r"(?<![A-Za-z])(?:Loc\.?|Localit(?:y|ies))\s*[:\-]?\s+"
-    r"([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3}?)"
-    r"(?:\s*,?\s*and\s+([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3}?))?",
+    # audit 2026-07-26: greedy match (was non-greedy {0,3}? which
+    # truncated multi-word locality names like "Monte San Gottardo" to
+    # just "Monte"), but exclude the word "and" so "Tunisia and Greece"
+    # still splits into two localities via the optional and-group below.
+    r"((?!and\b)[A-Za-z][A-Za-z\-]+(?:\s+(?!and\b)[A-Za-z][A-Za-z\-]+){0,3})"
+    r"(?:\s*,?\s*and\s+((?!and\b)[A-Za-z][A-Za-z\-]+(?:\s+(?!and\b)[A-Za-z][A-Za-z\-]+){0,3}))?",
     re.IGNORECASE,
 )
 

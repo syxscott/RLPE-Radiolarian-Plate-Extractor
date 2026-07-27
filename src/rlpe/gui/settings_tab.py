@@ -392,7 +392,11 @@ class SettingsTab(QWidget):
         ylayout.setVerticalSpacing(SPACE_S)
 
         self._yolo_enable = tr_checkbox("settab.yolo.enable")
-        self._yolo_enable.toggled.connect(lambda checked: self._yolo_gb.setEnabled(checked))
+        # Audit 2026-07-26 M4: do NOT disable the parent groupbox - the
+        # checkbox lives inside _yolo_gb, so setEnabled(False) on the
+        # groupbox would lock the user out of re-enabling YOLO (the
+        # 306e427 "fix" regression). Disable only the child inputs.
+        self._yolo_enable.toggled.connect(self._sync_yolo_children_enabled)
         ylayout.addRow("", self._yolo_enable)
 
         self._yolo_model_path = QLineEdit(DEFAULT_YOLO_MODEL_PATH)
@@ -400,15 +404,15 @@ class SettingsTab(QWidget):
         yolo_row = QHBoxLayout()
         yolo_row.setSpacing(SPACE_S)
         yolo_row.addWidget(self._yolo_model_path, 1)
-        yolo_browse_btn = tr_button("settab.yolo.browse")
-        yolo_browse_btn.clicked.connect(
+        self._yolo_browse_btn = tr_button("settab.yolo.browse")
+        self._yolo_browse_btn.clicked.connect(
             lambda: self._pick_file(
                 self._yolo_model_path,
                 "settab.yolo.model_path",
                 "YOLO model (*.pt *.pth);;All files (*)",
             )
         )
-        yolo_row.addWidget(yolo_browse_btn)
+        yolo_row.addWidget(self._yolo_browse_btn)
         ylayout.addRow(tr_label("settab.yolo.model_path"), yolo_row)
 
         self._yolo_conf = QDoubleSpinBox()
@@ -527,6 +531,21 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
+    def _sync_yolo_children_enabled(self, checked: bool) -> None:
+        """Toggle only the YOLO child inputs, not the groupbox itself.
+
+        Audit 2026-07-26 M4: the previous ``setEnabled`` on ``_yolo_gb``
+        disabled the checkbox too (it is a child of the groupbox),
+        locking users out of re-enabling YOLO after unchecking it.
+        """
+        for w in (
+            self._yolo_model_path,
+            self._yolo_browse_btn,
+            self._yolo_conf,
+            self._yolo_iou,
+        ):
+            w.setEnabled(bool(checked))
+
     def _load(self) -> None:
         """Load settings from QSettings + in-memory cache."""
         # Theme — Phase 47: the combo stores friendly names as text
@@ -619,6 +638,10 @@ class SettingsTab(QWidget):
         self._yolo_model_path.setText(self._qsettings.value("yolo_model_path", DEFAULT_YOLO_MODEL_PATH))
         self._yolo_conf.setValue(_qfloat("yolo_conf_threshold", DEFAULT_YOLO_CONF))
         self._yolo_iou.setValue(_qfloat("yolo_iou_threshold", DEFAULT_YOLO_IOU))
+        # Audit 2026-07-26 M4: sync child-widget enabled state to the
+        # checkbox (setChecked may not fire ``toggled`` when the value
+        # is unchanged, leaving children editable while YOLO is off).
+        self._sync_yolo_children_enabled(self._yolo_enable.isChecked())
 
     def _save(self) -> None:
         """Write the current settings to QSettings + in-memory cache."""
@@ -667,6 +690,18 @@ class SettingsTab(QWidget):
         self._qsettings.setValue("save_intermediate", self._save_intermediate.isChecked())
 
         # YOLO
+        # audit 2026-07-27 B3: validate that enabling YOLO without a model
+        # path would crash the pipeline at runtime; catch it at save time.
+        if self._yolo_enable.isChecked() and not self._yolo_model_path.text().strip():
+            QMessageBox.warning(
+                self,
+                i18n._tr("settab.yolo.warn.title", "YOLO Model Required"),
+                i18n._tr(
+                    "settab.yolo.warn.body",
+                    "Please select a YOLO model file (.pt) before enabling YOLO detection.",
+                ),
+            )
+            return
         self._qsettings.setValue("use_yolo_figures", self._yolo_enable.isChecked())
         self._qsettings.setValue("yolo_model_path", self._yolo_model_path.text())
         self._qsettings.setValue("yolo_conf_threshold", self._yolo_conf.value())

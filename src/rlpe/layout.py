@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 
 import cv2
@@ -11,6 +12,11 @@ from .utils import ensure_dir, slugify
 FIG_REF_PATTERN = re.compile(r"\b(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?)\b", re.IGNORECASE)
 CAPTION_LEAD_PATTERN = re.compile(
     r"^(?:fig(?:ure)?|plate)\s*\.?\s*(\d+[A-Za-z]?)\b[:\-\.]?\s*", re.IGNORECASE
+)
+# Phase X: pattern for detecting plate-related keywords in caption text or page text.
+_PLATE_KEYWORD_RE = re.compile(
+    r"\b(?:plate|pl\.?|figure\s*(?:plate|section)|图版|图版说明)\b",
+    re.IGNORECASE,
 )
 
 
@@ -148,7 +154,17 @@ def detect_figure_regions(
         crop_dir = ensure_dir(Path(page.image_path).parent / "regions")
         region_id = f"p{page.page_index:03d}_{slugify(f'region_{x}_{y}_{w}_{h}')}"
         crop_path = crop_dir / f"{region_id}.png"
-        cv2.imwrite(str(crop_path), crop)
+        # audit 2026-07-27 B1: check imwrite return AND catch cv2.error
+        # (C-level I/O errors raise cv2.error, not Python exceptions).
+        try:
+            if not cv2.imwrite(str(crop_path), crop):
+                raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to write crop %s: %s; skipping this region", crop_path, exc
+            )
+            continue
         regions.append(
             FigureRegion(
                 page_index=page.page_index,
@@ -167,13 +183,36 @@ def detect_figure_regions(
         crop_dir = ensure_dir(Path(page.image_path).parent / "regions")
         region_id = f"p{page.page_index:03d}_fullpage"
         crop_path = crop_dir / f"{region_id}.png"
-        cv2.imwrite(str(crop_path), image)
+        # audit 2026-07-27 B1: same imwrite guard for fullpage fallback.
+        try:
+            if not cv2.imwrite(str(crop_path), image):
+                raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to write fullpage crop %s: %s; proceeding without crop",
+                crop_path, exc,
+            )
+            # Still emit a region with a None-ish crop_path so the page
+            # is not silently dropped; downstream can decide how to handle it.
+            regions.append(
+                FigureRegion(
+                    page_index=page.page_index,
+                    bbox=(0, 0, w, h),
+                    crop_path="",
+                    score=0.0,
+                    region_id=region_id,
+                    kind="page",
+                    metadata={"fallback": True, "crop_write_failed": True},
+                )
+            )
+            return regions
         regions.append(
             FigureRegion(
                 page_index=page.page_index,
                 bbox=(0, 0, w, h),
                 crop_path=str(crop_path),
-                score=0.5,
+                score=0.0,
                 region_id=region_id,
                 kind="page",
                 metadata={"fallback": True},
@@ -222,16 +261,99 @@ def detect_figure_regions_yolo(
 
     # Lazy-load the YOLO model (loaded once per session, cached on the
     # function object so repeated calls on the same path reuse it).
-    cache_key = f"_yolo_model_{model_path}"
-    if not hasattr(detect_figure_regions_yolo, cache_key):
-        from ultralytics import YOLO
-        model = YOLO(str(model_path))
-        # Warm up CUDA if available (first inference is slow).
-        model(image_path, verbose=False, conf=conf, iou=iou)
-        setattr(detect_figure_regions_yolo, cache_key, model)
+    # audit 2026-07-27 M2: use a lock so two concurrent threads don't
+    # both see hasattr=False and both load the model simultaneously.
+    # The lock is a class-level sentinel so it persists across calls.
+    _lock_attr = "_yolo_load_lock"
+    if not hasattr(detect_figure_regions_yolo, _lock_attr):
+        setattr(detect_figure_regions_yolo, _lock_attr, threading.Lock())
+
+    # audit 2026-07-27 B4: use .resolve() so that
+    # models/yolo.pt, ./models/yolo.pt, and symlinked paths all
+    # normalise to the same cache entry.
+    cache_key = f"_yolo_model_{Path(model_path).resolve()}"
+    with getattr(detect_figure_regions_yolo, _lock_attr):
+        if not hasattr(detect_figure_regions_yolo, cache_key):
+            # audit 2026-07-27 B2: guard YOLO() constructor for corrupt .pt.
+            try:
+                from ultralytics import YOLO
+            except ImportError as exc:
+                raise RuntimeError(
+                    "YOLO figure detection requires the `ultralytics` "
+                    "package. Install it with `pip install ultralytics` "
+                    "or disable YOLO in Settings."
+                ) from exc
+            try:
+                model = YOLO(str(model_path))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"YOLO model failed to load from {model_path}: {exc}. "
+                    "The model file may be corrupted or incomplete; "
+                    "please re-download it."
+                ) from exc
+            # audit 2026-07-27 warmup fix: use a small dummy image instead
+            # of the real page image so we don't double-infer on the first
+            # actual page (and the warmup image is always fast).
+            try:
+                import numpy as np
+                _dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+                model(_dummy, verbose=False)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "YOLO warmup failed (%s); continuing without warmup", exc
+                )
+            setattr(detect_figure_regions_yolo, cache_key, model)
 
     model: "ultralytics.YOLO" = getattr(detect_figure_regions_yolo, cache_key)
-    results = model(image_path, verbose=False, conf=conf, iou=iou)
+
+    # audit 2026-07-27 M1: inference exception should return the fullpage
+    # fallback region, not []. Returning [] silently drops the page from
+    # the output; the fullpage fallback preserves the page with a
+    # kind="page" region so downstream caption routing can still match it.
+    try:
+        results = model(image_path, verbose=False, conf=conf, iou=iou)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "YOLO inference failed on %s (%s); using fullpage fallback",
+            image_path, exc,
+        )
+        h, w = image.shape[:2]
+        crop_dir = ensure_dir(image_path.parent / "regions")
+        region_id = f"p{page.page_index:03d}_yolo_fullpage"
+        crop_path = crop_dir / f"{region_id}.png"
+        # audit 2026-07-27 B1: same imwrite guard for fullpage.
+        try:
+            if not cv2.imwrite(str(crop_path), image):
+                raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
+        except Exception as write_exc:
+            logging.getLogger(__name__).warning(
+                "Failed to write YOLO fullpage crop %s: %s; proceeding without crop",
+                crop_path, write_exc,
+            )
+            return [
+                FigureRegion(
+                    page_index=page.page_index,
+                    bbox=(0, 0, w, h),
+                    crop_path="",
+                    score=0.0,
+                    region_id=region_id,
+                    kind="page",
+                    metadata={"fallback": True, "detector": "yolo", "crop_write_failed": True},
+                )
+            ]
+        return [
+            FigureRegion(
+                page_index=page.page_index,
+                bbox=(0, 0, w, h),
+                crop_path=str(crop_path),
+                score=0.0,
+                region_id=region_id,
+                kind="page",
+                metadata={"fallback": True, "detector": "yolo"},
+            )
+        ]
 
     regions: list[FigureRegion] = []
     for result in results:
@@ -252,7 +374,17 @@ def detect_figure_regions_yolo(
             crop_dir = ensure_dir(image_path.parent / "regions")
             region_id = f"p{page.page_index:03d}_{slugify(f'yolo_{x1}_{y1}_{w}_{ht}')}"
             crop_path = crop_dir / f"{region_id}.png"
-            cv2.imwrite(str(crop_path), crop)
+            # audit 2026-07-27 B1: same imwrite guard for per-detection crops.
+            try:
+                if not cv2.imwrite(str(crop_path), crop):
+                    raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Failed to write YOLO crop %s: %s; skipping region",
+                    crop_path, exc,
+                )
+                continue
             conf_score = float(box.conf.cpu().numpy()[0])
             regions.append(
                 FigureRegion(
@@ -272,26 +404,73 @@ def detect_figure_regions_yolo(
             )
 
     regions.sort(key=lambda r: (r.page_index, r.bbox[1], r.bbox[0]))
-    # Full-page fallback (same as OpenCV path): if YOLO finds nothing,
-    # the page is not silently dropped — it contributes a full-page region.
+    # Full-page fallback: if YOLO finds nothing, the page is not silently
+    # dropped — it contributes a full-page region.
     if not regions:
         h, w = image.shape[:2]
-        crop_dir = ensure_dir(Path(page.image_path).parent / "regions")
+        crop_dir = ensure_dir(image_path.parent / "regions")
         region_id = f"p{page.page_index:03d}_yolo_fullpage"
         crop_path = crop_dir / f"{region_id}.png"
-        cv2.imwrite(str(crop_path), image)
+        # audit 2026-07-27 B1: imwrite guard for YOLO fullpage fallback.
+        try:
+            if not cv2.imwrite(str(crop_path), image):
+                raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to write YOLO fullpage crop %s: %s; proceeding without crop",
+                crop_path, exc,
+            )
+            regions.append(
+                FigureRegion(
+                    page_index=page.page_index,
+                    bbox=(0, 0, w, h),
+                    crop_path="",
+                    score=0.0,
+                    region_id=region_id,
+                    kind="page",
+                    metadata={"fallback": True, "detector": "yolo", "crop_write_failed": True},
+                )
+            )
+            return regions
         regions.append(
             FigureRegion(
                 page_index=page.page_index,
                 bbox=(0, 0, w, h),
                 crop_path=str(crop_path),
-                score=0.5,
+                score=0.0,
                 region_id=region_id,
                 kind="page",
                 metadata={"fallback": True, "detector": "yolo"},
             )
         )
     return regions
+
+
+def is_likely_plate_page(page: PageRecord) -> bool:
+    """Return True if this page looks like a集中图版页 (末尾大图页).
+
+    Plate pages typically contain keywords like "Plate", "pl.", and
+    have relatively little body text compared to discussion pages.
+    """
+    text = page.text or ""
+    return bool(_PLATE_KEYWORD_RE.search(text))
+
+
+def find_plate_pages(pages: list[PageRecord]) -> list[PageRecord]:
+    """Return pages in the second half of the document that look like集中图版页.
+
+    Searches only the back half of the paper because radiolarian plates
+    are conventionally placed at the end of an article.  Returns pages
+    sorted by page_index (earliest plate pages first).
+    """
+    if not pages:
+        return []
+    mid = len(pages) // 2
+    return sorted(
+        [p for p in pages[mid:] if is_likely_plate_page(p)],
+        key=lambda p: p.page_index,
+    )
 
 
 def page_text_density(page: PageRecord) -> float:
@@ -321,7 +500,21 @@ def choose_best_page(
         for i, page in enumerate(pages):
             if re.search(rf"\b{re.escape(figure_number)}\b", page.text or ""):
                 return page
-    # Otherwise choose the page with lowest text density among pages near the caption text.
-    if not pages:
-        return None
+    # audit 2026-07-26: caption_text was previously ignored; use it to
+    # pick a page whose text overlaps the caption before falling back to
+    # the lowest-density page. (The `if not pages: return None` that was
+    # here was dead - already guarded at the top of the function.)
+    if caption_text:
+        cap_tokens = [t for t in re.findall(r"\w+", caption_text) if len(t) > 3]
+        for page in pages:
+            pt = (page.text or "").lower()
+            if any(t.lower() in pt for t in cap_tokens[:5]):
+                return page
+    # Phase X: caption mentions a plate keyword but every normal candidate
+    # has already been exhausted — the figure is likely on a、集中图版页
+    # at the end of the document.  Return the first plate page as a fallback.
+    if caption_text and _PLATE_KEYWORD_RE.search(caption_text):
+        plate_pages = find_plate_pages(pages)
+        if plate_pages:
+            return plate_pages[0]
     return min(pages, key=page_text_density)

@@ -468,6 +468,16 @@ class RunTab(QWidget):
             "grobid_timeout": self._grobid_timeout.value(),
             "caption_window": self._caption_window.value(),
             "od_caption_window": self._od_caption_window.value(),
+            # Audit 2026-07-26 M5: forward YOLO config from the shared
+            # Settings-tab dict. YOLO controls live in SettingsTab, not
+            # here, so read from self._settings (populated by
+            # SettingsTab.apply_to_run_settings + MainWindow.
+            # _load_settings_cache). Without this the worker received
+            # use_yolo_figures=False regardless of GUI state.
+            "use_yolo_figures": bool(self._settings.get("use_yolo_figures", False)),
+            "yolo_model_path": str(self._settings.get("yolo_model_path", "")),
+            "yolo_conf_threshold": float(self._settings.get("yolo_conf_threshold", 0.25)),
+            "yolo_iou_threshold": float(self._settings.get("yolo_iou_threshold", 0.45)),
             "num_workers": self._workers.value(),
             "min_panel_score": self._panel_score.value(),
             "use_gpu": self._gpu_check.isChecked(),

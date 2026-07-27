@@ -522,6 +522,13 @@ def compare_before_after(
 
     if "species" not in df_g:
         df_g["species"] = None
+    # audit 2026-07-26: ensure both prediction frames have a species
+    # column so the merge always produces species_before/species_after
+    # (otherwise one-sided species raises KeyError at the .fillna line).
+    if "species" not in df_b:
+        df_b["species"] = None
+    if "species" not in df_a:
+        df_a["species"] = None
 
     # Drop rows with no panel_id from BOTH sides — they're placeholders
     # and would silently inflate the merge denominator with junk.

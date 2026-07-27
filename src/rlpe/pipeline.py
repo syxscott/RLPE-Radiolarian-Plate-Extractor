@@ -32,7 +32,13 @@ from .converters import match_result_from_dict, run_output_from_provenance
 from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
 from .geology_extraction import build_knowledge_graph, link_species_to_geology
 from .grobid import GrobidClient, PipelineCancelledError, parse_paper_metadata_from_tei
-from .layout import choose_best_page, detect_figure_regions, extract_figure_number, render_pdf_pages
+from .layout import (
+    choose_best_page,
+    detect_figure_regions,
+    extract_figure_number,
+    find_plate_pages,
+    render_pdf_pages,
+)
 from .m3_engine import CaptionPair, M3Engine, PanelBox, PanelMatch
 from .ocr import OCRBackend, normalize_ocr_tokens
 from .provenance.stamp import build_provenance
@@ -377,6 +383,7 @@ class RadiolarianPipeline:
         # until every running worker (especially long LLM API calls)
         # had finished — a 30s sleep per PDF meant 4 PDFs blocked for
         # 2 minutes after the user clicked Cancel.
+        cancelled_fast = False  # audit 2026-07-26 M6: set by the cancel branch
         pool = ThreadPoolExecutor(max_workers=max(1, self.config.num_workers))
         try:
             futures = {pool.submit(self._process_one_pdf, p): p for p in pdf_files}
@@ -395,7 +402,18 @@ class RadiolarianPipeline:
                             completed, total,
                             f"Cancelled by user after {completed}/{total} PDFs",
                         )
+                        # Audit 2026-07-26 M6+M7: mark fast-shutdown so
+                        # the finally block does NOT call shutdown(
+                        # wait=True) (which would block up to 30s on an
+                        # in-flight LLM call), and write the manifest
+                        # here so already-completed PDFs aren't lost -
+                        # the post-finally write below is unreachable on
+                        # this return path.
+                        cancelled_fast = True
                         pool.shutdown(wait=False, cancel_futures=True)
+                        write_jsonl(
+                            self.config.manifests_dir() / "matches.jsonl", rows
+                        )
                         return rows
                     pdf = futures[fut]
                     if fut.cancelled():
@@ -414,6 +432,7 @@ class RadiolarianPipeline:
                         # to ``cancelled`` (the API's own cancel path doesn't
                         # go through ``run()``, but the API may also be
                         # wrapping this method).
+                        cancelled_fast = True  # audit M6: don't let finally wait=True
                         pool.shutdown(wait=False, cancel_futures=True)
                         raise
                     except Exception:
@@ -430,14 +449,16 @@ class RadiolarianPipeline:
                 # Same handling if the cancel happens between ``as_completed``
                 # yields (e.g. signal handler fires while we're idle waiting
                 # for the next future).
+                cancelled_fast = True  # audit M6: don't let finally wait=True
                 pool.shutdown(wait=False, cancel_futures=True)
                 raise
         finally:
-            # Always release the executor; if we already entered the
-            # cancel branch, ``wait=False`` was used; otherwise default
-            # to ``wait=True`` so the remaining futures drain cleanly.
+            # Audit 2026-07-26 M6: honour the cancel branch's
+            # fast-shutdown intent - use wait=False when cancelled so
+            # we don't block on in-flight LLM calls; otherwise wait=True
+            # so remaining futures drain cleanly.
             try:
-                pool.shutdown(wait=True)
+                pool.shutdown(wait=not cancelled_fast)
             except Exception:
                 # shutdown may already have been called from the cancel
                 # branch — ignore the resulting RuntimeError.
@@ -1014,7 +1035,11 @@ class RadiolarianPipeline:
             # so it can detect "distribution of" captions and find an
             # orphan image for them.
             self._emit_progress(
-                fig_idx - 1,
+                # audit 2026-07-26: fig_idx is 1-based; emit_progress's
+                # first arg is the 1-based "current" (see M5 fix), so
+                # pass fig_idx, not fig_idx-1, to keep the bar aligned
+                # with the "[fig_idx/n_figs]" label.
+                fig_idx,
                 n_figs,
                 f"[{fig_idx}/{n_figs}] {pair.caption_text[:40] if pair.caption_text else pair.figure_id}",
             )
@@ -2315,12 +2340,18 @@ class RadiolarianPipeline:
                 )
             for pv, links in zip(panel_views, visual_per_panel):
                 pid = pv.get("panel_id") or ""
+                fid = pv.get("figure_id") or ""
                 if not pid or not links:
                     continue
-                # Find the matching plate row and write the links.
+                # Audit 2026-07-26 M8: match on (figure_id, panel_id)
+                # composite key - two plates in the same paper can share
+                # panel labels (Bandini 2011 pl07/pl09 both have 1-27);
+                # matching on panel_id alone writes cross-plate links to
+                # the wrong row. Mirrors the P1-2 fix at line ~2237.
                 for row in plate_rows:
                     row_pid = row.get("panel_id") or row.get("canonical_panel_id") or ""
-                    if row_pid == pid:
+                    row_fid = row.get("figure_id") or (row.get("metadata") or {}).get("figure_id") or ""
+                    if row_pid == pid and row_fid == fid:
                         md = row.setdefault("metadata", {})
                         existing = list(md.get("cross_figure_visual_links") or [])
                         existing.extend(links)
@@ -2476,6 +2507,16 @@ class RadiolarianPipeline:
                 paper_metadata=paper_meta,
             )
 
+        # Audit 2026-07-26 M2: cache detect_figure_regions results per
+        # page so adjacent captions (whose candidate_pages overlap) do
+        # not re-run YOLO inference on the same page. The OD path
+        # already uses a two-pass enum (pipeline.py:4617); only this
+        # GROBID path re-detected per caption. YOLO on CPU is
+        # seconds/inference, so redundant calls added minutes to a
+        # 20-caption run.
+        yolo_path = self.config.yolo_model_path if self.config.use_yolo_figures else None
+        regions_cache: dict[int, list] = {}
+
         for idx, caption in enumerate(tei_captions, start=1):
             self._emit_progress(
                 idx - 1,
@@ -2504,15 +2545,33 @@ class RadiolarianPipeline:
                 if next_idx < len(pages):
                     candidate_pages.append(pages[next_idx])
 
-            chosen_regions = []
-            yolo_path = self.config.yolo_model_path if self.config.use_yolo_figures else None
-            for page in candidate_pages:
-                regions = detect_figure_regions(
-                    page,
-                    yolo_model_path=yolo_path,
-                    yolo_conf=self.config.yolo_conf_threshold,
-                    yolo_iou=self.config.yolo_iou_threshold,
+            # Phase X: caption text mentions a plate but the caption_window
+            # expansion found very few candidate pages — the actual figure is
+            # likely on a、集中图版页 at the end of the document that lies
+            # beyond the normal window range.  Supplement the candidates.
+            existing_indexes = {cp.page_index for cp in candidate_pages}
+            if len(candidate_pages) <= 2 and caption.caption:
+                _PLATE_KW_RE = __import__("re", fromlist=["compile"]).compile(
+                    r"\b(?:plate|pl\.?|figure\s*(?:plate|section)|图版|图版说明)\b",
+                    re.IGNORECASE,
                 )
+                if _PLATE_KW_RE.search(caption.caption):
+                    plate_pages = [
+                        p for p in find_plate_pages(pages)
+                        if p.page_index not in existing_indexes
+                    ]
+                    candidate_pages.extend(plate_pages[:3])
+
+            chosen_regions = []
+            for page in candidate_pages:
+                if page.page_index not in regions_cache:
+                    regions_cache[page.page_index] = detect_figure_regions(
+                        page,
+                        yolo_model_path=yolo_path,
+                        yolo_conf=self.config.yolo_conf_threshold,
+                        yolo_iou=self.config.yolo_iou_threshold,
+                    )
+                regions = regions_cache[page.page_index]
                 if regions:
                     chosen_regions.extend(regions)
             if not chosen_regions:

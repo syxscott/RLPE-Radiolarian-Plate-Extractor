@@ -145,29 +145,40 @@ def _to_analysis_row(panel: PanelRecord) -> dict[str, Any]:
     # P3-1 fix: pull authorship from TaxonRecord if present.
     # Use getattr since PanelRecord may be constructed without taxa field.
     _taxa = getattr(panel, "taxa", None) or []
+    # audit 2026-07-26 M11: pick the taxon matching panel.taxon_id
+    # rather than blindly using _taxa[0] - a panel may carry multiple
+    # TaxonRecords (synonyms/children) and [0] is not guaranteed to be
+    # the one panel.species refers to, so authorship was often empty.
+    _authorship = ""
+    if _taxa:
+        _panel_tid = getattr(panel, "taxon_id", None)
+        _match = (
+            next((t for t in _taxa if getattr(t, "taxon_id", None) == _panel_tid), None)
+            if _panel_tid
+            else None
+        )
+        if _match is None:
+            _match = _taxa[0]
+        _authorship = _match.scientific_name_authorship or ""
     return {
         "occurrenceID": occurrence_id,
         "paper_id": panel.paper_id,
         "figure_id": panel.figure_id,
         "panel_id": panel.panel_id or "",
         "scientificName": panel.species or "",
-        "scientificNameAuthorship": (
-            _taxa[0].scientific_name_authorship
-            if _taxa and _taxa[0].scientific_name_authorship
-            else ""
-        ),
+        "scientificNameAuthorship": _authorship,
         "basisOfRecord": "FossilSpecimen" if panel.species else "",
         "eventDate": str(pm.year) if pm and pm.year else "",
         "locality": (geo.locality if geo and geo.locality else "") or "",
-        "decimalLatitude": (lat if lat is not None else ""),
-        "decimalLongitude": (lon if lon is not None else ""),
+        "decimalLatitude": lat,
+        "decimalLongitude": lon,
         "geologicalContextID": (geo.age if geo and geo.age else "") or "",
         "formation": (geo.formation if geo and geo.formation else "") or "",
         "identifiedBy": ("; ".join(pm.authors) if pm and pm.authors else ""),
         "associatedReferences": (pm.doi if pm and pm.doi else "") or "",
-        "scale_bar_value": (sb.value if sb and sb.value is not None else ""),
+        "scale_bar_value": (sb.value if sb and sb.value is not None else None),
         "scale_bar_unit": (sb.unit if sb and sb.unit else "") or "",
-        "scale_bar_um_per_px": (sb.um_per_px if sb and sb.um_per_px is not None else ""),
+        "scale_bar_um_per_px": (sb.um_per_px if sb and sb.um_per_px is not None else None),
         "label_text": (panel.label_text or "") or "",
         "confidence": panel.confidence,
         "matcher_type": panel.metadata.matcher_type,

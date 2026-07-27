@@ -87,9 +87,16 @@ def find_panel_crop(panels_root: Path, paper_id: str, figure_id: str, panel_id: 
     if not fig_dir.exists():
         return None
     # Try exact, then zero-padded 2-digit, then any panel_*.png
+    # audit 2026-07-26 M12: panel_id may be non-numeric (e.g. "7a",
+    # "A1"); int(panel_id) would raise ValueError and abort the run.
+    _pid_zero = panel_id
+    try:
+        _pid_zero = f"{int(panel_id):02d}"
+    except (TypeError, ValueError):
+        pass
     candidates = [
         fig_dir / f"panel_{panel_id}.png",
-        fig_dir / f"panel_{int(panel_id):02d}.png",
+        fig_dir / f"panel_{_pid_zero}.png",
         fig_dir / f"panel_{panel_id}.jpg",
     ]
     for c in candidates:
@@ -232,8 +239,12 @@ def evaluate_image_verified(
                 if str(ocr_label).strip().lower() == str(g.panel_id).strip().lower():
                     n_image_verified += 1
         # String-match rate (same denominator as image-verified)
+        # audit 2026-07-26 M14: was n_string_match / n_gold, but
+        # iv_rate uses n_checked as denominator - mixing them makes
+        # gap_pp = str_match_rate - iv_rate meaningless. Use n_checked
+        # for both so the gap is comparable.
         if n_checked > 0:
-            str_match_rate = n_string_match / n_gold if n_gold else 0.0
+            str_match_rate = n_string_match / n_checked if n_checked else 0.0
             iv_rate = n_image_verified / n_checked
         else:
             str_match_rate = n_string_match / n_gold if n_gold else 0.0

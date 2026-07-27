@@ -550,7 +550,13 @@ def web_css(file_path: str):
     # BEFORE the relative_to check further reduces the
     # symlink-bypass surface.
     try:
-        target.relative_to(css_root, strict=True)
+        # audit 2026-07-26 M15: do NOT pass strict=True - it is only
+        # available on Python 3.12+ (raises TypeError on 3.11) and
+        # requires the path to exist, which would turn a missing-file
+        # 404 below into a 400. Both paths are already resolve()d
+        # above, so a plain relative_to is sufficient for the
+        # symlink-bypass guard.
+        target.relative_to(css_root)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid asset path")
     if not target.exists() or not target.is_file():
@@ -746,7 +752,7 @@ def job_file(job_id: str, file_path: str):
     if target.is_symlink():
         real = target.resolve(strict=True)
         try:
-            real.relative_to(job_root, strict=True)
+            real.relative_to(job_root)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid file path")
     return FileResponse(target)
@@ -766,7 +772,10 @@ def job_result(job_id: str):
     # instead of an infinite spinner.
     if job["status"] not in {"done", "failed", "cancelled"}:
         raise HTTPException(status_code=202, detail="Job not finished")
-    return job
+    # audit 2026-07-26: return a shallow copy so concurrent mutation
+    # of the cached job dict (e.g. a worker finalising the result list)
+    # can't race with the response serialisation.
+    return {**job, "result": list(job.get("result") or [])}
 
 
 @app.get("/jobs/{job_id}/export.xlsx")
@@ -1184,7 +1193,7 @@ def get_results(
             if skipped < offset:
                 skipped += 1
                 continue
-            if limit and len(results) >= limit:
+            if limit is not None and len(results) >= limit:
                 # Reached the requested page size; bail out early so
                 # we don't build a 10000-row response when the
                 # caller only asked for 500.
@@ -1248,7 +1257,7 @@ def _row_id(job_id: str, row: dict[str, Any]) -> str:
     if bbox:
         return (
             f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:"
-            f"bbox:{','.join(str(int(v)) for v in bbox)}"
+            f"bbox:{','.join(str(v) for v in bbox)}"
         )
     # Last resort: stable hash of the row's identifying fields so two
     # identical rows collapse but two differing rows don't.
