@@ -83,7 +83,13 @@ class PanelSegmenter:
                     device="cuda",
                 )
                 self._predictor = SAM2ImagePredictor(model)
-            except Exception:
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "SAM2 model failed to initialise (falling back to OpenCV): %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
                 self._predictor = None
         return self._predictor
 

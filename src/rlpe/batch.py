@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -28,8 +29,38 @@ def run_batch_parallel(
         for pdf in pdf_files:
             futures.append(pool.submit(_run_single, config, pdf))
         for fut in as_completed(futures):
-            rows.extend(fut.result())
+            try:
+                rows.extend(fut.result())
+            except Exception as exc:
+                # Log and continue so one crashed worker doesn't kill the whole batch.
+                import logging
+                logging.getLogger(__name__).error(
+                    "Batch worker failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
     write_jsonl(config.manifests_dir() / "matches.jsonl", rows)
+    # Produce the same run_output.json bundle as pipeline.run() so downstream
+    # consumers (eval scripts, web UI) get a consistent data package.
+    from .utils import write_json
+    run_output = {
+        "rows": rows,
+        "n_rows": len(rows),
+        "n_papers": len(pdf_files),
+        "config": {
+            "use_gpu": config.use_gpu,
+            "ocr_backend": config.ocr_backend,
+            "caption_window": config.caption_window,
+            "od_caption_window": config.od_caption_window,
+            "use_yolo_figures": config.use_yolo_figures,
+            "yolo_model_path": config.yolo_model_path,
+        },
+    }
+    try:
+        write_json(config.manifests_dir() / "run_output.json", run_output)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Failed to write run_output.json")
     return rows
 
 
@@ -54,7 +85,8 @@ def _run_single(config: PipelineConfig, pdf_path: Path) -> list[dict[str, Any]]:
         yolo_model_path=config.yolo_model_path,
         yolo_conf_threshold=config.yolo_conf_threshold,
         yolo_iou_threshold=config.yolo_iou_threshold,
-        extra=dict(config.extra),
+        yolo_device=config.yolo_device,
+        extra=copy.deepcopy(config.extra),
     )
     pipeline = RadiolarianPipeline(local_config)
     return pipeline._process_one_pdf(pdf_path)

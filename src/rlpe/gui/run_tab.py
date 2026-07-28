@@ -617,7 +617,9 @@ class RunTab(QWidget):
         if self._worker is not None and self._worker.isRunning():
             self._worker.request_cancel()
             self._worker.quit()
-            self._worker.wait(2000)
+            # Do NOT wait() synchronously — it blocks the GUI thread for up
+            # to 2 s.  _on_thread_done (connected to finished) handles the
+            # synchronous wait when the thread actually exits.
         self._remove_i18n_listener()
         super().closeEvent(event)
 

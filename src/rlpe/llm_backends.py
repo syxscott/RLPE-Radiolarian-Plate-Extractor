@@ -379,6 +379,16 @@ class TransformersGemmaBackend(BaseLLMBackend):
             parsed["fallback_used"] = False
             return parsed
         except Exception as exc:
+            # Log at error level so operators can distinguish hardware failures
+            # (CUDA OOM, model crash) from semantic parse failures.  Without
+            # this log, a CUDA OOM surfaces only as ``fallback_used=True`` with
+            # no other trace — making debugging very difficult.
+            logger.error(
+                "TransformersGemmaBackend inference failed (fallback_used=True): "
+                "%s: %s",
+                type(exc).__name__,
+                _redact_api_keys(str(exc)),
+            )
             return {
                 "label": None,
                 "species": None,
@@ -776,6 +786,9 @@ class MiniMaxM3Backend(BaseLLMBackend):
             )
         # Per-process semaphore (cheap; limits concurrent in-flight requests).
         self._sem = threading.Semaphore(self.max_concurrent)
+        # Per-thread context storage — prevents concurrent threads (e.g. m3_engine
+        # workers) from overwriting each other's caption/OCR state mid-call.
+        self._thread_local = threading.local()
         # Running totals (read by callers for cost dashboards).
         self._lock = threading.Lock()
         self.total_input_tokens: int = 0
@@ -811,11 +824,11 @@ class MiniMaxM3Backend(BaseLLMBackend):
         # (which is constructed by m3_engine with its own caption parsing).
         # Only prepend if not already embedded in user_prompt to avoid duplication.
         extra_parts: list[str] = []
-        ocr_labels = getattr(self, "_ocr_labels", None) or []
+        ocr_labels = getattr(self._thread_local, "ocr_labels", None) or []
         if ocr_labels:
             labels_str = ", ".join(sorted(set(ocr_labels)))
             extra_parts.append(f"[Panel labels (OCR): {labels_str}]")
-        caption_text = getattr(self, "_caption_text", None) or ""
+        caption_text = getattr(self._thread_local, "caption_text", None) or ""
         if caption_text and caption_text not in user_prompt:
             extra_parts.append(f"[Figure caption: {caption_text}]")
         if extra_parts:
@@ -939,10 +952,9 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 elif status in (401, 403):
                     # M10: auth errors (401/403) are not transient — retrying
                     # wastes quota and won't fix a bad/missing/expired key.
-                    # Count the error and re-raise immediately so callers
-                    # see the real failure on the first attempt.
-                    with self._lock:
-                        self.total_errors += 1
+                    # Re-raise immediately so callers see the real failure on
+                    # the first attempt.  ``total_errors`` is bumped once at
+                    # the retry-exhaustion line (989-990) when the loop exits.
                     logger.warning(
                         "MiniMax %d (non-retryable auth error): %s",
                         status,
@@ -974,15 +986,11 @@ class MiniMaxM3Backend(BaseLLMBackend):
                             )
                             with self._lock:
                                 self.fallback_4xx_hints += 1
-                            with self._lock:
-                                self.total_errors += 1
                             raise FallbackRecommendedError(
                                 f"MiniMax 4xx error, fallback {recommended} recommended",
                                 recommended_backend=recommended,
                             ) from exc
                     except FallbackRecommendedError:
-                        with self._lock:
-                            self.total_errors += 1
                         raise
         # Retry exhaustion. ``total_calls`` already reflects every
         # attempt (bumped at entry above); just bump errors once.
@@ -1189,8 +1197,8 @@ class MiniMaxM3Backend(BaseLLMBackend):
         # can prepend them to the user prompt. This keeps all callers (including
         # m3_engine which passes empty strings) working while enabling future callers
         # to pass actual caption / OCR context through these parameters.
-        self._caption_text = caption_text or ""
-        self._ocr_labels = ocr_labels or []
+        self._thread_local.caption_text = caption_text or ""
+        self._thread_local.ocr_labels = ocr_labels or []
         try:
             img, up = self._apply_outbound_policy(
                 panel_image, caption_text, ocr_labels, user_prompt
@@ -1402,7 +1410,7 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
         raise ValueError(
             "MiniMax api_key not set. Provide one via:\n"
             "  - PipelineConfig.extra['MiniMax_api_key']\n"
-            "  - environment variable ANTHROPIC_API_KEY\n"
+            "  - environment variable MiniMax_API_KEY or MINIMAX_API_KEY\n"
             "  - .env file (see .env.example)\n"
             "Or set data_outbound_policy=local_only to run without the API."
         )

@@ -555,7 +555,10 @@ class JobsTab(QWidget):
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _on_row_double_clicked(self, index) -> None:
-        job_id = self._table.item(index.row(), 0).text()
+        item = self._table.item(index.row(), 0)
+        if item is None:
+            return
+        job_id = item.text()
         self.open_results_requested.emit(job_id)
 
     def _export_xlsx(self, job: JobRecord) -> None:

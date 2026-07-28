@@ -320,14 +320,23 @@ class BatchDialog(QDialog):
         # permission; the failure would surface only when the first
         # job tries to write a JSON, which is harder to recover from.
         import tempfile as _tf_probe
+        import os as _os_probe
         try:
-            with _tf_probe.NamedTemporaryFile(
-                prefix=".rlpe_probe_", dir=out_dir, delete=True,
-            ) as _probe:
-                _probe.write(b"ok")
-            import os as _os_probe
-            if not _os_probe.access(out_dir, _os_probe.W_OK):
-                raise OSError(f"Directory is not writable: {out_dir}")
+            # Write to a temp file and flush to disk before checking access.
+            # On network mounts or sync-less filesystems the data may still be
+            # in the kernel buffer after write(); flush() ensures it hits disk.
+            _probe_path = out_dir / f".rlpe_probe_{os.getpid()}.tmp"
+            try:
+                _probe_path.write_text("ok")
+                os.chmod(_probe_path, 0o644)
+                _os_probe.sync()  # force kernel buffers to disk
+                if not _os_probe.access(out_dir, _os_probe.W_OK):
+                    raise OSError(f"Directory is not writable: {out_dir}")
+            finally:
+                try:
+                    _probe_path.unlink()
+                except OSError:
+                    pass
         except OSError as exc:
             QMessageBox.warning(
                 self,

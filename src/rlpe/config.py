@@ -106,6 +106,7 @@ _KNOWN_EXTRA_KEYS = {
     "yolo_model_path",
     "yolo_conf_threshold",
     "yolo_iou_threshold",
+    "yolo_device",
 }
 
 
@@ -144,6 +145,10 @@ class PipelineConfig:
     yolo_model_path: str = ""
     yolo_conf_threshold: float = 0.25
     yolo_iou_threshold: float = 0.45
+    # audit 2026-07-27 M-YO-1: YOLO device independent of ``use_gpu``.
+    # "auto" = let ultralytics auto-select (cuda/cpu); "0" = GPU 0;
+    # "" or "cpu" = force CPU.  Default "auto" preserves historical behaviour.
+    yolo_device: str = "auto"
     num_workers: int = 4
     render_dpi: int = 200
     save_intermediate: bool = False

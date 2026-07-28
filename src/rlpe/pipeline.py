@@ -690,7 +690,25 @@ class RadiolarianPipeline:
             logger.warning(
                 "range_chart: no ANTHROPIC_API_KEY set; skipping %s/%s", paper_id, figure_id
             )
-            return []
+            return [
+                {
+                    "paper_id": paper_id,
+                    "figure_id": figure_id,
+                    "panel_id": "_RANGE_CHART_SKIPPED_NO_API_KEY",
+                    "species": None,
+                    "panel_path": None,
+                    "bbox": None,
+                    "confidence": 0.0,
+                    "label_text": None,
+                    "caption_snippet": caption_text[:200] if caption_text else None,
+                    "ocr_text": None,
+                    "paper_metadata": None,
+                    "metadata": {
+                        "extraction_source": "range_chart",
+                        "skip_reason": "no_ANTHROPIC_API_KEY",
+                    },
+                }
+            ]
 
         chart = extract_range_chart(
             paper_id=paper_id,
@@ -2570,6 +2588,7 @@ class RadiolarianPipeline:
                         yolo_model_path=yolo_path,
                         yolo_conf=self.config.yolo_conf_threshold,
                         yolo_iou=self.config.yolo_iou_threshold,
+                        yolo_device=getattr(self.config, "yolo_device", "auto"),
                     )
                 regions = regions_cache[page.page_index]
                 if regions:
@@ -2621,6 +2640,18 @@ class RadiolarianPipeline:
             results = self._apply_geo_vision(results, paper_id)
         if self.config.extra.get("m3_stage3", False) and self.m3_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
+        # cross_figure_linker reads geology_links / range_chart_data populated
+        # by the enrichment steps above; runs after them so the linker sees
+        # complete context.  Mirrors the OD-path call at line 517.
+        if self.config.extra.get("cross_figure_linker_enabled", True):
+            try:
+                results = self._apply_cross_figure_linker(results, paper_id)
+            except Exception as exc:  # defensive
+                logger.warning(
+                    "cross_figure_linker failed for paper=%s (GROBID path): %s",
+                    paper_id,
+                    exc,
+                )
         # Audit P1-5: append an ingestion-failed warning stub when
         # GROBID failed so the failure is visible in run_output.warnings.
         if not grobid_result.success and not results:
@@ -2639,7 +2670,7 @@ class RadiolarianPipeline:
                     "paper_metadata": None,
                     "metadata": {
                         "extraction_source": "grobid_failed",
-                        "ingestion_error": error,
+                        "ingestion_error": grobid_result.error or "GROBID returned no result",
                         "ingestion_warning": True,
                     },
                 }

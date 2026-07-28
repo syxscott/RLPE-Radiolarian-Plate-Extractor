@@ -705,6 +705,7 @@ class MainWindow(QMainWindow):
         # call returns immediately.
         if (
             getattr(self, "_batch_pdfs", None)
+            and getattr(self, "_batch_settings", None)
             and self._batch_settings.get("_stop_on_error", False)
         ):
             remaining = len(self._batch_pdfs) - self._batch_index
@@ -737,7 +738,7 @@ class MainWindow(QMainWindow):
         job = jobs[job_id]
         path = Path(job.pdf_path)
         if not path.exists():
-            QMessageBox.warning(self, i18n._tr("main.retry", "Retry"), f"Original file no longer exists:\n{path}")
+            QMessageBox.warning(self, i18n._tr("main.retry", default="Retry"), f"Original file no longer exists:\n{path}")
             return
         # Re-push the PDF + settings into Run tab and start
         self._run_tab._set_pdf_path(path)

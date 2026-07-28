@@ -105,6 +105,7 @@ def detect_figure_regions(
     yolo_model_path: str | Path | None = None,
     yolo_conf: float = 0.25,
     yolo_iou: float = 0.45,
+    yolo_device: str = "auto",
 ) -> list[FigureRegion]:
     """Detect figure regions in a rendered PDF page.
 
@@ -118,6 +119,7 @@ def detect_figure_regions(
             conf=yolo_conf,
             iou=yolo_iou,
             min_area=min_area,
+            device=yolo_device,
         )
     image = cv2.imread(page.image_path, cv2.IMREAD_UNCHANGED)
     if image is None:
@@ -230,7 +232,12 @@ def detect_figure_regions_yolo(
     conf: float = 0.25,
     iou: float = 0.45,
     min_area: int = 5000,
+    *,
+    device: str = "auto",
 ) -> list[FigureRegion]:
+    # Guard against invalid min_area values.
+    if min_area <= 0:
+        min_area = 5000
     """Detect figure regions in a PDF page using a YOLO model.
 
     Parameters
@@ -256,6 +263,10 @@ def detect_figure_regions_yolo(
     image = cv2.imread(str(image_path))
     if image is None:
         return []
+    # PyMuPDF may save RGBA PNGs; convert to BGR before any processing so
+    # the YOLO inference and saved crops have correct colour ordering.
+    if image.ndim == 3 and image.shape[2] == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
 
     h_img, w_img = image.shape[:2]
 
@@ -284,7 +295,7 @@ def detect_figure_regions_yolo(
                     "or disable YOLO in Settings."
                 ) from exc
             try:
-                model = YOLO(str(model_path))
+                model = YOLO(str(model_path), device=device)
             except Exception as exc:
                 raise RuntimeError(
                     f"YOLO model failed to load from {model_path}: {exc}. "

@@ -401,7 +401,9 @@ class ResultsTab(QWidget):
     def _refresh_texts(self) -> None:
         """Re-translate column headers + filter labels."""
         for i, col in enumerate(RESULT_COLUMNS):
-            self._table.horizontalHeaderItem(i).setText(i18n._tr(f"restab.col.{col.key}"))
+            item = self._table.horizontalHeaderItem(i)
+            if item is not None:
+                item.setText(i18n._tr(f"restab.col.{col.key}"))
         # "all"/"any" labels. We update only the *displayed text*
         # at the existing index rather than clearing + rebuilding,
         # which would lose the per-species / per-family items.

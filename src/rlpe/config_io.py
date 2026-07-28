@@ -140,5 +140,6 @@ def load_config(path: Path) -> PipelineConfig:
         yolo_model_path=_coerce("yolo_model_path", payload.get("yolo_model_path", ""), ""),
         yolo_conf_threshold=_coerce("yolo_conf_threshold", payload.get("yolo_conf_threshold", 0.25), 0.25),
         yolo_iou_threshold=_coerce("yolo_iou_threshold", payload.get("yolo_iou_threshold", 0.45), 0.45),
+        yolo_device=_coerce("yolo_device", payload.get("yolo_device", "auto"), "auto"),
         extra=payload.get("extra", {}) or {},
     )

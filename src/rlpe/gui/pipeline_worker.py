@@ -28,6 +28,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from ..config import PipelineConfig
 from ..pipeline import RadiolarianPipeline
+from ..utils import stable_id
 from .utils import get_gui_logger
 from .constants import DEFAULT_LLM_BACKEND, DEFAULT_MINIMAX_MODEL
 
@@ -56,9 +57,9 @@ class PipelineWorker(QThread):
     # log_line(line)
     log_line = Signal(str)
     # result_row(row_dict)
-    result_row = Signal("QVariant")
+    result_row = Signal("PyVariant")
     # finished_ok(results_list)
-    finished_ok = Signal("QVariant")
+    finished_ok = Signal("PyVariant")
     # failed(error_message)
     failed = Signal(str)
 
@@ -70,7 +71,6 @@ class PipelineWorker(QThread):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        import threading
         self._settings = settings
         self._pdf_path = Path(pdf_path)
         self._work_dir = Path(work_dir)
@@ -102,18 +102,8 @@ class PipelineWorker(QThread):
     # ------------------------------------------------------------------
 
     def paper_id(self) -> str:
-        """Stable paper id, computed the same way the pipeline does.
-
-        Currently we delegate to ``rlpe.utils.stable_id`` via the
-        extra dict fallback path. Keeping a method on the worker
-        avoids a duplicate import.
-        """
-        # Use a hash of the absolute path. Matches
-        # ``rlpe.utils.stable_id`` which uses sha1(file_path)[:16].
-        import hashlib
-
-        path_str = str(self._pdf_path.resolve())
-        return hashlib.sha1(path_str.encode("utf-8")).hexdigest()[:16]
+        """Stable paper id, delegated to ``rlpe.utils.stable_id``."""
+        return stable_id(self._pdf_path)
 
     # ------------------------------------------------------------------
     # QThread entry point
