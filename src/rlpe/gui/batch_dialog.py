@@ -319,17 +319,20 @@ class BatchDialog(QDialog):
         # read-only mount or a directory where the user lacks write
         # permission; the failure would surface only when the first
         # job tries to write a JSON, which is harder to recover from.
-        import tempfile as _tf_probe
         import os as _os_probe
         try:
-            # Write to a temp file and flush to disk before checking access.
-            # On network mounts or sync-less filesystems the data may still be
-            # in the kernel buffer after write(); flush() ensures it hits disk.
+            # Probe actual writability by creating a temp file (not just checking
+            # permissions, which can lie on network/overlay filesystems).  Use
+            # os.fsync() on the open file handle rather than os.sync() to flush
+            # only this file's kernel buffers, not the entire system.
             _probe_path = out_dir / f".rlpe_probe_{os.getpid()}.tmp"
             try:
-                _probe_path.write_text("ok")
-                os.chmod(_probe_path, 0o644)
-                _os_probe.sync()  # force kernel buffers to disk
+                _fd = _os_probe.open(_probe_path, _os_probe.O_CREAT | _os_probe.O_WRONLY, 0o644)
+                try:
+                    _os_probe.write(_fd, b"ok")
+                    _os_probe.fsync(_fd)  # flush this file's buffers to disk only
+                finally:
+                    _os_probe.close(_fd)
                 if not _os_probe.access(out_dir, _os_probe.W_OK):
                     raise OSError(f"Directory is not writable: {out_dir}")
             finally:

@@ -235,9 +235,6 @@ def detect_figure_regions_yolo(
     *,
     device: str = "auto",
 ) -> list[FigureRegion]:
-    # Guard against invalid min_area values.
-    if min_area <= 0:
-        min_area = 5000
     """Detect figure regions in a PDF page using a YOLO model.
 
     Parameters
@@ -259,6 +256,9 @@ def detect_figure_regions_yolo(
     list[FigureRegion]
         Detected regions, each with ``kind="figure"`` and a saved crop.
     """
+    # Guard against invalid min_area values.
+    if min_area <= 0:
+        min_area = 5000
     image_path = Path(page.image_path)
     image = cv2.imread(str(image_path))
     if image is None:

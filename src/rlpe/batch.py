@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import copy
+import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
 from .config import PipelineConfig
 from .pipeline import RadiolarianPipeline
-from .utils import ensure_dir, write_jsonl
+from .utils import ensure_dir, write_json, write_jsonl
 
 
 def run_batch(config: PipelineConfig) -> list[dict[str, Any]]:
@@ -33,7 +34,6 @@ def run_batch_parallel(
                 rows.extend(fut.result())
             except Exception as exc:
                 # Log and continue so one crashed worker doesn't kill the whole batch.
-                import logging
                 logging.getLogger(__name__).error(
                     "Batch worker failed: %s: %s",
                     type(exc).__name__,
@@ -42,7 +42,6 @@ def run_batch_parallel(
     write_jsonl(config.manifests_dir() / "matches.jsonl", rows)
     # Produce the same run_output.json bundle as pipeline.run() so downstream
     # consumers (eval scripts, web UI) get a consistent data package.
-    from .utils import write_json
     run_output = {
         "rows": rows,
         "n_rows": len(rows),
@@ -59,7 +58,6 @@ def run_batch_parallel(
     try:
         write_json(config.manifests_dir() / "run_output.json", run_output)
     except Exception:
-        import logging
         logging.getLogger(__name__).exception("Failed to write run_output.json")
     return rows
 
