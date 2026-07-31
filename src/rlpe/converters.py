@@ -197,7 +197,15 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
         for entry in raw_visual_links:
             if isinstance(entry, dict):
                 visual_links.append(entry)
+    # audit 2026-07-31: forward PBDB taxonomy onto the exported
+    # metadata so the DwC-A exporter can fill kingdom…family (the
+    # columns were hard-coded empty because PanelRecord never carried
+    # the PBDB payload).
+    pbdb_tax = (meta.get("paleodb") or {}).get("taxonomy")
+    if not isinstance(pbdb_tax, dict):
+        pbdb_tax = None
     return PanelMetadata(
+        paleodb_taxonomy=pbdb_tax,
         panel_score=meta.get("panel_score"),
         ocr_count=int(meta.get("ocr_count", 0) or 0),
         taxon_count=int(meta.get("taxon_count", 0) or 0),

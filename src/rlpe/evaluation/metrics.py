@@ -338,13 +338,25 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
     def _best_pred(preds: list[dict[str, Any]]) -> dict[str, Any] | None:
         if not preds:
             return None
+        # audit 2026-07-31: the key was (confidence, has_species) —
+        # an empty-species prediction with high confidence beat a
+        # correct species with lower confidence, turning a TP into
+        # FN (docstring claimed the opposite). Species presence must
+        # sort FIRST.
         return max(
             preds,
             key=lambda p: (
-                float(p.get("confidence") or 0.0),
                 bool((p.get("species") or "").strip()),
+                float(p.get("confidence") or 0.0),
             ),
         )
+
+    # audit 2026-07-31: a prediction group can satisfy at most ONE
+    # gold entry. The old code let one pred "5" match gold "5" AND
+    # gold "5a" (prefix match), scoring 2 TP from a single
+    # prediction and inflating recall/F1. Groups are consumed after
+    # their first successful match.
+    consumed_pred_keys: set[tuple[str, str, str]] = set()
 
     for g in gold:
         m = by_paper[g.paper_id]
@@ -352,7 +364,10 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
         # Find a matching prediction. Restrict to predictions in the
         # same figure so panel labels in different figures don't collide.
         matched_pred: dict[str, Any] | None = None
+        matched_key: tuple[str, str, str] | None = None
         for (pid, fid, plabel), preds in pred_groups.items():
+            if (pid, fid, plabel) in consumed_pred_keys:
+                continue
             if pid != g.paper_id:
                 continue
             # Phase 55 audit: explicit guard — skip when both are non-empty and differ
@@ -365,6 +380,7 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
                     continue
                 if matched_pred is None:
                     matched_pred = cand
+                    matched_key = (pid, fid, plabel)
                 else:
                     # Prefer the candidate that matches the gold species
                     cand_sp = _norm_species(cand.get("species"))
@@ -374,9 +390,12 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
                         and cur_sp.lower() != gold_species.lower()
                     ):
                         matched_pred = cand
+                        matched_key = (pid, fid, plabel)
         matched_pred_species = _norm_species(matched_pred.get("species")) if matched_pred else None
         if matched_pred is not None:
             m.panel_match += 1
+            if matched_key is not None:
+                consumed_pred_keys.add(matched_key)
             if (
                 gold_species
                 and matched_pred_species

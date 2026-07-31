@@ -3052,6 +3052,23 @@ class RadiolarianPipeline:
         # panel label on the matching rows.
         kept = self._apply_review_corrections(kept)
 
+        # audit 2026-07-31: low-confidence rows must be flagged for
+        # review. A confidence < 0.5 row previously shipped with
+        # needs_review=0 — half-trusted data flowed into the research
+        # chain unmarked (real runs: 18/36 rows < 0.5, zero flagged).
+        for r in kept:
+            try:
+                conf = float(r.get("confidence") or 0.0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            if 0.0 < conf < 0.5:
+                md = r.setdefault("metadata", {})
+                md.setdefault("needs_review", True)
+                reasons = list(md.get("review_reasons") or [])
+                if "low_confidence" not in reasons:
+                    reasons.append("low_confidence")
+                md["review_reasons"] = reasons
+
         return kept
 
     def _apply_review_corrections(

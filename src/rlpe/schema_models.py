@@ -388,6 +388,11 @@ class PanelMetadata(BaseModel):
     scale_bar: ScaleBarRecord | None = None
     geology_links: list[GeologyLinkRecord] = Field(default_factory=list)
     m3_diagnostic: dict[str, Any] = Field(default_factory=dict)
+    # audit 2026-07-31: PBDB taxonomy forwarded from the match
+    # metadata so the DwC-A exporter can populate the higher-rank
+    # classification columns (kingdom … family). Optional; absent for
+    # runs without use_paleodb.
+    paleodb_taxonomy: dict[str, Any] | None = None
     extraction_source: str = ""
     extraction_method: str = ""
     needs_review: bool = False

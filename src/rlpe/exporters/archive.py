@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from html import escape as _xml_escape
 from pathlib import Path
 
-from ..converters import _taxon_parts
+from ..converters import _extract_authorship, _taxon_parts
 from ..schema_models import PanelRecord, RunOutput
 
 
@@ -107,26 +107,32 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
     # authoritative entries; open-nomenclature rows carry only the
     # ``scientificName`` string.
     taxon = _taxon_parts(panel.species)
-    # P3-1 fix: pull authorship from TaxonRecord if present.
-    _taxa = getattr(panel, "taxa", None) or []
+    # audit 2026-07-31: the old authorship path read
+    # ``panel.taxa[0].scientific_name_authorship`` — PanelRecord has
+    # NO ``taxa`` field, so the column was ALWAYS empty (dead code).
+    # Use the centralised ``_extract_authorship`` (Phase 63) which
+    # parses "Genus species (Smith, 1900)" / "… Smith, 1900" shapes.
+    _, _subgenus, _authorship = _extract_authorship(panel.species)
+    # audit 2026-07-31: the higher-rank DwC columns (kingdom …
+    # family) were hard-coded empty even though the pipeline attaches
+    # PBDB taxonomy to the match metadata. It is now forwarded onto
+    # PanelMetadata.paleodb_taxonomy; join it here so GBIF uploads
+    # carry the full classification.
+    _pbdb_tax = panel.metadata.paleodb_taxonomy or {}
     # P3-2 fix: getattr guard for geology_context_id.
     _geo_ctx_id = getattr(panel, "geology_context_id", None)
     return {
         "occurrenceID": occ_id,
         "basisOfRecord": "FossilSpecimen" if panel.species else "",
         "scientificName": panel.species or "",
-        "kingdom": "",
-        "phylum": "",
-        "class": "",
-        "order": "",
-        "family": "",
+        "kingdom": str(_pbdb_tax.get("kingdom") or ""),
+        "phylum": str(_pbdb_tax.get("phylum") or ""),
+        "class": str(_pbdb_tax.get("class") or ""),
+        "order": str(_pbdb_tax.get("order") or ""),
+        "family": str(_pbdb_tax.get("family") or ""),
         "genus": (taxon.get("genus") or ""),
         "specificEpithet": (taxon.get("specific_epithet") or ""),
-        "scientificNameAuthorship": (
-            _taxa[0].scientific_name_authorship
-            if _taxa and _taxa[0].scientific_name_authorship
-            else ""
-        ),
+        "scientificNameAuthorship": (_authorship or ""),
         "eventDate": str(pm.year) if pm and pm.year else "",
         "year": str(pm.year) if pm and pm.year else "",
         "locality": (geo.locality if geo and geo.locality else ""),
@@ -448,6 +454,24 @@ def _coerce_run_output_from_dict(run: dict) -> RunOutput:
     prov.setdefault("timestamp_utc", "1970-01-01T00:00:00Z")
     prov.setdefault("host", "unknown")
     prov.setdefault("python_version", "unknown")
+    # audit 2026-07-31: stub provenance must not be SILENT. A GUI/Web
+    # export with a missing git_commit or timestamp used to ship with
+    # the fake values ("unknown", "1970-01-01") and the consumer could
+    # not tell it apart from a fully-provenanced export. Warn loudly
+    # and stamp the incompleteness on the payload.
+    _stubbed = [k for k in ("git_commit", "timestamp_utc", "pipeline_version") if prov.get(k) in ("unknown", "1970-01-01T00:00:00Z")]
+    if _stubbed:
+        import logging as _logging
+
+        # audit 2026-07-31: the stub values themselves (git_commit=
+        # "unknown", timestamp_utc="1970-01-01…") remain in the
+        # export — consumers can detect them — but the operator is
+        # now WARNED instead of silently shipping fake provenance.
+        _logging.getLogger(__name__).warning(
+            "Exporting run WITHOUT full provenance (stubbed: %s) — "
+            "the output is not FAIR-traceable to a source commit",
+            ", ".join(_stubbed),
+        )
     payload = dict(run)
     payload["provenance"] = prov
     return RunOutput.model_validate(payload)

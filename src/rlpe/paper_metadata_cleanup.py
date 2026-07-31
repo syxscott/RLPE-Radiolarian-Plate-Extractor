@@ -369,5 +369,33 @@ def cleanup_paper_metadata(paper_dict: dict[str, Any]) -> tuple[dict[str, Any], 
 
     # Journal via DOI
     cleaned["journal"] = enrich_journal(cleaned.get("journal"), cleaned.get("doi"))
+    # audit 2026-07-31: a real run shipped journal="Explanation of
+    # Plate" — the caption header leaked into the journal field and
+    # went straight into CSV/DwC/EML exports. Drop caption-fragment
+    # values here.
+    if _is_garbage_journal(cleaned.get("journal")):
+        cleaned["journal"] = None
+        if "journal_extraction_failed" not in review_reasons:
+            review_reasons.append("journal_extraction_failed")
 
     return cleaned, review_reasons
+
+
+# audit 2026-07-31: journal values polluted by caption fragments —
+# "Explanation of Plate 1", "Plate 2", "Fig. 1", page-range strings.
+# These are never journal names.
+_JOURNAL_GARBAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^explanation\s+of\s+plate", re.IGNORECASE),
+    re.compile(r"^plates?\s+\d+", re.IGNORECASE),
+    re.compile(r"^figs?\.?\s*\d+", re.IGNORECASE),
+    re.compile(r"^\d{1,3}[_-]\d{1,3}$"),
+)
+
+
+def _is_garbage_journal(journal: Any) -> bool:
+    if journal is None:
+        return True
+    s = str(journal).strip()
+    if not s or len(s) < 3:
+        return True
+    return any(p.match(s) for p in _JOURNAL_GARBAGE_PATTERNS)
