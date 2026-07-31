@@ -171,7 +171,7 @@ class TestPipelineRoutingSource:
         text = path.read_text(encoding="utf-8")
         # The geo_vision block for new types must call
         # extract_geology with the figure_type forwarded.
-        assert "self.m3_engine.extract_geology(" in text
+        assert "_m3_call_with_fallback(self.m3_engine.extract_geology," in text
         assert "figure_type=fig_type," in text
 
     def test_pipeline_creates_stub_record_for_geo_vision(self):

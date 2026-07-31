@@ -1193,6 +1193,19 @@
           "default": null,
           "title": "Page Index"
         },
+        "paleodb_taxonomy": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paleodb Taxonomy"
+        },
         "panel_score": {
           "anyOf": [
             {

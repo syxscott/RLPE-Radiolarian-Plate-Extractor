@@ -41,19 +41,19 @@ class TestLinkSourceBadge:
         from rlpe.gui.results_tab import _emit_link_source_badge
         html: list[str] = []
         _emit_link_source_badge(html, "cross_figure_linker:sample_match")
-        assert any("link: " in s and "Sample ID match" in s for s in html)
+        assert any("link: " in s and ("Sample ID match" in s or "样品号匹配" in s) for s in html)
 
     def test_locality_match_emits_chip(self):
         from rlpe.gui.results_tab import _emit_link_source_badge
         html: list[str] = []
         _emit_link_source_badge(html, "cross_figure_linker:locality_match")
-        assert any("Locality match" in s for s in html)
+        assert any("Locality match" in s or "产地匹配" in s for s in html)
 
     def test_m3_emits_amber_chip(self):
         from rlpe.gui.results_tab import _emit_link_source_badge
         html: list[str] = []
         _emit_link_source_badge(html, "cross_figure_linker:m3_inference")
-        assert any("M3 inference" in s for s in html)
+        assert any("M3 inference" in s or "M3 推理" in s for s in html)
         # Amber chip class
         assert any("badge-warn" in s for s in html)
 
@@ -61,7 +61,7 @@ class TestLinkSourceBadge:
         from rlpe.gui.results_tab import _emit_link_source_badge
         html: list[str] = []
         _emit_link_source_badge(html, "cross_figure_linker:unlinked")
-        assert any("Unlinked" in s for s in html)
+        assert any("Unlinked" in s or "未关联" in s for s in html)
         assert any("badge-muted" in s for s in html)
 
     def test_non_linker_no_chip(self):
@@ -83,13 +83,13 @@ class TestLinkSummaryBadge:
         from rlpe.gui.results_tab import _emit_link_summary_badge
         html: list[str] = []
         _emit_link_summary_badge(html, "sample_match", 1.0)
-        assert any("Sample ID match" in s and "100%" in s for s in html)
+        assert any(("Sample ID match" in s or "样品号匹配" in s) and "100%" in s for s in html)
 
     def test_unlinked_zero_conf(self):
         from rlpe.gui.results_tab import _emit_link_summary_badge
         html: list[str] = []
         _emit_link_summary_badge(html, "unlinked", 0.0)
-        assert any("Unlinked" in s and "0%" in s for s in html)
+        assert any(("Unlinked" in s or "未关联" in s) and "0%" in s for s in html)
 
     def test_unknown_source_uses_raw_label(self):
         from rlpe.gui.results_tab import _emit_link_summary_badge
@@ -145,12 +145,20 @@ class TestRenderDetailIntegration:
             },
         }
 
-        rt = ResultsTab.__new__(ResultsTab)
-        rt.text_browser = FakeBrowser()
+        # audit 2026-07-31: __new__ bypassing __init__ raises in
+        # PySide6 6.11 ("base class __init__ not called"). Construct
+        # for real (offscreen) and swap the browser.
+        from PySide6.QtWidgets import QApplication
+        _app = QApplication.instance() or QApplication([])
+        rt = ResultsTab()
+        rt._detail_browser = FakeBrowser()
         rt._render_detail(row)
-        html = rt.text_browser.last_html
-        assert "Sample ID match" in html
-        assert "Cross-figure link" in html
+        html = rt._detail_browser.last_html
+        # audit 2026-07-31: accept either language (the test env's
+        # default language is zh_CN; the string table renders the
+        # equivalent Chinese labels)
+        assert ("Sample ID match" in html or "样品号匹配" in html), html
+        assert ("Cross-figure link" in html or "跨图关联" in html), html
 
 
 @pytest.mark.skipif(_HAS_PYSIDE6, reason="source-guard only")

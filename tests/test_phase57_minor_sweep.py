@@ -190,19 +190,27 @@ def test_minor5_bbox_click_prefers_rect(qapp) -> None:
 # ---------------------------------------------------------------------------
 
 def test_minor6_batch_dialog_probes_writability(qapp, tmp_path) -> None:
-    """batch_dialog must use tempfile + os.W_OK before accepting an
-    output directory. We check the source for the probe pattern.
+    """batch_dialog must probe writability before accepting an output
+    directory. audit 2026-07-31: the probe moved to the Qt-free
+    outdir_probe module (unit-testable without PySide6); the dialog
+    delegates to it.
     """
-    src = (Path(__file__).resolve().parents[1]
-           / "src" / "rlpe" / "gui" / "batch_dialog.py").read_text(encoding="utf-8")
-    assert "NamedTemporaryFile" in src, (
-        "batch_dialog.py missing the writability probe (tempfile.NamedTemporaryFile)."
+    probe_src = (Path(__file__).resolve().parents[1]
+                 / "src" / "rlpe" / "gui" / "outdir_probe.py").read_text(encoding="utf-8")
+    assert "def probe_output_dir_writable" in probe_src, (
+        "outdir_probe.py missing the writability probe."
     )
-    # The probe uses an aliased os import (``_os_probe.access``) so
-    # we accept either the bare or aliased form.
-    assert (".access(" in src and "W_OK" in src), (
-        "batch_dialog.py missing the os.access(W_OK) fallback check."
+    assert "os.open" in probe_src, "probe must actually create a temp file"
+    dialog_src = (Path(__file__).resolve().parents[1]
+                  / "src" / "rlpe" / "gui" / "batch_dialog.py").read_text(encoding="utf-8")
+    assert "probe_output_dir_writable" in dialog_src, (
+        "batch_dialog.py must delegate to probe_output_dir_writable"
     )
-    assert "batch.outdir.not_writable" in src, (
+    # audit 2026-07-31: the W_OK fallback check lives in the probe
+    # module now.
+    assert "W_OK" in probe_src, (
+        "outdir_probe.py missing the os.access(W_OK) fallback check."
+    )
+    assert "batch.outdir.not_writable" in dialog_src, (
         "batch_dialog.py doesn't reference the new 'not writable' i18n key."
     )

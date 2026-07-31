@@ -41,7 +41,22 @@ class TestVisualLinksGuiRender:
         must include a '视觉坐标关联' / 'Visual coordinate links' section
         listing each link's target figure, layer, age, formation, and
         confidence."""
-        from rlpe.gui.results_tab import _render_detail
+        # audit 2026-07-31: _render_detail is a ResultsTab method, not
+        # a module function; the test env now has PySide6 so construct
+        # a real instance.
+        from PySide6.QtWidgets import QApplication
+        _app = QApplication.instance() or QApplication([])
+        from rlpe.gui.results_tab import ResultsTab
+        _rt = ResultsTab()
+
+        class _FakeBrowser:
+            def __init__(self):
+                self.last_html = ""
+
+            def setHtml(self, html):
+                self.last_html = html
+
+        _rt._detail_browser = _FakeBrowser()
 
         md = {
             "link_source": "locality_match",
@@ -57,13 +72,14 @@ class TestVisualLinksGuiRender:
                 }
             ],
         }
-        html = _render_detail(panel={"metadata": md}, i18n_keys={})
-        assert any("Visual" in s or "视觉" in s for s in html), (
+        _rt._render_detail({"metadata": md})
+        html = _rt._detail_browser.last_html
+        assert ("Visual" in html or "视觉" in html), (
             "expected a visual-coordinate link section in the rendered detail; "
-            f"got: {html}"
+            f"got: {html[:300]}"
         )
-        assert any("strat1" in s for s in html)
-        assert any("Late Triassic" in s for s in html)
+        assert "strat1" in html
+        assert "Late Triassic" in html
 
 
 class TestVisualLinksSourceGuard:

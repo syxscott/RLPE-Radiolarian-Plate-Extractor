@@ -3085,7 +3085,10 @@ class RadiolarianPipeline:
         ``metadata.review_corrected = True`` so the provenance trail
         shows the overlay.
         """
-        work = Path(getattr(self.config, "work_dir", "") or self.config.resolved_output_dir())
+        cfg = getattr(self, "config", None)
+        if cfg is None:
+            return rows
+        work = Path(getattr(cfg, "work_dir", "") or cfg.resolved_output_dir())
         corr_path = work.parent / "corrections" / "corrections.jsonl"
         if not corr_path.exists():
             return rows

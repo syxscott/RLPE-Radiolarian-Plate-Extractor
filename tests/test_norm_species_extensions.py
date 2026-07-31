@@ -89,10 +89,20 @@ def test_sample_code_preserved_adversarial():
 
 
 def test_trinomial_collapse_real_subspecies():
-    """A real subspecies 'Eucyrtidiellum unumaense pustulatum' should
-    collapse to the binomial 'Eucyrtidiellum unumaense' because there
-    is no qualifier in the way."""
-    assert _norm_species("Eucyrtidiellum unumaense pustulatum") == "Eucyrtidiellum unumaense"
+    """audit 2026-07-31: a real subspecies ('Eucyrtidiellum unumaense
+    pustulatum') is a DISTINCT taxon and is preserved by _norm_species.
+    It remains COMPATIBLE with the species-level name via
+    _species_compatible (subspecies is a refinement of the species
+    determination), so a species-level gold still matches."""
+    from rlpe.evaluation.metrics import _species_compatible
+
+    norm = _norm_species("Eucyrtidiellum unumaense pustulatum")
+    assert norm == "Eucyrtidiellum unumaense pustulatum", norm
+    assert _species_compatible(norm, "Eucyrtidiellum unumaense")
+    # a DIFFERENT subspecies must NOT match
+    assert not _species_compatible(
+        norm, "Eucyrtidiellum unumaense dentatum"
+    )
 
 
 def test_trinomial_collapse_stops_at_qualifier():

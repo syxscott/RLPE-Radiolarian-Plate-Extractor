@@ -39,7 +39,7 @@ class TestIngestionWarningSourceGuard:
         path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
         text = path.read_text(encoding="utf-8")
         # Locate _process_one_pdf_od
-        marker = "def _process_one_pdf_od("
+        marker = "def _process_one_pdf_od_inner("
         i = text.find(marker)
         assert i > 0
         next_def = text.find("\n    def ", i + 1)

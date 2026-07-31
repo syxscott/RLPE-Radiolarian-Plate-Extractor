@@ -48,13 +48,17 @@ def test_biozone_to_ma_lookup():
     # References: Baumgartner et al. (1984) "A Middle Jurassic to
     # Early Cretaceous radiolarian zonation based on Unitary
     # Associations and Rhabdocyclus costatus" — UAZ 1-21.
+    # audit 2026-07-31: UAZ values recalibrated to the published
+    # Baumgartner et al. 1995 scheme (UAZones95, Aalenian→Hauterivian/
+    # Barremian). The old values placed UAZ 5/11 in the Late
+    # Cretaceous — 40-80 Myr too young.
     cases = [
-        # UAZ 1 = Callovian–Kimmeridgian (Baumgartner 1984 fig. 1)
-        ("UAZ 1", 152.0, 168.0),
-        # UAZ 5 = Hauterivian–Barremian (Baumgartner 1984 fig. 1)
-        ("UAZ 5", 121.4, 132.6),
-        # UAZ 11 = Campanian–Maastrichtian
-        ("UAZ 11", 66.0, 83.6),
+        # UAZ 1 = early–middle Aalenian (~172-174.7 Ma)
+        ("UAZ 1", 172.0, 174.7),
+        # UAZ 5 = latest Bajocian–early Bathonian (~166-168 Ma)
+        ("UAZ 5", 166.2, 167.7),
+        # UAZ 11 = late Kimmeridgian–early Tithonian (~147-152 Ma)
+        ("UAZ 11", 147.5, 152.0),
         # Hollis 1997 NZ Late Paleocene (Thanetian) radiolarian zone
         # (corrected: was incorrectly set to Permian ~254 Ma)
         ("Buryella clinata Zone", 56.0, 59.0),

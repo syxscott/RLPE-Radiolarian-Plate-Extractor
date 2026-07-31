@@ -61,7 +61,13 @@ def test_classical_filter_drops_phantom_panels():
     from rlpe.pipeline import RadiolarianPipeline
 
     caption_labels = {1, 2, 3, 4, 5, 6, 7, 8, 9}
-    caption_text = "figs 1-9. Sample. figs 10a-b. Other. figs 11a-c. Other2."
+    # audit 2026-07-31: the caption used to list 10a-b and 11a-c as
+    # EXPLICIT clauses — with the letter-suffix label parsing fixed
+    # (batch 3), those are now recognised as real caption labels and
+    # the filter correctly KEEPS them. Phantom filtering only applies
+    # to labels the caption does NOT mention, so the caption here
+    # lists only 1-9.
+    caption_text = "figs 1-9. Sample."
 
     @dataclass
     class FakeCaption:

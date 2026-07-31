@@ -198,6 +198,9 @@ def test_get_results_handles_rows_with_panel_local_path():
     assert any(r.job_id == job_id and r.panel_local_path == "/abs/panel.png" for r in rows)
 
 
+_FAKE_REQUEST = type("R", (), {"headers": {}})()
+
+
 def test_upload_pdf_defaults_to_joboptions_defaults_and_sanitizes_filename(tmp_path, monkeypatch):
     """Direct API uploads without an options field should still use
     JobOptions defaults (notably use_opendataloader=True), and a
@@ -227,7 +230,7 @@ def test_upload_pdf_defaults_to_joboptions_defaults_and_sanitizes_filename(tmp_p
         headers=Headers({"content-type": "application/pdf"}),
     )
     bg = BG()
-    asyncio.run(api_app.upload_pdf(bg, good, options=None))
+    asyncio.run(api_app.upload_pdf(_FAKE_REQUEST, bg, good, options=None))
     assert bg.calls
     _fn, args = bg.calls[0]
     assert args[2]["use_opendataloader"] is True
@@ -238,7 +241,7 @@ def test_upload_pdf_defaults_to_joboptions_defaults_and_sanitizes_filename(tmp_p
         headers=Headers({"content-type": "application/pdf"}),
     )
     with pytest.raises(HTTPException) as ei:
-        asyncio.run(api_app.upload_pdf(BG(), bad, options=None))
+        asyncio.run(api_app.upload_pdf(_FAKE_REQUEST, BG(), bad, options=None))
     assert ei.value.status_code == 400
 
 
