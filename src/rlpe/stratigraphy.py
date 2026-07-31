@@ -91,38 +91,42 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "ma_top": 419.2,
         "ma_base": 443.8,
     },
-    # Silurian ages (ICS 2023) — Phase 64 audit fix
+    # Silurian series (ICS 2023) — audit 2026-07-31: the previous
+    # values were shifted one slot (Llandovery got Wenlock's range,
+    # Pridoli's top 416 Ma fell inside the Devonian). Correct ICS 2023
+    # series boundaries: Llandovery 433.4-443.8, Wenlock 427.4-433.4,
+    # Ludlow 423.0-427.4, Pridoli 419.2-423.0.
     {
         "name": "Llandovery",
-        "cn": "兰多弗里期",
-        "rank": "age",
+        "cn": "兰多弗里统",
+        "rank": "epoch",
+        "parent": "Silurian",
+        "ma_top": 433.4,
+        "ma_base": 443.8,
+    },
+    {
+        "name": "Wenlock",
+        "cn": "文洛克统",
+        "rank": "epoch",
         "parent": "Silurian",
         "ma_top": 427.4,
         "ma_base": 433.4,
     },
     {
-        "name": "Wenlock",
-        "cn": "文洛克期",
-        "rank": "age",
+        "name": "Ludlow",
+        "cn": "卢德洛统",
+        "rank": "epoch",
         "parent": "Silurian",
         "ma_top": 423.0,
         "ma_base": 427.4,
     },
     {
-        "name": "Ludlow",
-        "cn": "卢德洛期",
-        "rank": "age",
-        "parent": "Silurian",
-        "ma_top": 418.7,
-        "ma_base": 423.0,
-    },
-    {
         "name": "Pridoli",
-        "cn": "普里多利期",
-        "rank": "age",
+        "cn": "普里多利统",
+        "rank": "epoch",
         "parent": "Silurian",
-        "ma_top": 416.0,
-        "ma_base": 418.7,
+        "ma_top": 419.2,
+        "ma_base": 423.0,
     },
     {
         "name": "Devonian",
@@ -147,6 +151,34 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "parent": "Paleozoic",
         "ma_top": 251.9,
         "ma_base": 298.9,
+    },
+    # Permian series (ICS 2023) — audit 2026-07-31: the three
+    # Permian series were missing entirely, so "Lopingian" /
+    # "Guadalupian" / "Cisuralian" fell through to the (often
+    # unavailable) PBDB network fallback.
+    {
+        "name": "Cisuralian",
+        "cn": "乌拉尔统",
+        "rank": "epoch",
+        "parent": "Permian",
+        "ma_top": 273.01,
+        "ma_base": 298.9,
+    },
+    {
+        "name": "Guadalupian",
+        "cn": "瓜德鲁普统",
+        "rank": "epoch",
+        "parent": "Permian",
+        "ma_top": 259.51,
+        "ma_base": 273.01,
+    },
+    {
+        "name": "Lopingian",
+        "cn": "乐平统",
+        "rank": "epoch",
+        "parent": "Permian",
+        "ma_top": 251.9,
+        "ma_base": 259.51,
     },
     # Carboniferous epochs / ages (ICS 2023)
     # Mississippian (early Carboniferous)
@@ -779,7 +811,16 @@ def _build_classification(
 ) -> AgeClassification:
     rank = hit["rank"]
     period = epoch = age = None
-    if rank == "period":
+    if rank in {"eon", "era"}:
+        # audit 2026-07-31: era/eon names ("Mesozoic", "Phanerozoic")
+        # used to fall through every branch and return a
+        # confidence=0.95 classification with period/epoch/age all
+        # None — a "high-confidence empty result" that polluted
+        # GeologyLinkRecords and find_ages_in_text. The era/eon name
+        # itself is the answer: map it onto the period slot so
+        # downstream code sees a non-empty, meaningful result.
+        period = hit["name"]
+    elif rank == "period":
         period = hit["name"]
     elif rank == "epoch":
         epoch = hit["name"]
@@ -907,7 +948,15 @@ def _pbdb_lookup(body: str) -> dict[str, Any] | None:
     for rec in intervals:
         nm = (rec.get("nam") or "").lower()
         if nm == body_l:
-            rank = (rec.get("tpb") or "").lower()  # eon/era/period/epoch/age
+            # audit 2026-07-31: PBDB intervals/list.json field names —
+            # ``rnk`` is the rank ("period"/"epoch"/"age"/…); the old
+            # code read ``tpb`` which is not a field of this endpoint,
+            # so every PBDB fallback silently degraded to rank="age".
+            # Age bounds: PBDB ``eag`` = OLDER bound (larger number),
+            # ``lag`` = YOUNGER bound (smaller number). The old code
+            # assigned them to ma_top/ma_base the wrong way round,
+            # producing inverted intervals.
+            rank = (rec.get("rnk") or "").lower()
             parent = rec.get("par")
             parent_name = None
             if parent:
@@ -915,13 +964,15 @@ def _pbdb_lookup(body: str) -> dict[str, Any] | None:
                     if r.get("oid") == parent:
                         parent_name = r.get("nam")
                         break
+            eag = rec.get("eag")
+            lag = rec.get("lag")
             return {
                 "name": rec.get("nam"),
                 "cn": "",
                 "rank": rank if rank in {"eon", "era", "period", "epoch", "age"} else "age",
                 "parent": parent_name,
-                "ma_top": rec.get("eag"),
-                "ma_base": rec.get("lag"),
+                "ma_top": lag,   # younger bound
+                "ma_base": eag,  # older bound
             }
     return None
 
@@ -961,24 +1012,52 @@ def _pbdb_lookup(body: str) -> dict[str, Any] | None:
 # lookup helper — the operator sees the unmatched zone name + a
 # ``biozone_unknown`` warning instead of invented bounds.
 _BIOZONE_TO_MA: dict[str, tuple[float, float]] = {
-    # Baumgartner 1984 Unitary Association Zones (UAZ 1-21)
-    # Mid-Jurassic (Bathonian) → mid-Cretaceous (Hauterivian)
-    "UAZ 1": (152.0, 168.0),     # Callovian–Kimmeridgian
-    "UAZ 2": (145.0, 152.0),     # late Kimmeridgian–Tithonian
-    "UAZ 3": (139.8, 145.0),     # Berriasian
-    "UAZ 4": (132.6, 139.8),     # Valanginian
-    "UAZ 5": (121.4, 132.6),     # Hauterivian–Barremian
-    "UAZ 6": (113.0, 121.4),     # Aptian
-    "UAZ 7": (100.5, 113.0),     # Albian
-    # UAZ 8: Albian-Cenomanian boundary interval (~100.5-93.9 Ma)
-    # (fixed: was incorrectly set to (89.0, 100.5) which spans Turonian)
-    "UAZ 8": (93.9, 100.5),      # Albian–Cenomanian boundary
-    "UAZ 9": (83.6, 93.9),       # Turonian (fixed: was (83.6, 89.0))
-    # UAZ 10: Santonian-Campanian (86.3-72.1 Ma).  Fixed: was (74.0, 83.6)
-    # which excluded the Santonian stage entirely (86.3-83.6 Ma).
-    "UAZ 10": (72.1, 86.3),      # Santonian–Campanian (corrected)
-    # UAZ 11: Campanian-Maastrichtian (83.6-66.0 Ma)
-    "UAZ 11": (66.0, 83.6),      # Campanian–Maastrichtian
+    # Baumgartner et al. 1995 Unitary Association Zones (UAZones95,
+    # UAZ 1-21), Middle Jurassic to Lower Cretaceous radiolarian
+    # biochronology of Tethys (Mém. Géol. Lausanne 23).
+    #
+    # audit 2026-07-31: the previous table placed UAZ 7-11 in the
+    # Albian–Maastrichtian (66-113 Ma). The published scheme covers
+    # Aalenian → Hauterivian/Barremian (~175-123 Ma) and NEVER enters
+    # the Late Cretaceous; the old values are younger by 40-80 Myr.
+    #
+    # Calibration anchors (stage assignments from published usage of
+    # the zonation, e.g. Slovak Geol. Mag. 1998 calibration table of
+    # Baumgartner et al. 1995; Austrian Geol. Survey charts; Kaizara
+    # Fm. study, Japan):
+    #   UAZ 1-2  Aalenian;  UAZ 3-4  Bajocian;  UAZ 5-6  Bathonian;
+    #   UAZ 7    late Bathonian–early Callovian;
+    #   UAZ 8    middle Callovian–early Oxfordian;
+    #   UAZ 9    middle–late Oxfordian;
+    #   UAZ 10   late Oxfordian–early Kimmeridgian;
+    #   UAZ 11   late Kimmeridgian–early Tithonian;
+    #   UAZ 12   early Tithonian.
+    # UAZ 13-21 (Tithonian → Barremian) are spaced evenly over the
+    # remaining interval (145-123 Ma) — APPROXIMATE; consult the
+    # original UAZones95 chart for zone-level boundaries.
+    # Ma bounds follow the ICS 2023 stage boundaries used in
+    # ``_ICS_ROWS`` above.
+    "UAZ 1": (172.0, 174.7),     # early–middle Aalenian
+    "UAZ 2": (170.9, 172.0),     # late Aalenian
+    "UAZ 3": (169.3, 170.9),     # early–middle Bajocian
+    "UAZ 4": (167.7, 169.3),     # late Bajocian
+    "UAZ 5": (166.2, 167.7),     # latest Bajocian–early Bathonian
+    "UAZ 6": (165.0, 166.2),     # middle Bathonian
+    "UAZ 7": (163.0, 165.3),     # late Bathonian–early Callovian
+    "UAZ 8": (158.0, 163.0),     # middle Callovian–early Oxfordian
+    "UAZ 9": (156.0, 158.5),     # middle–late Oxfordian
+    "UAZ 10": (152.0, 156.0),    # late Oxfordian–early Kimmeridgian
+    "UAZ 11": (147.5, 152.0),    # late Kimmeridgian–early Tithonian
+    "UAZ 12": (145.0, 147.5),    # early Tithonian
+    "UAZ 13": (142.6, 145.0),    # late Tithonian (approx.)
+    "UAZ 14": (140.2, 142.6),    # latest Tithonian–early Berriasian (approx.)
+    "UAZ 15": (137.8, 140.2),    # Berriasian (approx.)
+    "UAZ 16": (135.4, 137.8),    # late Berriasian–early Valanginian (approx.)
+    "UAZ 17": (133.0, 135.4),    # Valanginian (approx.)
+    "UAZ 18": (130.6, 133.0),    # late Valanginian–early Hauterivian (approx.)
+    "UAZ 19": (128.2, 130.6),    # Hauterivian (approx.)
+    "UAZ 20": (125.8, 128.2),    # late Hauterivian (approx.)
+    "UAZ 21": (123.4, 125.8),    # Hauterivian–Barremian boundary (approx.)
     # Hollis 1997 NZ Late Cretaceous radiolarian zones
     # Buryella clinata Zone: Thanetian (late Paleocene), ~56-59 Ma
     # (corrected: was incorrectly set to Wuchiapingian ~254-259 Ma)
@@ -1026,6 +1105,22 @@ def lookup_biozone_ma(name: str | None) -> tuple[float, float] | None:
     raw = str(name).strip()
     if not raw:
         return None
+    # audit 2026-07-31: range form "UAZ 4-7" — the union interval
+    # (youngest top, oldest base). Papers routinely cite UAZ ranges;
+    # they used to resolve to None.
+    m = re.match(r"^UAZ\s+(\d+)\s*[-–—]\s*(\d+)$", raw, re.IGNORECASE)
+    if m:
+        lo, hi = int(m.group(1)), int(m.group(2))
+        if lo > hi:
+            lo, hi = hi, lo
+        tops, bases = [], []
+        for i in range(lo, hi + 1):
+            bounds = _BIOZONE_TO_MA.get(f"UAZ {i}")
+            if bounds is None:
+                return None  # unknown zone in range → conservative None
+            tops.append(bounds[0])
+            bases.append(bounds[1])
+        return (min(tops), max(bases))
     # Direct hit.
     if raw in _BIOZONE_TO_MA:
         return _BIOZONE_TO_MA[raw]

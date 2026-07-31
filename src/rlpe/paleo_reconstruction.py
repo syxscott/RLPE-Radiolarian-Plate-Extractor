@@ -326,7 +326,14 @@ def _interpolate_euler(plate: str, age_ma: float):
         age_y, lat_y, lon_y, rot_y = poles[i]
         age_o, lat_o, lon_o, rot_o = poles[i + 1]
         if age_y <= age_ma <= age_o:
-            t = (age_o - age_ma) / (age_o - age_y) if age_o != age_y else 0.0
+            # audit 2026-07-31: t was computed as
+            # ``(age_o - age_ma)/(age_o - age_y)`` — INVERTED. A query
+            # exactly on a timestep (age_ma == age_y) got t=1, i.e.
+            # the OLDER adjacent pole, so every exact-timestep
+            # reconstruction (e.g. Adria at 200 Ma) silently used the
+            # 250 Ma pole. t=0 must mean "the younger pole" (the
+            # timestep the query sits on), t=1 the older one.
+            t = (age_ma - age_y) / (age_o - age_y) if age_o != age_y else 0.0
             return (
                 lat_y * (1 - t) + lat_o * t,
                 _interp_lon(lon_y, lon_o, t),
@@ -344,35 +351,56 @@ def _interp_lon(lon_a: float, lon_b: float, t: float) -> float:
 def _rotate_point(
     lat: float, lon: float, euler_lat: float, euler_lon: float, rot_deg: float
 ) -> tuple[float, float]:
-    """Apply a finite rotation to a (lat, lon) point using Rodrigues'
-    formula on the unit sphere. Angles in degrees, converted to radians
-    internally.
+    """Apply a finite rotation to a (lat, lon) point around an Euler pole.
+
+    Standard 3-D vector rotation: convert the point to a unit vector,
+    rotate it around the axis vector of the Euler pole by ``rot_deg``
+    using the vector form of Rodrigues' formula, then convert back to
+    (lat, lon).
+
+    audit 2026-07-31: the previous "spherical" implementation was not
+    a valid rotation — it did not preserve vector length (rotating
+    (0°N,0°E) by 30° around the north pole returned latitude -63.4°
+    instead of 0°) so EVERY paleo-coordinate produced by
+    ``reconstruct_paleo_position`` was wrong. The vector form below is
+    the standard finite rotation (see e.g. Cox & Hart, Plate
+    Tectonics, ch. 5).
     """
     if rot_deg == 0.0:
         return lat, lon
-    phi_p = math.radians(euler_lat)
-    lam_p = math.radians(euler_lon)
     phi = math.radians(lat)
     lam = math.radians(lon)
+    phi_p = math.radians(euler_lat)
+    lam_p = math.radians(euler_lon)
     omega = math.radians(rot_deg)
-    cp = math.cos(phi_p)
-    sp = math.sin(phi_p)
-    ca, sa = math.cos(omega), math.sin(omega)
-    cl, sl = math.cos(lam - lam_p), math.sin(lam - lam_p)
-    # Rotate the point by omega around the Euler pole.
-    x_new = (
-        cp * cl * math.cos(phi)
-        - sa * sl * math.cos(phi)
-        + ca * sp * cl * math.sin(phi)
+
+    # Point on the unit sphere (x = cos(lat)cos(lon), y = cos(lat)sin(lon), z = sin(lat)).
+    p = (
+        math.cos(phi) * math.cos(lam),
+        math.cos(phi) * math.sin(lam),
+        math.sin(phi),
     )
-    y_new = (
-        cp * sl * math.cos(phi)
-        + sa * cl * math.cos(phi)
-        + ca * sp * sl * math.sin(phi)
+    # Rotation axis: unit vector pointing at the Euler pole.
+    k = (
+        math.cos(phi_p) * math.cos(lam_p),
+        math.cos(phi_p) * math.sin(lam_p),
+        math.sin(phi_p),
     )
-    z_new = -sp * math.cos(phi) + ca * cp * math.sin(phi)
-    lat_new = math.degrees(math.atan2(z_new, math.sqrt(x_new * x_new + y_new * y_new)))
-    lon_new = math.degrees(math.atan2(y_new, x_new))
+    # Rodrigues' rotation formula (vector form):
+    #   p' = p cos ω + (k × p) sin ω + k (k·p)(1 − cos ω)
+    c = math.cos(omega)
+    s = math.sin(omega)
+    kd = 1.0 - c
+    kx, ky, kz = k
+    px, py, pz = p
+    dot = kx * px + ky * py + kz * pz
+    cross = (ky * pz - kz * py, kz * px - kx * pz, kx * py - ky * px)
+    rx = px * c + cross[0] * s + kx * dot * kd
+    ry = py * c + cross[1] * s + ky * dot * kd
+    rz = pz * c + cross[2] * s + kz * dot * kd
+
+    lat_new = math.degrees(math.atan2(rz, math.sqrt(rx * rx + ry * ry)))
+    lon_new = math.degrees(math.atan2(ry, rx))
     return lat_new, lon_new
 
 

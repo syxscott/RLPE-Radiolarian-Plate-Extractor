@@ -775,7 +775,14 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                     default=None,
                 )
                 if best is not None:
-                    chrono = best.age or best.period
+                    # audit 2026-07-31: ``best.age or best.period``
+                    # downgraded epoch-level hits to their parent
+                    # period — "Miocene radiolarians from Cyprus"
+                    # produced chronostratigraphy="Neogene"
+                    # (rank="epoch"). Keep the most specific name for
+                    # every rank; the rank field tells consumers the
+                    # resolution.
+                    chrono = best.age or best.epoch or best.period
                     chrono_rank = best.rank
                     # Carry numeric Ma values from the matched ICS row.
                     # These flow through to_dict() -> converters and

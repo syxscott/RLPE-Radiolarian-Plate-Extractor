@@ -104,9 +104,14 @@ def test_unstable_plate_reconstructs_normally():
         plate_id="Adria",
     )
     assert paleo_lat is not None
-    # Adria at 200 Ma was south of modern Italy. Assert that the
-    # result is DIFFERENT from the modern coord.
-    assert abs(paleo_lat - 41.0) > 1.0, (
+    # Adria at 200 Ma differs from modern Italy. NOTE (audit
+    # 2026-07-31): with the corrected rotation formula the displacement
+    # is small — modern (41°N,14°E) lies only ~7° from the 200 Ma
+    # Euler pole (35°N,18°E), so a 10° rotation moves the point ~0.5°
+    # in latitude, not the several degrees the broken formula
+    # produced. Assert "different from modern" (any direction), not a
+    # specific magnitude.
+    assert abs(paleo_lat - 41.0) > 0.2, (
         f"Adria 200 Ma should differ from modern; got paleo_lat={paleo_lat}"
     )
 
