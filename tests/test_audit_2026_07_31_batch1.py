@@ -147,9 +147,9 @@ class TestEulerInterpolation:
         """Adria at exactly 200 Ma must use the 200 Ma pole
         (35,18,-10), not the adjacent 250 Ma pole — the interpolation
         t direction was inverted."""
-        from rlpe.paleo_reconstruction import _euler_pole_for, reconstruct_paleo_position
+        from rlpe.paleo_reconstruction import _interpolate_euler, reconstruct_paleo_position
 
-        pole = _euler_pole_for("Adria", 200.0)
+        pole = _interpolate_euler("Adria", 200.0)
         assert pole is not None
         assert abs(pole[0] - 35.0) < 1e-9, f"pole lat {pole[0]} should be 35"
         assert abs(pole[1] - 18.0) < 1e-9
@@ -161,9 +161,9 @@ class TestEulerInterpolation:
         assert abs(lat - 41.0) > 0.2
 
     def test_zero_ma_uses_identity_pole(self):
-        from rlpe.paleo_reconstruction import _euler_pole_for
+        from rlpe.paleo_reconstruction import _interpolate_euler
 
-        pole = _euler_pole_for("Adria", 0.0)
+        pole = _interpolate_euler("Adria", 0.0)
         assert pole is not None
         assert abs(pole[0]) < 1e-9 and abs(pole[1]) < 1e-9 and abs(pole[2]) < 1e-9
 
