@@ -273,6 +273,19 @@ class RadiolarianPipeline:
                 self.config.extra["llm_backend"] = "minimax"
                 backend_name = "minimax"  # sync local for FallbackHandler gate below
             self.gemma_runtime = build_gemma_backend_from_config(self.config.extra)
+            # audit 2026-07-31: wire the configured fallback backend
+            # name into the backend so a 4xx error can raise
+            # FallbackRecommendedError with the name attached. Without
+            # this the fallback feature was dead code (nothing ever
+            # called set_fallback_backend).
+            fb_name = self.config.extra.get("fallback_llm_backend")
+            if fb_name and hasattr(self.gemma_runtime, "backend"):
+                setter = getattr(self.gemma_runtime.backend, "set_fallback_backend", None)
+                if setter is not None:
+                    try:
+                        setter(fb_name)
+                    except Exception:
+                        logger.debug("set_fallback_backend unavailable", exc_info=True)
             # If MiniMax backend, attach a FallbackHandler. The handler is
             # invoked ONLY from ``_apply_gemma_with_fallback``; we intentionally
             # do NOT also wire it into ``backend.on_error`` to avoid the
@@ -1283,7 +1296,7 @@ class RadiolarianPipeline:
 
                         with _PILImage.open(geo_image_path) as im:
                             geo_image = im.convert("RGB")
-                        geo_links = self.m3_engine.extract_geology(
+                        geo_links = self._m3_call_with_fallback(self.m3_engine.extract_geology, 
                             image=geo_image,
                             caption=pair.caption_text or "",
                             figure_type=fig_type,
@@ -1395,7 +1408,7 @@ class RadiolarianPipeline:
 
                         with _PILImage.open(schematic_image_path) as im:
                             schematic_image = im.convert("RGB")
-                        schematic_data = self.m3_engine.extract_schematic(
+                        schematic_data = self._m3_call_with_fallback(self.m3_engine.extract_schematic, 
                             image=schematic_image,
                             caption=pair.caption_text or "",
                             figure_type=fig_type,
@@ -1932,7 +1945,7 @@ class RadiolarianPipeline:
                 continue
 
             try:
-                panels = self.m3_engine.enrich_plate_panels(
+                panels = self._m3_call_with_fallback(self.m3_engine.enrich_plate_panels, 
                     image=plate_image,
                     page_caption=page_caption[:3000],  # cap to avoid token bloat
                     paper_id=paper_id,
@@ -2183,7 +2196,7 @@ class RadiolarianPipeline:
 
                 with _PILImage.open(image_path) as im:
                     panel_image = im.convert("RGB")
-                geo_links = self.m3_engine.extract_geology(
+                geo_links = self._m3_call_with_fallback(self.m3_engine.extract_geology, 
                     image=panel_image,
                     caption=caption_text,
                     figure_type=figure_type,
@@ -3170,25 +3183,35 @@ Rules:
 
         # Parse the LLM response. The result may contain a "panels" key
         # directly, or the raw JSON may be in result["raw_text"].
+        # audit 2026-07-31: the backend ALREADY parsed the model JSON
+        # (via parse_json_from_text, tolerant of preambles) — the raw
+        # text is only a fallback. The previous code re-parsed raw_text
+        # with strict json.loads: when the model emitted a preamble
+        # ("Here are the panels: {...}") the backend had succeeded but
+        # this strict re-parse failed and the PAID result was silently
+        # discarded. Consumption order is now: backend-parsed panels →
+        # backend-parsed single panel → robust _safe_json_loads on the
+        # raw text.
         panels_data = result.get("panels") or result.get("answer")
+        if panels_data is None:
+            # The backend may have parsed a SINGLE panel dict (the
+            # model ignored the "output an array" instruction).
+            if isinstance(result, dict) and "label" in result:
+                panels_data = [result]
         if panels_data is None:
             raw = result.get("raw_text", "")
             if not raw:
                 return None
             try:
-                import json as _json
-                import re as _re
+                from .m3_engine import _safe_json_loads
 
-                # Strip markdown code fences (```json ... ```) that M3
-                # wraps around its JSON output. Without this, _json.loads
-                # fails on the raw_text and we silently fall back to the
-                # classical pipeline (which drops to ~83% F1 on beccaro).
-                cleaned = raw.strip()
-                cleaned = _re.sub(r"^```(?:json)?\s*", "", cleaned, flags=_re.MULTILINE)
-                cleaned = _re.sub(r"\s*```\s*$", "", cleaned, flags=_re.MULTILINE)
-                cleaned = cleaned.strip()
-                parsed = _json.loads(cleaned)
-                panels_data = parsed.get("panels") or parsed
+                parsed = _safe_json_loads(raw)
+                if isinstance(parsed, dict):
+                    panels_data = parsed.get("panels") or parsed.get("answer") or [
+                        parsed
+                    ]
+                else:
+                    panels_data = parsed
             except Exception:
                 return None
 
@@ -3370,7 +3393,7 @@ Rules:
                     logger.debug("Regex caption parser failed: %s", exc)
                 if not pair_lookup and self.m3_engine is not None:
                     try:
-                        caption_pairs = self.m3_engine.parse_caption(
+                        caption_pairs = self._m3_call_with_fallback(self.m3_engine.parse_caption, 
                         caption.caption or "",
                         lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
                     )
@@ -3702,14 +3725,14 @@ Rules:
                         plate_pil = _im.convert("RGB")
                 # Stage 1: caption parser
                 if self.m3_engine._stage_enabled(1):
-                    m3_caption_pairs = self.m3_engine.parse_caption(
+                    m3_caption_pairs = self._m3_call_with_fallback(self.m3_engine.parse_caption, 
                         caption.caption or "",
                         lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
                     )
                     m3_diag["stage1_pairs"] = len(m3_caption_pairs)
                 # Stage 2: plate classifier — early exit on non-radiolarian
                 if self.m3_engine._stage_enabled(2):
-                    m3_plate_cls = self.m3_engine.classify_plate(plate_pil)
+                    m3_plate_cls = self._m3_call_with_fallback(self.m3_engine.classify_plate, plate_pil)
                     m3_diag["stage2_class"] = m3_plate_cls.to_dict()
                     if not m3_plate_cls.is_radiolarian_plate:
                         logger.info(
@@ -4201,6 +4224,51 @@ Rules:
             md.setdefault("m3_diagnostic", {})
             row["metadata"] = md
         return rows
+
+    def _switch_to_fallback_backend(self) -> bool:
+        """Build the configured local fallback backend and swap it in.
+
+        Called after a FallbackRecommendedError (MiniMax 4xx). Uses the
+        existing local-fallback builder (llama.cpp → ollama →
+        transformers, whichever is configured) and points both the
+        pipeline runtime and the M3 engine at the new backend.
+        """
+        from .llm_backends import FallbackRecommendedError  # noqa: F401 (re-export clarity)
+
+        new_runtime = self._build_local_gemma_fallback()
+        if new_runtime is None:
+            logger.warning(
+                "FallbackRecommendedError but no local backend configured; "
+                "giving up on M3 for this call"
+            )
+            return False
+        self.gemma_runtime = new_runtime
+        if self.m3_engine is not None:
+            self.m3_engine.backend = new_runtime.backend
+        logger.info("Switched M3 backend to %s", getattr(new_runtime, "backend_name", "?"))
+        return True
+
+    def _m3_call_with_fallback(self, fn, *args, **kwargs):
+        """Call an M3Engine method; on FallbackRecommendedError switch
+        to the configured fallback backend once and retry the call.
+
+        audit 2026-07-31: the fallback-backend feature (Phase 61 Plan 4)
+        was never wired — 4xx errors were swallowed by generic
+        except-Exception handlers and the configured fallback was never
+        used. This wrapper is the single interception point.
+        """
+        from .llm_backends import FallbackRecommendedError
+
+        try:
+            return fn(*args, **kwargs)
+        except FallbackRecommendedError as fre:
+            logger.warning(
+                "M3 backend requested fallback (%s); switching backends",
+                getattr(fre, "recommended_backend", "?"),
+            )
+            if self._switch_to_fallback_backend():
+                return fn(*args, **kwargs)
+            raise
 
     def _gemma_lock_if_needed(self):
         """Return a lock context manager for backends requiring serialization.

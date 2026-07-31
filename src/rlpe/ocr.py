@@ -158,7 +158,14 @@ class OCRBackend:
                     # handles multi-lang in one Reader (it downloads each
                     # model's weights on first use). Phase 27: pass the
                     # full configured lang list, not a hard-coded ["en"].
-                    self._engine = easyocr.Reader(self.lang, gpu=self.use_gpu)
+                    # audit 2026-07-31: EasyOCR has NO "zh" code — only
+                    # ch_sim / ch_tra. Passing "zh" made Reader() raise,
+                    # and the except below silently DISABLED OCR for
+                    # users who explicitly asked for Chinese.
+                    easyocr_langs = [
+                        "ch_sim" if l == "zh" else l for l in self.lang
+                    ]
+                    self._engine = easyocr.Reader(easyocr_langs, gpu=self.use_gpu)
                     return self._engine
                 except Exception:
                     logger.warning("EasyOCR init failed; OCR disabled")

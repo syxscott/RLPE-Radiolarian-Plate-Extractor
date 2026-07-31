@@ -95,13 +95,16 @@ def _safe_json_loads(text: str) -> Any:
         items = _extract_balanced_objects(text)
         if items:
             return items
-    # 3) First object match
-    obj_match = _JSON_OBJECT_RE.search(text)
-    if obj_match:
+    # 3) First object match. audit 2026-07-31: the greedy
+    # ``_JSON_OBJECT_RE`` (``\{.*\}``) spans MULTIPLE concatenated
+    # objects ("{"a": 1} {"b": 2}") and fails to parse the whole
+    # span, discarding valid output. Try each balanced object
+    # non-greedily and return the first that parses.
+    for obj_match in re.finditer(r"\{.*?\}", text, re.DOTALL):
         try:
             return json.loads(obj_match.group(0))
         except Exception:
-            pass
+            continue
     raise ValueError(f"No JSON object/array found in text: {text[:200]!r}")
 
 
@@ -1285,6 +1288,23 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     # otherwise the U+FB01 ligature in OpenDataLoader output makes
     # _CAPTION_CLAUSE_RE miss every clause and return zero pairs.
     text = _normalize_caption_text(caption_text)
+    # audit 2026-07-31: period-separated DISCRETE labels —
+    # "Figs 1-3. 5. 8. 10. 12: Archaespongoprunum sp." — are a real
+    # caption convention that the clause regex cannot parse (it stops
+    # at the first period). Normalise the trailing "N. N. N." run to
+    # the comma form before the clause regex runs. Only fires when a
+    # digit follows a period, so "figs 1-2. Entactinia sp." (species
+    # after the period) is untouched.
+    text = re.sub(
+        r"(\bfigs?\s+(?:\d+[a-z]?(?:\s*[,\-–—]\s*(?:\d+[a-z]?|[a-z]))*))"
+        r"\.\s+((?:\d+[a-z]?\.\s*)*(?:\d+[a-z]?))"
+        r"(?=[:A-Z])",
+        lambda m: m.group(1) + ", " + ", ".join(
+            x.rstrip(".") for x in m.group(2).split()
+        ),
+        text,
+        flags=re.IGNORECASE,
+    )
     # Strip leading "Explanation of Plate N." so the regex doesn't anchor on
     # the word "Explanation" (which is not a real label).
     text = re.sub(
@@ -1958,6 +1978,38 @@ class M3Engine:
         self.config.setdefault("m3_match_samples", 1)
         # Thinking budget for vision stages (more thinking for harder visual reasoning).
         self.config.setdefault("m3_thinking_budget", 1024)
+        # audit 2026-07-31: the m3_temperature / m3_thinking_budget
+        # keys were setdefault'd here but never READ anywhere — the
+        # user's knobs were dead. Push both onto the backend so the
+        # sampling parameters actually reach the API call.
+        self._apply_config_sampling_params()
+
+    def _apply_config_sampling_params(self) -> None:
+        """Forward ``m3_temperature`` / ``m3_thinking_budget`` from
+        the config dict onto the backend's sampling attributes.
+
+        The backend classes (llm_backends) expose ``temperature``,
+        ``max_output_tokens`` and ``thinking_budget_tokens`` fields;
+        setting them here is the only place the config knobs are
+        consumed (audit 2026-07-31: previously dead keys)."""
+        temp = self.config.get("m3_temperature")
+        if temp is not None and hasattr(self.backend, "temperature"):
+            try:
+                self.backend.temperature = float(temp)
+            except (TypeError, ValueError):
+                pass
+        thinking = self.config.get("m3_thinking_budget")
+        if thinking is not None and hasattr(self.backend, "thinking_budget_tokens"):
+            try:
+                self.backend.thinking_budget_tokens = int(thinking)
+            except (TypeError, ValueError):
+                pass
+        max_out = self.config.get("m3_max_output_tokens")
+        if max_out is not None and hasattr(self.backend, "max_output_tokens"):
+            try:
+                self.backend.max_output_tokens = int(max_out)
+            except (TypeError, ValueError):
+                pass
         # Skip stage-4 per-panel matching if caption parser found zero pairs.
         # Default True: when no caption pairs were extracted, M3 stage 4 has
         # no candidate species list to choose from, so its visual-only mode
@@ -2108,7 +2160,7 @@ class M3Engine:
         if not isinstance(data, dict):
             return PlateClassification()
         cls = PlateClassification(
-            is_radiolarian_plate=bool(data.get("is_radiolarian_plate", True)),
+            is_radiolarian_plate=_safe_bool(data.get("is_radiolarian_plate"), default=True),
             image_type=str(data.get("image_type") or "micrograph"),
             panel_count_estimate=_safe_int(data.get("panel_count_estimate")),
             specimen_count_estimate=_safe_int(data.get("specimen_count_estimate")),
@@ -2398,22 +2450,19 @@ class M3Engine:
             key=lambda kv: (
                 len(kv[1]),
                 max(
-                    (float(r.get("confidence") or 0) for r in kv[1]),
+                    (_safe_float(r.get("confidence")) for r in kv[1]),
                     default=0.0,
                 ),
             ),
         )
-        best = max(best_group, key=lambda r: float(r.get("confidence") or 0))
-        try:
-            conf = float(best.get("confidence", 0.0))
-        except Exception:
-            conf = 0.0
+        best = max(best_group, key=lambda r: _safe_float(r.get("confidence")))
+        conf = _safe_float(best.get("confidence"))
         # If there's a runner-up, surface as alternative.
         runner_up: str | None = None
         if len(votes) > 1:
             sorted_groups = sorted(votes.values(), key=lambda g: -len(g))
             if len(sorted_groups) > 1:
-                ru = max(sorted_groups[1], key=lambda r: float(r.get("confidence") or 0))
+                ru = max(sorted_groups[1], key=lambda r: _safe_float(r.get("confidence")))
                 ru_sp = str(ru.get("species") or "").strip() or None
                 if ru_sp and ru_sp != best.get("species"):
                     runner_up = ru_sp
@@ -2424,7 +2473,7 @@ class M3Engine:
             confidence=max(0.0, min(1.0, conf)),
             reasoning=str(best.get("reasoning") or "").strip(),
             alternative=runner_up,
-            is_radiolarian=bool(best.get("is_radiolarian", True)),
+            is_radiolarian=_safe_bool(best.get("is_radiolarian"), default=True),
             raw={
                 "votes": len(results),
                 "agreement": len(best_group) / max(1, len(results)),
@@ -2578,6 +2627,12 @@ class M3Engine:
         enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
         try:
             res = self.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
+        except FallbackRecommendedError:
+            # audit 2026-07-31: mirror _infer_vision — the backend
+            # asked us to switch to the configured fallback; swallowing
+            # it here meant the pipeline never saw the recommendation
+            # and the fallback feature stayed dead.
+            raise
         except Exception as exc:
             logger.exception("M3 text inference failed")
             return {"fallback_used": True, "error": str(exc)}
@@ -3398,6 +3453,41 @@ def _safe_int(v: Any) -> int | None:
         return int(v)
     except Exception:
         return None
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    """Parse a numeric confidence the LLM may have emitted as a string
+    ("0.8") or as a non-numeric label ("high"). Returns ``default`` on
+    anything unparseable (audit 2026-07-31: a bare ``float()`` here
+    crashed match_panel and voided the paid M3 judgement)."""
+    if isinstance(v, (int, float)):
+        return float(v)
+    if v is None:
+        return default
+    try:
+        return float(str(v).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_bool(v: Any, default: bool = False) -> bool:
+    """Parse a JSON boolean that the LLM may have emitted as a STRING.
+
+    audit 2026-07-31: ``bool("false")`` is True in Python — M3
+    returning ``"is_radiolarian_plate": "false"`` used to pass the
+    stage-2 gate as a real radiolarian plate (and vice versa). Accepts
+    real bools and the common string spellings.
+    """
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return default
+    s = str(v).strip().lower()
+    if s in {"true", "yes", "1", "y", "t"}:
+        return True
+    if s in {"false", "no", "0", "n", "f", ""}:
+        return False
+    return default
 
 
 def _coerce_label(value: Any) -> str | None:
