@@ -833,16 +833,25 @@ class RunTab(QWidget):
 
     def _on_failed(self, error: str) -> None:
         self._log.error("Job %s failed: %s", self._current_job_id, error)
-        # Phase 56 audit: set status QSS property to "failed" before dialog
-        # so the label colour reflects the failed state.
-        self._status_label.setProperty("status", "failed")
-        self._status_label.style().unpolish(self._status_label)
-        self._status_label.style().polish(self._status_label)
-        QMessageBox.critical(
-            self,
-            i18n._tr("runtab.prompt.error.title"),
-            error,
-        )
+        cancelled = "cancelled" in (error or "").lower() or "取消" in (error or "")
+        # audit 2026-07-31: a user cancellation is not a pipeline
+        # failure — no red error dialog, status shows "cancelled".
+        if cancelled:
+            self._status_label.setProperty("status", "cancelled")
+            self._status_label.style().unpolish(self._status_label)
+            self._status_label.style().polish(self._status_label)
+            self._status_label.setText(i18n._tr("runtab.status.cancelled"))
+        else:
+            # Phase 56 audit: set status QSS property to "failed" before
+            # dialog so the label colour reflects the failed state.
+            self._status_label.setProperty("status", "failed")
+            self._status_label.style().unpolish(self._status_label)
+            self._status_label.style().polish(self._status_label)
+            QMessageBox.critical(
+                self,
+                i18n._tr("runtab.prompt.error.title"),
+                error,
+            )
         if self._current_job_id:
             self.job_failed.emit(self._current_job_id, error)
 

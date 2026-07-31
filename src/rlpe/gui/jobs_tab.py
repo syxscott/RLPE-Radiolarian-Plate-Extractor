@@ -286,16 +286,37 @@ class JobsTab(QWidget):
                 continue
             try:
                 rows: list[dict[str, Any]] = []
-                with matches_path.open(encoding="utf-8") as fh:
+                with matches_path.open(encoding="utf-8", errors="replace") as fh:
                     for line in fh:
                         line = line.strip()
-                        if line:
-                            rows.append(json.loads(line))
-            except (OSError, json.JSONDecodeError):
+                        if not line:
+                            continue
+                        try:
+                            row = json.loads(line)
+                        except json.JSONDecodeError:
+                            # audit 2026-07-31: skip the BROKEN LINE,
+                            # not the whole job — a partially-written
+                            # matches.jsonl (crash mid-write) used to
+                            # hide every panel of the job.
+                            self._log.debug(
+                                "load_recent_jobs: skipping bad line in %s",
+                                matches_path,
+                            )
+                            continue
+                        # audit 2026-07-31: non-dict rows (scalar JSON)
+                        # crashed later with AttributeError; skip them.
+                        if not isinstance(row, dict):
+                            self._log.debug(
+                                "load_recent_jobs: skipping non-dict line in %s",
+                                matches_path,
+                            )
+                            continue
+                        rows.append(row)
+            except OSError:
                 # Corrupt or partial file — skip silently. Logged at
                 # the GUI logger for the curious.
                 self._log.warning(
-                    "load_recent_jobs: skipping %s (read/parse error)",
+                    "load_recent_jobs: skipping %s (read error)",
                     matches_path,
                 )
                 continue
@@ -336,6 +357,17 @@ class JobsTab(QWidget):
         self._refresh_row(job)
         self._update_summary()
         self._trim_old_jobs()
+
+    def remove_job(self, job_id: str) -> None:
+        """Remove a job row from the table.
+
+        audit 2026-07-31: used by the batch flow to promote a
+        placeholder row to the real job id (the placeholder id never
+        matched the Run tab's generated id)."""
+        if job_id not in self._jobs:
+            return
+        del self._jobs[job_id]
+        self._update_summary()
 
     def update_progress(self, job_id: str, current: int, total: int, msg: str) -> None:
         if job_id not in self._jobs:
@@ -580,6 +612,10 @@ class JobsTab(QWidget):
             return
         run_output = self._build_run_output(job)
         # Try cli_export first (Round 24), fall back to direct write_xlsx.
+        # audit 2026-07-31: only ImportError was caught around
+        # export_run_output_to_xlsx — a runtime error (e.g. openpyxl
+        # version issue) escaped silently with no dialog. Catch it and
+        # surface the message.
         try:
             from ..cli_export import export_run_output_to_xlsx
             export_run_output_to_xlsx(run_output, path)
@@ -596,6 +632,17 @@ class JobsTab(QWidget):
                     ),
                 )
                 return
+        except Exception as exc:
+            # audit 2026-07-31: runtime errors from cli_export escaped
+            # (only ImportError was caught) with no user feedback.
+            QMessageBox.warning(
+                self,
+                i18n._tr("jobstab.menu.export_xlsx"),
+                i18n._tr("jobstab.export.failed").format(
+                    error=f"{type(exc).__name__}: {exc}",
+                ),
+            )
+            return
         QMessageBox.information(
             self,
             i18n._tr("jobstab.menu.export_xlsx"),

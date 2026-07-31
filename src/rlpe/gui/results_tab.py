@@ -89,6 +89,21 @@ _LINK_SOURCE_LABEL_KEYS: dict[str, str] = {
 }
 
 
+def _fmt_float(v: Any, fmt: str) -> str | None:
+    """Format a numeric field, tolerating string numerics and garbage.
+
+    audit 2026-07-31: _render_detail called float() on ma_top /
+    latitude / reconstruction_age etc. with no guard; extractors
+    occasionally emit string coords ("12.3N") and a ValueError killed
+    the whole detail panel render."""
+    if v is None:
+        return None
+    try:
+        return fmt.format(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
 def _emit_link_source_badge(html: list[str], coord_source: str) -> None:
     """Append a per-link source badge to the geology-links block.
 
@@ -812,8 +827,12 @@ class ResultsTab(QWidget):
                 # Ma range
                 ma_top = g.get("ma_top")
                 ma_base = g.get("ma_base")
-                if ma_top is not None and ma_base is not None:
-                    bits.append(f"<span style='color:#555'>{float(ma_top):.2f}–{float(ma_base):.2f} Ma</span>")
+                ma_fmt = _fmt_float(ma_top, "{:.2f}")
+                base_fmt = _fmt_float(ma_base, "{:.2f}")
+                if ma_fmt is not None and base_fmt is not None:
+                    bits.append(
+                        f"<span style='color:#555'>{ma_fmt}–{base_fmt} Ma</span>"
+                    )
                 # Lithology / formation / member / group
                 for k in ("lithology", "formation", "member", "group"):
                     v = g.get(k)
@@ -834,27 +853,39 @@ class ResultsTab(QWidget):
                 # Modern coords
                 mlat = g.get("modern_latitude")
                 mlon = g.get("modern_longitude")
-                if mlat is not None and mlon is not None:
+                mlat_fmt = _fmt_float(mlat, "{:.3f}")
+                mlon_fmt = _fmt_float(mlon, "{:.3f}")
+                if mlat_fmt is not None and mlon_fmt is not None:
                     bits.append(
                         f"<span style='font-size:11px;color:#27ae60'>now "
-                        f"{float(mlat):.3f}, {float(mlon):.3f}</span>"
+                        f"{mlat_fmt}, {mlon_fmt}</span>"
                     )
                 # Paleo coords
                 plat = g.get("paleo_latitude")
                 plon = g.get("paleo_longitude")
                 plate_id = g.get("plate_id")
                 recon_age = g.get("reconstruction_age_ma")
-                if plat is not None and plon is not None:
-                    paleo_bits = [f"<span style='color:#e67e22'>@ {float(plat):.3f}, {float(plon):.3f}</span>"]
+                plat_fmt = _fmt_float(plat, "{:.3f}")
+                plon_fmt = _fmt_float(plon, "{:.3f}")
+                if plat_fmt is not None and plon_fmt is not None:
+                    paleo_bits = [
+                        f"<span style='color:#e67e22'>@ {plat_fmt}, {plon_fmt}</span>"
+                    ]
                     if plate_id:
                         paleo_bits.append(f"<span style='color:#e67e22'>plate={plate_id}</span>")
-                    if recon_age is not None:
-                        paleo_bits.append(f"<span style='color:#e67e22'>{float(recon_age):.1f} Ma</span>")
+                    recon_fmt = _fmt_float(recon_age, "{:.1f}")
+                    if recon_fmt is not None:
+                        paleo_bits.append(
+                            f"<span style='color:#e67e22'>{recon_fmt} Ma</span>"
+                        )
                     bits.append(" ".join(paleo_bits))
                 # Confidence
                 gc = g.get("geology_confidence") or g.get("confidence")
-                if gc is not None:
-                    bits.append(f"<span style='color:#888;font-size:10px'>({float(gc)*100:.0f}%)</span>")
+                gc_fmt = _fmt_float(gc, "{:.0f}")
+                if gc_fmt is not None:
+                    bits.append(
+                        f"<span style='color:#888;font-size:10px'>({gc_fmt}%)</span>"
+                    )
                 if bits:
                     html.append(
                         f"<div style='font-size:11px;background:#f7f9fc;padding:4px 6px;"

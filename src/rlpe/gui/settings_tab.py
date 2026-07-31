@@ -645,6 +645,20 @@ class SettingsTab(QWidget):
 
     def _save(self) -> None:
         """Write the current settings to QSettings + in-memory cache."""
+        # audit 2026-07-31: validate EVERYTHING before the first
+        # setValue — the YOLO check used to sit mid-sequence, so a
+        # failed validation left 20+ already-written keys un-synced
+        # (looked saved, wasn't).
+        if self._yolo_enable.isChecked() and not self._yolo_model_path.text().strip():
+            QMessageBox.warning(
+                self,
+                i18n._tr("settab.yolo.warn.title", "YOLO Model Required"),
+                i18n._tr(
+                    "settab.yolo.warn.body",
+                    "Please select a YOLO model file (.pt) before enabling YOLO detection.",
+                ),
+            )
+            return
         # Theme — Phase 47: use the ISO code, not the friendly name.
         theme = self._theme_combo.currentData() or self._theme_combo.currentText()
         self._qsettings.setValue(QS_KEY_THEME, theme)
@@ -689,19 +703,7 @@ class SettingsTab(QWidget):
         self._qsettings.setValue("render_dpi", self._dpi.value())
         self._qsettings.setValue("save_intermediate", self._save_intermediate.isChecked())
 
-        # YOLO
-        # audit 2026-07-27 B3: validate that enabling YOLO without a model
-        # path would crash the pipeline at runtime; catch it at save time.
-        if self._yolo_enable.isChecked() and not self._yolo_model_path.text().strip():
-            QMessageBox.warning(
-                self,
-                i18n._tr("settab.yolo.warn.title", "YOLO Model Required"),
-                i18n._tr(
-                    "settab.yolo.warn.body",
-                    "Please select a YOLO model file (.pt) before enabling YOLO detection.",
-                ),
-            )
-            return
+        # YOLO (validation moved to the top of _save — see above)
         self._qsettings.setValue("use_yolo_figures", self._yolo_enable.isChecked())
         self._qsettings.setValue("yolo_model_path", self._yolo_model_path.text())
         self._qsettings.setValue("yolo_conf_threshold", self._yolo_conf.value())

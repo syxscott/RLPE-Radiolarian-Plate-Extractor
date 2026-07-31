@@ -636,10 +636,19 @@ class MainWindow(QMainWindow):
     # Job lifecycle
     # ------------------------------------------------------------------
     def _on_job_started(self, job_id: str, pdf_path: str) -> None:
+        # audit 2026-07-31: promote the batch placeholder row (if any)
+        # to the REAL job id so the queue shows one row per PDF through
+        # queued → running → done instead of a stale "queued" row plus
+        # a duplicate running row.
+        stem = Path(pdf_path).stem
+        placeholder_ids = getattr(self, "_batch_placeholder_by_stem", {})
+        ph = placeholder_ids.get(stem)
+        if ph:
+            self._jobs_tab.remove_job(ph)
         job = JobRecord(
             job_id=job_id,
             pdf_path=pdf_path,
-            output_dir=str(Path(pdf_path).parent / f"{Path(pdf_path).stem}_rlpe_out"),
+            output_dir=str(Path(pdf_path).parent / f"{stem}_rlpe_out"),
             status=STATUS_RUNNING,
             started_at=time.time(),
             settings=self._run_tab.collect_settings(),
@@ -697,20 +706,41 @@ class MainWindow(QMainWindow):
             self._start_next_batch_job()
 
     def _on_job_failed(self, job_id: str, error: str) -> None:
-        self._jobs_tab.mark_failed(job_id, error)
-        self._set_status("main.failed", id=job_id)
+        cancelled = "cancelled" in (error or "").lower() or "取消" in (error or "")
+        if cancelled:
+            # audit 2026-07-31: a user-initiated cancellation is NOT a
+            # failure — mark_cancelled and don't treat it as a batch
+            # error (previously it showed a red "failed" row AND, with
+            # _stop_on_error, silently halted the whole batch).
+            self._jobs_tab.mark_cancelled(job_id)
+            self._set_status("main.cancelled", id=job_id)
+        else:
+            self._jobs_tab.mark_failed(job_id, error)
+            self._set_status("main.failed", id=job_id)
         self._mini_progress.setVisible(False)
         # for "stop on first error", halt the batch here. The
         # _batch_pdfs list is reset so the next _start_next_batch_job
-        # call returns immediately.
+        # call returns immediately. Cancellations never halt the batch.
         if (
-            getattr(self, "_batch_pdfs", None)
+            not cancelled
+            and getattr(self, "_batch_pdfs", None)
             and getattr(self, "_batch_settings", None)
             and self._batch_settings.get("_stop_on_error", False)
         ):
             remaining = len(self._batch_pdfs) - self._batch_index
             self._batch_pdfs = []  # halt
             self._set_status("main.batch_stopped_on_error", failed=job_id, remaining=remaining)
+        # audit 2026-07-31: when NOT stopping on error, advance the
+        # batch — the previous code left every remaining PDF stuck in
+        # "queued" after the first failure (only _on_job_finished
+        # advanced the queue).
+        if (
+            not cancelled
+            and getattr(self, "_batch_pdfs", None)
+            and self._batch_index < len(self._batch_pdfs)
+            and not self._batch_settings.get("_stop_on_error", False)
+        ):
+            self._start_next_batch_job()
         # Audit 2026-07-26 M9: do NOT raise a second QMessageBox here -
         # RunTab._on_failed already shows an i18n error dialog before
         # emitting job_failed, so this was a duplicate (and hard-coded
@@ -752,8 +782,15 @@ class MainWindow(QMainWindow):
     def _on_batch_started(self, pdfs: list[Path], batch_settings: dict) -> None:
         # Build a list of job_id placeholders
         from .jobs_tab import JobRecord
+        # audit 2026-07-31: placeholder ids ("batch-00-<stem>") NEVER
+        # matched the Run tab's real ids ("<stem>-HHMMSS"), so the
+        # placeholder rows stayed "queued" forever while a SECOND row
+        # with the real id appeared. Record the stem→placeholder map
+        # so _on_job_started can promote the placeholder row instead.
+        self._batch_placeholder_by_stem: dict[str, str] = {}
         for i, p in enumerate(pdfs):
             jid = f"batch-{i:02d}-{p.stem}"
+            self._batch_placeholder_by_stem[p.stem] = jid
             job = JobRecord(
                 job_id=jid,
                 pdf_path=str(p),

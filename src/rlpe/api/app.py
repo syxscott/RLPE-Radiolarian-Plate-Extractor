@@ -17,7 +17,7 @@ from typing import Any
 logger = logging.getLogger("rlpe.api")
 
 try:
-    from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+    from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, Response
     from fastapi.staticfiles import StaticFiles
@@ -33,8 +33,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # Use project root so dirs are predictable regardless of launch directory.
 APP_ROOT = PROJECT_ROOT
 ensure_dir(APP_ROOT / "static")
-UPLOAD_DIR = ensure_dir(APP_ROOT / "uploads")
-WORK_DIR = ensure_dir(APP_ROOT / "service_work")
+# audit 2026-07-31: RLPE_API_TEST_TMP overrides the work/upload roots so
+# the API test suite runs in an isolated temp dir. The tests already set
+# this env var but app.py never READ it — the "sandbox" was fake: uploads
+# and pipeline output went to the REAL project dirs and the tests could
+# trigger real paid API calls. Note the env var is read at import time,
+# so fixtures must set it before importing the module (as the tests do).
+_RLPE_API_TEST_TMP = Path(os.environ["RLPE_API_TEST_TMP"]) if os.environ.get("RLPE_API_TEST_TMP") else None
+if _RLPE_API_TEST_TMP is not None:
+    _RLPE_API_TEST_TMP.mkdir(parents=True, exist_ok=True)
+    UPLOAD_DIR = ensure_dir(_RLPE_API_TEST_TMP / "uploads")
+    WORK_DIR = ensure_dir(_RLPE_API_TEST_TMP / "service_work")
+else:
+    UPLOAD_DIR = ensure_dir(APP_ROOT / "uploads")
+    WORK_DIR = ensure_dir(APP_ROOT / "service_work")
 MAX_UPLOAD_SIZE_MB = 256
 RESULT_CACHE: dict[str, dict[str, Any]] = {}
 # All compound writes to ``RESULT_CACHE`` and ``FALLBACK_PENDING`` go
@@ -408,7 +420,16 @@ app = FastAPI(
 # auth and confusing the operator about why logins weren't sticking.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # audit 2026-07-31: restrict origins to the app's own pages. The
+    # wildcard did not itself allow cross-origin reads (no credentials),
+    # but it advertised permissive CORS to every website the user
+    # visits; the real fix for the "drive the local API" vector is the
+    # loopback default bind in run_web_server.py. This keeps CORS
+    # honest for the same-origin static frontend.
+    allow_origins=[
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -619,6 +640,7 @@ def health() -> dict[str, Any]:
 
 @app.post("/jobs/upload", response_model=JobStatus)
 async def upload_pdf(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     options: str | None = Form(None),
@@ -649,6 +671,19 @@ async def upload_pdf(
         job_options = validated.model_dump(exclude_none=True)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid options: {exc}")
+    # audit 2026-07-31: pre-check Content-Length BEFORE reading the
+    # body into memory — a 2 GB upload used to be fully buffered
+    # (2 GB RAM) before the 413 was raised.
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds {MAX_UPLOAD_SIZE_MB} MB limit.",
+                )
+        except ValueError:
+            pass  # malformed header — fall through to the read+check below
     # Read content to check size before writing.
     content = await file.read()
     size_mb = len(content) / (1024 * 1024)
@@ -975,7 +1010,12 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
         # user must cancel the job first (which sets status="cancelled");
         # the worker thread sees this in its progress callback, raises
         # _JobCancelledError, and exits cleanly.
-        if job.get("status") in {"running", "queued", "awaiting_user_decision"}:
+        if job.get("status") in {"running", "queued", "awaiting_user_decision", "cancelled"}:
+            # audit 2026-07-31: "cancelled" joins the refusal list —
+            # cancellation is cooperative and the worker thread may
+            # STILL be mid-API-call; rmtree under a live worker would
+            # delete files it is about to write. The user retries
+            # delete once the job's files settle.
             return {
                 "job_id": job_id,
                 "status": "refused",

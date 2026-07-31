@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -3042,7 +3043,73 @@ class RadiolarianPipeline:
                 dropped_stubs,
             )
 
+        # audit 2026-07-31: apply human review corrections
+        # (service_work/corrections/corrections.jsonl, written by
+        # POST /review/correction). Previously the endpoint only
+        # APPENDED rows nobody ever read — corrections were dead
+        # letters. Corrections key on (paper_id, figure_id) with an
+        # optional panel_path prefix; they override species and/or
+        # panel label on the matching rows.
+        kept = self._apply_review_corrections(kept)
+
         return kept
+
+    def _apply_review_corrections(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Overlay human review corrections on finalized rows.
+
+        Reads ``<work_dir>/corrections/corrections.jsonl`` (one JSON
+        object per line, shape of the ``ReviewCorrection`` API model).
+        A correction matches rows whose ``paper_id`` and ``figure_id``
+        equal the entry and whose ``panel_path`` starts with the
+        entry's ``panel_path`` (when given). ``corrected_species`` and
+        ``corrected_label`` override the row fields; matched rows get
+        ``metadata.review_corrected = True`` so the provenance trail
+        shows the overlay.
+        """
+        work = Path(getattr(self.config, "work_dir", "") or self.config.resolved_output_dir())
+        corr_path = work.parent / "corrections" / "corrections.jsonl"
+        if not corr_path.exists():
+            return rows
+        try:
+            with corr_path.open(encoding="utf-8") as fh:
+                corrections = [
+                    json.loads(line)
+                    for line in fh
+                    if line.strip()
+                ]
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Review corrections file unreadable: %s", corr_path)
+            return rows
+        if not corrections:
+            return rows
+        applied = 0
+        for row in rows:
+            for c in corrections:
+                if not isinstance(c, dict):
+                    continue
+                if c.get("paper_id") != row.get("paper_id"):
+                    continue
+                if c.get("figure_id") and c.get("figure_id") != row.get("figure_id"):
+                    continue
+                pp = c.get("panel_path")
+                if pp and not str(row.get("panel_path") or "").startswith(str(pp)):
+                    continue
+                changed = False
+                if c.get("corrected_species"):
+                    row["species"] = c["corrected_species"]
+                    changed = True
+                if c.get("corrected_label"):
+                    row["panel_id"] = c["corrected_label"]
+                    changed = True
+                if changed:
+                    md = row.setdefault("metadata", {})
+                    md["review_corrected"] = True
+                    applied += 1
+        if applied:
+            logger.info("Applied %d review corrections from %s", applied, corr_path)
+        return rows
 
     # ---- LLM-first extraction (new architecture) --------------------------------
     # When an LLM backend is available, try to extract ALL panel→species mappings

@@ -90,7 +90,11 @@ for _stream in (sys.stdout, sys.stderr):
 
 def main() -> None:
     """Start the RLPE web server."""
-    host = os.environ.get("RLPE_HOST", "0.0.0.0")
+    # audit 2026-07-31: default to loopback. The server runs the user's
+    # paid MiniMax key with NO authentication; binding 0.0.0.0 exposed
+    # it to the LAN (any local webpage could also drive it via a CORS
+    # simple request). Set RLPE_HOST=0.0.0.0 explicitly for remote use.
+    host = os.environ.get("RLPE_HOST", "127.0.0.1")
     port = int(os.environ.get("RLPE_PORT", "8000"))
     workers = int(os.environ.get("RLPE_WORKERS", "1"))
     log_level = os.environ.get("RLPE_LOG_LEVEL", "info")
