@@ -37,8 +37,32 @@ SUBPANEL_LABEL_PATTERN = re.compile(
 # matched by group 1; a SEPARATE pattern ``TAXON_CF_COMPARE_PATTERN``
 # below picks up the trailing comparison reference so the compared
 # species epithet is not silently dropped.
+# audit 2026-07-31: both tokens now require ≥3 letters so English
+# phrase fragments like "An attempt of" / "Explanation of" can never
+# match (2-letter words are never epithets; ICZN epithets are ≥3
+# letters). The word filter in ``extract_taxa_from_caption`` applies
+# the stopword / phrase-word lists on top.
 TAXON_LIKE_PATTERN = re.compile(
-    r"\b([A-Z][a-zA-Z-]+\s+[a-z][a-zA-Z-]+(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b"
+    r"\b([A-Z][a-zA-Z-]{2,}\s+[a-z][a-zA-Z-]{2,}(?:\s+(?:sp\.|spp\.|cf\.|aff\.))?)\b"
+)
+# audit 2026-07-31: English function / phrase words that must never be
+# accepted as genus or epithet tokens. "attempt", "explanation",
+# "plateau", "figure" etc. are the real false positives seen in
+# production output ("An attempt of" was shipped as a species).
+_TAXON_STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "the", "and", "are", "was", "were", "for", "with", "from",
+        "this", "that", "their", "which", "shows", "show", "showing",
+        "attempt", "attempts", "scale", "figure", "figures", "fig",
+        "plate", "plates", "explanation", "explanationof", "specimen",
+        "specimens", "upper", "lower", "middle", "early", "late",
+        "part", "parts", "view", "views", "section", "sections",
+        "sample", "samples", "locality", "localities", "age", "ages",
+        "stage", "stages", "formation", "units", "unit", "sequence",
+        "area", "areas", "time", "times", "reconstruction", "domain",
+        "region", "regions", "basin", "basins", "succession",
+        "interval", "intervals", "belt", "zone", "zones",
+    }
 )
 # Phase 60 Plan 3 (Bug 3.1): ``cf. <Author>. <epithet>`` / ``aff. <Author>. <epithet>``
 # — separate scan so the trailing comparison reference is preserved
@@ -298,9 +322,24 @@ def extract_taxa_from_caption(caption_text: str) -> list[str]:
         return []
     if is_placeholder_caption(caption_text):
         return []
+    # audit 2026-07-31: strip the "Explanation of Plate N." header the
+    # same way taxon.py does — "Explanation of" is not a binomial.
+    from .taxon import TaxonRecognizer
+
+    text = TaxonRecognizer._clean_caption_for_taxon(caption_text)
     taxa: list[str] = []
-    for m in TAXON_LIKE_PATTERN.finditer(caption_text):
+    for m in TAXON_LIKE_PATTERN.finditer(text):
         tax = m.group(1).strip()
+        words = tax.split()
+        if not words:
+            continue
+        # Word-boundary filter: neither the genus token nor the
+        # epithet may be an English function/phrase word ("An
+        # attempt of", "Explanation of", "The specimen").
+        if words[0].lower().rstrip(".,;:?!") in _TAXON_STOP_WORDS:
+            continue
+        if len(words) > 1 and words[1].lower().rstrip(".,;:?!") in _TAXON_STOP_WORDS:
+            continue
         if tax and tax not in taxa:
             taxa.append(tax)
     # Phase 60 Plan 3 (Bug 3.1): also surface trailing cf./aff.

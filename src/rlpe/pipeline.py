@@ -24,6 +24,7 @@ from .association import (
     _iou,
     _label_in_pair_lookup,
     _normalize_panel_label,
+    _TAXON_STOP_WORDS,
     is_valid_panel_label,
     match_panels,
 )
@@ -5010,12 +5011,22 @@ def _extract_taxon_entities_from_text(text: str) -> list[CaptionEntity]:
     """Extract taxon-like strings from caption text for CaptionRecord.entities."""
     if not text:
         return []
-    pattern = re.compile(r"\b([A-Z][a-zA-Z-]+\s+(?:sp\.|spp\.|cf\.|aff\.|[a-z][a-zA-Z-]+))\b")
+    # audit 2026-07-31: ≥3-letter tokens on both sides so English
+    # phrase fragments ("An attempt", "Explanation of") can't match;
+    # the stopword filter mirrors association._TAXON_STOP_WORDS.
+    pattern = re.compile(r"\b([A-Z][a-zA-Z-]{2,}\s+(?:sp\.|spp\.|cf\.|aff\.|[a-z][a-zA-Z-]{2,}))\b")
     out: list[CaptionEntity] = []
     seen: set[str] = set()
     for m in pattern.finditer(text):
         taxon = m.group(1).strip()
-        if taxon and taxon not in seen:
+        if not taxon:
+            continue
+        words = taxon.split()
+        if words[0].lower().rstrip(".,;:?!") in _TAXON_STOP_WORDS:
+            continue
+        if len(words) > 1 and words[1].lower().rstrip(".,;:?!") in _TAXON_STOP_WORDS:
+            continue
+        if taxon not in seen:
             seen.add(taxon)
             out.append(
                 CaptionEntity(text=taxon, start=m.start(1), end=m.end(1), label="taxon", score=0.65)

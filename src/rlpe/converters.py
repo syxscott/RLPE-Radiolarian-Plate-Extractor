@@ -394,6 +394,11 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
         "var",
         "f",
         "nom",
+        # audit 2026-07-31: "gen" is the ICZN "genus" abbreviation
+        # (LLM truncation shape "Spumellarian gen"). Without it the
+        # token was eaten as an epithet and the validity guard let
+        # the truncated form through.
+        "gen",
     }
 
     def _is_qualifier_token(token: str) -> bool:
@@ -460,7 +465,11 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
     # If the second token is itself a qualifier (e.g. "cf."), the
     # binomial is incomplete; emit the qualifier as everything from
     # there onward and leave the epithet empty.
-    if len(tokens) >= 2 and _is_qualifier_token(tokens[1]):
+    # audit 2026-07-31: EXCEPT when the qualifier is a parenthesised
+    # marker — "Sethoconus (?) amphora" — where the epithet follows
+    # and must not be dropped. (The "(?)" sets the qualifier start and
+    # the walk below keeps scanning for the epithet.)
+    if len(tokens) >= 2 and _is_qualifier_token(tokens[1]) and not tokens[1].startswith("("):
         return {
             "genus": genus,
             "specific_epithet": None,
@@ -475,6 +484,15 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
     qualifier: str | None = None
     qualifier_idx: int | None = None
     for i, token in enumerate(tokens[1:], start=1):
+        # audit 2026-07-31: parenthesised tokens are subgenus /
+        # uncertainty markers — "Podocyrtis (Podocyrtites) amphora",
+        # "Sethoconus (?) amphora" (Haeckel's classic subgenus shape).
+        # They start the qualifier but must NOT stop the scan: the
+        # epithet comes after the closing paren.
+        if token.startswith("(") and token.endswith(")"):
+            if qualifier_idx is None:
+                qualifier_idx = i
+            continue
         if _is_qualifier_token(token) or _is_author_initial(token):
             qualifier_idx = i
             break
@@ -497,7 +515,18 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
         break
 
     if qualifier_idx is not None:
-        qualifier = " ".join(tokens[qualifier_idx:])
+        if tokens[qualifier_idx].startswith("("):
+            # audit 2026-07-31: parenthesised subgenus/uncertainty
+            # markers are qualifiers that END at the closing paren —
+            # the epithet after them was already captured and must not
+            # be re-included ("(Podocyrtites) amphora" → qualifier
+            # "(Podocyrtites)", epithet "amphora").
+            end = qualifier_idx + 1
+            while end < len(tokens) and tokens[end].startswith("("):
+                end += 1
+            qualifier = " ".join(tokens[qualifier_idx:end])
+        else:
+            qualifier = " ".join(tokens[qualifier_idx:])
 
     return {"genus": genus, "specific_epithet": epithet, "qualifier": qualifier}
 

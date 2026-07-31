@@ -637,6 +637,13 @@ _NON_TAXON_FIRST_WORDS: frozenset[str] = frozenset(
         # Caption-header nouns that look like binomials but never are.
         # "Plate 1 Scanning electron microscope pictures..." — the
         # "Scanning electron" pair matches the regex but is not a taxon.
+        # audit 2026-07-31: the microscopy acronyms themselves —
+        # "SEM photographs: 1-5." is a routine plate caption opening.
+        "sem",
+        "tem",
+        "eds",
+        "sem-images",
+        "semimages",
         "scanning",
         "electron",
         "microscope",
@@ -778,5 +785,17 @@ _NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset(
         "table",
         "plate",
         "appendix",
+        # audit 2026-07-31: microscopy / imaging nouns — "SEM
+        # photographs", "TEM micrographs", "EDS images" and the bare
+        # "gen" truncation ("Spumellarian gen") matched as epithets.
+        "photographs",
+        "micrographs",
+        "micrograph",
+        "images",
+        "image",
+        "spectra",
+        "spectrum",
+        "gen",
+        "gen.",
     }
 )

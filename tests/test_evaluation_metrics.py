@@ -432,8 +432,17 @@ class TestSpeciesNormAsymmetric:
         ],
     )
     def test_asymmetric_qualifier_normalization(self, gold, pred):
-        assert _norm_species(gold).lower() == _norm_species(pred).lower(), (
-            f"gold={gold!r} → {_norm_species(gold)!r}, pred={pred!r} → {_norm_species(pred)!r}"
+        # audit 2026-07-31: equivalence is now judged by
+        # ``_species_compatible`` — subspecies preds match their
+        # species-level gold (subspecies is a refinement), while two
+        # DIFFERENT subspecies remain a mismatch. Pure string equality
+        # of the normalised forms no longer holds for trinomials.
+        from rlpe.evaluation.metrics import _species_compatible
+
+        g = _norm_species(gold)
+        p = _norm_species(pred)
+        assert _species_compatible(g, p), (
+            f"gold={gold!r} → {g!r}, pred={pred!r} → {p!r} must be compatible"
         )
 
     @pytest.mark.parametrize(

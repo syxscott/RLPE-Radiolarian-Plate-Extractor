@@ -59,6 +59,12 @@ logger = logging.getLogger(__name__)
 
 # --- Figure type classification ------------------------------------------------
 
+# audit 2026-07-31: whole-word "plate"/"plates" matcher for the plate
+# keyword, plus the common words that contain "plate" as a substring
+# and must NOT count ("pelagic plateau", "carbonate platform").
+_PLATE_WORD_RE = re.compile(r"\bplates?\b")
+_PLATE_SUBSTRING_VETO_WORDS = ("plateau", "platform")
+
 _FIGURE_TYPE_PROMPT_KEYWORDS = {
     # Map: keyword -> figure type. Checked in order; first hit wins.
     "plate": (
@@ -297,17 +303,23 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
     if not caption:
         return "other"
     low = caption.lower()
-    # 1. Check plate first because plates often co-occur with range
-    # charts in a paper but the keyword "distribution of radiolarians"
-    # is what marks the range chart, not a plate caption that mentions
-    # "distribution" in passing.
-    for kw in _FIGURE_TYPE_PROMPT_KEYWORDS["plate"]:
+    # audit 2026-07-31: "plate" is a bare-substring keyword, so
+    # "pelagic PLATEau of the Trapanese Domain" / "carbonate
+    # PLATform" (both routine in geology texts) routed paleogeographic
+    # maps / locality figures into the plate path — their captions
+    # then got species-mined ("An attempt of" shipped as a species).
+    # Match "plate"/"plates" as a whole word and veto the words that
+    # merely contain the substring.
+    if not any(w in low for w in _PLATE_SUBSTRING_VETO_WORDS) and _PLATE_WORD_RE.search(low):
+        # Even if plate-like, check if the caption ALSO mentions
+        # range/distribution — that overrides.
+        for rc_kw in _FIGURE_TYPE_PROMPT_KEYWORDS["range_chart"]:
+            if rc_kw in low:
+                return "range_chart"
+        return "plate"
+    # Other plate-family keywords stay as substring matches.
+    for kw in _FIGURE_TYPE_PROMPT_KEYWORDS["plate"][1:]:
         if kw in low:
-            # Even if plate-like, check if the caption ALSO mentions
-            # range/distribution — that overrides.
-            for rc_kw in _FIGURE_TYPE_PROMPT_KEYWORDS["range_chart"]:
-                if rc_kw in low:
-                    return "range_chart"
             return "plate"
     # 2. Check the more specific paleogeographic_map BEFORE the
     # generic map because "paleogeographic map of..." contains the

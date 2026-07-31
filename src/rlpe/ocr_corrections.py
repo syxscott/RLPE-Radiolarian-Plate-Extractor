@@ -149,56 +149,61 @@ PAPER_WHITELIST: dict[str, list[tuple[str, str]]] = {
     # that the LLM expands but gold suppresses. 5 distinct corrections
     # observed; all preserve the type-specimen identifier by stripping
     # the verbose gloss and recovering the short plate-label form.
+    #
+    # audit 2026-07-31: the entries are now REGEX patterns (first
+    # element), not plain substrings. The old substring semantics
+    # broke correct output: "Corythomelissa sp. A. B-F36/0" (already
+    # complete) contained the substring "Corythomelissa sp. A" so the
+    # suffix got appended AGAIN ("…B-F36/0. B-F36/0"), and
+    # "Spumellarian gen. et sp. indet" (correct) became
+    # "Spumellarian indet. et sp. indet". Negative lookaheads make
+    # each rule fire ONLY on the truncated/predicted form.
     "hollis2006": [
-        # 1. The "Haliomma gr. A" + verbose glosses (hollis2006 plate 5):
-        #    gold uses the short form "Haliomma gr. A-K47/4", pred emits
-        #    only the prefix "Haliomma gr. A". Whitelist reverses this
-        #    ONLY when the pred has no suffix at all — when the pred
-        #    actually includes the sample code (which the LLM does on
-        #    some panels), the rule below is a no-op.
-        ("Haliomma gr. A", "Haliomma gr. A"),  # identity, see rationale above
         # 2. Strip the "(cf. Theocosphaerella rotunda)" gloss from the
         #    group-b label so pred "Haliomma gr. b. (cf. T. rotunda)"
         #    matches gold "Haliomma gr. b".
-        ("Haliomma gr. b. (cf. Theocosphaerella rotunda)", "Haliomma gr. b"),
+        (r"Haliomma gr\. b\. \(cf\. Theocosphaerella rotunda\)", "Haliomma gr. b"),
         # 3. LLM dropped the trailing period on "Haliomma gr. b." —
         #    pred "Haliomma gr. b." matches gold "Haliomma gr. b" already
         #    via rstrip(.,;). Listed for completeness.
-        ("Haliomma gr. b.", "Haliomma gr. b"),
+        (r"Haliomma gr\. b\.(?![(])", "Haliomma gr. b"),
         # 4. LLM truncated "Spumellarian gen. et sp. indet" → "Spumellarian gen".
-        #    The soft-normaliser already collapses "X gen. et sp. indet"
-        #    to "X indet" — but this paper uses the archaic "Spumellarian"
-        #    spelling and the gold has the trailing period dropped.
-        ("Spumellarian gen", "Spumellarian indet"),
+        #    Fires only when NOT followed by ". et" (the complete form
+        #    must be left untouched).
+        (r"Spumellarian gen(?!\.\s*et)", "Spumellarian indet"),
         # 5. LLM dropped the author suffix "Foreman" from
         #    "Theocorys? phyzella Foreman" → "Theocorys? phyzella".
         #    Author suffixes are biologically meaningful but the gold
         #    convention in this paper SUPPRESSES them on the plate label
         #    (they appear only in the systematic description). Whitelist
         #    drops " Foreman" so the plate label matches.
-        ("Theocorys? phyzella Foreman", "Theocorys? phyzella"),
+        (r"Theocorys\? phyzella Foreman\b", "Theocorys? phyzella"),
         # 6. "Corythomelissa sp. A" with a sample-code suffix in gold
         #    ("A. B-F36/0"): pred emits just the prefix. Soft-norm can't
-        #    recover the suffix; whitelist recovers it.
-        ("Corythomelissa sp. A", "Corythomelissa sp. A. B-F36/0"),
+        #    recover the suffix; whitelist recovers it. Fires only when
+        #    the pred has NO sample-code suffix of its own (negative
+        #    lookahead for ". <CAP>" continuation).
+        (r"Corythomelissa sp\. A(?!\.\s*[A-Z])", "Corythomelissa sp. A. B-F36/0"),
         # 7. "Axoprunum bispiculum" pred vs "Axoprunum aff. bispiculum"
         #    gold: LLM dropped the "aff." qualifier. This is the one
         #    case where the LLM is the MORE conservative source — gold
         #    is the open-nomen marker. Re-add it.
-        ("Axoprunum bispiculum", "Axoprunum aff. bispiculum"),
+        (r"Axoprunum bispiculum(?!\s+aff\.)", "Axoprunum aff. bispiculum"),
     ],
     # feng2007 — the LLM frequently rolls "Trilonche pseudocimelia" up
     # to "Trilonche cimelia" (it strips the "pseudo-" prefix because
     # the OCR confidence on the "pseudo-" ligature is low). Re-add it.
     # 4 occurrences, all on the same species.
     "feng2007": [
-        ("Trilonche cimelia", "Trilonche pseudocimelia"),
+        (r"Trilonche cimelia(?!\s+pseudo)", "Trilonche pseudocimelia"),
     ],
     # beccaro2006 — the parser drops the group letter on "Pseudoeucyrtis
     # sp. B" → "Pseudoeucyrtis sp.". 2 occurrences on plate 13. Whitelist
-    # recovers the " B" suffix when the pred has exactly the bare species.
+    # recovers the " B" suffix when the pred has exactly the bare species
+    # (audit 2026-07-31: the negative lookahead stops the rule from
+    # re-appending " B" to an already-correct "Pseudoeucyrtis sp. B").
     "beccaro2006": [
-        ("Pseudoeucyrtis sp.", "Pseudoeucyrtis sp. B"),
+        (r"Pseudoeucyrtis sp\.(?!\s*[A-Z])", "Pseudoeucyrtis sp. B"),
     ],
 }
 
@@ -260,11 +265,14 @@ def apply_corrections(species_str: str | None, paper_id: str | None = None) -> s
         return ""
     s = species_str.strip()
     # Paper-specific whitelist first — paper conventions beat global rules.
+    # audit 2026-07-31: entries are (regex_pattern, replacement); the
+    # old plain-substring semantics re-fired on already-correct strings
+    # ("Corythomelissa sp. A. B-F36/0" → "…B-F36/0. B-F36/0").
     if paper_id and paper_id in PAPER_WHITELIST:
-        for pred_sub, gold_sub in PAPER_WHITELIST[paper_id]:
-            if pred_sub in s:
-                s = s.replace(pred_sub, gold_sub)
-                # Don't break early: a single pred_sub may overlap with
+        for pred_re, gold_sub in PAPER_WHITELIST[paper_id]:
+            if re.search(pred_re, s):
+                s = re.sub(pred_re, gold_sub, s)
+                # Don't break early: a single pred may overlap with
                 # itself (e.g. "Trilonche cimelia" appears twice in the
                 # same string on feng2007 plates — both must be fixed).
     # Global substring corrections, longest-match first.

@@ -783,7 +783,13 @@ _CAPTION_CLAUSE_RE = re.compile(
     # char being an uppercase letter (genus name) so prose like
     # "1. Introduction" doesn't match.
     r"(?:(?:[Ff]ig(?:s|ure|ures)?\.?)\s*|\d+\.\s+(?=[A-Z]))"
-    r"((?:\d+(?:\s*[,\-–—]\s*\d+)*(?:\s*,\s*\d+(?:\s*[,\-–—]\s*\d+)*)*))"  # label list
+    # audit 2026-07-31: the label list only accepted pure digits, so
+    # the very common letter-suffixed forms ("figs 12-14b",
+    # "figs 1a-b") failed to match the whole clause and the panel
+    # mapping silently vanished. Each label token may now carry an
+    # optional letter suffix ("12", "14b", "1a"), and a range end may
+    # be a BARE letter that inherits the leading number ("1a-b").
+    r"((?:\d+[a-z]?(?:\s*[,\-–—]\s*(?:\d+[a-z]?|[a-z]))*(?:\s*,\s*\d+[a-z]?(?:\s*[,\-–—]\s*(?:\d+[a-z]?|[a-z]))*)*))"  # label list
     r"\s*[\.:]?\s*"
     r"([A-Z][a-zA-Z-]+"  # Genus (capitalized)
     # Optional "?" uncertainty marker. We always consume the "?" so
@@ -845,7 +851,12 @@ _CAPTION_CLAUSE_RE = re.compile(
     # end-of-string. Captured as group 4 so _regex_parse_caption can
     # append it to the species string ("Entactinia sp." + " 1" =
     # "Entactinia sp. 1") to match the gold convention.
-    r"(\s+(?:[A-Z]|\d+)(?=[\s,;:.()]|$))?",
+    # audit 2026-07-31: a capital letter must NOT be consumed as the
+    # identifier when it is an author INITIAL of a compared species —
+    # "Stichocapsa excelsa cf. S. excelsa" used to fold " S" into the
+    # species string ("… cf. S", a corrupt pseudo-taxon). The negative
+    # lookahead rejects "X." followed by a lowercase word.
+    r"(\s+(?:[A-Z](?!\.\s*[a-z])|\d+)(?=[\s,;:.()]|$))?",
 )
 
 # Danelian-style "1) Species; 2-3) Species" caption clauses. Each
@@ -910,7 +921,14 @@ _DANELIAN_CLAUSE_RE = re.compile(
     # We accept a leading single letter / digit OR an alphanumeric
     # token with optional dashes/slashes, optionally followed by a
     # ``. ``-separated second segment (e.g. ``A. B-F36/0``).
-    r"(\s+(?:[A-Za-z]|\d+|[A-Z]\d*(?:[-/][A-Z0-9]+){0,3})"
+    # audit 2026-07-31: a single capital letter is rejected as the
+    # identifier when it is an author INITIAL of a compared species —
+    # "cf. S. excelsa" produced the corrupt pseudo-taxon
+    # "Stichocapsa excelsa cf. S". "A. B-F36/0" (capital after the
+    # dot) still matches, and the alphanumeric-specimen branch now
+    # requires a digit/dash/slash or ". <CAP>" continuation so a bare
+    # capital (author initial) can never be consumed by it either.
+    r"(\s+(?:[A-Za-z](?!\.\s+[a-z])|\d+|[A-Z](?=\d|[-/]|\.\s+[A-Z])[A-Z\d]*(?:[-/][A-Z0-9]+){0,3})"
     r"(?:\.\s+[A-Z]\d*(?:[-/][A-Z0-9]+){0,3})?"
     r"(?=[\s,;:.()]|$))?",
 )
@@ -1176,16 +1194,40 @@ def _regex_expand_label_list(s: str) -> list[str]:
             continue
         # Range with optional letter suffix on the upper bound:
         # "1-3" or "12-14b" — the suffix applies only to the last label.
-        m = re.match(r"(\d+)\s*[–\-—]\s*(\d+)([a-z]?)$", chunk)
+        # audit 2026-07-31: also "1a-b" — the lower bound carries the
+        # number+suffix and the upper bound is a BARE letter that
+        # inherits the number ("1a-b" → ["1a","1b"]).
+        m_letter = re.match(r"(\d+)([a-z])\s*[–\-—]\s*([a-z])$", chunk)
+        if m_letter:
+            lo_num, lo_suf, hi_suf = m_letter.groups()
+            if ord(hi_suf) >= ord(lo_suf):
+                out.extend(
+                    f"{lo_num}{chr(c)}"
+                    for c in range(ord(lo_suf), ord(hi_suf) + 1)
+                )
+            else:
+                out.extend(
+                    f"{lo_num}{chr(c)}"
+                    for c in range(ord(hi_suf), ord(lo_suf) + 1)
+                )
+            continue
+        m = re.match(r"(\d+)([a-z]?)\s*[–\-—]\s*(\d+)([a-z]?)$", chunk)
         if m:
             try:
-                lo, hi = int(m.group(1)), int(m.group(2))
-                suffix = m.group(3)
+                lo, hi = int(m.group(1)), int(m.group(3))
+                suffix = m.group(4)
                 # Track which endpoint the user actually attached the
                 # suffix to in the original string — by value, not by
                 # the post-swap ``hi``. The user's "5-3b" means
                 # ``3b``; the suffix belongs to the value 3, not the
                 # numerically-largest label of the expanded range.
+                # (audit 2026-07-31: group(2) is the LOWER bound's
+                # letter suffix — "1a-b" is handled by m_letter above;
+                # a lower-bound suffix here without an upper suffix is
+                # an unusual shape, fall back to raw chunk.)
+                if m.group(2) and not suffix:
+                    out.append(chunk)
+                    continue
                 suffix_on_lo = bool(suffix) and lo > hi
                 if lo > hi:
                     lo, hi = hi, lo
@@ -1424,7 +1466,15 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             modifier = (m.group(4) or "").strip()
             trailing_id = (m.group(5) or "").strip() if m.lastindex and m.lastindex >= 5 else ""
             if modifier:
-                species = (species + " " + modifier).strip()
+                # audit 2026-07-31: cf./aff. are comparison qualifiers
+                # whose target follows in the text — folding the bare
+                # "cf." into the species string produced the dangling
+                # pseudo-taxon "Stichocapsa excelsa cf.". Keep the
+                # primary species only (gold convention); gr./indet./
+                # sp. etc. still fold (hollis "Haliomma gr. b" needs
+                # "gr.").
+                if modifier.lower() not in ("cf.", "aff."):
+                    species = (species + " " + modifier).strip()
                 modifier = ""
             if trailing_id:
                 species = (species + " " + trailing_id).strip()

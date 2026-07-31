@@ -219,7 +219,16 @@ def _norm_species(s: str | None) -> str:
             trinomial_safe = False
             break
     if len(parts) >= 3 and trinomial_safe and all(p and p[0].islower() for p in parts[1:]):
-        s = " ".join(parts[:2])
+        # audit 2026-07-31: only the AUTONYM trinomial (third word
+        # equals the second — "Lamptonium fabaeforme fabaeforme") is
+        # the same species under ICZN Art. 46.1 and folds to the
+        # binomial. DIFFERENT subspecies ("Eucyrtidiellum unumaense
+        # pustulatum" vs "…dentatum") are distinct taxa; the blanket
+        # fold made them compare equal, inflating F1 and
+        # contradicting m3_engine._normalize_species, which preserves
+        # subspecies.
+        if parts[1].rstrip(".,;").lower() == parts[2].rstrip(".,;").lower():
+            s = " ".join(parts[:2])
     # 4) Spelling variants: "Archaeo" / "Archeo" prefix — the two
     #    spellings are interchangeable in informal usage; canonicalise
     #    to "Archeo" for comparison. Case-sensitive so we don't break
@@ -241,6 +250,30 @@ def _norm_species(s: str | None) -> str:
     #    so gold "Theocorys? phyzella" matches pred "Theocorys phyzella".
     s = re.sub(r"^([A-Z][a-z]+)\?\s+", r"\1 ", s)
     return s
+
+
+def _species_compatible(a: str, b: str) -> bool:
+    """Normalised species equality with subspecific one-way tolerance.
+
+    audit 2026-07-31: ``_norm_species`` preserves non-autonym
+    subspecies (they are distinct taxa), so a plain string compare
+    would count "Eucyrtidiellum unumaense pustulatum" (pred) as a
+    MISS against gold "Eucyrtidiellum unumaense" — a subspecies
+    determination is a refinement of the species determination and
+    should match (existing suite semantics). Two DIFFERENT subspecies
+    ("…pustulatum" vs "…dentatum") remain a mismatch.
+    """
+    a_n = a.lower()
+    b_n = b.lower()
+    if a_n == b_n:
+        return True
+    aw = a_n.split()
+    bw = b_n.split()
+    if len(aw) == 3 and len(bw) == 2:
+        return aw[0] == bw[0] and aw[1] == bw[1]
+    if len(bw) == 3 and len(aw) == 2:
+        return bw[0] == aw[0] and bw[1] == aw[1]
+    return False
 
 
 _PLACEHOLDER_MATCHER_TYPES = frozenset(
@@ -347,7 +380,7 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
             if (
                 gold_species
                 and matched_pred_species
-                and gold_species.lower() == matched_pred_species.lower()
+                and _species_compatible(gold_species, matched_pred_species)
             ):
                 m.species_tp += 1
                 m.exact_match += 1
