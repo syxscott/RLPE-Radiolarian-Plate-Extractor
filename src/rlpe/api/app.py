@@ -1010,12 +1010,7 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
         # user must cancel the job first (which sets status="cancelled");
         # the worker thread sees this in its progress callback, raises
         # _JobCancelledError, and exits cleanly.
-        if job.get("status") in {"running", "queued", "awaiting_user_decision", "cancelled"}:
-            # audit 2026-07-31: "cancelled" joins the refusal list —
-            # cancellation is cooperative and the worker thread may
-            # STILL be mid-API-call; rmtree under a live worker would
-            # delete files it is about to write. The user retries
-            # delete once the job's files settle.
+        if job.get("status") in {"running", "queued", "awaiting_user_decision"}:
             return {
                 "job_id": job_id,
                 "status": "refused",
@@ -1024,6 +1019,29 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
                     f"/jobs/{job_id}/cancel, then delete."
                 ),
             }
+        if job.get("status") == "cancelled":
+            # audit 2026-07-31: cancellation is cooperative — the
+            # worker thread may still be mid-API-call right after the
+            # cancel, so rmtree under it would delete files it is
+            # about to write. After a grace period the worker has
+            # surely exited (its progress callback raises
+            # _JobCancelledError on the next tick) and deletion is
+            # safe. Without the grace period, cancelled jobs could
+            # NEVER be deleted (their status never changes again) —
+            # the UI dead-locked on cleanup.
+            try:
+                cancelled_at = datetime.fromisoformat(job.get("cancelled_at") or "")
+            except (ValueError, TypeError):
+                cancelled_at = None
+            if cancelled_at is None or (datetime.now() - cancelled_at).total_seconds() < 30:
+                return {
+                    "job_id": job_id,
+                    "status": "refused",
+                    "error": (
+                        "Job was just cancelled; the worker may still be "
+                        "exiting. Try again in a few seconds."
+                    ),
+                }
         # Phase 54 audit: B4 — snapshot ``_root`` once under the lock so
         # the second lock-free ``RESULT_CACHE.get`` at the previous line
         # 949 is no longer a race. We also use this snapshot for the

@@ -1254,11 +1254,17 @@ async function confirmDelete() {
             const notFound = results.filter(r => r.status === 'not_found').length;
             const fileErr = results.filter(r => r.status === 'file_error').length;
             const filesSkipped = results.filter(r => r.files_skipped).length;
+            // audit 2026-07-31: refused deletions were not counted —
+            // batch-deleting running jobs reported "已删除 N 个任务"
+            // as if everything was removed, while the running jobs
+            // stayed selected and alive.
+            const refused = results.filter(r => r.status === 'refused').length;
             let suffix = '';
             if (notFound) suffix += `，${notFound} 个已不存在`;
             if (fileErr) suffix += `，${fileErr} 个文件清理失败`;
             if (filesSkipped) suffix += `，${filesSkipped} 个 CLI 任务文件保留在磁盘上`;
-            showToast(`已删除 ${deleted} 个任务${suffix}${freed}`, deleted > 0 ? 'success' : 'info');
+            if (refused) suffix += `，${refused} 个被拒绝删除（运行中或刚取消）`;
+            showToast(`已删除 ${deleted} 个任务${suffix}${freed}`, deleted > 0 && !refused ? 'success' : (refused ? 'warning' : 'info'));
         }
     } catch (err) {
         console.error('Delete failed', err);
@@ -1533,13 +1539,31 @@ document.getElementById('delete-modal-confirm')?.addEventListener('click', confi
 // ==================== Results ==================== //
 async function loadResults() {
     try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/results`);
-        if (!response.ok) {
-            console.error(`loadResults: HTTP ${response.status}`);
-            return;
+        // audit 2026-07-31: the backend returns at most 500 rows per
+        // page and its contract requires the CLIENT to paginate until
+        // an empty page. The old code fetched a single page, so once
+        // results exceeded 500 rows the table, stats and exports all
+        // silently operated on the truncated set.
+        const PAGE = 500;
+        let offset = 0;
+        let all = [];
+        for (;;) {
+            const response = await fetch(
+                `${CONFIG.apiBaseUrl}/results?limit=${PAGE}&offset=${offset}`
+            );
+            if (!response.ok) {
+                console.error(`loadResults: HTTP ${response.status}`);
+                if (offset === 0) return;
+                break;
+            }
+            const page = await response.json();
+            if (!Array.isArray(page) || page.length === 0) break;
+            all = all.concat(page);
+            if (page.length < PAGE) break;
+            offset += PAGE;
         }
 
-        resultsData = await response.json();
+        resultsData = all;
         // Prune stale row_ids from the persistent selection set —
         // rows deleted elsewhere (CLI, another tab) would otherwise
         // sit in the set forever and accumulate.
@@ -1551,7 +1575,11 @@ async function loadResults() {
         renderResults();
         updateStats();
     } catch (error) {
+        // audit 2026-07-31: a failure here used to be silent —
+        // the operator kept looking at stale data as if it were
+        // current. Surface it like the jobs poll does.
         console.error('Failed to load results:', error);
+        showToast('结果加载失败，显示的可能不是最新数据', 'error');
     }
 }
 
@@ -1712,8 +1740,8 @@ function renderResults() {
     if (total === 0) {
         const hasAnyResults = resultsData.length > 0;
         tbody.innerHTML = hasAnyResults
-            ? '<tr class="placeholder"><td colspan="9" style="text-align: center; color: var(--text-muted);">当前筛选条件下无结果，试试清除搜索或切换筛选</td></tr>'
-            : `<tr class="placeholder"><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+            ? '<tr class="placeholder"><td colspan="10" style="text-align: center; color: var(--text-muted);">当前筛选条件下无结果，试试清除搜索或切换筛选</td></tr>'
+            : `<tr class="placeholder"><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 2rem;">
                 🔍 还没有提取结果<br>
                 <span style="font-size: 0.85rem;">完成 PDF 处理后，结果会自动显示在这里</span>
             </td></tr>`;
@@ -2210,13 +2238,19 @@ document.getElementById('export-btn')?.addEventListener('click', async () => {
     showNotification(`正在导出 ${rows.length} 条结果 (${jobIds.size} 个 job) ...`);
     for (const jobId of jobIds) {
         try {
-            const resp = await fetch(`/jobs/${jobId}/export.xlsx`, {
+            // audit 2026-07-31: the URL was hard-coded relative while every
+    // other request honours CONFIG.apiBaseUrl — a custom API origin
+    // made export fail against the page origin.
+            const resp = await fetch(`${CONFIG.apiBaseUrl}/jobs/${jobId}/export.xlsx`, {
                 method: 'GET',
                 credentials: 'same-origin',
             });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
-                showNotification(`导出 ${jobId} 失败: ${err.detail || resp.status}`, true);
+                // audit 2026-07-31: the boolean 'true' was passed as the type
+                // class — CSS has no '.true' rule so failures rendered
+                // with the GREEN success style.
+                showNotification(`导出 ${jobId} 失败: ${err.detail || resp.status}`, 'error');
                 continue;
             }
             const blob = await resp.blob();
@@ -2237,7 +2271,7 @@ document.getElementById('export-btn')?.addEventListener('click', async () => {
             document.body.removeChild(a);
             setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (err) {
-            showNotification(`导出 ${jobId} 异常: ${err}`, true);
+            showNotification(`导出 ${jobId} 异常: ${err}`, 'error');
         }
     }
 });
@@ -2519,7 +2553,11 @@ document.getElementById('correction-form')?.addEventListener('submit', async (e)
         });
 
         if (response.ok) {
-            showNotification('纠正已提交');
+            // audit 2026-07-31: the correction is consumed on the NEXT
+    // pipeline run (corrections.jsonl overlay) — the current table
+    // still shows the old value. Saying just "submitted" implied it
+    // was applied, which misled operators into trusting stale rows.
+    showNotification('纠正已保存，将在下次运行时生效');
             closeCorrectionModal();
             document.getElementById('correction-form').reset();
         } else {
