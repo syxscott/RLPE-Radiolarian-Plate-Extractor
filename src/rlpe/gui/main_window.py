@@ -134,8 +134,25 @@ class MainWindow(QMainWindow):
         # shows historical results even after a GUI restart.
         self._load_recent_jobs()
 
-    @staticmethod
-    def _qbool(qsettings: QSettings, key: str, default: bool) -> bool:
+    def _qint(self, qsettings: QSettings, key: str, default: int) -> int:
+        """audit 2026-07-31: safe int read — a corrupted QSettings
+        value ("abc", a float "3.0") used to crash the whole GUI at
+        startup via bare int(). Mirrors settings_tab._qint."""
+        val = qsettings.value(key, default)
+        try:
+            return int(float(str(val)))
+        except (TypeError, ValueError):
+            return default
+
+    def _qfloat(self, qsettings: QSettings, key: str, default: float) -> float:
+        """audit 2026-07-31: safe float read (same corruption guard)."""
+        val = qsettings.value(key, default)
+        try:
+            return float(str(val))
+        except (TypeError, ValueError):
+            return default
+
+    def _qbool(self, qsettings: QSettings, key: str, default: bool) -> bool:
         """Phase 55 audit: correctly parse QSettings-stored booleans.
 
         QSettings stores bools as strings ("true"/"false"). Wrapping in
@@ -170,8 +187,24 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             i18n._tr("main.recent_loaded").format(n=n), 5000
         )
-        # Phase 51 auto-open was removed: startup now defaults to the Run tab.
-        # Users can manually switch to Results/Jobs tabs to see loaded jobs.
+        # audit 2026-07-31: restore the Phase 51 auto-open — opening
+        # the GUI after a restart dumped the user on the empty Run
+        # tab while their completed work sat unlisted. Auto-select the
+        # most recently finished job into the Results tab.
+        try:
+            jobs = getattr(self._jobs_tab, "_jobs", {})
+            finished = [
+                j for j in jobs.values()
+                if getattr(j, "status", None) == STATUS_DONE and getattr(j, "rows", None)
+            ]
+            if finished:
+                latest = max(finished, key=lambda j: getattr(j, "finished_at", 0) or 0)
+                self._results_tab.load_job(
+                    latest.job_id, latest.rows, latest.output_dir
+                )
+                self._tabs.setCurrentIndex(TAB_RESULTS)
+        except Exception as exc:  # pragma: no cover — defensive
+            self._log.warning("Phase 51 auto-open failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Settings cache
@@ -192,12 +225,12 @@ class MainWindow(QMainWindow):
             "last_pdf_dir": str(self._qsettings.value(QS_KEY_LAST_DIR, str(Path.home()))),
             "last_export_dir": str(self._qsettings.value(QS_KEY_LAST_EXPORT_DIR, str(Path.home()))),
             "grobid_url": self._qsettings.value("grobid_url", "http://localhost:8070"),
-            "grobid_max_retries": int(self._qsettings.value("grobid_max_retries", 3)),
-            "grobid_timeout": int(self._qsettings.value("grobid_timeout", 300)),
+            "grobid_max_retries": self._qint(self._qsettings, "grobid_max_retries", 3),
+            "grobid_timeout": self._qint(self._qsettings, "grobid_timeout", 300),
             "ocr_backend": self._qsettings.value("ocr_backend", "paddleocr"),
             "ocr_lang": self._qsettings.value("ocr_lang", "en"),
-            "caption_window": int(self._qsettings.value("caption_window", 2)),
-            "od_caption_window": int(self._qsettings.value("od_caption_window", 5)),
+            "caption_window": self._qint(self._qsettings, "caption_window", 2),
+            "od_caption_window": self._qint(self._qsettings, "od_caption_window", 5),
             # Audit 2026-07-26 M5: load YOLO keys from QSettings so the
             # Run tab's collect_settings() can forward them to the
             # worker. Previously only the Settings tab read these;
@@ -205,19 +238,19 @@ class MainWindow(QMainWindow):
             # default (use_yolo_figures=False) silently won.
             "use_yolo_figures": self._qbool(self._qsettings, "use_yolo_figures", False),
             "yolo_model_path": str(self._qsettings.value("yolo_model_path", "")),
-            "yolo_conf_threshold": float(self._qsettings.value("yolo_conf_threshold", 0.25)),
-            "yolo_iou_threshold": float(self._qsettings.value("yolo_iou_threshold", 0.45)),
+            "yolo_conf_threshold": self._qfloat(self._qsettings, "yolo_conf_threshold", 0.25),
+            "yolo_iou_threshold": self._qfloat(self._qsettings, "yolo_iou_threshold", 0.45),
             "llm_backend": self._qsettings.value("llm_backend", "minimax"),
             "m3_prompt_lang": self._qsettings.value("m3_prompt_lang", "auto"),
             "m3_model": self._qsettings.value("m3_model", "MiniMax-M3"),
-            "MiniMax_thinking_budget": int(self._qsettings.value("MiniMax_thinking_budget", 1024)),
-            "MiniMax_max_output_tokens": int(self._qsettings.value("MiniMax_max_output_tokens", 2048)),
-            "MiniMax_timeout_sec": int(self._qsettings.value("MiniMax_timeout_sec", 60)),
-            "MiniMax_max_retries": int(self._qsettings.value("MiniMax_max_retries", 3)),
+            "MiniMax_thinking_budget": self._qint(self._qsettings, "MiniMax_thinking_budget", 1024),
+            "MiniMax_max_output_tokens": self._qint(self._qsettings, "MiniMax_max_output_tokens", 2048),
+            "MiniMax_timeout_sec": self._qint(self._qsettings, "MiniMax_timeout_sec", 60),
+            "MiniMax_max_retries": self._qint(self._qsettings, "MiniMax_max_retries", 3),
             "use_paleodb": self._qbool(self._qsettings, "use_paleodb", True),
-            "paleodb_max_occurrences": int(self._qsettings.value("paleodb_max_occurrences", 25)),
+            "paleodb_max_occurrences": self._qint(self._qsettings, "paleodb_max_occurrences", 25),
             "paleodb_endpoint": self._qsettings.value("paleodb_endpoint", "https://paleobiodb.org/data1.2"),
-            "render_dpi": int(self._qsettings.value("render_dpi", 200)),
+            "render_dpi": self._qint(self._qsettings, "render_dpi", 200),
             "save_intermediate": self._qbool(self._qsettings, "save_intermediate", False),
         }
 
@@ -566,6 +599,12 @@ class MainWindow(QMainWindow):
             return
         self._run_tab._set_pdf_path(Path(path))
         self._settings["last_pdf_dir"] = str(Path(path).parent)
+        # audit 2026-07-31: the choice was only written to the
+        # in-memory cache; the Settings tab persisted "io/last_pdf_dir"
+        # on ITS save, but selecting a PDF here never did — the
+        # directory memory was lost on restart. Persist immediately
+        # under the same key the loader reads.
+        self._qsettings.setValue(QS_KEY_LAST_DIR, self._settings["last_pdf_dir"])
         self._tabs.setCurrentIndex(TAB_RUN)
 
     def _on_open_batch(self) -> None:
@@ -657,6 +696,11 @@ class MainWindow(QMainWindow):
         self._set_status("main.running", id=job_id)
         self._mini_progress.setRange(0, 0)  # indeterminate
         self._mini_progress.setVisible(True)
+        # audit 2026-07-31: cancel any pending hide timer from the
+        # previous job so it can't hide THIS job's progress bar.
+        if getattr(self, "_mini_progress_timer", None) is not None:
+            self._mini_progress_timer.stop()
+            self._mini_progress_timer = None
         # Auto-switch to Jobs tab
         self._tabs.setCurrentIndex(TAB_JOBS)
 
@@ -687,9 +731,23 @@ class MainWindow(QMainWindow):
         self._set_status("main.done", id=job_id, rows=f"{len(rows):,}")
         self._mini_progress.setRange(0, 1)
         self._mini_progress.setValue(1)
-        QTimer.singleShot(2000, lambda: self._mini_progress.setVisible(False))
-        # Auto-switch to results tab
-        self._tabs.setCurrentIndex(TAB_RESULTS)
+        # audit 2026-07-31: the 2s hide timer raced the next batch job
+        # (which setVisible(True) immediately) — the timer then hid the
+        # NEXT job's progress bar. Track the timer and only hide if no
+        # job started since; also stop auto-switching to the Results
+        # tab during a batch (the tab-jacking interrupted the operator
+        # 10× on a 10-paper batch).
+        if getattr(self, "_mini_progress_timer", None) is not None:
+            self._mini_progress_timer.stop()
+        self._mini_progress_timer = QTimer(self)
+        self._mini_progress_timer.setSingleShot(True)
+        self._mini_progress_timer.timeout.connect(
+            lambda: self._mini_progress.setVisible(False)
+        )
+        self._mini_progress_timer.start(2000)
+        if not getattr(self, "_batch_pdfs", None):
+            # Auto-switch to results tab (single-job mode only)
+            self._tabs.setCurrentIndex(TAB_RESULTS)
         # Phase 54 audit: M3 — advance the serial batch queue. The
         # previous version declared a batch helper at line 702-719 that
         # started the *first* job and bumped the index, but nothing
@@ -739,6 +797,15 @@ class MainWindow(QMainWindow):
             and getattr(self, "_batch_pdfs", None)
             and self._batch_index < len(self._batch_pdfs)
             and not self._batch_settings.get("_stop_on_error", False)
+        ):
+            self._start_next_batch_job()
+        # audit 2026-07-31: a CANCELLED job also advances the batch —
+        # cancellation skips the current PDF, it does not silently
+        # strand the remaining ones in "queued" forever.
+        if (
+            cancelled
+            and getattr(self, "_batch_pdfs", None)
+            and self._batch_index < len(self._batch_pdfs)
         ):
             self._start_next_batch_job()
         # Audit 2026-07-26 M9: do NOT raise a second QMessageBox here -
@@ -837,6 +904,16 @@ class MainWindow(QMainWindow):
         self._batch_index += 1
         # Use the existing Run tab mechanism to start a job
         self._run_tab._set_pdf_path(pdf)
+        # audit 2026-07-31: each batch job MUST get its own output
+        # directory. _set_pdf_path only defaults _out_edit when it is
+        # EMPTY — after job 1 it stays set, so every later job wrote
+        # into <pdf1_stem>_rlpe_out; the shared work/input then
+        # accumulated every processed PDF and job k re-processed all
+        # previous papers (O(N²) work, duplicated rows, and the last
+        # job's matches.jsonl overwrote the earlier ones).
+        stem = pdf.stem
+        base = Path(self._batch_settings.get("last_export_dir") or pdf.parent)
+        self._run_tab._out_edit.setText(str(base / f"{stem}_rlpe_out"))
         self._run_tab.apply_settings(self._batch_settings)
         # Force start
         # The Run tab has a private _on_start(); we emulate it

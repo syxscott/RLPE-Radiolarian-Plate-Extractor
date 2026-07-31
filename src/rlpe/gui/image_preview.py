@@ -267,11 +267,19 @@ class ImagePreviewWidget(QWidget):
         font = QFont()
         font.setPointSize(10)
         font.setBold(True)
+        # audit 2026-07-31: guard against coordinate-space mismatch.
+        # Rows carry PAGE-level bboxes; if the loaded image is a panel
+        # crop (no figure image available), the rects land far outside
+        # the image. Skip rects that start beyond the image bounds.
+        img_w = self._pixmap.width() if self._pixmap is not None else 0
+        img_h = self._pixmap.height() if self._pixmap is not None else 0
         for i, bbox in enumerate(self._bboxes):
             coords = bbox.get("bbox") or bbox.get("bounding_box")
             if not coords or len(coords) != 4:
                 continue
             x, y, w, h = coords
+            if img_w > 0 and img_h > 0 and (x >= img_w or y >= img_h):
+                continue
             colour = palette[i % len(palette)]
             pen = QPen(colour, 3)
             rect_item = QGraphicsRectItem(x, y, w, h)

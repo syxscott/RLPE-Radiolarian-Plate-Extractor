@@ -621,14 +621,30 @@ class ResultsTab(QWidget):
         if not row:
             return
         self._render_detail(row)
-        # Load image preview
+        # Load image preview. audit 2026-07-31: the row bbox is in
+        # PAGE/FIURE coordinates but panel_path is a PANEL CROP —
+        # overlaying page coords on the crop drew rectangles far
+        # outside the image (real data: 4/5 rows invisible). Prefer
+        # the figure-level image for bbox overlays; a crop is shown
+        # without overlays.
+        md = row.get("metadata") or {}
+        figure_img = None
+        for key in ("figure_image_path", "primary_image", "image_path"):
+            v = md.get(key)
+            if v and Path(str(v)).exists():
+                figure_img = Path(str(v))
+                break
+        if figure_img is not None:
+            self._preview.set_image(figure_img)
+            self._preview.set_bboxes([row])  # bbox is figure-level
+            return
         panel_path = row.get("panel_path")
         if panel_path:
             p = Path(panel_path)
             if p.exists():
                 self._preview.set_image(p)
-                bbox_list = [row]  # the row's bbox is one rectangle
-                self._preview.set_bboxes(bbox_list)
+                # crop coords are NOT page coords — no overlay
+                self._preview.set_bboxes([])
                 return
         self._preview.clear()
         self._preview.set_bboxes([])

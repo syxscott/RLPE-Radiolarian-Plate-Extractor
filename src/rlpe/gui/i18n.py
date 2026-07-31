@@ -219,13 +219,26 @@ def _apply_registry() -> None:
     app = QApplication.instance()
     if app is None:
         return
-    all_widgets = set(id(w) for w in app.allWidgets())
+    # audit 2026-07-31: the prune used ``app.findChild(QWidget, name)``
+    # — findChild searches the QObject tree rooted at the application,
+    # but PARENTLESS top-level widgets are NOT in that tree, so every
+    # registry entry was pruned and language switches silently stopped
+    # re-texting the UI (tests construct widgets without parents).
+    # allWidgets() returns every widget including top-levels; index by
+    # objectName and prune only entries whose widget is truly gone.
+    all_widgets = {w.objectName(): w for w in app.allWidgets()}
     # Rebuild registry keeping only entries whose widgets are still alive
     kept, removed = [], 0
     for entry in _REGISTRY:
         object_name = entry[0]
-        w = app.findChild(QWidget, object_name) if object_name else None
-        if w is not None and id(w) in all_widgets:
+        lookup_name = object_name
+        # comboItem entries register as "<combo>:item:<index>" while
+        # the widget's objectName is just "<combo>" — strip the suffix
+        # before the lookup (mirrors _apply_to_one).
+        if object_name and ":item:" in object_name:
+            lookup_name = object_name.rsplit(":item:", 1)[0]
+        w = all_widgets.get(lookup_name) if lookup_name else None
+        if w is not None:
             kept.append(entry)
         else:
             removed += 1

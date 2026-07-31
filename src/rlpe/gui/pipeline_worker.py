@@ -173,7 +173,16 @@ class PipelineWorker(QThread):
                 )
                 return
             self.status_changed.emit("failed")
-            self.failed.emit(f"{type(exc).__name__}: {exc}\n\n{tb}")
+            # audit 2026-07-31: a full traceback (tens of KB) in the
+            # error dialog overflowed the QMessageBox and interrupted
+            # batch runs once per failed job. Truncate; the full
+            # traceback stays in the GUI log.
+            msg = f"{type(exc).__name__}: {exc}"
+            if tb:
+                tb_tail = tb.strip().splitlines()
+                tail = tb_tail[-6:]
+                msg = f"{msg}\n\n… (see log for full traceback)\n" + "\n".join(tail)
+            self.failed.emit(msg)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -275,6 +284,10 @@ class PipelineWorker(QThread):
             "m3_multi_plate_enrich": bool(s.get("m3_multi_plate_enrich", True)),
             "use_paleodb": bool(s.get("use_paleodb", True)),
             "paleodb_max_occurrences": paleodb_max_occ,
+            # audit 2026-07-31: paleodb_endpoint was saved by the
+            # Settings tab but never forwarded — a custom endpoint was
+            # silently ignored.
+            "paleodb_endpoint": str(s.get("paleodb_endpoint") or "https://paleobiodb.org/data1.2"),
             "MiniMax_max_retries": int(s.get("MiniMax_max_retries", 3)),
             "MiniMax_timeout_sec": int(s.get("MiniMax_timeout_sec", 60)),
             "MiniMax_thinking_budget_tokens": int(s.get("MiniMax_thinking_budget", 1024)),
@@ -316,10 +329,24 @@ class PipelineWorker(QThread):
         # so the pipeline's ``pdf_dir.glob("*.pdf")`` finds it.
         in_dir = self._work_dir / "input"
         in_dir.mkdir(parents=True, exist_ok=True)
+        # audit 2026-07-31: CLEAR the input dir first. The pipeline
+        # globs *.pdf and never cleans up; a work_dir reused across
+        # batch jobs (the old flow shared one output dir for the whole
+        # batch) accumulated every previous PDF and re-processed them
+        # all. With per-job dirs this is belt-and-braces, but a stale
+        # input dir must never silently add papers to a run.
+        import shutil
+
+        for stale in in_dir.iterdir():
+            try:
+                if stale.is_file():
+                    stale.unlink()
+                elif stale.is_dir():
+                    shutil.rmtree(stale)
+            except OSError:
+                pass
         target = in_dir / self._pdf_path.name
         if target.resolve() != self._pdf_path.resolve():
-            import shutil
-
             shutil.copy2(self._pdf_path, target)
         return cfg
 

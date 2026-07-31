@@ -786,7 +786,11 @@ class RunTab(QWidget):
             # (e.g. "matched 95% of panels") which would raise
             # ValueError from the underlying QString formatter. Escape
             # any literal '%' before passing the message in.
-            safe_message = (message or "").replace("%", "%%")
+            # audit 2026-07-31: QProgressBar.setFormat does NOT
+            # interpret % in the message text (only the %v/%m tokens);
+            # escaping to %% made the user see "matched 95%% of
+            # panels". Pass the message through unchanged.
+            safe_message = message or ""
             self._progress.setFormat(f"{{value}} / {{maxValue}}  ·  {{message}}".replace("{value}", "%v").replace("{maxValue}", "%m").replace("{message}", safe_message))
         else:
             self._progress.setRange(0, 0)

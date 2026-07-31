@@ -192,10 +192,13 @@ def tr_label(
     it on language change.
     """
     lbl = QLabel(parent)
-    key = object_name or text_key
     if align is not None:
         lbl.setAlignment(align)
-    _set_text(lbl, "text", key)
+    # audit 2026-07-31: object_name must NOT replace the translation
+    # key — the label showed the raw "⟦<object_name>⟧" sentinel.
+    lbl.setObjectName(object_name or text_key)
+    i18n.register_widget_text(object_name or text_key, "text", text_key)
+    lbl.setText(i18n._tr(text_key))
     return lbl
 
 
@@ -208,14 +211,15 @@ def tr_button(
     min_height: int = 32,
 ) -> QPushButton:
     btn = QPushButton(parent)
-    key = object_name or text_key
-    btn.setObjectName(key)
+    # audit 2026-07-31: object_name must NOT replace the translation
+    # key — tr_label("runtab.status.idle", object_name="runtab.status_label")
+    # used to look up the translation under the OBJECT NAME and showed
+    # the raw "⟦runtab.status_label⟧" sentinel.
+    btn.setObjectName(object_name or text_key)
     btn.setProperty("object_name_attr", object_name_attr)
     btn.setMinimumHeight(min_height)
-    i18n.register_widget_text(key, "text", key)
-    i18n._tr(key)  # force registration
-    # We can't call _set_text because it would re-set the objectName.
-    btn.setText(i18n._tr(key))
+    i18n.register_widget_text(object_name or text_key, "text", text_key)
+    btn.setText(i18n._tr(text_key))
     return btn
 
 
@@ -233,10 +237,12 @@ def tr_checkbox(
     like "Enable PBDB enrichment (taxonomy + occurrences)" wrap
     cleanly rather than clipping at the QSS 22-px checkbox height."""
     cb = QCheckBox(parent)
-    key = object_name or text_key
     cb.setChecked(checked)
     cb.setMinimumHeight(min_height)
-    _set_text(cb, "text", key)
+    # audit 2026-07-31: same key/objectName split as tr_label
+    cb.setObjectName(object_name or text_key)
+    i18n.register_widget_text(object_name or text_key, "text", text_key)
+    cb.setText(i18n._tr(text_key))
     return cb
 
 
@@ -247,8 +253,9 @@ def tr_groupbox(
     parent: Optional[QWidget] = None,
 ) -> QGroupBox:
     gb = QGroupBox(parent)
-    key = object_name or text_key
-    _set_text(gb, "title", key)
+    gb.setObjectName(object_name or text_key)
+    i18n.register_widget_text(object_name or text_key, "title", text_key)
+    gb.setTitle(i18n._tr(text_key))
     return gb
 
 
@@ -272,13 +279,13 @@ def tr_lineedit(
     still looks balanced with adjacent widgets.
     """
     le = QLineEdit(text, parent)
-    key = object_name or placeholder_key
     le.setMinimumWidth(min_width)
     le.setMinimumHeight(min_height)
     _ensure_size_hint(le, min_height)
-    le.setObjectName(key)
-    i18n.register_widget_text(key, "placeholderText", key)
-    le.setPlaceholderText(i18n._tr(key))
+    # audit 2026-07-31: same key/objectName split as the other helpers
+    le.setObjectName(object_name or placeholder_key)
+    i18n.register_widget_text(object_name or placeholder_key, "placeholderText", placeholder_key)
+    le.setPlaceholderText(i18n._tr(placeholder_key))
     return le
 
 
