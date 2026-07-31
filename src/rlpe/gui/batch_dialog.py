@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 
 from .constants import BATCH_DIALOG_DEFAULT_SIZE
 from .i18n_widgets import tr_button, tr_checkbox, tr_groupbox, tr_label
+from .outdir_probe import probe_output_dir_writable
 from .styles import SPACE_M, SPACE_S
 from .utils import file_size_human, get_gui_logger, short_path
 from . import i18n
@@ -319,33 +320,18 @@ class BatchDialog(QDialog):
         # read-only mount or a directory where the user lacks write
         # permission; the failure would surface only when the first
         # job tries to write a JSON, which is harder to recover from.
-        import os as _os_probe
-        try:
-            # Probe actual writability by creating a temp file (not just checking
-            # permissions, which can lie on network/overlay filesystems).  Use
-            # os.fsync() on the open file handle rather than os.sync() to flush
-            # only this file's kernel buffers, not the entire system.
-            _probe_path = out_dir / f".rlpe_probe_{os.getpid()}.tmp"
-            try:
-                _fd = _os_probe.open(_probe_path, _os_probe.O_CREAT | _os_probe.O_WRONLY, 0o644)
-                try:
-                    _os_probe.write(_fd, b"ok")
-                    _os_probe.fsync(_fd)  # flush this file's buffers to disk only
-                finally:
-                    _os_probe.close(_fd)
-                if not _os_probe.access(out_dir, _os_probe.W_OK):
-                    raise OSError(f"Directory is not writable: {out_dir}")
-            finally:
-                try:
-                    _probe_path.unlink()
-                except OSError:
-                    pass
-        except OSError as exc:
+        # audit 2026-07-31: the probe moved to ``outdir_probe`` (pure
+        # function, unit-testable without Qt). The old inline probe
+        # used ``os.getpid()`` (never imported — NameError) and
+        # ``out_dir / ...`` on a ``str`` (TypeError), crashing the
+        # dialog before ``batch_started`` could emit.
+        probe_err = probe_output_dir_writable(out_dir)
+        if probe_err is not None:
             QMessageBox.warning(
                 self,
                 i18n._tr("batch.no_outdir.title"),
                 i18n._tr("batch.outdir.not_writable").format(
-                    path=out_dir, error=f"{type(exc).__name__}: {exc}",
+                    path=out_dir, error=probe_err,
                 ),
             )
             return

@@ -573,7 +573,10 @@ class TestStage3BboxCropsSourceGuard:
         # Find the _process_one_pdf_od method body (use the next
         # top-level def as the end-marker; the function is large
         # ~17k chars so a 5000-char slice misses the call site).
-        marker = "def _process_one_pdf_od("
+        # audit 2026-07-31: the per-PDF body moved to
+        # ``_process_one_pdf_od_inner`` (the public entry now only
+        # applies the GROBID↔OD cycle guard).
+        marker = "def _process_one_pdf_od_inner("
         i = text.find(marker)
         assert i > 0
         # Find the next ``def `` after the marker at column 4.

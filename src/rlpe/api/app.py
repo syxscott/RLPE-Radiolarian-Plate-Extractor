@@ -669,6 +669,13 @@ async def upload_pdf(
             "created_at": now,
             "filename": safe_filename,
             "progress": 0,
+            # audit 2026-07-31: ``_root`` was only ever set for
+            # CLI-discovered jobs, so ``delete_files=true`` silently
+            # left uploaded jobs' files on disk while the API claimed
+            # "deleted". Web uploads run under ``service_work/<jid>/``;
+            # record that root so ``_purge_job`` can remove it (the
+            # safe-root / CLI-shared checks below still apply).
+            "_root": str(WORK_DIR / job_id),
         }
     background_tasks.add_task(_run_job, job_id, save_path, job_options)
     return JobStatus(job_id=job_id, status="queued", created_at=now, filename=safe_filename)
@@ -775,7 +782,17 @@ def job_result(job_id: str):
     # audit 2026-07-26: return a shallow copy so concurrent mutation
     # of the cached job dict (e.g. a worker finalising the result list)
     # can't race with the response serialisation.
-    return {**job, "result": list(job.get("result") or [])}
+    # audit 2026-07-31: strip non-JSON-serialisable internal plumbing.
+    # ``RESULT_CACHE[job_id]["MiniMax_fallback_handler"]`` holds a
+    # FallbackHandler dataclass whose ``on_error`` field is a function;
+    # serialising it raised TypeError → 500 on every MiniMax run, so
+    # the Web UI could never display results. UI-facing fields are
+    # all in the whitelist below.
+    _UI_FIELDS = ("job_id", "status", "detail", "created_at", "filename",
+                  "progress", "stage", "elapsed_sec")
+    view = {k: job[k] for k in _UI_FIELDS if k in job}
+    view["result"] = list(job.get("result") or [])
+    return view
 
 
 @app.get("/jobs/{job_id}/export.xlsx")

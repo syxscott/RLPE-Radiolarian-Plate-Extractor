@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import functools
 from pathlib import Path
 from typing import Any
 
@@ -728,7 +729,18 @@ class RunTab(QWidget):
         self._worker.status_changed.connect(self._on_status)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
-        self._worker.finished.connect(self._on_thread_done)
+        # audit 2026-07-31: bind the worker instance into the slot.
+        # The plain ``self._on_thread_done`` was connected WITHOUT the
+        # worker reference; in batch mode MainWindow starts the next
+        # worker synchronously from ``_on_job_finished``, so by the
+        # time THIS worker's ``finished`` fires, ``self._worker``
+        # already points at the next job — and the old handler
+        # quit()+terminate()d the *new* worker (batch job 2 died
+        # ~2s in). The partial carries the owning worker so the
+        # handler can only ever touch its own thread.
+        self._worker.finished.connect(
+            functools.partial(self._on_thread_done, self._worker)
+        )
         # Toggle buttons
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
@@ -834,50 +846,56 @@ class RunTab(QWidget):
         if self._current_job_id:
             self.job_failed.emit(self._current_job_id, error)
 
-    def _on_thread_done(self) -> None:
-        # ``self._worker = None`` which left the worker object alive
-        # until Python's GC ran. If the user closed the window (or
-        # hit Ctrl-C) before Python GC, the QThread's C++ object
-        # was still running and the RuntimeError "QThread: Destroyed
-        # while thread is still running" was raised at process exit.
-        # Fixed: call quit() (asks the thread's event loop to stop)
-        # and wait() (block until the thread actually exits) before
-        # dropping the reference.
-        worker = self._worker
-        was_cancelled = worker is not None and worker.isInterruptionRequested()
+    def _on_thread_done(self, worker: PipelineWorker | None = None) -> None:
+        # audit 2026-07-31: the handler now receives the worker that
+        # actually finished (bound via functools.partial at connect
+        # time). It must NEVER touch ``self._worker`` — in batch mode
+        # MainWindow starts the next job synchronously from
+        # ``_on_job_finished``, so by the time this slot runs
+        # ``self._worker`` points at the NEXT job. Acting on
+        # ``self._worker`` quit()+terminate()d the next job (batch
+        # job 2 died ~2s in) and disconnected its signals.
+        if worker is None:
+            return
+        was_cancelled = worker.isInterruptionRequested()
         # Phase 56 audit: disconnect signals before cleanup so late
         # signals from a dying thread don't reach stale slots.
-        if worker is not None:
-            try:
-                worker.progress.disconnect(self._on_progress)
-                worker.log_line.disconnect(self._log_to_statusbar)
-                worker.status_changed.disconnect(self._on_status)
-                worker.finished_ok.disconnect(self._on_finished)
-                worker.failed.disconnect(self._on_failed)
-                worker.finished.disconnect(self._on_thread_done)
-            except (TypeError, RuntimeError):
-                pass  # already disconnected or worker partially deleted
-        if worker is not None and worker.isRunning():
+        try:
+            worker.progress.disconnect(self._on_progress)
+            worker.log_line.disconnect(self._log_to_statusbar)
+            worker.status_changed.disconnect(self._on_status)
+            worker.finished_ok.disconnect(self._on_finished)
+            worker.failed.disconnect(self._on_failed)
+            worker.finished.disconnect()
+        except (TypeError, RuntimeError):
+            pass  # already disconnected or worker partially deleted
+        if worker.isRunning():
             worker.quit()
             if not worker.wait(2000):  # 2s timeout
                 # Thread didn't exit cleanly; ask it to terminate.
                 worker.terminate()
                 worker.wait(500)
-        self._worker = None
-        self._current_job_id = None
-        self._start_btn.setEnabled(bool(self._path_edit.text().strip()))
-        self._cancel_btn.setEnabled(False)
-        self._progress.setRange(0, 1)
-        self._progress.setValue(1)
-        # Phase 56 audit: reset status label QSS property to idle so colour
-        # reverts from "running" (blue) back to neutral after job completes.
-        self._status_label.setProperty("status", "idle")
-        self._status_label.style().unpolish(self._status_label)
-        self._status_label.style().polish(self._status_label)
-        # reset to the empty-state hint) so the user can read the
-        # completion message.
-        self._progress_msg.setText(i18n._tr("runtab.progress.done"))
-        if was_cancelled:
-            self._status_label.setText(i18n._tr("runtab.status.cancelled"))
-        else:
-            self._status_label.setText(i18n._tr("runtab.status.done"))
+        # Only reset the shared state when this worker is still the
+        # active one (single-job mode). In batch mode the next worker
+        # is already running; clearing its bookkeeping would corrupt
+        # the batch state machine.
+        if self._worker is worker:
+            self._worker = None
+            self._current_job_id = None
+            self._start_btn.setEnabled(bool(self._path_edit.text().strip()))
+            self._cancel_btn.setEnabled(False)
+            self._progress.setRange(0, 1)
+            self._progress.setValue(1)
+            # Phase 56 audit: reset status label QSS property to idle so
+            # colour reverts from "running" (blue) back to neutral after
+            # the job completes.
+            self._status_label.setProperty("status", "idle")
+            self._status_label.style().unpolish(self._status_label)
+            self._status_label.style().polish(self._status_label)
+            # reset to the empty-state hint) so the user can read the
+            # completion message.
+            self._progress_msg.setText(i18n._tr("runtab.progress.done"))
+            if was_cancelled:
+                self._status_label.setText(i18n._tr("runtab.status.cancelled"))
+            else:
+                self._status_label.setText(i18n._tr("runtab.status.done"))

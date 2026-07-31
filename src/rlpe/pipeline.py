@@ -115,6 +115,15 @@ class RadiolarianPipeline:
         # infinite recursion. All reads and writes to the cycle-guard
         # set MUST go through ``self._grobid_lock``.
         self._grobid_lock = threading.Lock()
+        # audit 2026-07-31: per-thread fallback depth for the
+        # GROBID↔OD recursion. The ``_grobid_in_progress`` guard only
+        # covers the OD-failure branch (L956); the OD "success but
+        # zero results" branches (L1017, L1490) re-enter GROBID
+        # without any guard, so GROBID-down + OD-empty looped
+        # indefinitely (RecursionError after hours). The depth
+        # counter bounds the whole fallback chain to one
+        # GROBID→OD→GROBID hop (depth 1 → 2 → 3 is refused).
+        self._od_grobid_depth = threading.local()
         # Phase 27: forward the configured OCR language list. Default
         # ``"en"`` keeps the legacy English-only flow identical. JA
         # papers pass ``--ocr-lang en,ja`` and EasyOCR / PaddleOCR both
@@ -939,7 +948,61 @@ class RadiolarianPipeline:
         )
         return chosen
 
+    def _enter_od_grobid_guard(self, paper_id: str, path_name: str) -> bool:
+        """Enter the OD↔GROBID fallback chain; False means the chain is
+        already too deep and the caller must NOT recurse further."""
+        depth = getattr(self._od_grobid_depth, "depth", 0) + 1
+        self._od_grobid_depth.depth = depth
+        if depth >= 3:
+            logger.warning(
+                "OD↔GROBID fallback cycle detected for %s (%s at depth=%d); "
+                "abandoning recursive fallback.",
+                paper_id,
+                path_name,
+                depth,
+            )
+            return False
+        return True
+
+    def _exit_od_grobid_guard(self) -> None:
+        depth = getattr(self._od_grobid_depth, "depth", 1)
+        self._od_grobid_depth.depth = max(depth - 1, 0)
+
+    def _make_od_grobid_cycle_stub(
+        self, paper_id: str, pdf_path: Path, source: str
+    ) -> dict[str, Any]:
+        """Ingestion-failure stub emitted when the GROBID↔OD fallback
+        chain is cut by the depth guard — the failure must stay visible
+        in run_output.warnings instead of producing 0 rows with 0
+        diagnostics (mirrors the ``_ingestion_*`` stub shape)."""
+        return {
+            "paper_id": paper_id,
+            "figure_id": f"_ingestion_{source}_cycle",
+            "panel_id": None,
+            "species": None,
+            "panel_path": None,
+            "bbox": None,
+            "confidence": 0.0,
+            "label_text": None,
+            "caption_snippet": pdf_path.name,
+            "ocr_text": None,
+            "paper_metadata": None,
+            "metadata": {
+                "extraction_source": f"{source}_cycle",
+                "ingestion_error": "OD↔GROBID fallback cycle detected; recursive fallback abandoned",
+                "ingestion_warning": True,
+            },
+        }
+
     def _process_one_pdf_od(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+        if not self._enter_od_grobid_guard(paper_id, "OD"):
+            return [self._make_od_grobid_cycle_stub(paper_id, pdf_path, "od")]
+        try:
+            return self._process_one_pdf_od_inner(paper_id, pdf_path)
+        finally:
+            self._exit_od_grobid_guard()
+
+    def _process_one_pdf_od_inner(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         od_result = self.od_extractor.extract(pdf_path, self.config.resolved_output_dir())
 
         if not od_result.success:
@@ -2390,6 +2453,18 @@ class RadiolarianPipeline:
     # -----------------------------------------------------------------------
 
     def _process_one_pdf_grobid(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+        # audit 2026-07-31: depth-guard the GROBID entry too. The
+        # OD "success but zero results" branches re-enter this
+        # method; without a bound here, GROBID-down + OD-empty
+        # recursed GROBID→OD→GROBID→… forever.
+        if not self._enter_od_grobid_guard(paper_id, "GROBID"):
+            return [self._make_od_grobid_cycle_stub(paper_id, pdf_path, "grobid")]
+        try:
+            return self._process_one_pdf_grobid_impl(paper_id, pdf_path)
+        finally:
+            self._exit_od_grobid_guard()
+
+    def _process_one_pdf_grobid_impl(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         # Phase 43: fast-fail when GROBID is offline. The GrobidClient
         # retry loop burns ``max_retries * timeout`` seconds (up to
         # 900s by default) hammering a closed port. Probe first; if

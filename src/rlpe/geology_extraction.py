@@ -180,9 +180,32 @@ _ISOTOPE_PATTERN = re.compile(
     r")",
     re.IGNORECASE,
 )
+# audit 2026-07-31: the vocabulary contains three-letter acronyms
+# (CIE / LIP / OAE) whose bare substrings appear inside ordinary
+# English words — "species" contains "cie", "slip"/"eclipse" contain
+# "lip", and a "lip of the aperture" is a real morphological term in
+# foraminiferal/radiolarian descriptions. Matching them case-
+# insensitively without word boundaries stamped a bogus chemostrat
+# record ("cie" / "LIP") onto nearly every SEM plate caption (they
+# all contain the word "species"). The acronyms now match ONLY in
+# full upper case at letter boundaries; the longer phrases keep
+# their case-insensitive matching.
+_CHEMOSTRAT_ACRONYMS = ("CIE", "LIP", "OAE")
+_CHEMOSTRAT_PHRASES = tuple(
+    t for t in _CHEMOSTRAT_VOCAB if t not in _CHEMOSTRAT_ACRONYMS
+)
 CHEMOSTRAT_PATTERN = re.compile(
-    r"(?:" + "|".join(re.escape(t) for t in _CHEMOSTRAT_VOCAB) + r")",
-    re.IGNORECASE,
+    # Acronyms: case-SENSITIVE (full upper case only) at letter
+    # boundaries — "species" contains "cie", "lip of the aperture"
+    # is a real morphology term. Sorted longest-first so e.g. "OAE"
+    # doesn't shadow nothing (kept explicit for clarity).
+    r"(?<![A-Za-z])(?:"
+    + "|".join(re.escape(t) for t in _CHEMOSTRAT_ACRONYMS)
+    + r")(?![A-Za-z])"
+    # Longer phrases: case-insensitive as before.
+    r"|(?i:"
+    + "|".join(re.escape(t) for t in _CHEMOSTRAT_PHRASES)
+    + r")"
 )
 
 # ``facies`` is the standard sedimentological facies vocabulary.
@@ -502,6 +525,35 @@ class GeologyRecord:
     redox: str | None = None
     chemostrat: str | None = None
     facies: str | None = None
+
+    def has_geology_content(self) -> bool:
+        """True if the record carries at least one substantive geology
+        field. Used to drop records that are all-None except for
+        bookkeeping fields (section_title / evidence_text) — those are
+        noise, not geology links (audit 2026-07-31)."""
+        return any(
+            v not in (None, "", [])
+            for v in (
+                self.age,
+                self.chronostratigraphy,
+                self.ma_top,
+                self.ma_base,
+                self.ma_mid,
+                self.formation,
+                self.group,
+                self.member,
+                self.lithology,
+                self.locality,
+                self.country,
+                self.biozone,
+                self.latitude,
+                self.longitude,
+                self.paleoenvironment,
+                self.redox,
+                self.chemostrat,
+                self.facies,
+            )
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1154,7 +1206,21 @@ def link_panels_to_geology(
         # evidence_text) don't pollute the cached originals.
         for r in _cap_cache[caption]:
             r2 = replace(r)
-            r2.confidence = max(r2.confidence, 0.6)
+            # audit 2026-07-31: drop records that carry NO geology
+            # fields at all. Previously a regex hit on a peripheral
+            # field (e.g. chemostrat="cie" from the word "species")
+            # produced an otherwise-empty record that was kept and
+            # shipped to every panel of the figure.
+            if not r2.has_geology_content():
+                continue
+            # audit 2026-07-31: do NOT unconditionally raise the
+            # confidence to 0.6. That made empty/weak records look
+            # trustworthy (real runs shipped "all fields None,
+            # confidence 0.6" links) and destroyed the
+            # country-centroid 0.3 low-confidence signal. The
+            # extractor's own confidence (0.3 / 0.55 / 0.7) is the
+            # honest value; per-panel caption context is not
+            # evidence of geology.
             r2.evidence_text = caption[:300]
             records.append(r2)
         # 2) If the caption is short ("Auto-generated figure for
