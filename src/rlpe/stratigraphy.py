@@ -264,6 +264,75 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "ma_top": 201.4,
         "ma_base": 251.9,
     },
+    # Mesozoic epochs / series (ICS 2023) — audit 2026-07-31: without
+    # these, "Late Triassic" / "Upper Cretaceous" etc. classified as the
+    # whole period and the Early/Middle/Late modifier was silently
+    # dropped, so Ma ranges were the full-period interval (up to
+    # ~25 Myr too wide, midpoints off by ~20 Myr).
+    {
+        "name": "Early Triassic",
+        "cn": "早三叠世",
+        "rank": "epoch",
+        "parent": "Triassic",
+        "ma_top": 247.2,
+        "ma_base": 251.9,
+    },
+    {
+        "name": "Middle Triassic",
+        "cn": "中三叠世",
+        "rank": "epoch",
+        "parent": "Triassic",
+        "ma_top": 237.0,
+        "ma_base": 247.2,
+    },
+    {
+        "name": "Late Triassic",
+        "cn": "晚三叠世",
+        "rank": "epoch",
+        "parent": "Triassic",
+        "ma_top": 201.4,
+        "ma_base": 237.0,
+    },
+    {
+        "name": "Early Jurassic",
+        "cn": "早侏罗世",
+        "rank": "epoch",
+        "parent": "Jurassic",
+        "ma_top": 174.7,
+        "ma_base": 201.4,
+    },
+    {
+        "name": "Middle Jurassic",
+        "cn": "中侏罗世",
+        "rank": "epoch",
+        "parent": "Jurassic",
+        "ma_top": 161.5,
+        "ma_base": 174.7,
+    },
+    {
+        "name": "Late Jurassic",
+        "cn": "晚侏罗世",
+        "rank": "epoch",
+        "parent": "Jurassic",
+        "ma_top": 145.0,
+        "ma_base": 161.5,
+    },
+    {
+        "name": "Lower Cretaceous",
+        "cn": "早白垩世",
+        "rank": "epoch",
+        "parent": "Cretaceous",
+        "ma_top": 100.5,
+        "ma_base": 139.8,
+    },
+    {
+        "name": "Upper Cretaceous",
+        "cn": "晚白垩世",
+        "rank": "epoch",
+        "parent": "Cretaceous",
+        "ma_top": 66.0,
+        "ma_base": 100.5,
+    },
     {
         "name": "Jurassic",
         "cn": "侏罗纪",
@@ -769,6 +838,90 @@ _MODIFIER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# audit 2026-07-31: common-language age names that do not equal any
+# ICS row name but map onto a known epoch / series. "Late Permian" is
+# Lopingian, "上二叠统" is the Chinese lithostratigraphic name for
+# Lopingian, etc. Keys are lower-cased.
+_ICS_ALIASES: dict[str, str] = {
+    # Permian: Late/Middle/Early → series names
+    "late permian": "Lopingian",
+    "middle permian": "Guadalupian",
+    "early permian": "Cisuralian",
+    # Carboniferous
+    "late carboniferous": "Pennsylvanian",
+    "early carboniferous": "Mississippian",
+    # Cretaceous: Late/Early are the common English usage for the
+    # Lower/Upper series
+    "late cretaceous": "Upper Cretaceous",
+    "early cretaceous": "Lower Cretaceous",
+    # Chinese lithostratigraphic series names (统)
+    "上二叠统": "Lopingian",
+    "中二叠统": "Guadalupian",
+    "下二叠统": "Cisuralian",
+    "上石炭统": "Pennsylvanian",
+    "下石炭统": "Mississippian",
+    "上白垩统": "Upper Cretaceous",
+    "下白垩统": "Lower Cretaceous",
+    "上侏罗统": "Late Jurassic",
+    "中侏罗统": "Middle Jurassic",
+    "下侏罗统": "Early Jurassic",
+    "上三叠统": "Late Triassic",
+    "中三叠统": "Middle Triassic",
+    "下三叠统": "Early Triassic",
+}
+
+# Range form: "Late Jurassic to Early Cretaceous", "Middle to Late
+# Jurassic", "late Valanginian to early Hauterivian" — the most common
+# way radiolarian papers express a stratigraphic span.
+_AGE_RANGE_RE = re.compile(r"^(.+?)\s+(?:to|and|until)\s+(.+)$", re.IGNORECASE)
+
+
+def _classify_age_range(raw: str) -> AgeClassification | None:
+    """Classify "X to Y" spans as the union interval of both ends."""
+    m = _AGE_RANGE_RE.match(raw)
+    if not m:
+        return None
+    left_raw = m.group(1).strip()
+    right_raw = m.group(2).strip()
+    left = classify_age_string(left_raw)
+    right = classify_age_string(right_raw)
+    # "Middle to Late Jurassic" — the left end is a BARE modifier
+    # ("Middle"), not a full name; fold it onto the right end's
+    # period so it resolves to "Middle Jurassic".
+    if (
+        left.confidence <= 0
+        and right.confidence > 0
+        and left_raw.lower() in {"early", "middle", "late", "lower", "upper"}
+    ):
+        anchor = right.period or right.epoch or right.age
+        if anchor:
+            folded = classify_age_string(f"{left_raw} {anchor}")
+            if folded.confidence > 0:
+                left = folded
+    if left.confidence <= 0 or right.confidence <= 0:
+        return None
+    tops = [v for v in (left.ma_top, right.ma_top) if v is not None]
+    bases = [v for v in (left.ma_base, right.ma_base) if v is not None]
+    if not tops or not bases:
+        # no numeric bounds → keep the raw string with the endpoints'
+        # names but no Ma (better than a misleading empty confidence=0)
+        return AgeClassification(
+            raw=raw,
+            period=left.period or right.period,
+            rank="range",
+            confidence=min(left.confidence, right.confidence),
+        )
+    period = left.period if left.period == right.period else None
+    return AgeClassification(
+        raw=raw,
+        period=period,
+        rank="range",
+        confidence=min(left.confidence, right.confidence),
+        ma_top=min(tops),
+        ma_base=max(bases),
+        ma_mid=(min(tops) + max(bases)) / 2.0,
+    )
+
 
 def classify_age_string(text: str) -> AgeClassification:
     """Map a free-form age string to ``(period, epoch, age)``.
@@ -777,10 +930,12 @@ def classify_age_string(text: str) -> AgeClassification:
     --------
     >>> classify_age_string("Changhsingian").age
     'Changhsingian'
-    >>> classify_age_string("Late Permian").period
-    'Permian'
+    >>> classify_age_string("Late Permian").epoch
+    'Lopingian'
     >>> classify_age_string("上二叠统").period
     'Permian'
+    >>> classify_age_string("Late Jurassic to Early Cretaceous").ma_base > 150
+    True
     """
     if not text or not text.strip():
         return AgeClassification(raw="", confidence=0.0)
@@ -791,15 +946,37 @@ def classify_age_string(text: str) -> AgeClassification:
     # ``Late Permian``. Without this the modifier would be eaten but
     # the body would be ``-Permian`` which fails the ICS_INDEX lookup.
     raw = _normalise_modifier_sep(raw)
+    # 1) Full-string hit first: epoch entries are named "Late Triassic"
+    #    etc., so the modifier must NOT be stripped before this lookup.
+    hit = (
+        ICS_INDEX.get(raw)
+        or ICS_INDEX.get(raw.lower())
+        or ICS_INDEX.get(raw.capitalize())
+    )
+    if hit:
+        return _build_classification(raw, hit, raw)
+    # 2) Common-language aliases ("Late Permian" → Lopingian, Chinese
+    #    统 names, …).
+    alias = _ICS_ALIASES.get(raw) or _ICS_ALIASES.get(raw.lower())
+    if alias:
+        target = ICS_INDEX.get(alias) or ICS_INDEX.get(alias.lower())
+        if target:
+            return _build_classification(raw, target, alias)
+    # 3) Range form "X to Y" — must run BEFORE modifier stripping so
+    #    "Late Jurassic to Early Cretaceous" isn't eaten by the
+    #    leading-modifier rule.
+    range_cls = _classify_age_range(raw)
+    if range_cls is not None:
+        return range_cls
+    # 4) Strip the leading modifier and look up the bare name.
     body = _MODIFIER_PATTERN.sub("", raw).strip()
-    # Direct hit
     hit = ICS_INDEX.get(body) or ICS_INDEX.get(body.lower()) or ICS_INDEX.get(body.capitalize())
     if hit:
         return _build_classification(raw, hit, body)
     # Try PBDB fallback for unusual names
-    pbdb = _pbdb_lookup(body)
+    pbdb = _pbdb_lookup(body or raw)
     if pbdb:
-        return _build_classification(raw, pbdb, body, confidence=0.85)
+        return _build_classification(raw, pbdb, body or raw, confidence=0.85)
     return AgeClassification(raw=raw, confidence=0.0)
 
 
