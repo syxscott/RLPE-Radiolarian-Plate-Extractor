@@ -779,30 +779,13 @@ def test_dotenv_loader_overrides_project_keys_even_when_os_env_set(monkeypatch, 
 
     import os
 
-    _RLPE_PROJECT_OVERRIDE_KEYS = {
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_MODEL",
-        "MiniMax_API_KEY",
-        "MiniMax_MODEL",
-        "MiniMax_BASE_URL",
-    }
-    _force_override = os.environ.get("RLPE_FORCE_ENV_OVERRIDE") == "1"
-    with env_file.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if not key:
-                continue
-            should_override = (
-                _force_override or key in _RLPE_PROJECT_OVERRIDE_KEYS or key not in os.environ
-            )
-            if should_override:
-                os.environ[key] = value
+    # audit 2026-07-31: this test used to re-implement the loader's
+    # override logic inline and assert on its own copy — the production
+    # loader could be deleted and the test still passed. Call the real
+    # production function (rlpe.env_loader.load_env_file).
+    from rlpe.env_loader import load_env_file
+
+    load_env_file(env_file)
 
     # Project-reserved keys: .env wins
     assert os.environ["ANTHROPIC_BASE_URL"] == "https://api.minimaxi.com/anthropic"
@@ -810,6 +793,10 @@ def test_dotenv_loader_overrides_project_keys_even_when_os_env_set(monkeypatch, 
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-cp-realminimax-key-from-env-file"
     # Non-project key: OS env wins (default behaviour)
     assert os.environ["HTTP_PROXY"] == "http://os-set-proxy:8080"
+
+    # MINIMAX_API_KEY must be in the override set (the CLI copy used to
+    # miss it — this guards against the key sets drifting apart again).
+    assert "MINIMAX_API_KEY" in load_env_file.__globals__["_RLPE_PROJECT_OVERRIDE_KEYS"]
 
 
 def test_dotenv_loader_force_override_flips_for_all_keys(monkeypatch, tmp_path):

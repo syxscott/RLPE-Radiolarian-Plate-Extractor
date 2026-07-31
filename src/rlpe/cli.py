@@ -19,27 +19,18 @@ import os as _os
 from pathlib import Path
 
 try:
-    from dotenv import dotenv_values, find_dotenv, load_dotenv
+    from dotenv import find_dotenv, load_dotenv
 
     _env_path = find_dotenv(usecwd=True) or str(Path(__file__).resolve().parents[2] / ".env")
     if _env_path and Path(_env_path).exists():
         # First, do the standard non-override load so unset keys come in.
         load_dotenv(_env_path, override=False)
         # Then selectively override the project's reserved keys.
-        _force_override = _os.environ.get("RLPE_FORCE_ENV_OVERRIDE") == "1"
-        _project_keys = {
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_BASE_URL",
-            "ANTHROPIC_MODEL",
-            "MiniMax_API_KEY",
-            "MiniMax_MODEL",
-            "MiniMax_BASE_URL",
-        }
-        for k, v in (dotenv_values(_env_path) or {}).items():
-            if v is None:
-                continue
-            if _force_override or k in _project_keys:
-                _os.environ[k] = v
+        # audit 2026-07-31: centralised in rlpe.env_loader — the two
+        # copies had drifted (this one missed MINIMAX_API_KEY).
+        from .env_loader import load_env_file
+
+        load_env_file(_env_path)
 except ImportError:
     pass
 

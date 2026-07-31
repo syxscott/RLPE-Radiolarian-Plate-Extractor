@@ -358,7 +358,10 @@ def test_pbdb_lookup_occurrences_decodes_short_codes():
     # Pre-write the cache file so the HTTP call short-circuits.
     import hashlib
     cache_key = hashlib.sha1(f"occs|{name.lower()}|25".encode()).hexdigest()[:16]
-    cache_file = cache_dir / f"{cache_key}.json"
+    # audit 2026-07-31: occurrence cache keys carry the pagination
+    # suffix ("_off0_lim25") — the bare key misses and the test
+    # hits the live PBDB API.
+    cache_file = cache_dir / f"{cache_key}_off0_lim25.json"
     cache_file.write_text(json.dumps(payload), encoding="utf-8")
 
     occs = pbdb.lookup_occurrences(name, max_n=25)
@@ -425,7 +428,10 @@ def test_pbdb_lookup_occurrences_accepts_long_codes():
     }
     import hashlib
     cache_key = hashlib.sha1(f"occs|{name.lower()}|25".encode()).hexdigest()[:16]
-    cache_file = cache_dir / f"{cache_key}.json"
+    # audit 2026-07-31: occurrence cache keys carry the pagination
+    # suffix ("_off0_lim25") — the bare key misses and the test
+    # hits the live PBDB API.
+    cache_file = cache_dir / f"{cache_key}_off0_lim25.json"
     cache_file.write_text(json.dumps(payload), encoding="utf-8")
 
     occs = pbdb.lookup_occurrences(name, max_n=25)
@@ -539,7 +545,10 @@ def test_pbdb_lookup_uses_show_full_param():
         ]
     }
     cache_key = hashlib.sha1(f"occs|{name.lower()}|25".encode()).hexdigest()[:16]
-    cache_file = cache_dir / f"{cache_key}.json"
+    # audit 2026-07-31: occurrence cache keys carry the pagination
+    # suffix ("_off0_lim25") — the bare key misses and the test
+    # hits the live PBDB API.
+    cache_file = cache_dir / f"{cache_key}_off0_lim25.json"
     cache_file.write_text(json.dumps(payload), encoding="utf-8")
 
     occs = pbdb.lookup_occurrences(name, max_n=25)

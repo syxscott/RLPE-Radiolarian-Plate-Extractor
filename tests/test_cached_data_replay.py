@@ -252,33 +252,66 @@ class TestM7TotalCallsReplayOnV18Cached:
         backend.total_output_tokens = 0
         backend.total_calls = 0
         backend.total_errors = 0
+        backend.failed_with_thinking = 0
+        backend.fallback_4xx_hints = 0
+        backend.max_concurrent = 8
+        backend.data_outbound_policy = "api_full"
+        import anthropic
+        from unittest.mock import MagicMock
+
+        backend._anthropic = anthropic
+        backend._client = MagicMock()
         import threading
 
         backend._lock = threading.Lock()
+        backend._sem = threading.Semaphore(backend.max_concurrent)
+        backend._thread_local = threading.local()
 
-        # Monkey-patch _call_api to simulate the fix's behavior:
-        # the real source has total_calls += 1 at the entry of
-        # each attempt. We verify the post-fix invariant directly
-        # by checking the source code's structure (a separate test
-        # in tests/test_audit_round3_low.py::TestM3BackendCallCounter
-        # already drives the real call; here we re-verify the
-        # counter semantics on a synthetic loop).
-        from types import SimpleNamespace
+        # audit 2026-07-31: this test used to increment
+        # ``backend.total_calls`` ITSELF in a loop and then assert
+        # the result — it never called the production code (classic
+        # tautology: the production retry counter could be deleted
+        # and the test still passed). Drive the REAL ``_call_api``
+        # retry loop instead: 3 retryable 500s then a success, and
+        # assert the production counter.
+        import anthropic
+        import httpx
+        from unittest.mock import MagicMock, patch
 
-        # Simulate 3 failed + 1 success attempts; track counter
-        # as the fix would.
-        for i in range(1, 4):  # 3 failed attempts
-            with backend._lock:
-                backend.total_calls += 1
-            # simulated attempt fails
-        # 4th attempt succeeds
+        attempts = {"n": 0}
+
+        def fake_create(*args, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] <= 2:
+                req = httpx.Request("POST", "http://fake")
+                resp = httpx.Response(500, request=req)
+                raise anthropic.APIStatusError(
+                    f"simulated 500 #{attempts['n']}", response=resp, body=None
+                )
+            ok_resp = MagicMock()
+            ok_resp.content = [MagicMock(
+                type="text",
+                text='{"label": "1", "species": "Test species", "confidence": 0.9}',
+            )]
+            ok_resp.id = "test-id"
+            ok_resp.model = "MiniMax-M3-fake"
+            ok_resp.usage = None
+            return ok_resp
+
+        # Patch the UNDERLYING SDK call, not _call_api — the retry
+        # loop and the total_calls counter must be the production ones.
+        backend._client.messages.create.side_effect = fake_create
+        with patch("rlpe.llm_backends.time.sleep", lambda s: None):
+            result = backend.infer_text(system_prompt="s", user_prompt="u")
+        assert result.get("species") == "Test species", result
+        # max_retries=3 → the retry loop permits 3 attempts total:
+        # 2 failures then the success on attempt 3.
+        assert attempts["n"] == 3, f"expected 3 attempts, got {attempts['n']}"
         with backend._lock:
-            backend.total_calls += 1
-        assert backend.total_calls == 4, (
-            f"After 3 failed + 1 success attempts, total_calls "
-            f"should be 4; got {backend.total_calls}. A pre-fix "
-            f"implementation would report 3 (missing the final "
-            f"failed attempt's counter)."
+            calls = backend.total_calls
+        assert calls == 3, (
+            f"After 2 failed + 1 success attempts, production "
+            f"total_calls should be 3; got {calls}."
         )
 
     def test_source_has_total_calls_at_entry_of_try(self):

@@ -44,38 +44,15 @@ if str(src_path) not in sys.path:
 # Without rule 2, an operator would point .env at MiniMax, start the
 # server, and silently get connected to the wrong endpoint because the
 # Claude Code global ANTHROPIC_BASE_URL takes precedence.
-_RLPE_PROJECT_OVERRIDE_KEYS = {
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_MODEL",
-    "MiniMax_API_KEY",
-    "MiniMax_MODEL",
-    "MiniMax_BASE_URL",
-    "MINIMAX_API_KEY",
-}
-_force_override = os.environ.get("RLPE_FORCE_ENV_OVERRIDE") == "1"
+# audit 2026-07-31: logic centralised in rlpe.env_loader (the CLI and
+# server copies had drifted — the CLI missed MINIMAX_API_KEY).
+from rlpe.env_loader import load_env_file
 
 env_path = project_root / ".env"
-if env_path.exists():
-    try:
-        with env_path.open(encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if not key:
-                    continue
-                # Decide whether to override an existing env var.
-                should_override = (
-                    _force_override or key in _RLPE_PROJECT_OVERRIDE_KEYS or key not in os.environ
-                )
-                if should_override:
-                    os.environ[key] = value
-    except Exception as e:
-        print(f"Warning: failed to load .env: {e}")
+try:
+    load_env_file(env_path)
+except Exception as e:
+    print(f"Warning: failed to load .env: {e}")
 
 from rlpe.api.app import app
 

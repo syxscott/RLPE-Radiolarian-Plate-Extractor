@@ -43,6 +43,15 @@ SMOKE_MATCHES = REPO_ROOT / "work" / "papers_smoke" / "output" / "manifests" / "
 @pytest.fixture(scope="module")
 def smoke_rows():
     if not SMOKE_MATCHES.exists():
+        # audit 2026-07-31: if the smoke OUTPUT DIRECTORY exists but
+        # the matches file is missing, the smoke run itself failed —
+        # that is a real failure, not a skip.
+        if SMOKE_MATCHES.parent.parent.exists():
+            pytest.fail(
+                f"{SMOKE_MATCHES.relative_to(REPO_ROOT)} missing but "
+                "the smoke output dir exists — the smoke run produced "
+                "no manifests (pipeline failure)."
+            )
         pytest.skip(
             f"{SMOKE_MATCHES.relative_to(REPO_ROOT)} not present. "
             "Re-run the v1.1.0 smoke test to generate it."
