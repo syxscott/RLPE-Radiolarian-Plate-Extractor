@@ -131,6 +131,8 @@ class TestAgeRanges:
         )
         assert cls_list, "range text should yield classifications"
         # free-text scanning finds both ends as epoch hits
+        # ("Early Cretaceous" is normalised to its ICS series name
+        # "Lower Cretaceous" via the alias table)
         epochs = {c.epoch for c in cls_list}
         assert "Late Jurassic" in epochs
-        assert "Early Cretaceous" in epochs
+        assert "Lower Cretaceous" in epochs
