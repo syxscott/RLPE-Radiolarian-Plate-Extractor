@@ -165,13 +165,18 @@ class TestPipelineRoutingSource:
             assert f'"{fig_type}"' in text, f"pipeline.py must handle fig_type={fig_type!r}"
 
     def test_pipeline_calls_extract_geology_for_new_types(self):
+        import re as _re
         from pathlib import Path as _Path
 
         path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
         text = path.read_text(encoding="utf-8")
         # The geo_vision block for new types must call
-        # extract_geology with the figure_type forwarded.
-        assert "_m3_call_with_fallback(self.m3_engine.extract_geology," in text
+        # extract_geology with the figure_type forwarded. Allow the
+        # call to be wrapped across lines (commit ac99b12 split the
+        # long line); regex matches newline-tolerant whitespace.
+        assert _re.search(
+            r"_m3_call_with_fallback\(\s*self\.m3_engine\.extract_geology\s*,", text
+        ), "pipeline.py must call _m3_call_with_fallback(self.m3_engine.extract_geology, ...)"
         assert "figure_type=fig_type," in text
 
     def test_pipeline_creates_stub_record_for_geo_vision(self):
