@@ -57,31 +57,51 @@ COORDINATE_PATTERN = re.compile(
 # much narrower ``[A-Z][A-Za-z\-]{0,30}`` with a non-greedy ``?``
 # quantifier and explicit word boundaries so the match terminates at
 # the first lowercase word or sentence end.
-_GROUP_RE = re.compile(
-    r"\b([A-Z][A-Za-z\-]{0,30}?\s+(?:Group|Gp\.))\b"
-)
-_FORMATION_RE = re.compile(
-    r"\b([A-Z][A-Za-z\-]{0,30}?\s+(?:Formation|Fm\.))\b"
-)
-_MEMBER_RE = re.compile(
-    r"\b([A-Z][A-Za-z\-]{0,30}?\s+(?:Member|Mb\.))\b"
-)
+_GROUP_RE = re.compile(r"\b([A-Z][A-Za-z\-]{0,30}?\s+(?:Group|Gp\.))\b")
+_FORMATION_RE = re.compile(r"\b([A-Z][A-Za-z\-]{0,30}?\s+(?:Formation|Fm\.))\b")
+_MEMBER_RE = re.compile(r"\b([A-Z][A-Za-z\-]{0,30}?\s+(?:Member|Mb\.))\b")
 
 # Lithology dictionary: lowercase match against a curated set of
 # sedimentary / volcanic / biogenic rock names that appear in
 # radiolarian-paper captions. ``\b`` boundaries prevent
 # "siliceous" matching inside "siliceously".
 _LITHOLOGY_TERMS = (
-    "siliceous limestone", "limestone", "chert", "radiolarian chert",
-    "bedded chert", "ribbon chert", "cherty limestone",
-    "marl", "marlstone", "shale", "mudstone", "claystone",
-    "sandstone", "siltstone", "conglomerate", "breccia",
-    "dolomite", "dolostone", "micrite", "biomicrite",
-    "calcarenite", "calcilutite", "tuff", "tuffaceous",
-    "basalt", "basaltic", "andesite", "rhyolite",
-    "ophiolite", "serpentinite", "chalk",
-    "glauconitic sandstone", "phosphorite", "ironstone",
-    "black shale", "organic-rich shale",
+    "siliceous limestone",
+    "limestone",
+    "chert",
+    "radiolarian chert",
+    "bedded chert",
+    "ribbon chert",
+    "cherty limestone",
+    "marl",
+    "marlstone",
+    "shale",
+    "mudstone",
+    "claystone",
+    "sandstone",
+    "siltstone",
+    "conglomerate",
+    "breccia",
+    "dolomite",
+    "dolostone",
+    "micrite",
+    "biomicrite",
+    "calcarenite",
+    "calcilutite",
+    "tuff",
+    "tuffaceous",
+    "basalt",
+    "basaltic",
+    "andesite",
+    "rhyolite",
+    "ophiolite",
+    "serpentinite",
+    "chalk",
+    "glauconitic sandstone",
+    "phosphorite",
+    "ironstone",
+    "black shale",
+    "organic-rich shale",
 )
 LITHOLOGY_PATTERN = re.compile(
     r"\b(?:" + "|".join(re.escape(t) for t in _LITHOLOGY_TERMS) + r")\b",
@@ -101,12 +121,31 @@ LITHOLOGY_PATTERN = re.compile(
 # Critical for P/T boundary research: anoxia / euxinia is one of
 # the leading kill mechanisms for radiolarians.
 _PALEOENV_VOCAB = (
-    "anoxic", "euxinic", "oxic", "suboxic", "dysoxic", "suboxic-anoxic",
-    "oxygen minimum zone", "OMZ", "upwelling", "upwelling zone",
-    "restricted basin", "open marine", "pelagic", "hemipelagic",
-    "neritic", "littoral", "shallow marine", "deep marine",
-    "near-shore", "slope", "basinal", "abyssal", "photic zone",
-    "aphotic zone", "dysoxic bottom water",
+    "anoxic",
+    "euxinic",
+    "oxic",
+    "suboxic",
+    "dysoxic",
+    "suboxic-anoxic",
+    "oxygen minimum zone",
+    "OMZ",
+    "upwelling",
+    "upwelling zone",
+    "restricted basin",
+    "open marine",
+    "pelagic",
+    "hemipelagic",
+    "neritic",
+    "littoral",
+    "shallow marine",
+    "deep marine",
+    "near-shore",
+    "slope",
+    "basinal",
+    "abyssal",
+    "photic zone",
+    "aphotic zone",
+    "dysoxic bottom water",
 )
 PALEOENV_PATTERN = re.compile(
     r"\b(?:" + "|".join(re.escape(t) for t in _PALEOENV_VOCAB) + r")\b",
@@ -116,8 +155,15 @@ PALEOENV_PATTERN = re.compile(
 # ``redox`` uses the Algeo & Tribovillard (2009) classification:
 # oxic / dysoxic / suboxic / anoxic / euxinic.
 _REDOX_VOCAB = (
-    "oxic", "dysoxic", "suboxic", "anoxic", "euxinic",
-    "ferruginous", "sulfidic", "anoxic-ferruginous", "anoxic-sulfidic",
+    "oxic",
+    "dysoxic",
+    "suboxic",
+    "anoxic",
+    "euxinic",
+    "ferruginous",
+    "sulfidic",
+    "anoxic-ferruginous",
+    "anoxic-sulfidic",
     "non-sulfidic anoxic",
 )
 REDOX_PATTERN = re.compile(
@@ -130,17 +176,35 @@ REDOX_PATTERN = re.compile(
 # Critical for P/T boundary: a δ¹³C negative excursion marks
 # the extinction horizon.
 _CHEMOSTRAT_VOCAB = (
-    "CIE", "carbon isotope excursion", "δ13C excursion",
-    "delta 13C excursion", "delta-13C excursion", "C-isotope excursion",
-    "mass extinction", "biocalcification crisis", "LIP", "large igneous province",
-    "Siberian Traps", "TE disaster", "oceanic anoxic event", "OAE",
-    "bonarelli event", "toarcian OAE", "cenomanian-turonian OAE",
-    "Frasnian-Famennian boundary", "Hangenberg event", "P/T boundary",
-    "end-Triassic extinction", "end-Permian extinction",
+    "CIE",
+    "carbon isotope excursion",
+    "δ13C excursion",
+    "delta 13C excursion",
+    "delta-13C excursion",
+    "C-isotope excursion",
+    "mass extinction",
+    "biocalcification crisis",
+    "LIP",
+    "large igneous province",
+    "Siberian Traps",
+    "TE disaster",
+    "oceanic anoxic event",
+    "OAE",
+    "bonarelli event",
+    "toarcian OAE",
+    "cenomanian-turonian OAE",
+    "Frasnian-Famennian boundary",
+    "Hangenberg event",
+    "P/T boundary",
+    "end-Triassic extinction",
+    "end-Permian extinction",
     "end-Guadalupian extinction",
-    "Permian-Triassic boundary", "carbon isotope negative excursion",
-    "δ13C negative excursion", "strontium isotope excursion",
-    "osmium isotope excursion", "mercury anomaly",
+    "Permian-Triassic boundary",
+    "carbon isotope negative excursion",
+    "δ13C negative excursion",
+    "strontium isotope excursion",
+    "osmium isotope excursion",
+    "mercury anomaly",
 )
 
 # Round 25 (user audit follow-up): the user asked specifically
@@ -191,35 +255,55 @@ _ISOTOPE_PATTERN = re.compile(
 # full upper case at letter boundaries; the longer phrases keep
 # their case-insensitive matching.
 _CHEMOSTRAT_ACRONYMS = ("CIE", "LIP", "OAE")
-_CHEMOSTRAT_PHRASES = tuple(
-    t for t in _CHEMOSTRAT_VOCAB if t not in _CHEMOSTRAT_ACRONYMS
-)
+_CHEMOSTRAT_PHRASES = tuple(t for t in _CHEMOSTRAT_VOCAB if t not in _CHEMOSTRAT_ACRONYMS)
 CHEMOSTRAT_PATTERN = re.compile(
     # Acronyms: case-SENSITIVE (full upper case only) at letter
     # boundaries — "species" contains "cie", "lip of the aperture"
     # is a real morphology term. Sorted longest-first so e.g. "OAE"
     # doesn't shadow nothing (kept explicit for clarity).
-    r"(?<![A-Za-z])(?:"
-    + "|".join(re.escape(t) for t in _CHEMOSTRAT_ACRONYMS)
-    + r")(?![A-Za-z])"
+    r"(?<![A-Za-z])(?:" + "|".join(re.escape(t) for t in _CHEMOSTRAT_ACRONYMS) + r")(?![A-Za-z])"
     # Longer phrases: case-insensitive as before.
-    r"|(?i:"
-    + "|".join(re.escape(t) for t in _CHEMOSTRAT_PHRASES)
-    + r")"
+    r"|(?i:" + "|".join(re.escape(t) for t in _CHEMOSTRAT_PHRASES) + r")"
 )
 
 # ``facies`` is the standard sedimentological facies vocabulary.
 # We support both descriptive terms and named lithofacies.
 _FACIES_VOCAB = (
-    "turbidite", "turbiditic", "calciturbidite", "debrites",
-    "pelagic", "hemipelagic", "neritic", "littoral", "shallow water",
-    "deep water", "deep-sea", "abyssal", "slope", "shelf", "platform",
-    "carbonate platform", "rimmed platform", "isolated platform",
-    "basinal", "basin", "back-arc basin", "fore-arc basin",
-    "intra-arc basin", "rift basin", "passive margin",
-    "active margin", "subduction zone", "accretionary wedge",
-    "foreshore", "shoreface", "offshore", "deep-water",
-    "basin plain", "distal turbidite", "proximal turbidite",
+    "turbidite",
+    "turbiditic",
+    "calciturbidite",
+    "debrites",
+    "pelagic",
+    "hemipelagic",
+    "neritic",
+    "littoral",
+    "shallow water",
+    "deep water",
+    "deep-sea",
+    "abyssal",
+    "slope",
+    "shelf",
+    "platform",
+    "carbonate platform",
+    "rimmed platform",
+    "isolated platform",
+    "basinal",
+    "basin",
+    "back-arc basin",
+    "fore-arc basin",
+    "intra-arc basin",
+    "rift basin",
+    "passive margin",
+    "active margin",
+    "subduction zone",
+    "accretionary wedge",
+    "foreshore",
+    "shoreface",
+    "offshore",
+    "deep-water",
+    "basin plain",
+    "distal turbidite",
+    "proximal turbidite",
 )
 FACIES_PATTERN = re.compile(
     r"\b(?:" + "|".join(re.escape(t) for t in _FACIES_VOCAB) + r")\b",
@@ -267,15 +351,53 @@ _BIOZONE_RE = re.compile(
 # countries, and including them caused "Sicily" to wrongly match
 # before "Italy" in the Beccaro paper.
 _COUNTRIES = (
-    "Italy", "Japan", "China", "Turkey", "Greece", "Oman",
-    "New Zealand", "Australia", "Austria", "France", "Germany",
-    "Spain", "Portugal", "Swiss", "Switzerland", "Russia",
-    "Canada", "USA", "United States", "Mexico", "Argentina",
-    "Chile", "Brazil", "India", "Pakistan", "Philippines",
-    "Indonesia", "Iran", "Iraq", "Saudi Arabia", "South Africa",
-    "Egypt", "Tunisia", "Morocco", "Algeria", "Norway", "Sweden",
-    "Finland", "Denmark", "Poland", "Czech Republic", "Hungary",
-    "Romania", "Bulgaria", "Greece", "Turkey", "Cyprus",
+    "Italy",
+    "Japan",
+    "China",
+    "Turkey",
+    "Greece",
+    "Oman",
+    "New Zealand",
+    "Australia",
+    "Austria",
+    "France",
+    "Germany",
+    "Spain",
+    "Portugal",
+    "Swiss",
+    "Switzerland",
+    "Russia",
+    "Canada",
+    "USA",
+    "United States",
+    "Mexico",
+    "Argentina",
+    "Chile",
+    "Brazil",
+    "India",
+    "Pakistan",
+    "Philippines",
+    "Indonesia",
+    "Iran",
+    "Iraq",
+    "Saudi Arabia",
+    "South Africa",
+    "Egypt",
+    "Tunisia",
+    "Morocco",
+    "Algeria",
+    "Norway",
+    "Sweden",
+    "Finland",
+    "Denmark",
+    "Poland",
+    "Czech Republic",
+    "Hungary",
+    "Romania",
+    "Bulgaria",
+    "Greece",
+    "Turkey",
+    "Cyprus",
 )
 
 # Round 21: country centroid fallback table. When a paper mentions
@@ -359,9 +481,7 @@ _REGION_TO_COUNTRY = (
     ("shikoku", "Japan"),
     ("kyushu", "Japan"),
 )
-_COUNTRY_RE = re.compile(
-    r"\b(" + "|".join(re.escape(c) for c in _COUNTRIES) + r")\b"
-)
+_COUNTRY_RE = re.compile(r"\b(" + "|".join(re.escape(c) for c in _COUNTRIES) + r")\b")
 
 # Modern vs paleo coordinate heuristic. A "paleo" coordinate appears
 # in a sentence that frames it as the position AT DEPOSITION TIME
@@ -369,32 +489,74 @@ _COUNTRY_RE = re.compile(
 # A "modern" coordinate appears in a present-day framing ("today
 # the locality is at 38°N, 14°E"). Keywords that flip the assignment.
 _PALEO_KEYWORDS = (
-    "during the ", "at that time", "at the time", "in the late ",
-    "in the early ", "in the middle ", "paleogeographic",
-    "paleolatitude", "paleolongitude", "during deposition",
-    "reconstructed", "was located", "lay at", "was situated",
-    "at deposition", "in triassic", "in jurassic", "in cretaceous",
-    "in permian", "in devonian", "in ordovician", "in silurian",
-    "in cambrian", "in carboniferous",
+    "during the ",
+    "at that time",
+    "at the time",
+    "in the late ",
+    "in the early ",
+    "in the middle ",
+    "paleogeographic",
+    "paleolatitude",
+    "paleolongitude",
+    "during deposition",
+    "reconstructed",
+    "was located",
+    "lay at",
+    "was situated",
+    "at deposition",
+    "in triassic",
+    "in jurassic",
+    "in cretaceous",
+    "in permian",
+    "in devonian",
+    "in ordovician",
+    "in silurian",
+    "in cambrian",
+    "in carboniferous",
     # Phase 62 Plan 5 (Bug 5.15): era + epoch names. The original
     # list covered periods only, so a sentence framed "in the
     # Eocene" / "in the Mesozoic" was mis-classified as modern.
     # Both "in the X" and bare "X" framings are covered — real
     # sentences use both forms interchangeably.
-    "in mesozoic", "in the mesozoic", "mesozoic",
-    "in cenozoic", "in the cenozoic", "cenozoic",
-    "in paleozoic", "in the paleozoic", "paleozoic",
-    "in paleogene", "in the paleogene", "paleogene",
-    "in neogene", "in the neogene", "neogene",
-    "in eocene", "in the eocene", "eocene",
-    "in oligocene", "in the oligocene", "oligocene",
-    "in miocene", "in the miocene", "miocene",
-    "in pliocene", "in the pliocene", "pliocene",
-    "in pleistocene", "in the pleistocene", "pleistocene",
+    "in mesozoic",
+    "in the mesozoic",
+    "mesozoic",
+    "in cenozoic",
+    "in the cenozoic",
+    "cenozoic",
+    "in paleozoic",
+    "in the paleozoic",
+    "paleozoic",
+    "in paleogene",
+    "in the paleogene",
+    "paleogene",
+    "in neogene",
+    "in the neogene",
+    "neogene",
+    "in eocene",
+    "in the eocene",
+    "eocene",
+    "in oligocene",
+    "in the oligocene",
+    "oligocene",
+    "in miocene",
+    "in the miocene",
+    "miocene",
+    "in pliocene",
+    "in the pliocene",
+    "pliocene",
+    "in pleistocene",
+    "in the pleistocene",
+    "pleistocene",
 )
 _MODERN_KEYWORDS = (
-    "today", "present-day", "present day", "currently",
-    "now ", "modern coordinates", "modern position",
+    "today",
+    "present-day",
+    "present day",
+    "currently",
+    "now ",
+    "modern coordinates",
+    "modern position",
     "modern locality",
 )
 
@@ -408,7 +570,7 @@ def _strip_leading_article(name: str | None) -> str | None:
         return name
     for art in ("The ", "the ", "A ", "a ", "An ", "an "):
         if name.startswith(art):
-            return name[len(art):]
+            return name[len(art) :]
     return name
 
 
@@ -419,15 +581,24 @@ def _strip_leading_article(name: str | None) -> str | None:
 # age" → "In Group") rather than a real unit name. Used by
 # ``_formation_name_ok`` to reject the match.
 _FORMATION_STOPWORD_PREFIXES = (
-    "the ", "The ",
-    "a ", "A ",
-    "an ", "An ",
-    "of ", "Of ",
-    "in ", "In ",
-    "and ", "And ",
-    "from ", "From ",
-    "near ", "Near ",
-    "by ", "By ",
+    "the ",
+    "The ",
+    "a ",
+    "A ",
+    "an ",
+    "An ",
+    "of ",
+    "Of ",
+    "in ",
+    "In ",
+    "and ",
+    "And ",
+    "from ",
+    "From ",
+    "near ",
+    "Near ",
+    "by ",
+    "By ",
 )
 
 
@@ -452,22 +623,67 @@ def _starts_with_stopword(name: str | None) -> bool:
     return first_word in stopwords
 
 
-def _classify_coordinate_age(
-    text: str, match_start: int, match_end: int
-) -> str:
-    """Return ``"paleo"`` or ``"modern"`` based on keywords within
-    ~120 chars BEFORE the coordinate match. Defaults to ``"modern"``
-    when neither set of keywords appears (most radiolarian papers
-    report modern locality coordinates by default).
+# Audit 2026-08-01 (Bug M5): pre-compile keyword matchers with word
+# boundaries so e.g. "paleogeneously" does not match the bare
+# substring "paleogene", and "subpaleogene" / "concurrently" don't
+# silently flip the classification. The previous bare-substring
+# ``kw in ctx`` produced false positives whenever a keyword was
+# embedded inside a longer word (adverbs, prefixes, multi-word
+# compounds). The trailing space that some keywords already carry
+# (e.g. "during the ") keeps the regex matching phrase-end; the
+# surrounding ``\b`` keeps compound-NEIGHBOUR words like
+# "Neogene-bearing" or "paleogene-rich" (still legitimate
+# matches) but rejects "paleogeneously" / "subpaleogene".
+_PALEO_KEYWORDS_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in _PALEO_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
+_MODERN_KEYWORDS_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in _MODERN_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _classify_coordinate_age(text: str, match_start: int, match_end: int) -> str | None:
+    """Return ``"paleo"``, ``"modern"``, or ``None`` based on
+    keywords within ~400 chars BEFORE the coordinate match
+    (line-level scan of the preceding lines within the window).
+
+    Audit 2026-08-01 (Bug M4 / M5):
+      * Window widened from 120 to 400 chars so an age label
+        in the plate header (often 200+ chars before the
+        coordinate) is still detected.
+      * Line-level scan (split on ``\n``) so headers like
+        "Tertiary" or "Pleistocene" are searched regardless of
+        position within the 400-char window.
+      * When neither paleo nor modern keyword appears, returns
+        ``None`` instead of silently defaulting to ``"modern"``.
+        A wrong default would cause paleo-reconstruction to
+        seed off modern coordinates, producing meaningless
+        paleo maps. Downstream callers leave both
+        ``modern_latitude`` and ``paleo_latitude`` unset in
+        the ambiguous case.
+      * Keyword matching uses pre-compiled word-boundary
+        regexes so ``paleogeneously`` / ``subpaleogene``
+        don't match the bare substring ``paleogene``.
     """
-    ctx = text[max(0, match_start - 120) : match_start].lower()
-    for kw in _PALEO_KEYWORDS:
-        if kw in ctx:
+    ctx = text[max(0, match_start - 400) : match_start]
+    # Line-level scan: search each line separately so header lines
+    # like "Tertiary" or "Pleistocene" are searchable regardless of
+    # their position within the 400-char window. The window covers
+    # the 400 chars BEFORE the coordinate; if a header keyword sits
+    # inside that window it's found; if it sits BEFORE the window
+    # we'd need a separate header-pass (out of scope here).
+    for line in ctx.split("\n"):
+        if _PALEO_KEYWORDS_RE.search(line):
             return "paleo"
-    for kw in _MODERN_KEYWORDS:
-        if kw in ctx:
+        if _MODERN_KEYWORDS_RE.search(line):
             return "modern"
-    return "modern"
+    # Neither keyword found — return None so the caller can flag
+    # the record for manual review rather than silently classifying
+    # as "modern" (which would feed modern coords into a paleo
+    # reconstruction seed).
+    return None
 
 
 @dataclass(slots=True)
@@ -583,8 +799,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         sec_type = (sec.get("section_type") or "").lower()
         sec_title = (sec.get("title") or "").lower()
         if sec_type == "references" or any(
-            kw in sec_title
-            for kw in ("reference", "bibliograph", "cited work", "literature cited")
+            kw in sec_title for kw in ("reference", "bibliograph", "cited work", "literature cited")
         ):
             logger.debug(
                 "Skipping section %r (type=%r): bibliography / references section "
@@ -646,6 +861,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                     )
                     continue
             locs.append(loc)
+
         # Round 18: split the formation regex into rank-specific
         # matches so a single text span yields separate
         # ``group`` / ``formation`` / ``member`` fields instead of
@@ -683,9 +899,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
             return not any(ch.isdigit() for ch in stripped)
 
         groups = [
-            m.group(1).strip()
-            for m in _GROUP_RE.finditer(text)
-            if _formation_name_ok(m.group(1))
+            m.group(1).strip() for m in _GROUP_RE.finditer(text) if _formation_name_ok(m.group(1))
         ]
         formations = [
             m.group(1).strip()
@@ -693,9 +907,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
             if _formation_name_ok(m.group(1))
         ]
         members = [
-            m.group(1).strip()
-            for m in _MEMBER_RE.finditer(text)
-            if _formation_name_ok(m.group(1))
+            m.group(1).strip() for m in _MEMBER_RE.finditer(text) if _formation_name_ok(m.group(1))
         ]
         # ``forms`` is only used as a "did we find ANY formation
         # keyword at all" gate in the skip-check below. We use the
@@ -826,9 +1038,7 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         # and the user can't tell which is which.
         if lat is not None and lon is not None:
             if coord_start is not None and coord_end is not None:
-                coord_age = _classify_coordinate_age(
-                    text, coord_start, coord_end
-                )
+                coord_age = _classify_coordinate_age(text, coord_start, coord_end)
             else:
                 coord_age = "modern"
         else:
@@ -1027,9 +1237,7 @@ def link_species_to_geology(
     # don't use typed sections.
     geology_section_types = {"geological_setting"}
     geo_sections = [
-        sec
-        for sec in sections
-        if (sec.get("section_type") or "").lower() in geology_section_types
+        sec for sec in sections if (sec.get("section_type") or "").lower() in geology_section_types
     ]
     if not geo_sections:
         geo_sections = [

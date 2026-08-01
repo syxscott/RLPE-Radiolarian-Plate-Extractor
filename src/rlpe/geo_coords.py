@@ -332,6 +332,21 @@ _PALEO_KEYWORDS_GEO = (
 )
 
 
+# Audit 2026-08-01 (Bug M5): word-boundary regex matching. The
+# previous bare-substring ``kw in ctx`` produced false positives
+# whenever a keyword was embedded inside a longer word (e.g.
+# "paleogeneously" matched "paleogene", "subpaleogene" matched
+# "paleogene", "concurrently" matched "currently"). The regex
+# keeps the same keyword list but enforces ``\b`` on either side
+# so the match must start/end at a word boundary. Trailing
+# spaces preserved in the keyword list (e.g. "during the ")
+# still anchor a phrase-end thanks to the surrounding ``\b``.
+_PALEO_KEYWORDS_GEO_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in _PALEO_KEYWORDS_GEO) + r")\b",
+    re.IGNORECASE,
+)
+
+
 def _is_paleo_text(text: str, match_start: int) -> bool:
     """Return True if a paleo keyword appears within ~120 chars
     BEFORE ``match_start``. Used by ``parse_coordinate`` /
@@ -343,5 +358,5 @@ def _is_paleo_text(text: str, match_start: int) -> bool:
     importable without ``geology_extraction`` (which itself imports
     modules that touch coordinate parsing).
     """
-    ctx = text[max(0, match_start - 120) : match_start].lower()
-    return any(kw in ctx for kw in _PALEO_KEYWORDS_GEO)
+    ctx = text[max(0, match_start - 120) : match_start]
+    return bool(_PALEO_KEYWORDS_GEO_RE.search(ctx))
