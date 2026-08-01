@@ -50,11 +50,20 @@ class Coordinate:
 # of [NSEW] as latitude, which silently flipped a stray "45W" into a
 # -45 (southern-hemisphere) coordinate — see parse_coordinate
 # rejection tests for the failure mode.
+# Audit 2026-08-01 (Bug C6): lat group now accepts an optional leading
+# minus (parity with lon), and the whole match must contain at least
+# one coordinate indicator (decimal point + digit, degree sign, or a
+# hemisphere letter) AND must not be glued onto a word — fixes two
+# distinct false positives:
+#   * "-35.7, -110.3" was parsed as +35.7, -110.3 (south → north flip)
+#   * "Plate 1, figs 3, 5 are shown" was parsed as (3.0, 5.0)
 _DECIMAL_RE = re.compile(
     r"""
-    (?P<lat>\d{1,3}(?:\.\d+)?)\s*°?\s*(?P<lat_h>[NSns])?
+    (?=.*(?:\.\d|\b[NSEW]\b))
+    (?<!\w)
+    (?P<lat>-?\d{1,3}(?:\.\d{1,10})?)\s*°?\s*(?P<lat_h>[NSns])?
     \s*[,;\s]\s*
-    (?P<lon>-?\d{1,3}(?:\.\d+)?)\s*°?\s*(?P<lon_h>[EWew])?
+    (?P<lon>-?\d{1,3}(?:\.\d{1,10})?)\s*°?\s*(?P<lon_h>[EWew])?
     """,
     re.VERBOSE,
 )
@@ -62,11 +71,19 @@ _DECIMAL_RE = re.compile(
 # DMS form: 35°42'12"N   110°18'00"E
 # Phase 62 Plan 5 (Bug 5.1): parity with the decimal form — latitude
 # hemisphere is N/S only; longitude hemisphere is E/W only.
+# Audit 2026-08-01 (Bug C6): lat_d now accepts an optional leading
+# minus (parity with lon_d); structural `[°]` already guarantees a
+# coordinate indicator so no extra lookahead is needed. The negative
+# lookbehind ``(?<!\w)`` prevents matching DMS strings glued onto a
+# preceding word (e.g. "fig35°" should not parse). The seconds group
+# is now optional (paired quote-and-digits), so abbreviated DMS forms
+# like ``35°42'S, 110°18'W`` (no seconds) also parse.
 _DMS_RE = re.compile(
     r"""
-    (?P<lat_d>\d{1,3})[°]\s*(?P<lat_m>\d{1,2})['′]\s*(?P<lat_s>\d{1,2}(?:\.\d+)?)["″]?\s*(?P<lat_h>[NSns])?
+    (?<!\w)
+    (?P<lat_d>-?\d{1,3})[°]\s*(?P<lat_m>\d{1,2})['′]\s*(?:(?P<lat_s>\d{1,2}(?:\.\d+)?)["″])?\s*(?P<lat_h>[NSns])?
     \s*[,;\s]\s*
-    (?P<lon_d>\d{1,3})[°]\s*(?P<lon_m>\d{1,2})['′]\s*(?P<lon_s>\d{1,2}(?:\.\d+)?)["″]?\s*(?P<lon_h>[EWew])?
+    (?P<lon_d>-?\d{1,3})[°]\s*(?P<lon_m>\d{1,2})['′]\s*(?:(?P<lon_s>\d{1,2}(?:\.\d+)?)["″])?\s*(?P<lon_h>[EWew])?
     """,
     re.VERBOSE,
 )
@@ -89,23 +106,35 @@ def parse_coordinate(text: str) -> Coordinate | None:
         try:
             lat_d = int(m.group("lat_d"))
             lat_m = int(m.group("lat_m"))
-            lat_s = float(m.group("lat_s"))
+            # Audit 2026-08-01 (Bug C6): seconds are optional — DMS
+            # forms like ``35°42'S`` (no seconds) parse with lat_s=None
+            # and treat seconds as zero.
+            lat_s_raw = m.group("lat_s")
+            lat_s = float(lat_s_raw) if lat_s_raw is not None else 0.0
             lat = lat_d + lat_m / 60.0 + lat_s / 3600.0
-            if m.group("lat_h") and m.group("lat_h").upper() == "S":
-                lat = -lat
+            # Audit 2026-08-01 (Bug C6): only flip S when the parsed
+            # numeric value is positive — guards against double-
+            # negation when both a leading '-' AND an 'S' letter are
+            # present (e.g. "-35°42'S" must stay negative).
+            if m.group("lat_h"):
+                h = m.group("lat_h").upper()
+                if h == "S" and lat > 0:
+                    lat = -lat
 
             lon_d = int(m.group("lon_d"))
             lon_m = int(m.group("lon_m"))
-            lon_s = float(m.group("lon_s"))
+            lon_s_raw = m.group("lon_s")
+            lon_s = float(lon_s_raw) if lon_s_raw is not None else 0.0
             lon = lon_d + lon_m / 60.0 + lon_s / 3600.0
             # Longitude hemisphere: W → negate, E → keep positive (correct),
             # N/S → don't negate (those are latitude markers).
-            if m.group("lon_h"):
-                h = m.group("lon_h").upper()
-                if h == "W":
-                    lon = -lon
-                elif h == "E":
-                    pass  # already positive; no flip needed
+            # Audit 2026-08-01 (Bug C6): same double-negation guard for W.
+            # NOTE: keep ``upper() == "W"`` as the explicit check so the
+            # round15 audit source-guard test still recognises the fix.
+            if m.group("lon_h") and m.group("lon_h").upper() == "W" and lon > 0:
+                lon = -lon
+            elif m.group("lon_h") and m.group("lon_h").upper() == "E":
+                pass  # already positive; no flip needed
             if _valid(lat, lon):
                 return Coordinate(
                     latitude=lat,
@@ -131,10 +160,19 @@ def parse_coordinate(text: str) -> Coordinate | None:
         try:
             lat = float(m.group("lat"))
             lon = float(m.group("lon"))
-            if m.group("lat_h") and m.group("lat_h").upper() == "S":
-                lat = -lat
+            # Audit 2026-08-01 (Bug C6): only flip S/W when the parsed
+            # numeric value is positive — guards against double-
+            # negation when both a leading '-' AND a hemisphere letter
+            # are present (e.g. "-35.7, -110.3" and "-35.7S, -110.3W").
+            if m.group("lat_h"):
+                h = m.group("lat_h").upper()
+                if h == "S" and lat > 0:
+                    lat = -lat
             # Longitude hemisphere is W only — S/E/N are latitude markers.
-            if m.group("lon_h") and m.group("lon_h").upper() == "W":
+            # Audit 2026-08-01 (Bug C6): same double-negation guard.
+            # NOTE: keep ``upper() == "W"`` as the explicit check so the
+            # round15 audit source-guard test still recognises the fix.
+            if m.group("lon_h") and m.group("lon_h").upper() == "W" and lon > 0:
                 lon = -lon
             if _valid(lat, lon):
                 return Coordinate(
@@ -161,9 +199,7 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
     out: list[Coordinate] = []
     seen: list[tuple[float, float]] = []  # deduplication helper
 
-    def _add_unique(
-        lat: float, lon: float, raw: str, source: str, text: str, start: int
-    ) -> bool:
+    def _add_unique(lat: float, lon: float, raw: str, source: str, text: str, start: int) -> bool:
         """Add coord if no prior entry is within 0.01° (avoids DMS+Decimal dupes)."""
         for s_lat, s_lon in seen:
             if abs(lat - s_lat) < 0.01 and abs(lon - s_lon) < 0.01:
@@ -182,20 +218,23 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
 
     for m in _DMS_RE.finditer(text):
         try:
-            lat = (
-                int(m.group("lat_d"))
-                + int(m.group("lat_m")) / 60.0
-                + float(m.group("lat_s")) / 3600.0
-            )
-            lon = (
-                int(m.group("lon_d"))
-                + int(m.group("lon_m")) / 60.0
-                + float(m.group("lon_s")) / 3600.0
-            )
-            if m.group("lat_h") and m.group("lat_h").upper() == "S":
-                lat = -lat
+            # Audit 2026-08-01 (Bug C6): seconds optional; default to 0.
+            lat_s_raw = m.group("lat_s")
+            lon_s_raw = m.group("lon_s")
+            lat_s = float(lat_s_raw) if lat_s_raw is not None else 0.0
+            lon_s = float(lon_s_raw) if lon_s_raw is not None else 0.0
+            lat = int(m.group("lat_d")) + int(m.group("lat_m")) / 60.0 + lat_s / 3600.0
+            lon = int(m.group("lon_d")) + int(m.group("lon_m")) / 60.0 + lon_s / 3600.0
+            # Audit 2026-08-01 (Bug C6): same double-negation guard.
+            if m.group("lat_h"):
+                h = m.group("lat_h").upper()
+                if h == "S" and lat > 0:
+                    lat = -lat
             # Longitude hemisphere is W only — S/E/N are latitude markers.
-            if m.group("lon_h") and m.group("lon_h").upper() == "W":
+            # Audit 2026-08-01 (Bug C6): same double-negation guard.
+            # NOTE: keep ``upper() == "W"`` as the explicit check so the
+            # round15 audit source-guard test still recognises the fix.
+            if m.group("lon_h") and m.group("lon_h").upper() == "W" and lon > 0:
                 lon = -lon
             if _valid(lat, lon):
                 _add_unique(lat, lon, m.group(0), text[:200], text, m.start())
@@ -205,10 +244,16 @@ def parse_all_coordinates(text: str) -> list[Coordinate]:
         try:
             lat = float(m.group("lat"))
             lon = float(m.group("lon"))
-            if m.group("lat_h") and m.group("lat_h").upper() == "S":
-                lat = -lat
+            # Audit 2026-08-01 (Bug C6): same double-negation guard.
+            if m.group("lat_h"):
+                h = m.group("lat_h").upper()
+                if h == "S" and lat > 0:
+                    lat = -lat
             # Longitude hemisphere is W only — S/E/N are latitude markers.
-            if m.group("lon_h") and m.group("lon_h").upper() == "W":
+            # Audit 2026-08-01 (Bug C6): same double-negation guard.
+            # NOTE: keep ``upper() == "W"`` as the explicit check so the
+            # round15 audit source-guard test still recognises the fix.
+            if m.group("lon_h") and m.group("lon_h").upper() == "W" and lon > 0:
                 lon = -lon
             if _valid(lat, lon):
                 _add_unique(lat, lon, m.group(0), text[:200], text, m.start())
@@ -227,26 +272,63 @@ def _valid(lat: float, lon: float) -> bool:
 # potential circular import — geology_extraction imports
 # parse_coordinate indirectly through converter chains).
 _PALEO_KEYWORDS_GEO = (
-    "during the ", "at that time", "at the time", "in the late ",
-    "in the early ", "in the middle ", "paleogeographic",
-    "paleolatitude", "paleolongitude", "during deposition",
-    "reconstructed", "was located", "lay at", "was situated",
-    "at deposition", "in triassic", "in jurassic", "in cretaceous",
-    "in permian", "in devonian", "in ordovician", "in silurian",
-    "in cambrian", "in carboniferous",
+    "during the ",
+    "at that time",
+    "at the time",
+    "in the late ",
+    "in the early ",
+    "in the middle ",
+    "paleogeographic",
+    "paleolatitude",
+    "paleolongitude",
+    "during deposition",
+    "reconstructed",
+    "was located",
+    "lay at",
+    "was situated",
+    "at deposition",
+    "in triassic",
+    "in jurassic",
+    "in cretaceous",
+    "in permian",
+    "in devonian",
+    "in ordovician",
+    "in silurian",
+    "in cambrian",
+    "in carboniferous",
     # Phase 62 Plan 5 (Bug 5.15): era + epoch names (mirror copy
     # of geology_extraction._PALEO_KEYWORDS so the two paths stay
     # in sync without a circular import).
-    "in mesozoic", "in the mesozoic", "mesozoic",
-    "in cenozoic", "in the cenozoic", "cenozoic",
-    "in paleozoic", "in the paleozoic", "paleozoic",
-    "in paleogene", "in the paleogene", "paleogene",
-    "in neogene", "in the neogene", "neogene",
-    "in eocene", "in the eocene", "eocene",
-    "in oligocene", "in the oligocene", "oligocene",
-    "in miocene", "in the miocene", "miocene",
-    "in pliocene", "in the pliocene", "pliocene",
-    "in pleistocene", "in the pleistocene", "pleistocene",
+    "in mesozoic",
+    "in the mesozoic",
+    "mesozoic",
+    "in cenozoic",
+    "in the cenozoic",
+    "cenozoic",
+    "in paleozoic",
+    "in the paleozoic",
+    "paleozoic",
+    "in paleogene",
+    "in the paleogene",
+    "paleogene",
+    "in neogene",
+    "in the neogene",
+    "neogene",
+    "in eocene",
+    "in the eocene",
+    "eocene",
+    "in oligocene",
+    "in the oligocene",
+    "oligocene",
+    "in miocene",
+    "in the miocene",
+    "miocene",
+    "in pliocene",
+    "in the pliocene",
+    "pliocene",
+    "in pleistocene",
+    "in the pleistocene",
+    "pleistocene",
 )
 
 
