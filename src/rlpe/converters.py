@@ -721,7 +721,7 @@ def _coordinate_uncertainty_for(coord_source: str | None) -> float | None:
         "country_centroid": 25000.0,
         "paleo_reconstructed": 10000.0,
     }
-    return table.get(coord_source, 1000.0)
+    return table.get(coord_source)
 
 
 def _panel_review_reasons(match: MatchResult) -> list[str]:
