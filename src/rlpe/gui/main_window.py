@@ -12,6 +12,7 @@ a status bar with permanent + temporary widgets. We use a
 work — for example, opening a job from the Jobs tab switches to
 the Results tab and loads the rows.
 """
+
 from __future__ import annotations
 
 import sys
@@ -63,6 +64,7 @@ def _make_app_icon() -> QIcon:
     """
     from PySide6.QtCore import QRectF
     from PySide6.QtGui import QPainter, QPixmap
+
     pm = QPixmap(64, 64)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -184,9 +186,7 @@ class MainWindow(QMainWindow):
             return
         self._log.info("Loaded %d recent job(s) from disk", n)
         # Show a transient status bar message in the user's language.
-        self.statusBar().showMessage(
-            i18n._tr("main.recent_loaded").format(n=n), 5000
-        )
+        self.statusBar().showMessage(i18n._tr("main.recent_loaded").format(n=n), 5000)
         # audit 2026-07-31: restore the Phase 51 auto-open — opening
         # the GUI after a restart dumped the user on the empty Run
         # tab while their completed work sat unlisted. Auto-select the
@@ -194,14 +194,13 @@ class MainWindow(QMainWindow):
         try:
             jobs = getattr(self._jobs_tab, "_jobs", {})
             finished = [
-                j for j in jobs.values()
+                j
+                for j in jobs.values()
                 if getattr(j, "status", None) == STATUS_DONE and getattr(j, "rows", None)
             ]
             if finished:
                 latest = max(finished, key=lambda j: getattr(j, "finished_at", 0) or 0)
-                self._results_tab.load_job(
-                    latest.job_id, latest.rows, latest.output_dir
-                )
+                self._results_tab.load_job(latest.job_id, latest.rows, latest.output_dir)
                 self._tabs.setCurrentIndex(TAB_RESULTS)
         except Exception as exc:  # pragma: no cover — defensive
             self._log.warning("Phase 51 auto-open failed: %s", exc)
@@ -244,12 +243,16 @@ class MainWindow(QMainWindow):
             "m3_prompt_lang": self._qsettings.value("m3_prompt_lang", "auto"),
             "m3_model": self._qsettings.value("m3_model", "MiniMax-M3"),
             "MiniMax_thinking_budget": self._qint(self._qsettings, "MiniMax_thinking_budget", 1024),
-            "MiniMax_max_output_tokens": self._qint(self._qsettings, "MiniMax_max_output_tokens", 2048),
+            "MiniMax_max_output_tokens": self._qint(
+                self._qsettings, "MiniMax_max_output_tokens", 2048
+            ),
             "MiniMax_timeout_sec": self._qint(self._qsettings, "MiniMax_timeout_sec", 60),
             "MiniMax_max_retries": self._qint(self._qsettings, "MiniMax_max_retries", 3),
             "use_paleodb": self._qbool(self._qsettings, "use_paleodb", True),
             "paleodb_max_occurrences": self._qint(self._qsettings, "paleodb_max_occurrences", 25),
-            "paleodb_endpoint": self._qsettings.value("paleodb_endpoint", "https://paleobiodb.org/data1.2"),
+            "paleodb_endpoint": self._qsettings.value(
+                "paleodb_endpoint", "https://paleobiodb.org/data1.2"
+            ),
             "render_dpi": self._qint(self._qsettings, "render_dpi", 200),
             "save_intermediate": self._qbool(self._qsettings, "save_intermediate", False),
         }
@@ -344,9 +347,9 @@ class MainWindow(QMainWindow):
         menubar.addAction(view_menu.menuAction())
 
         for key, tab_idx in (
-            ("menu.view.run",      TAB_RUN),
-            ("menu.view.jobs",     TAB_JOBS),
-            ("menu.view.results",  TAB_RESULTS),
+            ("menu.view.run", TAB_RUN),
+            ("menu.view.jobs", TAB_JOBS),
+            ("menu.view.results", TAB_RESULTS),
             ("menu.view.settings", TAB_SETTINGS),
         ):
             act = tr_action(key, parent=self)
@@ -360,8 +363,8 @@ class MainWindow(QMainWindow):
         theme_menu = tr_menu("menu.theme", parent=view_menu)
         view_menu.addAction(theme_menu.menuAction())
         for theme_key, theme in (
-            ("menu.theme.light",  THEME_LIGHT),
-            ("menu.theme.dark",   "dark"),
+            ("menu.theme.light", THEME_LIGHT),
+            ("menu.theme.dark", "dark"),
             ("menu.theme.system", "system"),
         ):
             act = tr_action(theme_key, parent=self)
@@ -389,6 +392,7 @@ class MainWindow(QMainWindow):
         # language switch. The QToolBar widget itself is a QWidget
         # so its title can be retexted via the i18n registry.
         from .i18n_widgets import tr_action
+
         toolbar = QToolBar(i18n._tr("toolbar.title"))
         toolbar.setObjectName("mainToolBar")
         toolbar.setMovable(False)
@@ -408,9 +412,9 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         for key, tab_idx, shortcut in (
-            ("toolbar.run",      TAB_RUN,      "Ctrl+1"),
-            ("toolbar.jobs",     TAB_JOBS,     "Ctrl+2"),
-            ("toolbar.results",  TAB_RESULTS,  "Ctrl+3"),
+            ("toolbar.run", TAB_RUN, "Ctrl+1"),
+            ("toolbar.jobs", TAB_JOBS, "Ctrl+2"),
+            ("toolbar.results", TAB_RESULTS, "Ctrl+3"),
             ("toolbar.settings", TAB_SETTINGS, "Ctrl+4"),
         ):
             act = tr_action(key, parent=self)
@@ -458,9 +462,7 @@ class MainWindow(QMainWindow):
     def _refresh_status_text(self, _lang: str) -> None:
         """Re-render the status bar with the current i18n key."""
         try:
-            self._status_perm.setText(
-                i18n._tr(self._status_key).format(**self._status_kwargs)
-            )
+            self._status_perm.setText(i18n._tr(self._status_key).format(**self._status_kwargs))
         except Exception:
             pass
 
@@ -562,9 +564,24 @@ class MainWindow(QMainWindow):
             worker.request_cancel()
         except RuntimeError:
             pass
-        if not worker.wait(5000):
-            worker.terminate()
-            worker.wait(500)
+        # audit 2026-08-01 D20: replace ``worker.terminate()`` with a
+        # 30s bounded wait. ``terminate()`` forcibly kills the QThread
+        # mid-Python execution, which can orphan subprocesses
+        # (OpenDataLoader JVM, in-flight LLM HTTP requests) and leave
+        # partial temp dirs like ``od_output/<paper_id>/`` behind.
+        # ``request_cancel()`` above already called
+        # ``requestInterruption()``; the 30s wait gives the pipeline
+        # time to finish its current stage and clean up. If the worker
+        # is still running after 30s, log a warning rather than killing
+        # it — forcibly killing a worker that owns a live JVM is worse
+        # than letting the parent process exit normally.
+        if not worker.wait(30000):  # 30s timeout
+            self._log.warning(
+                "PipelineWorker did not exit within 30s after "
+                "request_cancel; leaving thread alive (process exit "
+                "will reclaim it). OpenDataLoader JVM may still be "
+                "running."
+            )
         if current_job_id:
             try:
                 self._jobs_tab.mark_cancelled(current_job_id)
@@ -613,11 +630,14 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_open_outdir(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Open output directory", self._settings.get("last_export_dir", str(Path.home())))
+        path = QFileDialog.getExistingDirectory(
+            self, "Open output directory", self._settings.get("last_export_dir", str(Path.home()))
+        )
         if path:
             self._settings["last_export_dir"] = path
             from PySide6.QtGui import QDesktopServices
             from PySide6.QtCore import QUrl
+
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _on_about(self) -> None:
@@ -642,6 +662,7 @@ class MainWindow(QMainWindow):
         import subprocess
         from .utils import LOG_FILE_NAME
         from PySide6.QtCore import QFileInfo
+
         log_path = Path(os.path.expanduser(f"~/.cache/rlpe/gui/{LOG_FILE_NAME}"))
         # Phase 55 audit — on a fresh install the log file does not
         # exist yet, so the previous ``xdg-open``/``open`` call would
@@ -667,7 +688,8 @@ class MainWindow(QMainWindow):
                 self,
                 i18n._tr("settab.log.title"),
                 i18n._tr("settab.log.open_fail").format(
-                    error=f"{type(exc).__name__}: {exc}", path=str(log_path),
+                    error=f"{type(exc).__name__}: {exc}",
+                    path=str(log_path),
                 ),
             )
 
@@ -722,9 +744,8 @@ class MainWindow(QMainWindow):
         # folder's exports. Fall back to the global setting for legacy
         # single-PDF jobs that never recorded their own output_dir.
         job_record = self._jobs_tab._jobs.get(job_id) if hasattr(self, "_jobs_tab") else None
-        job_dir = (
-            getattr(job_record, "output_dir", None)
-            or self._settings.get("last_export_dir", "")
+        job_dir = getattr(job_record, "output_dir", None) or self._settings.get(
+            "last_export_dir", ""
         )
         self._results_tab.load_job(job_id, rows, job_dir)
         # Status
@@ -741,9 +762,7 @@ class MainWindow(QMainWindow):
             self._mini_progress_timer.stop()
         self._mini_progress_timer = QTimer(self)
         self._mini_progress_timer.setSingleShot(True)
-        self._mini_progress_timer.timeout.connect(
-            lambda: self._mini_progress.setVisible(False)
-        )
+        self._mini_progress_timer.timeout.connect(lambda: self._mini_progress.setVisible(False))
         self._mini_progress_timer.start(2000)
         if not getattr(self, "_batch_pdfs", None):
             # Auto-switch to results tab (single-job mode only)
@@ -757,10 +776,7 @@ class MainWindow(QMainWindow):
         # 10-PDF batch would actually only run the first one. We now
         # re-enter the helper here whenever a batch is in flight and
         # there are still PDFs to process.
-        if (
-            getattr(self, "_batch_pdfs", None)
-            and self._batch_index < len(self._batch_pdfs)
-        ):
+        if getattr(self, "_batch_pdfs", None) and self._batch_index < len(self._batch_pdfs):
             self._start_next_batch_job()
 
     def _on_job_failed(self, job_id: str, error: str) -> None:
@@ -819,6 +835,7 @@ class MainWindow(QMainWindow):
     def _open_results(self, job_id: str) -> None:
         # Find the job in the jobs tab
         from PySide6.QtCore import Qt as _Qt
+
         jobs = getattr(self._jobs_tab, "_jobs", {})
         if job_id not in jobs:
             return
@@ -829,13 +846,18 @@ class MainWindow(QMainWindow):
     def _on_retry(self, job_id: str, settings: dict) -> None:
         # Re-run the job with the same PDF + (possibly updated) settings
         from PySide6.QtCore import Qt as _Qt
+
         jobs = getattr(self._jobs_tab, "_jobs", {})
         if job_id not in jobs:
             return
         job = jobs[job_id]
         path = Path(job.pdf_path)
         if not path.exists():
-            QMessageBox.warning(self, i18n._tr("main.retry", default="Retry"), f"Original file no longer exists:\n{path}")
+            QMessageBox.warning(
+                self,
+                i18n._tr("main.retry", default="Retry"),
+                f"Original file no longer exists:\n{path}",
+            )
             return
         # Re-push the PDF + settings into Run tab and start
         self._run_tab._set_pdf_path(path)
@@ -849,6 +871,7 @@ class MainWindow(QMainWindow):
     def _on_batch_started(self, pdfs: list[Path], batch_settings: dict) -> None:
         # Build a list of job_id placeholders
         from .jobs_tab import JobRecord
+
         # audit 2026-07-31: placeholder ids ("batch-00-<stem>") NEVER
         # matched the Run tab's real ids ("<stem>-HHMMSS"), so the
         # placeholder rows stayed "queued" forever while a SECOND row
@@ -896,9 +919,7 @@ class MainWindow(QMainWindow):
                 try:
                     self._export_batch_xlsx()
                 except Exception as exc:  # pragma: no cover
-                    self._log.warning(
-                        "batch xlsx_at_end export failed: %s", exc
-                    )
+                    self._log.warning("batch xlsx_at_end export failed: %s", exc)
             return
         pdf = self._batch_pdfs[self._batch_index]
         self._batch_index += 1
@@ -932,17 +953,12 @@ class MainWindow(QMainWindow):
 
         all_rows: list[dict[str, Any]] = []
         for job in getattr(self._jobs_tab, "_jobs", {}).values():
-            for row in (getattr(job, "rows", None) or []):
+            for row in getattr(job, "rows", None) or []:
                 all_rows.append(row)
         if not all_rows:
             return
-        default_dir = (
-            (self._batch_settings or {}).get("last_export_dir")
-            or str(Path.home())
-        )
-        default_name = (
-            f"rlpe_batch_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        )
+        default_dir = (self._batch_settings or {}).get("last_export_dir") or str(Path.home())
+        default_name = f"rlpe_batch_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         path, _ = QFileDialog.getSaveFileName(
             self,
             i18n._tr("restab.export.xlsx.title"),
@@ -953,6 +969,7 @@ class MainWindow(QMainWindow):
             return
         # Phase 56 audit: build run_output from all batch rows and export via xlsx.
         from ..exporters.xlsx import write_xlsx
+
         run_output = {
             "schema_version": "1.0.0",
             "provenance": {"job_id": "batch", "source": "rlpe-gui"},
@@ -966,7 +983,8 @@ class MainWindow(QMainWindow):
             ],
             "localities": [
                 {"country": g.get("country"), "locality": g.get("locality")}
-                for r in all_rows for g in ((r.get("metadata") or {}).get("geology_links") or [])
+                for r in all_rows
+                for g in ((r.get("metadata") or {}).get("geology_links") or [])
                 if g.get("country") or g.get("locality")
             ],
             "paleo_coordinates": [],

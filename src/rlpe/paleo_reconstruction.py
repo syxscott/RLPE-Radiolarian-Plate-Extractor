@@ -93,30 +93,54 @@ PLATE_OVERRIDES: dict[str, str] = {
 # Country keyword -> plate ID. Keeps the lookup simple (no gazetteer
 # dependency). Matches are case-insensitive whole-word.
 COUNTRY_PLATE: dict[str, str] = {
-    "italy": "Adria", "sicily": "Adria", "greece": "Adria",
-    "turkey": "Anatolia", "oman": "Arabia", "saudi": "Arabia",
-    "iran": "Iran", "iraq": "Arabia",
-    "uk": "Eurasia", "united kingdom": "Eurasia",
-    "france": "Eurasia", "germany": "Eurasia",
-    "spain": "Iberia", "portugal": "Iberia",
-    "austria": "Eurasia", "switzerland": "Eurasia",
+    "italy": "Adria",
+    "sicily": "Adria",
+    "greece": "Adria",
+    "turkey": "Anatolia",
+    "oman": "Arabia",
+    "saudi": "Arabia",
+    "iran": "Iran",
+    "iraq": "Arabia",
+    "uk": "Eurasia",
+    "united kingdom": "Eurasia",
+    "france": "Eurasia",
+    "germany": "Eurasia",
+    "spain": "Iberia",
+    "portugal": "Iberia",
+    "austria": "Eurasia",
+    "switzerland": "Eurasia",
     "italian": "Adria",
-    "usa": "North America", "united states": "North America",
-    "canada": "North America", "mexican": "North America",
+    "usa": "North America",
+    "united states": "North America",
+    "canada": "North America",
+    "mexican": "North America",
     "mexico": "North America",
-    "egypt": "Arabia", "tunisia": "Africa",
-    "morocco": "Africa", "algeria": "Africa",
+    "egypt": "Arabia",
+    "tunisia": "Africa",
+    "morocco": "Africa",
+    "algeria": "Africa",
     "south africa": "Africa",
-    "japan": "North China", "chinese": "South China",
-    "philippines": "South China", "indonesia": "Sundaland",
-    "indonesian": "Sundaland", "japanese": "North China",
-    "new zealand": "Mokoiwi", "australia": "East Gondwana",
-    "russian": "Siberia", "russia": "Siberia",
-    "norway": "Eurasia", "sweden": "Eurasia", "finland": "Eurasia",
-    "denmark": "Eurasia", "polish": "Eurasia",
-    "poland": "Eurasia", "czech": "Eurasia",
-    "hungary": "Eurasia", "romania": "Eurasia",
-    "bulgaria": "Eurasia", "cyprus": "Adria",
+    "japan": "North China",
+    "chinese": "South China",
+    "philippines": "South China",
+    "indonesia": "Sundaland",
+    "indonesian": "Sundaland",
+    "japanese": "North China",
+    "new zealand": "Mokoiwi",
+    "australia": "East Gondwana",
+    "russian": "Siberia",
+    "russia": "Siberia",
+    "norway": "Eurasia",
+    "sweden": "Eurasia",
+    "finland": "Eurasia",
+    "denmark": "Eurasia",
+    "polish": "Eurasia",
+    "poland": "Eurasia",
+    "czech": "Eurasia",
+    "hungary": "Eurasia",
+    "romania": "Eurasia",
+    "bulgaria": "Eurasia",
+    "cyprus": "Adria",
 }
 
 
@@ -246,6 +270,23 @@ def infer_plate_id(
     substring scan when the locality name itself contains the
     country name (e.g. "Favignana, Sicily").
     """
+    # 0) Operator extension point — PLATE_OVERRIDES wins over every
+    #    other lookup. Documented as the canonical way for operators
+    #    to remap a country to a plate without patching the table.
+    #    audit 2026-08-01 (Bug D16): previously this dict was only a
+    #    "documentation stub" — infer_plate_id never read it, so
+    #    operator additions had no effect on the pipeline.
+    if country:
+        override = PLATE_OVERRIDES.get(country)
+        if override is not None:
+            return override
+        # Also honour case-insensitive / whitespace-tolerant overrides
+        # so operators can write "Testland" or "testland" interchangeably.
+        c_norm = country.strip()
+        for k, v in PLATE_OVERRIDES.items():
+            if k.lower() == c_norm.lower():
+                return v
+
     # 1) Try country name directly (case-insensitive whole-word)
     if country:
         c_lower = country.strip().lower()
@@ -267,15 +308,31 @@ def infer_plate_id(
     # 3) Modern-coord heuristic — very rough bucket assignment
     #    based on approximate modern plate outlines. Only used when
     #    neither country nor locality produced a match.
+    #
+    #    audit 2026-08-01 (Bug C7): the original bucket order put
+    #    Eurasia (lat 25..75, lon -15..60) before Africa (lat
+    #    -40..40, lon -25..55), so Mediterranean coordinates such as
+    #    Tunisia (35, 10) and Cairo (30, 31) were misassigned to
+    #    Eurasia. N. Africa is now extracted FIRST and Eurasia is
+    #    tightened to start at lat 40 so the buckets never overlap.
     if modern_lat is not None and modern_lon is not None:
-        if -15 <= modern_lon <= 60 and 25 <= modern_lat <= 75:
-            return "Eurasia"
+        # N. Africa (Mediterranean margin) — MUST come before the
+        # Eurasia bucket so Tunisia, Egypt, Libya, Algeria coastal
+        # sites resolve to Africa rather than Eurasia.
+        if -15 <= modern_lon <= 30 and 25 <= modern_lat <= 40:
+            return "Africa"
         if -130 <= modern_lon <= -60 and 10 <= modern_lat <= 75:
             return "North America"
         if 100 <= modern_lon <= 160 and 20 <= modern_lat <= 60:
             return "North China"
         if 100 <= modern_lon <= 130 and -20 <= modern_lat <= 30:
             return "South China"
+        # Eurasia: tightened to start at lat 40 (i.e. "the southern
+        # edge of Europe") so it does NOT overlap with the N. Africa
+        # bucket above. Northern Europe (Paris, London, Berlin, etc.)
+        # at lat >= 40 still resolves here.
+        if -15 <= modern_lon <= 60 and 40 <= modern_lat <= 75:
+            return "Eurasia"
         if -25 <= modern_lon <= 55 and -40 <= modern_lat <= 40:
             return "Africa"
         if -180 <= modern_lon <= -150 and -60 <= modern_lat <= -30:
@@ -312,10 +369,20 @@ def _interpolate_euler(plate: str, age_ma: float):
     # Phase 62 Plan 5 (Bug 5.16): refuse to reconstruct known-stable
     # plates far in the past. The heuristic for "stable" is:
     #   * <= 3 reconstruction timesteps in the table, AND
-    #   * oldest timestep <= 100 Ma, AND
-    #   * most-recent pole has rotation_deg <= 1.0° (effectively
-    #     the modern identity).
-    if len(poles) <= 3 and age_max <= 100.0 and abs(poles[0][3]) <= 1.0:
+    #   * oldest timestep <= 250 Ma (relaxed from 100 Ma by audit
+    #     2026-08-01 Bug C8 — the Siberia pole table has age_max=200
+    #     so the original <=100 Ma guard never triggered, silently
+    #     returning the modern identity labelled "paleo"), AND
+    #   * BOTH the most-recent AND the oldest pole are identity
+    #     rotations (abs(rotation) <= 1.0°). Either end being a real
+    #     rotation means the plate has measurable motion in the
+    #     table and we should interpolate rather than refuse.
+    if (
+        len(poles) <= 3
+        and age_max <= 250.0
+        and abs(poles[0][3]) <= 1.0
+        and abs(poles[-1][3]) <= 1.0
+    ):
         if age_ma > 50.0:
             return None
     # Find the two adjacent timesteps bracketing age_ma. Note poles[i]
@@ -448,6 +515,7 @@ def enrich_geology_record(record: dict[str, Any]) -> None:
         # ``stratigraphy.find_ages_in_text``. We import lazily so this
         # module stays cheap to load.
         from .stratigraphy import find_ages_in_text
+
         classifications = find_ages_in_text(age_str)
         if not classifications and record.get("ma_mid") is not None:
             age_ma = float(record["ma_mid"])

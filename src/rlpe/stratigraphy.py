@@ -16,7 +16,11 @@ The lookup is case-insensitive and matches modifiers ("Early/Middle/Late" and
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
+import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -418,7 +422,7 @@ _ICS_ROWS: list[dict[str, Any]] = [
     {
         "name": "Pleistocene",
         "cn": "更新世",
-        "rank": "age",       # P1-6 fix: was "epoch" — ICS 2023 places Pleistocene as an age under Quaternary period
+        "rank": "age",  # P1-6 fix: was "epoch" — ICS 2023 places Pleistocene as an age under Quaternary period
         "parent": "Quaternary",
         "ma_top": 0.0117,
         "ma_base": 2.58,
@@ -426,10 +430,187 @@ _ICS_ROWS: list[dict[str, Any]] = [
     {
         "name": "Holocene",
         "cn": "全新世",
-        "rank": "age",       # P1-6 fix: was "epoch" — ICS 2023 places Holocene as an age under Quaternary period
+        "rank": "age",  # P1-6 fix: was "epoch" — ICS 2023 places Holocene as an age under Quaternary period
         "parent": "Quaternary",
         "ma_top": 0.0,
         "ma_base": 0.0117,
+    },
+    # Cenozoic stages (ICS 2023-09 chart) — audit 2026-08-01 batch W2 (C4):
+    # the previous table only had the period/epoch ranks (Paleogene,
+    # Eocene, Oligocene, …) and the bare Quaternary ages; downstream
+    # code that cited a specific stage ("Priabonian", "Burdigalian",
+    # "Calabrian") fell through to the (often unavailable) PBDB
+    # network fallback and was misclassified as the parent epoch.
+    # Paleogene stages (parent = Paleocene / Eocene / Oligocene)
+    {
+        "name": "Danian",
+        "cn": "丹麦期",
+        "rank": "age",
+        "parent": "Paleocene",
+        "ma_top": 61.6,
+        "ma_base": 66.0,
+    },
+    {
+        "name": "Selandian",
+        "cn": "塞兰特期",
+        "rank": "age",
+        "parent": "Paleocene",
+        "ma_top": 59.2,
+        "ma_base": 61.6,
+    },
+    {
+        "name": "Thanetian",
+        "cn": "塔内特期",
+        "rank": "age",
+        "parent": "Paleocene",
+        "ma_top": 56.0,
+        "ma_base": 59.2,
+    },
+    {
+        "name": "Ypresian",
+        "cn": "伊普里斯期",
+        "rank": "age",
+        "parent": "Eocene",
+        "ma_top": 47.8,
+        "ma_base": 56.0,
+    },
+    {
+        "name": "Lutetian",
+        "cn": "卢泰特期",
+        "rank": "age",
+        "parent": "Eocene",
+        "ma_top": 41.2,
+        "ma_base": 47.8,
+    },
+    {
+        "name": "Bartonian",
+        "cn": "巴顿期",
+        "rank": "age",
+        "parent": "Eocene",
+        "ma_top": 37.71,
+        "ma_base": 41.2,
+    },
+    {
+        "name": "Priabonian",
+        "cn": "普里阿邦期",
+        "rank": "age",
+        "parent": "Eocene",
+        "ma_top": 33.9,
+        "ma_base": 37.71,
+    },
+    {
+        "name": "Rupelian",
+        "cn": "鲁培尔期",
+        "rank": "age",
+        "parent": "Oligocene",
+        "ma_top": 27.82,
+        "ma_base": 33.9,
+    },
+    {
+        "name": "Chattian",
+        "cn": "恰特期",
+        "rank": "age",
+        "parent": "Oligocene",
+        "ma_top": 23.03,
+        "ma_base": 27.82,
+    },
+    # Neogene stages (parent = Miocene / Pliocene)
+    {
+        "name": "Aquitanian",
+        "cn": "阿基坦期",
+        "rank": "age",
+        "parent": "Miocene",
+        "ma_top": 20.44,
+        "ma_base": 23.03,
+    },
+    {
+        "name": "Burdigalian",
+        "cn": "布尔迪加尔期",
+        "rank": "age",
+        "parent": "Miocene",
+        "ma_top": 15.97,
+        "ma_base": 20.44,
+    },
+    {
+        "name": "Langhian",
+        "cn": "兰盖期",
+        "rank": "age",
+        "parent": "Miocene",
+        "ma_top": 13.65,
+        "ma_base": 15.97,
+    },
+    {
+        "name": "Serravallian",
+        "cn": "塞拉瓦尔期",
+        "rank": "age",
+        "parent": "Miocene",
+        "ma_top": 11.63,
+        "ma_base": 13.65,
+    },
+    {
+        "name": "Tortonian",
+        "cn": "托尔托纳期",
+        "rank": "age",
+        "parent": "Miocene",
+        "ma_top": 7.246,
+        "ma_base": 11.63,
+    },
+    {
+        "name": "Messinian",
+        "cn": "梅西尼期",
+        "rank": "age",
+        "parent": "Miocene",
+        "ma_top": 5.333,
+        "ma_base": 7.246,
+    },
+    {
+        "name": "Zanclean",
+        "cn": "赞克勒期",
+        "rank": "age",
+        "parent": "Pliocene",
+        "ma_top": 3.60,
+        "ma_base": 5.333,
+    },
+    {
+        "name": "Piacenzian",
+        "cn": "皮亚琴期",
+        "rank": "age",
+        "parent": "Pliocene",
+        "ma_top": 2.58,
+        "ma_base": 3.60,
+    },
+    # Quaternary stages (parent = Quaternary)
+    {
+        "name": "Gelasian",
+        "cn": "杰拉期",
+        "rank": "age",
+        "parent": "Quaternary",
+        "ma_top": 1.80,
+        "ma_base": 2.58,
+    },
+    {
+        "name": "Calabrian",
+        "cn": "卡拉布里期",
+        "rank": "age",
+        "parent": "Quaternary",
+        "ma_top": 0.774,
+        "ma_base": 1.80,
+    },
+    {
+        "name": "Chibanian",
+        "cn": "契班期",
+        "rank": "age",
+        "parent": "Quaternary",
+        "ma_top": 0.129,
+        "ma_base": 0.774,
+    },
+    {
+        "name": "Late Pleistocene",
+        "cn": "晚上新世",
+        "rank": "age",
+        "parent": "Pleistocene",
+        "ma_top": 0.0117,
+        "ma_base": 0.129,
     },
     # Permian stages (radiolarian-relevant)
     {
@@ -948,11 +1129,7 @@ def classify_age_string(text: str) -> AgeClassification:
     raw = _normalise_modifier_sep(raw)
     # 1) Full-string hit first: epoch entries are named "Late Triassic"
     #    etc., so the modifier must NOT be stripped before this lookup.
-    hit = (
-        ICS_INDEX.get(raw)
-        or ICS_INDEX.get(raw.lower())
-        or ICS_INDEX.get(raw.capitalize())
-    )
+    hit = ICS_INDEX.get(raw) or ICS_INDEX.get(raw.lower()) or ICS_INDEX.get(raw.capitalize())
     if hit:
         return _build_classification(raw, hit, raw)
     # 2) Common-language aliases ("Late Permian" → Lopingian, Chinese
@@ -1055,6 +1232,18 @@ def _midpoint(a: float | None, b: float | None) -> float | None:
 _PBDB_INTERVALS_CACHE: list[dict[str, Any]] | None = None
 _PBDB_LAST_FETCH: float = 0.0
 _PBDB_CACHE_TTL_SECONDS: float = 30 * 24 * 60 * 60  # 30 days
+# audit 2026-08-01 batch W2 (D1): the previous module-level cache
+# state had no lock, no negative cache, and a non-atomic write.
+# Concurrent callers (e.g. parallel PBDB fallback invocations from a
+# web UI batch) raced on the read-modify-write of
+# ``_PBDB_INTERVALS_CACHE`` and could either return a partially
+# populated cache or write a half-finished JSON to disk. The lock +
+# atomic write + negative-cache fixes below keep the helper correct
+# under concurrent calls and during mid-write process crashes.
+_PBDB_INTERVALS_LOCK = threading.Lock()
+_PBDB_INTERVALS_NEG_CACHE: dict[str, float] = {}
+_PBDB_NEG_TTL_SECONDS: float = 300.0  # 5 minutes
+_PBDB_ENDPOINT_URL = "https://paleobiodb.org/data1.2/intervals/list.json?all_parents=1"
 
 
 def fetch_pbdb_intervals(
@@ -1064,51 +1253,90 @@ def fetch_pbdb_intervals(
 
     Network call — does *not* run in unit tests.  Use :func:`_pbdb_lookup`
     which transparently uses the cache.
+
+    Concurrency: thread-safe via :data:`_PBDB_INTERVALS_LOCK`. Repeated
+    failures populate an in-memory negative cache (5 min TTL) so a
+    transient outage does not turn into a thundering herd of network
+    retries. Disk writes are atomic via ``tempfile`` + ``os.replace``.
     """
-    global _PBDB_INTERVALS_CACHE, _PBDB_LAST_FETCH
-    if _PBDB_INTERVALS_CACHE is not None and not force:
-        return _PBDB_INTERVALS_CACHE
-    cache_dir = cache_dir or Path.home() / ".cache" / "rlpe" / "paleodb"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / "intervals.json"
-    # Check if cached data is still valid (within TTL)
-    if cache_path.exists() and not force:
-        # audit 2026-07-26: base TTL on the cache file's mtime, not
-        # the in-process _PBDB_LAST_FETCH (which is 0.0 after a restart,
-        # making a fresh on-disk cache look stale and forcing a re-fetch).
-        age = time.time() - cache_path.stat().st_mtime
-        if age < _PBDB_CACHE_TTL_SECONDS:
+    global _PBDB_INTERVALS_CACHE, _PBDB_LAST_FETCH, _PBDB_INTERVALS_NEG_CACHE
+    with _PBDB_INTERVALS_LOCK:
+        if _PBDB_INTERVALS_CACHE is not None and not force:
+            return _PBDB_INTERVALS_CACHE
+        cache_dir = cache_dir or Path.home() / ".cache" / "rlpe" / "paleodb"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / "intervals.json"
+        # Negative cache: skip network for a short window after a
+        # recent failure so a transient outage doesn't trigger a
+        # thundering-herd of retries.
+        neg_expires = _PBDB_INTERVALS_NEG_CACHE.get(_PBDB_ENDPOINT_URL)
+        if neg_expires is not None and neg_expires > time.monotonic() and not force:
+            return []
+        # Check if cached data is still valid (within TTL)
+        if cache_path.exists() and not force:
+            # audit 2026-07-26: base TTL on the cache file's mtime, not
+            # the in-process _PBDB_LAST_FETCH (which is 0.0 after a restart,
+            # making a fresh on-disk cache look stale and forcing a re-fetch).
             try:
-                _PBDB_INTERVALS_CACHE = json.loads(cache_path.read_text(encoding="utf-8"))
-                return _PBDB_INTERVALS_CACHE
-            except (OSError, json.JSONDecodeError) as exc:
-                # Corrupted intervals cache — fall through to a live
-                # fetch (the right behaviour), but log at warning so the
-                # operator can clean up the bad file. Silent corruption
-                # used to make the live fetch look like a network
-                # regression.
-                import logging
+                age = time.time() - cache_path.stat().st_mtime
+            except OSError:
+                age = _PBDB_CACHE_TTL_SECONDS
+            if age < _PBDB_CACHE_TTL_SECONDS:
+                try:
+                    _PBDB_INTERVALS_CACHE = json.loads(cache_path.read_text(encoding="utf-8"))
+                    return _PBDB_INTERVALS_CACHE
+                except (OSError, json.JSONDecodeError) as exc:
+                    # Corrupted intervals cache — fall through to a live
+                    # fetch (the right behaviour), but log at warning so the
+                    # operator can clean up the bad file. Silent corruption
+                    # used to make the live fetch look like a network
+                    # regression.
+                    logging.getLogger(__name__).warning(
+                        "PBDB intervals cache at %s is unreadable (%s); falling through to live fetch",
+                        cache_path,
+                        exc,
+                    )
+        try:
+            import requests  # type: ignore
 
-                logging.getLogger(__name__).warning(
-                    "PBDB intervals cache at %s is unreadable (%s); falling through to live fetch",
-                    cache_path,
-                    exc,
-                )
-    try:
-        import requests  # type: ignore
-
-        resp = requests.get(
-            "https://paleobiodb.org/data1.2/intervals/list.json?all_parents=1",
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json().get("records", [])
-        cache_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        _PBDB_INTERVALS_CACHE = data
-        _PBDB_LAST_FETCH = time.time()
-        return data
-    except Exception:
-        return []
+            resp = requests.get(
+                _PBDB_ENDPOINT_URL,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("records", [])
+            # Atomic write: write to a temp file in the same directory
+            # then ``os.replace`` it onto the target path. A process
+            # crash mid-write leaves the original cache intact (the
+            # temp file may linger but is invisible to consumers).
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=str(cache_dir),
+                prefix="intervals.json.",
+                suffix=".tmp",
+            )
+            try:
+                with open(tmp_fd, "w", encoding="utf-8") as fh:
+                    fh.write(json.dumps(data, ensure_ascii=False))
+            except Exception:
+                # Best-effort cleanup of the temp file on failure.
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+            os.replace(tmp_path, cache_path)
+            _PBDB_INTERVALS_CACHE = data
+            _PBDB_LAST_FETCH = time.time()
+            # Clear any stale negative cache on success.
+            _PBDB_INTERVALS_NEG_CACHE.pop(_PBDB_ENDPOINT_URL, None)
+            return data
+        except Exception:
+            # Record the failure so subsequent callers within the TTL
+            # don't re-hit the network. We expire the entry via
+            # ``time.monotonic`` so a pause (suspend / sleep) does not
+            # extend the cooldown.
+            _PBDB_INTERVALS_NEG_CACHE[_PBDB_ENDPOINT_URL] = time.monotonic() + _PBDB_NEG_TTL_SECONDS
+            return []
 
 
 def _pbdb_lookup(body: str) -> dict[str, Any] | None:
@@ -1148,7 +1376,7 @@ def _pbdb_lookup(body: str) -> dict[str, Any] | None:
                 "cn": "",
                 "rank": rank if rank in {"eon", "era", "period", "epoch", "age"} else "age",
                 "parent": parent_name,
-                "ma_top": lag,   # younger bound
+                "ma_top": lag,  # younger bound
                 "ma_base": eag,  # older bound
             }
     return None
@@ -1214,51 +1442,51 @@ _BIOZONE_TO_MA: dict[str, tuple[float, float]] = {
     # original UAZones95 chart for zone-level boundaries.
     # Ma bounds follow the ICS 2023 stage boundaries used in
     # ``_ICS_ROWS`` above.
-    "UAZ 1": (172.0, 174.7),     # early–middle Aalenian
-    "UAZ 2": (170.9, 172.0),     # late Aalenian
-    "UAZ 3": (169.3, 170.9),     # early–middle Bajocian
-    "UAZ 4": (167.7, 169.3),     # late Bajocian
-    "UAZ 5": (166.2, 167.7),     # latest Bajocian–early Bathonian
-    "UAZ 6": (165.0, 166.2),     # middle Bathonian
-    "UAZ 7": (163.0, 165.3),     # late Bathonian–early Callovian
-    "UAZ 8": (158.0, 163.0),     # middle Callovian–early Oxfordian
-    "UAZ 9": (156.0, 158.5),     # middle–late Oxfordian
-    "UAZ 10": (152.0, 156.0),    # late Oxfordian–early Kimmeridgian
-    "UAZ 11": (147.5, 152.0),    # late Kimmeridgian–early Tithonian
-    "UAZ 12": (145.0, 147.5),    # early Tithonian
-    "UAZ 13": (142.6, 145.0),    # late Tithonian (approx.)
-    "UAZ 14": (140.2, 142.6),    # latest Tithonian–early Berriasian (approx.)
-    "UAZ 15": (137.8, 140.2),    # Berriasian (approx.)
-    "UAZ 16": (135.4, 137.8),    # late Berriasian–early Valanginian (approx.)
-    "UAZ 17": (133.0, 135.4),    # Valanginian (approx.)
-    "UAZ 18": (130.6, 133.0),    # late Valanginian–early Hauterivian (approx.)
-    "UAZ 19": (128.2, 130.6),    # Hauterivian (approx.)
-    "UAZ 20": (125.8, 128.2),    # late Hauterivian (approx.)
-    "UAZ 21": (123.4, 125.8),    # Hauterivian–Barremian boundary (approx.)
+    "UAZ 1": (172.0, 174.7),  # early–middle Aalenian
+    "UAZ 2": (170.9, 172.0),  # late Aalenian
+    "UAZ 3": (169.3, 170.9),  # early–middle Bajocian
+    "UAZ 4": (167.7, 169.3),  # late Bajocian
+    "UAZ 5": (166.2, 167.7),  # latest Bajocian–early Bathonian
+    "UAZ 6": (165.0, 166.2),  # middle Bathonian
+    "UAZ 7": (163.0, 165.3),  # late Bathonian–early Callovian
+    "UAZ 8": (158.0, 163.0),  # middle Callovian–early Oxfordian
+    "UAZ 9": (156.0, 158.5),  # middle–late Oxfordian
+    "UAZ 10": (152.0, 156.0),  # late Oxfordian–early Kimmeridgian
+    "UAZ 11": (147.5, 152.0),  # late Kimmeridgian–early Tithonian
+    "UAZ 12": (145.0, 147.5),  # early Tithonian
+    "UAZ 13": (142.6, 145.0),  # late Tithonian (approx.)
+    "UAZ 14": (140.2, 142.6),  # latest Tithonian–early Berriasian (approx.)
+    "UAZ 15": (137.8, 140.2),  # Berriasian (approx.)
+    "UAZ 16": (135.4, 137.8),  # late Berriasian–early Valanginian (approx.)
+    "UAZ 17": (133.0, 135.4),  # Valanginian (approx.)
+    "UAZ 18": (130.6, 133.0),  # late Valanginian–early Hauterivian (approx.)
+    "UAZ 19": (128.2, 130.6),  # Hauterivian (approx.)
+    "UAZ 20": (125.8, 128.2),  # late Hauterivian (approx.)
+    "UAZ 21": (123.4, 125.8),  # Hauterivian–Barremian boundary (approx.)
     # Hollis 1997 NZ Late Cretaceous radiolarian zones
     # Buryella clinata Zone: Thanetian (late Paleocene), ~56-59 Ma
     # (corrected: was incorrectly set to Wuchiapingian ~254-259 Ma)
-    "Buryella clinata Zone": (56.0, 59.0),          # Thanetian
+    "Buryella clinata Zone": (56.0, 59.0),  # Thanetian
     "Cryptocephalus nigricae Zone": (83.6, 86.3),  # Coniacian–Santonian
     # O'Dogherty 1994 Betic Cordillera zones (mid-Cretaceous subset)
     # P1-7 fix: corrected to ICS 2023 stage boundaries.
     # Valanginian: 139.8-132.6 Ma; Hauterivian: 132.6-125.77 Ma
     # Barremian: 125.77-121.4 Ma; Aptian: 121.4-113.0 Ma; Albian: 113.0-100.5 Ma
-    "Pessagno Zone A": (125.77, 132.6),            # Hauterivian
-    "Pessagno Zone B": (121.4, 125.77),           # Barremian (lower Aptian boundary at 125.77)
-    "Pessagno Zone C": (113.0, 121.4),            # Aptian
+    "Pessagno Zone A": (125.77, 132.6),  # Hauterivian
+    "Pessagno Zone B": (121.4, 125.77),  # Barremian (lower Aptian boundary at 125.77)
+    "Pessagno Zone C": (113.0, 121.4),  # Aptian
     # Legacy radiolarian zonation (Riedel & Sanfilippo 1978)
     # — commonly cited in older bandini / pouille papers.
     # Buryella tetradica Zone: Coniacian-Santonian (Late Cretaceous), ~83-89 Ma
     # (corrected: was incorrectly set to Olenekian-Anisian ~247-251 Ma)
-    "Buryella tetradica Zone": (83.6, 89.0),       # Coniacian–Santonian
-    "Triassocampe deweveri Zone": (208.5, 227.0), # Carnian–Norian
+    "Buryella tetradica Zone": (83.6, 89.0),  # Coniacian–Santonian
+    "Triassocampe deweveri Zone": (208.5, 227.0),  # Carnian–Norian
     # Bare-name aliases (no trailing "Zone") so callers that already
     # stripped the suffix don't pay an extra re-lookup cost. Both
     # forms resolve to the same (ma_top, ma_base) tuple.
-    "Buryella clinata": (56.0, 59.0),              # Thanetian (corrected)
+    "Buryella clinata": (56.0, 59.0),  # Thanetian (corrected)
     "Cryptocephalus nigricae": (83.6, 86.3),
-    "Buryella tetradica": (83.6, 89.0),            # Coniacian–Santonian (corrected)
+    "Buryella tetradica": (83.6, 89.0),  # Coniacian–Santonian (corrected)
     "Triassocampe deweveri": (208.5, 227.0),
 }
 

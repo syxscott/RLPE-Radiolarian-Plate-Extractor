@@ -133,18 +133,62 @@ def _sha256_file(path: Path) -> str:
 
 
 def _input_sha256(pdf_paths: list[Path]) -> dict[str, str]:
+    """Hash every input PDF and return ``{key: sha256}`` where ``key`` is a
+    disambiguated identifier for the file.
+
+    Phase 63 / audit 2026-08-01 D13: previously the key was just
+    ``path.name`` (basename), so two PDFs with the same basename from
+    different sub-directories could collide and the second would silently
+    overwrite the first's hash. We now build a list of
+    ``(candidate_key, hash)`` tuples — using ``parent/name`` when the
+    basenames collide or when relative-to-root cannot be computed — and
+    then deduplicate with a ``[N]`` suffix appended to the basename so
+    every input is always represented in the returned dict.
+    """
     digests: dict[str, str] = {}
-    missing_or_unreadable = []
+    missing_or_unreadable: list[str] = []
+    # First pass: produce (candidate_key, hash) pairs.
+    pairs: list[tuple[str, str]] = []
     for p in pdf_paths:
         if p.exists() and p.is_file():
             try:
-                digests[p.name] = _sha256_file(p)
+                digest = _sha256_file(p)
+                status_msg = None
             except OSError:
-                digests[p.name] = "unreadable"
-                missing_or_unreadable.append(f"{p.name}: unreadable")
+                digest = "unreadable"
+                status_msg = f"{p.name}: unreadable"
         else:
-            digests[p.name] = "missing"
-            missing_or_unreadable.append(f"{p.name}: missing")
+            digest = "missing"
+            status_msg = f"{p.name}: missing"
+        # Build a path-aware key so two PDFs with the same basename under
+        # different parents are distinguishable. Fall back to parent/name
+        # when relative_to has no usable root.
+        name = p.name
+        parent_name = p.parent.name if p.parent and p.parent.name else ""
+        if parent_name:
+            candidate = f"{parent_name}/{name}"
+        else:
+            candidate = name
+        pairs.append((candidate, digest))
+        if status_msg:
+            missing_or_unreadable.append(status_msg)
+    # Second pass: deduplicate by appending [N] suffix on collision.
+    counts: dict[str, int] = {}
+    for candidate, _digest in pairs:
+        counts[candidate] = counts.get(candidate, 0) + 1
+    seen: dict[str, int] = {}
+    for candidate, digest in pairs:
+        if counts[candidate] > 1:
+            idx = seen.get(candidate, 0)
+            seen[candidate] = idx + 1
+            stem, dot, ext = candidate.rpartition(".")
+            if dot:
+                key = f"{stem}[{idx}].{ext}"
+            else:
+                key = f"{candidate}[{idx}]"
+        else:
+            key = candidate
+        digests[key] = digest
     if missing_or_unreadable:
         import logging
         logger = logging.getLogger(__name__)
