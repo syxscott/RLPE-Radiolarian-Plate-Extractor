@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import random
 import re
 import threading
 import time
@@ -81,7 +82,7 @@ def resolve_deterministic_kwargs(
 # import _truncate_caption_for_llm``. We keep the actual implementation in
 # its own module to avoid dragging the Anthropic SDK / heavy dataclass
 # imports into places that just need the helper.
-from ._llm_caption import (  # noqa: E402  (import after logger setup)
+from ._llm_caption import (  # noqa: E402,F401  (intentional re-export)
     DEFAULT_MAX_CHARS,
     DEFAULT_MAX_TOKENS,
     _truncate_caption_for_llm,
@@ -123,6 +124,7 @@ def select_backend_after_4xx(
     if attempts_made < 2:
         return current_backend
     return configured_fallback
+
 
 # Match Anthropic / MiniMax / OpenAI style API keys (sk-ant-..., sk-...,
 # plus generic 40+ char sk- prefixes). Anthropic's actual key shape is
@@ -218,6 +220,35 @@ def _validate_llm_host(host: str) -> str:
         addr = ipaddress.ip_address(hostname)
     except ValueError:
         return host
+    # Audit M10: also block IPv4-mapped IPv6 addresses whose IPv4
+    # payload is itself non-routable (e.g. ``::ffff:169.254.169.254``
+    # which is the AWS / GCP / Azure metadata endpoint). The previous
+    # check only flagged ``is_link_local`` / ``is_unspecified`` /
+    # ``is_multicast`` directly on the IPv6 object, which leaves a
+    # window for an IPv6 wrapper around a dangerous IPv4 address.
+    # We intentionally do NOT add ``is_private`` to the predicate —
+    # loopback (127.0.0.0/8) and RFC1918 (10/8, 172.16/12, 192.168/16)
+    # are legitimate local LLM hosts and the docstring promises
+    # they're allowed. ``is_reserved`` is also excluded from the
+    # main predicate because it would over-block ``[::1]`` (IPv6
+    # loopback); the reserved-range check is still applied to the
+    # inner IPv4 of an IPv4-mapped IPv6 wrapper below.
+    ipv4_mapped = getattr(addr, "ipv4_mapped", None)
+    if ipv4_mapped is not None:
+        # The host is an IPv4-mapped IPv6 literal. Reject if the
+        # inner IPv4 is one of the SSRF payloads (link-local,
+        # unspecified, multicast, or reserved).
+        if (
+            ipv4_mapped.is_link_local
+            or ipv4_mapped.is_unspecified
+            or ipv4_mapped.is_multicast
+            or ipv4_mapped.is_reserved
+        ):
+            raise ValueError(
+                f"LLM host {host!r} resolves to a non-routable address "
+                f"({addr} -> {ipv4_mapped}); refusing to connect (SSRF guard). "
+                f"Set RLPE_LLM_ALLOW_ANY_HOST=1 to override."
+            )
     if addr.is_link_local or addr.is_unspecified or addr.is_multicast:
         raise ValueError(
             f"LLM host {host!r} resolves to a non-routable address "
@@ -279,10 +310,34 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
 
 
 def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
+    # Audit M12: the LLM may return ``confidence`` as a string like
+    # ``"high"`` / ``"medium"`` / ``"0.8"`` / ``"low"`` instead of a
+    # number. The previous code unconditionally called
+    # ``float(obj.get("confidence", 0.0))`` which raised ValueError
+    # on those non-numeric strings and broke the whole parse. We
+    # now coerce safely: numeric types pass through, numeric
+    # strings are parsed, anything else (including None) defaults
+    # to 0.0.
+    raw_conf = obj.get("confidence", 0.0)
+    if isinstance(raw_conf, bool):
+        # ``bool`` is a subclass of ``int`` in Python — treat True as
+        # 1.0 and False as 0.0 so ``True`` doesn't leak through.
+        conf_value = 1.0 if raw_conf else 0.0
+    elif isinstance(raw_conf, (int, float)):
+        conf_value = float(raw_conf)
+    elif isinstance(raw_conf, str):
+        try:
+            conf_value = float(raw_conf.strip())
+        except (TypeError, ValueError):
+            conf_value = 0.0
+    else:
+        # None, list, dict, object — none are sensible confidence
+        # values, so default to 0.0 instead of crashing.
+        conf_value = 0.0
     out = {
         "label": (str(obj.get("label", "")).strip() or None),
         "species": (str(obj.get("species", "")).strip() or None),
-        "confidence": float(obj.get("confidence", 0.0)),
+        "confidence": conf_value,
         "reasoning": str(obj.get("reasoning", "")).strip() or "No reasoning provided.",
     }
     out["confidence"] = max(0.0, min(1.0, round(out["confidence"], 2)))
@@ -384,8 +439,7 @@ class TransformersGemmaBackend(BaseLLMBackend):
             # this log, a CUDA OOM surfaces only as ``fallback_used=True`` with
             # no other trace — making debugging very difficult.
             logger.error(
-                "TransformersGemmaBackend inference failed (fallback_used=True): "
-                "%s: %s",
+                "TransformersGemmaBackend inference failed (fallback_used=True): %s: %s",
                 type(exc).__name__,
                 _redact_api_keys(str(exc)),
             )
@@ -526,10 +580,19 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
         user_prompt: str,
     ) -> dict[str, Any]:
         try:
-            text = self._chat_completion(panel_image, system_prompt, user_prompt)
+            text, multimodal_degraded = self._chat_completion(
+                panel_image, system_prompt, user_prompt
+            )
             parsed = parse_json_from_text(text)
             parsed["raw_text"] = text
             parsed["fallback_used"] = False
+            # Audit M7: propagate the multimodal-degraded flag so the
+            # caller knows the model only saw text, not the image.
+            # This is critical for radiolarian species ID: if the
+            # multimodal path failed and we degraded to text-only,
+            # the model's confidence is necessarily lower and the
+            # caller may want to mark the result as "vision-fallback".
+            parsed["multimodal_degraded"] = multimodal_degraded
             return parsed
         except Exception as exc:
             return {
@@ -544,10 +607,12 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
 
     def infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         try:
-            text = self._chat_completion(None, system_prompt, user_prompt)
+            text, _ = self._chat_completion(None, system_prompt, user_prompt)
             parsed = parse_json_from_text(text)
             parsed["raw_text"] = text
             parsed["fallback_used"] = False
+            # text-only call — multimodal was never attempted.
+            parsed["multimodal_degraded"] = False
             return parsed
         except Exception as exc:
             return {
@@ -560,7 +625,37 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
                 "error": _redact_api_keys(str(exc)),
             }
 
-    def _chat_completion(self, panel_image, system_prompt: str, user_prompt: str) -> str:
+    def _chat_completion(
+        self, panel_image, system_prompt: str, user_prompt: str
+    ) -> tuple[str, bool]:
+        """Return ``(text, multimodal_degraded)``.
+
+        Audit M7: ``multimodal_degraded`` is True when the multimodal
+        path failed and we degraded to text-only via the
+        ``/completion`` endpoint. False in every other case (text-only
+        call, successful multimodal call, fallback when no image was
+        provided). The caller can use this to flag the result so
+        downstream code knows the model only saw text.
+        """
+        # Text-only calls never attempt the multimodal path.
+        if panel_image is None:
+            prompt = self._build_text_prompt(system_prompt, user_prompt)
+            completion_payload = {
+                "prompt": prompt,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "stream": False,
+            }
+            if self.model:
+                completion_payload["model"] = self.model
+            resp = requests.post(
+                self.host.rstrip("/") + "/completion",
+                json=completion_payload,
+                timeout=self.timeout_sec,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return str(data.get("content") or data.get("response") or ""), False
         # 1) 优先尝试 OpenAI-compatible chat/completions
         payload = {
             "model": self.model or "default",
@@ -577,9 +672,12 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             resp = requests.post(url, json=payload, timeout=self.timeout_sec)
             resp.raise_for_status()
             data = resp.json()
-            return self._extract_chat_text(data)
+            return self._extract_chat_text(data), False
         except Exception:
             # 2) 回退到 llama.cpp /completion 接口（纯文本）
+            # Audit M7: signal the degraded mode so callers can tell
+            # "model saw the image" apart from "image was dropped
+            # silently".
             logger.debug(
                 "llama.cpp /v1/chat/completions failed; falling back to /completion (text-only)"
             )
@@ -599,7 +697,7 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             )
             resp.raise_for_status()
             data = resp.json()
-            return str(data.get("content") or data.get("response") or "")
+            return str(data.get("content") or data.get("response") or ""), True
 
     def _system_message(self, system_prompt: str) -> dict[str, Any]:
         return {"role": "system", "content": system_prompt}
@@ -733,9 +831,22 @@ class MiniMaxM3Backend(BaseLLMBackend):
     #                     is the correct setting for offline / air-gapped
     #                     deployments (M3 weights not yet open-sourced,
     #                     privacy-sensitive papers).
-    data_outbound_policy: str = "api_full"  # Phase 61 (Bug 4.11): M3 vision needs full-res image for species ID
+    data_outbound_policy: str = (
+        "api_full"  # Phase 61 (Bug 4.11): M3 vision needs full-res image for species ID
+    )
 
     def __post_init__(self) -> None:
+        # Audit M11: ``max_concurrent=0`` would create a
+        # ``Semaphore(0)`` which never grants — the first call to
+        # ``_call_api`` would block forever (deadlock). Validate
+        # ``max_concurrent >= 1`` at construction so misconfiguration
+        # surfaces immediately with a clear error rather than as a
+        # hang deep in the pipeline.
+        if int(self.max_concurrent) < 1:
+            raise ValueError(
+                f"max_concurrent must be >= 1 (got {self.max_concurrent!r}); "
+                f"a value of 0 would deadlock the MiniMax _sem."
+            )
         # ``local_only`` does not need an API key: the backend will refuse
         # every outbound request and return a no-op result, which the
         # surrounding pipeline treats as a fallback.
@@ -779,10 +890,17 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     "(or set data_outbound_policy=local_only to run without the SDK)."
                 ) from exc
             self._anthropic = anthropic
+            # Audit M8: the anthropic SDK defaults to ``max_retries=2``
+            # which silently multiplies with our outer 3-attempt loop
+            # (effectively 3 * (1+2) = 9 attempts on a 500). Disable
+            # the SDK's internal retries so the outer loop in
+            # ``_call_api`` is the sole retry mechanism and the
+            # ``total_calls`` counter remains accurate.
             self._client = anthropic.Anthropic(
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=self.timeout_sec,
+                max_retries=0,
             )
         # Per-process semaphore (cheap; limits concurrent in-flight requests).
         self._sem = threading.Semaphore(self.max_concurrent)
@@ -845,8 +963,16 @@ class MiniMaxM3Backend(BaseLLMBackend):
     def _build_request_kwargs(
         self, system_prompt: str, messages: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        # max_tokens must be > thinking_budget when thinking is enabled.
-        max_out = max(self.max_output_tokens, self.thinking_budget_tokens + 256)
+        # Audit M2: per the Anthropic protocol, thinking tokens count
+        # toward the ``max_tokens`` budget. The previous code only took
+        # the max of (max_output_tokens, thinking_budget + 256) which
+        # ignored thinking cost when ``max_output_tokens`` was already
+        # large. Now we explicitly add the thinking budget when
+        # thinking is enabled, so the budget covers BOTH the thinking
+        # tokens AND the final output tokens the caller requested.
+        max_out = self.max_output_tokens + (
+            self.thinking_budget_tokens if self.enable_thinking else 0
+        )
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_out,
@@ -906,7 +1032,11 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 return resp
             except anthropic_mod.RateLimitError as exc:
                 last_exc = exc
-                wait = min(2**attempt, 30)
+                # Audit M9: add jitter (random.uniform(0, 1)) to
+                # exponential backoff so concurrent workers don't all
+                # retry at the same instant after a 429 (thundering
+                # herd against the rate-limited endpoint).
+                wait = min(2**attempt, 30) + random.uniform(0, 1)
                 logger.warning(
                     "MiniMax rate-limited (attempt %d), sleeping %ds: %s",
                     attempt + 1,
@@ -917,7 +1047,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 time.sleep(wait)
             except anthropic_mod.APIConnectionError as exc:
                 last_exc = exc
-                wait = min(2**attempt, 30)
+                wait = min(2**attempt, 30) + random.uniform(0, 1)
                 logger.warning(
                     "MiniMax connection error (attempt %d), sleeping %ds: %s",
                     attempt + 1,
@@ -939,7 +1069,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 #     request is malformed or the resource doesn't
                 #     exist and retrying won't help.
                 if status >= 500 or status == 429:
-                    wait = min(2**attempt, 30)
+                    wait = min(2**attempt, 30) + random.uniform(0, 1)
                     logger.warning(
                         "MiniMax %d (attempt %d), sleeping %ds: %s",
                         status,
@@ -953,8 +1083,12 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     # M10: auth errors (401/403) are not transient — retrying
                     # wastes quota and won't fix a bad/missing/expired key.
                     # Re-raise immediately so callers see the real failure on
-                    # the first attempt.  ``total_errors`` is bumped once at
-                    # the retry-exhaustion line (989-990) when the loop exits.
+                    # the first attempt.  Audit M4: bump ``total_errors``
+                    # BEFORE the raise so the counter reflects this
+                    # non-retryable failure (the retry-exhaustion block
+                    # below is never reached for this branch).
+                    with self._lock:
+                        self.total_errors += 1
                     logger.warning(
                         "MiniMax %d (non-retryable auth error): %s",
                         status,
@@ -971,9 +1105,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     try:
                         recommended = select_backend_after_4xx(
                             current_backend=self.backend_name,
-                            configured_fallback=getattr(
-                                self, "_configured_fallback", None
-                            ),
+                            configured_fallback=getattr(self, "_configured_fallback", None),
                             attempts_made=attempt + 1,
                         )
                         if recommended != self.backend_name:
@@ -986,10 +1118,27 @@ class MiniMaxM3Backend(BaseLLMBackend):
                             )
                             with self._lock:
                                 self.fallback_4xx_hints += 1
+                            # Audit M4: bump ``total_errors`` BEFORE the
+                            # raise so the 4xx-with-fallback-hint path
+                            # also reflects in the error counter.
+                            with self._lock:
+                                self.total_errors += 1
                             raise FallbackRecommendedError(
                                 f"MiniMax 4xx error, fallback {recommended} recommended",
                                 recommended_backend=recommended,
                             ) from exc
+                        # Audit M3: no real fallback configured (the
+                        # helper returns the same backend when nothing
+                        # better is wired up). Fail fast — don't loop
+                        # 3 more times against a permanently broken
+                        # request (malformed body, missing resource,
+                        # etc.). Bump ``total_errors`` and re-raise the
+                        # last exception so the caller's
+                        # ``_make_error_result`` propagates the real
+                        # reason.
+                        with self._lock:
+                            self.total_errors += 1
+                        raise last_exc if last_exc is not None else exc
                     except FallbackRecommendedError:
                         raise
         # Retry exhaustion. ``total_calls`` already reflects every
@@ -1026,16 +1175,28 @@ class MiniMaxM3Backend(BaseLLMBackend):
         try:
             parsed = parse_json_from_text(text)
         except Exception as exc:
-            # Phase 61 Plan 4 (Bug 4.8): bump the dedicated counter when
-            # the model returned reasoning but a malformed JSON body.
-            # Operators can use the ``failed_with_thinking`` rate as a
-            # model-quality KPI: a high value means the API is paid for
-            # but the model's output is not parseable.
-            if thinking and thinking.strip():
-                try:
-                    self.record_failed_with_thinking(thinking)
-                except Exception:
-                    pass
+            # Audit M6: route ALL parse failures (with or without
+            # thinking) through a single helper so ``total_errors``
+            # is bumped exactly once. Previously the
+            # ``failed_with_thinking`` branch bumped both counters and
+            # the no-thinking path bumped neither, leaving the
+            # ``total_errors`` rate meaningless for "API OK, model
+            # returned garbage" failures.
+            has_thinking = bool(thinking and thinking.strip())
+            try:
+                self._record_parse_failure(thinking=thinking, has_thinking=has_thinking)
+            except Exception:
+                # Counter bookkeeping must never break the result path.
+                pass
+            # Audit M14: the previous code embedded ``str(exc)`` and
+            # ``type(exc).__name__`` into ``reasoning`` and ``error``
+            # without redacting API keys. Although the
+            # ``parse_json_from_text`` exception text doesn't itself
+            # contain keys, future error paths (e.g. SDK parse errors
+            # when streaming) may surface a leaked key. Redact
+            # defensively before writing into the result dict so the
+            # key never lands in ``matches.jsonl`` or the Web UI.
+            safe_exc = _redact_api_keys(str(exc))
             # Set `error` / `error_type` so downstream code (e.g.
             # apply_gemma_to_matches) can propagate it to match.metadata
             # and the FallbackHandler popup shows the real reason.
@@ -1043,9 +1204,9 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 "label": None,
                 "species": None,
                 "confidence": 0.0,
-                "reasoning": f"MiniMax JSON parse error: {type(exc).__name__}: {exc}",
+                "reasoning": f"MiniMax JSON parse error: {type(exc).__name__}: {safe_exc}",
                 "fallback_used": True,
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": f"{type(exc).__name__}: {safe_exc}",
                 "error_type": "JSONParseError",
                 "raw_text": text,
                 "thinking": thinking,
@@ -1258,13 +1419,39 @@ class MiniMaxM3Backend(BaseLLMBackend):
 
         ``thinking_text`` is optional — present for future use (e.g. to
         extract token counts) but not required today.
+
+        Audit M6: delegates to ``_record_parse_failure`` so the
+        ``total_errors`` bump is centralised and never double-counted
+        with the caller's own bookkeeping.
         """
+        self._record_parse_failure(
+            thinking=thinking_text, has_thinking=bool(thinking_text and thinking_text.strip())
+        )
+
+    def _record_parse_failure(
+        self, *, thinking: str | None = None, has_thinking: bool | None = None
+    ) -> None:
+        """Audit M6: single source of truth for JSON parse failure
+        bookkeeping. Bumps ``total_errors`` exactly once, and bumps
+        ``failed_with_thinking`` only when ``has_thinking`` is True.
+        Both counters are guarded by ``self._lock`` so concurrent
+        threads see consistent values.
+
+        ``thinking`` is the raw text (kept for future token-count
+        extraction). ``has_thinking`` defaults to ``bool(thinking and
+        thinking.strip())`` if not provided explicitly.
+        """
+        if has_thinking is None:
+            has_thinking = bool(thinking and thinking.strip())
         with self._lock:
-            self.failed_with_thinking += 1
             self.total_errors += 1
+            if has_thinking:
+                self.failed_with_thinking += 1
         logger.debug(
-            "MiniMax: JSON parse failure with thinking present (failed_with_thinking=%d)",
+            "MiniMax: JSON parse failure (has_thinking=%s, failed_with_thinking=%d, total_errors=%d)",
+            has_thinking,
             self.failed_with_thinking,
+            self.total_errors,
         )
 
     def llm_status(self) -> dict[str, Any]:
