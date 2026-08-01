@@ -3,11 +3,45 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from .utils import ensure_dir
+
+# ---------------------------------------------------------------------------
+# Atomic text-write helper — audit 2026-08-01 W1 / D6
+# ---------------------------------------------------------------------------
+
+
+def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Write ``text`` to ``path`` atomically (tmp file + fsync + os.replace).
+
+    A crash or signal mid-write leaves the previous good ``path`` untouched
+    and only a ``.tmp`` scratch file behind, which we clean up on error.
+    This mirrors the pattern already used by ``exporters/xlsx.py`` (Phase 38).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=path.name + ".",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
 
 # ---------------------------------------------------------------------------
 # JSON sanitiser — make rows safe for json.dumps and pd.read_json
@@ -160,16 +194,18 @@ def _jsonify(val: Any) -> str:
 
 def export_jsonl(rows: list[dict[str, Any]], path: Path) -> None:
     ensure_dir(path.parent)
-    with path.open("w", encoding="utf-8") as f:
-        for row in rows:
-            sanitized = _sanitize(flatten_for_csv(row))
-            f.write(json.dumps(sanitized, ensure_ascii=False) + "\n")
+    lines = [json.dumps(_sanitize(flatten_for_csv(row)), ensure_ascii=False) for row in rows]
+    _atomic_write_text(path, "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
 def export_json(rows: list[dict[str, Any]], path: Path) -> None:
     ensure_dir(path.parent)
     sanitized = [_sanitize(flatten_for_csv(r)) for r in rows]
-    path.write_text(json.dumps(sanitized, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_text(
+        path,
+        json.dumps(sanitized, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def export_csv(rows: list[dict[str, Any]], path: Path) -> None:
@@ -177,16 +213,22 @@ def export_csv(rows: list[dict[str, Any]], path: Path) -> None:
     if not rows:
         # Phase 63 Plan 6.10 (Bug 6.10): still emit a 3-byte UTF-8 BOM
         # so the empty file isn't misinterpreted as ANSI when the
-        # operator opens it later in Excel. utf-8-sig IS utf-8 + BOM.
-        path.write_bytes(b"\xef\xbb\xbf")
+        # operator opens it later in Excel. Route through the atomic
+        # helper so the BOM-only file is also written via tmp + os.replace.
+        _atomic_write_text(path, "﻿", encoding="utf-8")
         return
     flat = [flatten_for_csv(r) for r in rows]
     fieldnames = sorted({k for row in flat for k in row.keys()})
-    with path.open("w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in flat:
-            writer.writerow({k: _csv_cell(v) for k, v in row.items()})
+    # Build the CSV in memory so we can hand the whole string to the
+    # atomic helper. utf-8-sig adds a single BOM at file start.
+    import io
+
+    buf = io.StringIO(newline="")
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in flat:
+        writer.writerow({k: _csv_cell(v) for k, v in row.items()})
+    _atomic_write_text(path, buf.getvalue(), encoding="utf-8-sig")
 
 
 def _csv_cell(v: Any) -> str:
