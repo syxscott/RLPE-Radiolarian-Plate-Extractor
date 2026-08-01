@@ -8,11 +8,11 @@ import sys
 import threading
 import traceback
 import uuid
-from urllib.parse import quote as _url_quote
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote as _url_quote
 
 logger = logging.getLogger("rlpe.api")
 
@@ -26,6 +26,13 @@ except Exception as exc:  # pragma: no cover
     raise RuntimeError(f"FastAPI dependencies not available: {exc}")
 
 from ..config import PipelineConfig
+
+# audit 2026-08-01 W1 / M19: result-row deletes now persist back to
+# ``matches.jsonl`` using the same atomic-tmp + fsync + os.replace
+# helper the exporters use. ``DELIBERATELY`` not importing at module
+# top of test fixtures — if pydantic changes the export path, this
+# fails loudly here rather than at first request.
+from ..export import _atomic_write_text
 from ..pipeline import RadiolarianPipeline
 from ..utils import ensure_dir
 
@@ -39,7 +46,9 @@ ensure_dir(APP_ROOT / "static")
 # and pipeline output went to the REAL project dirs and the tests could
 # trigger real paid API calls. Note the env var is read at import time,
 # so fixtures must set it before importing the module (as the tests do).
-_RLPE_API_TEST_TMP = Path(os.environ["RLPE_API_TEST_TMP"]) if os.environ.get("RLPE_API_TEST_TMP") else None
+_RLPE_API_TEST_TMP = (
+    Path(os.environ["RLPE_API_TEST_TMP"]) if os.environ.get("RLPE_API_TEST_TMP") else None
+)
 if _RLPE_API_TEST_TMP is not None:
     _RLPE_API_TEST_TMP.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR = ensure_dir(_RLPE_API_TEST_TMP / "uploads")
@@ -63,6 +72,27 @@ RESULT_CACHE: dict[str, dict[str, Any]] = {}
 # (e.g. 80k files, 20 GB) blocks ALL other concurrent
 # /jobs/{any_id}/* endpoints globally for the rmtree duration.
 RESULT_LOCK = threading.Lock()
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int from an env var, falling back to ``default`` on
+    any parse error or non-positive value. Audit 2026-08-01 W1 / M14."""
+    try:
+        v = int(os.environ.get(name, str(default)))
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+# audit 2026-08-01 W1 / M14: cap concurrent pipeline runs so the
+# BackgroundTasks thread (which shares Starlette's anyio worker
+# pool with all sync endpoints) cannot exhaust the 40-token pool
+# with multi-minute CPU-bound GROBID / OD / MiniMax work. Without
+# this cap a user uploading 30 PDFs back-to-back can starve
+# /jobs/{id}/status, /results, etc. Default 4 (matches a typical
+# laptop core count for CPU-bound IO); override with RLPE_MAX_JOBS.
+JOB_CONCURRENCY = threading.Semaphore(_env_int("RLPE_MAX_JOBS", 4))
+
 
 # Cached GROBID URL — read from the GROBID_URL env var once at
 # module load. The previous version re-read the env var on every
@@ -225,7 +255,15 @@ class JobOptions(BaseModel):
     def _validate_backend(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        allowed = {"transformers", "ollama", "llamacpp", "MiniMax", "MiniMax-m3", "minimax", "minimax_api"}
+        allowed = {
+            "transformers",
+            "ollama",
+            "llamacpp",
+            "MiniMax",
+            "MiniMax-m3",
+            "minimax",
+            "minimax_api",
+        }
         if v not in allowed:
             raise ValueError(f"llm_backend must be one of {sorted(allowed)}, got {v!r}")
         return v
@@ -501,6 +539,16 @@ def _load_existing_jobs_from_disk() -> int:
             continue
         if not rows:
             continue
+        # audit 2026-08-01 W1 / M18: distinguish COMPLETED jobs from
+        # jobs that were interrupted mid-run and left a partial
+        # ``matches.jsonl`` behind. The previous code marked every
+        # job-with-matches as ``status="done"``, so an interrupted
+        # pipeline looked complete to the UI. A ``complete.flag`` is
+        # written by ``_run_job`` once the worker has flushed the
+        # final progress tick + moved to ``status="done"``. Without
+        # the flag, the runs are "partial" — the UI can still show
+        # whatever rows happen to exist, but the status is honest.
+        completed_flag = root / "output" / "manifests" / "complete.flag"
         # Locate the original PDF (best-effort) and remember the row count.
         pdf_name: str | None = None
         pdfs_dir = root / "pdfs"
@@ -514,7 +562,7 @@ def _load_existing_jobs_from_disk() -> int:
         except Exception:
             ts = _dt.now().isoformat()
         RESULT_CACHE[jid] = {
-            "status": "done",
+            "status": "done" if completed_flag.exists() else "partial",
             "result": rows,
             "error": None,
             "detail": f"loaded from disk ({len(rows)} rows)",
@@ -712,7 +760,19 @@ async def upload_pdf(
             # safe-root / CLI-shared checks below still apply).
             "_root": str(WORK_DIR / job_id),
         }
-    background_tasks.add_task(_run_job, job_id, save_path, job_options)
+
+    # audit 2026-08-01 W1 / M14: BackgroundTasks runs ``_run_job`` on
+    # Starlette's shared anyio worker pool (40 tokens). Wrap with the
+    # ``JOB_CONCURRENCY`` semaphore so a flood of uploads cannot
+    # monopolise the pool and stall /jobs/{id}/status, /results etc.
+    def _run_job_with_concurrency() -> None:
+        JOB_CONCURRENCY.acquire()
+        try:
+            return _run_job(job_id, save_path, job_options)
+        finally:
+            JOB_CONCURRENCY.release()
+
+    background_tasks.add_task(_run_job_with_concurrency)
     return JobStatus(job_id=job_id, status="queued", created_at=now, filename=safe_filename)
 
 
@@ -823,8 +883,16 @@ def job_result(job_id: str):
     # serialising it raised TypeError → 500 on every MiniMax run, so
     # the Web UI could never display results. UI-facing fields are
     # all in the whitelist below.
-    _UI_FIELDS = ("job_id", "status", "detail", "created_at", "filename",
-                  "progress", "stage", "elapsed_sec")
+    _UI_FIELDS = (
+        "job_id",
+        "status",
+        "detail",
+        "created_at",
+        "filename",
+        "progress",
+        "stage",
+        "elapsed_sec",
+    )
     view = {k: job[k] for k in _UI_FIELDS if k in job}
     view["result"] = list(job.get("result") or [])
     return view
@@ -855,9 +923,7 @@ def export_job_xlsx(job_id: str):
             detail=f"Job {job_id} is not finished (status={job.get('status')})",
         )
     if not job.get("result"):
-        raise HTTPException(
-            status_code=404, detail=f"Job {job_id} has no result"
-        )
+        raise HTTPException(status_code=404, detail=f"Job {job_id} has no result")
     try:
         from ..exporters.xlsx import write_xlsx
 
@@ -963,29 +1029,20 @@ def _resolve_job_root(job_id: str) -> Path | None:
 
 
 def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
-    """Delete a single job. Returns a per-job status dict."""
-    # Phase 54 audit: B3 — wrap the entire status-check + cache-read +
-    # filesystem-delete + cache-pop sequence in a single critical
-    # section. The previous implementation read ``status`` at line 924
-    # without holding ``RESULT_LOCK``, then performed ``shutil.rmtree``
-    # at line 964 outside the lock. A worker thread that flipped
-    # status to ``"running"`` between the two steps (legal: the
-    # pre-flight cancel check at line 1696-1709 is the only thing
-    # preventing it, and that only covers the initial flip — later
-    # resume / re-launch paths don't re-check here) would have its
-    # ``WORK_DIR/job_id`` deleted from under it, losing partially-
-    # written ``matches.jsonl`` / ``run_output.json`` / ``llm_usage.json``.
-    #
-    # We do the filesystem work INSIDE the lock because
-    # ``shutil.rmtree`` on a large job is fast (<1s for hundreds of
-    # MB). NOTE: RESULT_LOCK is a single GLOBAL lock shared across ALL
-    # job_ids (not per-job). Deleting a large job (e.g. 80k files,
-    # 20 GB) can stall ALL other concurrent /jobs/{any_id}/*
-    # endpoints for the rmtree duration. A finer-grained lock
-    # (per-job or move-to-tmp) would fix this but is a larger
-    # refactor; this comment exists so operators understand the
-    # global-throttle behaviour rather than misreading it as
-    # per-job isolation.
+    """Delete a single job. Returns a per-job status dict.
+
+    Lock discipline (audit 2026-08-01 W1 / M17):
+
+    ``RESULT_LOCK`` is a SINGLE GLOBAL lock shared across all job IDs.
+    The Phase 54 implementation held it across ``root.rglob + rmtree``,
+    so deleting an 80k-file / 20 GB job blocked every other ``/jobs/*``
+    endpoint for the rmtree duration. We now only hold the lock for
+    the cheap / short state-machine reads and the final cache-pop. File
+    ops run LOCK-FREE so other endpoints stay responsive while the
+    directory is being walked + deleted.
+    """
+    # (a) SHORT critical section: state validation + snapshot of fields
+    # the slow file ops below need.
     with RESULT_LOCK:
         job = RESULT_CACHE.get(job_id)
         if not job:
@@ -1042,16 +1099,47 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
                         "exiting. Try again in a few seconds."
                     ),
                 }
-        # Phase 54 audit: B4 — snapshot ``_root`` once under the lock so
-        # the second lock-free ``RESULT_CACHE.get`` at the previous line
-        # 949 is no longer a race. We also use this snapshot for the
-        # ``_is_relative_to`` safety check and the rmtree itself, so the
-        # entire purge uses a single immutable view of the job's root.
+        # Snapshot the on-disk root + the original PDF (D19) BEFORE
+        # releasing the lock so a concurrent state mutation (e.g.
+        # /resume) cannot shift the root out from under us mid-rmtree.
         cached_root_str = job.get("_root")
-        files_removed = False
-        bytes_freed = 0
-        cli_loaded = False
-        if delete_files and cached_root_str:
+        upload_filename = job.get("filename") or ""
+        # audit 2026-08-01 W1 / M17: we POP the cache entry BEFORE the
+        # slow file ops. If a worker tries to write back during rmtree
+        # it'll KeyError, exactly like the old behaviour, but
+        # ``/jobs/{id}/status`` (which is the endpoint every UI polls)
+        # will see 404 immediately and stop hammering us.
+        RESULT_CACHE.pop(job_id, None)
+        FALLBACK_PENDING.pop(job_id, None)
+
+    # (b) Lock-free file operations. At worst this races with a worker
+    # whose ``_run_job`` hasn't entered the pre-flight cancel check
+    # yet, but the cancel-check + the new cache-pop above means the
+    # worker either sees the entry (and proceeds safely; its _root is
+    # untouched) or sees ``not_found`` (and exits via the pre-flight
+    # branch at line 1914). Directory deletions are captured locally so
+    # we don't re-read RESULT_CACHE.
+    files_removed = False
+    bytes_freed = 0
+    cli_loaded = False
+    cleanup_error: str | None = None
+    if delete_files:
+        # D19: also drop the original uploaded PDF in ``UPLOAD_DIR``
+        # (in addition to the job's working dir). Previously a job
+        # cancelled pre-flight, or one whose upload was orphaned by a
+        # server restart while the queue was non-empty, left the PDF
+        # behind forever. The file is named ``<job_id>_<safe_filename>``
+        # in ``upload_pdf`` (line 713); we glob by prefix so a
+        # missing/renamed filename still gets cleaned.
+        for pdf in UPLOAD_DIR.glob(f"{job_id}_*"):
+            try:
+                bytes_freed += pdf.stat().st_size
+                pdf.unlink()
+                files_removed = True
+            except Exception as exc:
+                cleanup_error = str(exc)
+
+        if cached_root_str:
             root = Path(cached_root_str).resolve()
             if root.exists():
                 # Refuse to delete CLI-loaded jobs' files. Those jobs were
@@ -1075,22 +1163,30 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
                             "status": "refused",
                             "error": f"root {root} not under safe dirs",
                         }
-                    try:
-                        # Compute size before deletion for reporting.
-                        bytes_freed = sum(
-                            f.stat().st_size for f in root.rglob("*") if f.is_file()
-                        )
-                        shutil.rmtree(root)
-                        files_removed = True
-                    except Exception as exc:
-                        return {
-                            "job_id": job_id,
-                            "status": "file_error",
-                            "error": str(exc),
-                        }
-        # Always remove from in-memory caches.
-        RESULT_CACHE.pop(job_id, None)
-        FALLBACK_PENDING.pop(job_id, None)
+                    if cleanup_error is None:
+                        try:
+                            # Compute size before deletion for reporting.
+                            bytes_freed += sum(
+                                f.stat().st_size for f in root.rglob("*") if f.is_file()
+                            )
+                            shutil.rmtree(root)
+                            files_removed = True
+                        except Exception as exc:
+                            cleanup_error = str(exc)
+                    else:
+                        # D19 stage already failed; skip the rmtree so the
+                        # user sees ONE error rather than two competing
+                        # ones.
+                        pass
+        # Suppress the unused-variable lint; ``upload_filename`` is
+        # snapshotted so a re-read of RESULT_CACHE isn't needed.
+        _ = upload_filename
+    if cleanup_error is not None:
+        return {
+            "job_id": job_id,
+            "status": "file_error",
+            "error": cleanup_error,
+        }
     return {
         "job_id": job_id,
         # ``deleted`` = removed from cache. For CLI-loaded jobs we
@@ -1122,9 +1218,7 @@ class BatchDeleteRequest(BaseModel):
         seen: set[str] = set()
         for jid in v:
             if not isinstance(jid, str) or len(jid) > 64 or len(jid) == 0:
-                raise ValueError(
-                    f"job_id must be a non-empty string ≤ 64 chars, got {jid!r}"
-                )
+                raise ValueError(f"job_id must be a non-empty string ≤ 64 chars, got {jid!r}")
             # Phase 55 audit MEDIUM-2 fix: reject duplicate job_ids.
             # Previously duplicates passed validation, causing _purge_job to be
             # called twice with the same id — the second call would return
@@ -1149,7 +1243,22 @@ def batch_delete_jobs(req: BatchDeleteRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="job_ids must not be empty")
     if len(req.job_ids) > 200:
         raise HTTPException(status_code=400, detail="too many job_ids (max 200)")
-    results = [_purge_job(jid, delete_files=req.delete_files) for jid in req.job_ids]
+    # audit 2026-08-01 W1 / M17: serial rmtree across 200 jobs would
+    # block for many minutes on a small VPS. Now ``_purge_job`` keeps
+    # ``RESULT_LOCK`` only during the short state-machine read + final
+    # cache-pop, so it's safe to run several in parallel. Each
+    # ``_purge_job`` call touches the lock for <1ms (only the small
+    # read + pop), so 4 workers in parallel complete in roughly
+    # ceil(N/4) * single-time rather than N * single-time.
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(
+            pool.map(
+                lambda jid: _purge_job(jid, delete_files=req.delete_files),
+                req.job_ids,
+            )
+        )
     return {
         "delete_files": req.delete_files,
         "requested": len(req.job_ids),
@@ -1214,6 +1323,33 @@ def post_MiniMax_fallback(job_id: str, req: FallbackDecisionRequest) -> dict[str
 def submit_correction(payload: ReviewCorrection):
     corrections_dir = ensure_dir(WORK_DIR / "corrections")
     target = corrections_dir / "corrections.jsonl"
+    # audit 2026-08-01 W1 / D9 — rotate the corrections log before
+    # appending if it has grown past 1 MB. Without rotation a long-
+    # running server accumulates one unbounded ``corrections.jsonl``
+    # that becomes slow to grep and impossible to inspect. Keep at
+    # most 5 historical rotations: ``corrections.jsonl``,
+    # ``corrections.jsonl.1`` ... ``corrections.jsonl.5``. The newest
+    # rotation is ``.1`` (Python's ``logging.handlers.RotatingFileHandler``
+    # convention).
+    MAX_BYTES = 1024 * 1024
+    KEEP = 5
+    try:
+        if target.exists() and target.stat().st_size > MAX_BYTES:
+            # Drop the oldest if it's still around.
+            oldest = target.with_suffix(target.suffix + f".{KEEP}")
+            if oldest.exists():
+                oldest.unlink()
+            # Shift .N -> .(N+1) from the top down.
+            for i in range(KEEP - 1, 0, -1):
+                src = target.with_suffix(target.suffix + f".{i}")
+                if src.exists():
+                    src.rename(target.with_suffix(target.suffix + f".{i + 1}"))
+            # Rename current -> .1
+            target.rename(target.with_suffix(target.suffix + ".1"))
+    except Exception:
+        # Rotation is best-effort; never let a rotate failure block
+        # the user's submission. The next request will retry.
+        logger.exception("corrections.jsonl rotation failed")
     row = {**payload.model_dump(), "timestamp": datetime.now().isoformat()}
     with target.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -1325,9 +1461,7 @@ def _row_id(job_id: str, row: dict[str, Any]) -> str:
     """
     panel_id = row.get("panel_id")
     if panel_id:
-        return (
-            f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:{panel_id}"
-        )
+        return f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:{panel_id}"
     bbox = row.get("bbox")
     if bbox:
         return (
@@ -1337,9 +1471,49 @@ def _row_id(job_id: str, row: dict[str, Any]) -> str:
     # Last resort: stable hash of the row's identifying fields so two
     # identical rows collapse but two differing rows don't.
     import hashlib
+
     blob = repr(sorted(row.items())).encode("utf-8")
     digest = hashlib.sha1(blob).hexdigest()[:12]
     return f"{job_id}:{row.get('paper_id', '')}:{row.get('figure_id', '')}:hash:{digest}"
+
+
+def _persist_results_to_disk(job_id: str, root_str: str | None, rows: list[dict[str, Any]]) -> bool:
+    """Rewrite ``matches.jsonl`` for ``job_id`` from the in-memory ``rows``.
+
+    audit 2026-08-01 W1 / M19: returns True iff a file was actually
+    re-written. ``DELETE /results`` and ``DELETE /results/batch``
+    mutate ``job["result"]`` in memory; this helper makes the
+    deletion survive a server restart.
+
+    Behaviour:
+
+    - If the job has no recorded ``_root`` (in-memory-only job), skip.
+    - If the job's root does not contain an ``output/manifests`` dir,
+      skip (the job hasn't actually written pipeline output yet).
+    - Uses :func:`rlpe.export._atomic_write_text` so a crash mid-write
+      leaves the previous good ``matches.jsonl`` intact.
+    - If ``_atomic_write_text`` raises, swallow the error so a failed
+      disk write doesn't roll back the in-memory delete — losing the
+      ``matches.jsonl`` rewrite is a minor annoyance (rows resurrect
+      on restart) but rolling back the delete in memory is much worse.
+    """
+    if not root_str:
+        return False
+    root = Path(root_str).resolve()
+    matches_path = root / "output" / "manifests" / "matches.jsonl"
+    if not matches_path.parent.exists():
+        # Pipeline hasn't written manifests yet — leave a freshly-loaded
+        # (or in-memory-only) job's on-disk state untouched.
+        return False
+    try:
+        text = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows)
+        if text:
+            text += "\n"
+        _atomic_write_text(matches_path, text, encoding="utf-8")
+        return True
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("M19: failed to persist matches.jsonl for job %s: %s", job_id, exc)
+        return False
 
 
 @app.delete("/results")
@@ -1349,6 +1523,14 @@ def delete_all_results() -> dict[str, int]:
     Keeps the job metadata (so ``/jobs`` listings, ``/system/info``
     totals, and any in-flight pipeline runs are unaffected). Returns
     the total number of rows removed.
+
+    audit 2026-08-01 W1 / M19: now also rewrites ``matches.jsonl``
+    for each affected job so a server restart reloads the empty
+    state. Previously only ``job["result"]`` was mutated in memory,
+    so the on-disk ``matches.jsonl`` retained the rows and the next
+    ``_load_existing_jobs_from_disk()`` call would resurrect them
+    on restart — confusing for the operator who tried to clear the
+    table.
     """
     total_removed = 0
     with RESULT_LOCK:
@@ -1357,6 +1539,7 @@ def delete_all_results() -> dict[str, int]:
             if isinstance(result_list, list):
                 total_removed += len(result_list)
                 job["result"] = []
+                _persist_results_to_disk(job_id, job.get("_root"), [])
     return {"removed": total_removed}
 
 
@@ -1380,6 +1563,10 @@ def delete_results_batch(payload: DeleteRowsRequest) -> dict[str, Any]:
     Request body: ``{"row_ids": ["job_id:paper:figure:panel", ...]}``.
     Rows whose row_id is unknown are silently skipped (idempotent).
     Returns the number of rows actually removed and the not-found count.
+
+    audit 2026-08-01 W1 / M19: persists the new ``job["result"]``
+    back to ``matches.jsonl`` for each touched job so a restart
+    doesn't undo the deletion.
     """
     row_ids = set(payload.row_ids or [])
     if not row_ids:
@@ -1387,12 +1574,17 @@ def delete_results_batch(payload: DeleteRowsRequest) -> dict[str, Any]:
     removed = 0
     not_found: list[str] = []
     matched_ids: set[str] = set()
+    # audit 2026-08-01 W1 / M19: track which jobs' ``result`` lists
+    # actually changed so we only rewrite their ``matches.jsonl``
+    # (writing every job's file on every request is wasteful).
+    touched_jobs: set[str] = set()
     with RESULT_LOCK:
         for job_id, job in RESULT_CACHE.items():
             result_list = job.get("result")
             if not isinstance(result_list, list):
                 continue
             kept: list[dict[str, Any]] = []
+            job_touched = False
             for row in result_list:
                 if not isinstance(row, dict):
                     kept.append(row)
@@ -1401,9 +1593,19 @@ def delete_results_batch(payload: DeleteRowsRequest) -> dict[str, Any]:
                 if rid in row_ids:
                     removed += 1
                     matched_ids.add(rid)
+                    job_touched = True
                 else:
                     kept.append(row)
-            job["result"] = kept
+            if job_touched:
+                job["result"] = kept
+                touched_jobs.add(job_id)
+    # Persist each touched job's matches.jsonl. Done OUTSIDE the lock
+    # for the same reason as ``_purge_job`` (M17): the write can be
+    # slow on many rows and shouldn't block other endpoints.
+    for job_id in touched_jobs:
+        with RESULT_LOCK:
+            job = RESULT_CACHE.get(job_id) or {}
+        _persist_results_to_disk(job_id, job.get("_root"), job.get("result") or [])
     not_found = sorted(row_ids - matched_ids)
     return {"removed": removed, "not_found": len(not_found)}
 
@@ -2158,6 +2360,26 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                     else:
                         entry["detail"] = "Pipeline finished but no panels/matches were produced"
                     entry["progress"] = 100
+                    # audit 2026-08-01 W1 / M18: drop the
+                    # ``complete.flag`` so a future restart of the
+                    # server (or a ``_load_existing_jobs_from_disk``
+                    # call) loads this job with ``status="done"``
+                    # rather than ``"partial"``. The flag is written
+                    # AFTER the cache transition so a crash between
+                    # the flag write and the cache write would just
+                    # show the job as "partial" on next load (safe
+                    # under-reporting) — never "done" with stale
+                    # rows (unsafe over-reporting).
+                    try:
+                        manifests_dir = WORK_DIR / job_id / "output" / "manifests"
+                        ensure_dir(manifests_dir)
+                        (manifests_dir / "complete.flag").write_text(
+                            datetime.now().isoformat(), encoding="utf-8"
+                        )
+                    except Exception:
+                        # Flag is a hint, not a contract — never let
+                        # it break a successful job.
+                        logger.exception("Failed to write complete.flag for job %s", job_id)
     except _JobCancelledError:
         # Cancellation raised from the progress callback. Keep the
         # "cancelled" status that /jobs/{id}/cancel set; don't overwrite it
