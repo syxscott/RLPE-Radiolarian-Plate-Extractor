@@ -125,6 +125,13 @@ _CORRECTION_FREQ: dict[str, tuple[str, int, str]] = {
     # "spp." → "spp" : 3x (bandini2011)             -- redundant w/ rstrip
 }
 
+# --- C5 lock (audit 2026-08-01) ---
+# The CORRECTIONS table is INTENTIONALLY MINIMAL. Character-pair OCR
+# substitutions (l<->1, O<->0, rn<->m, ii<->u, etc.) are NOT handled here.
+# They live in the `_norm_species` post-processing pipeline
+# (see rlpe/pipeline.py). Expanding this dict or removing the 2
+# existing rules requires updating tests/test_audit_2026_08_01_ocr_corrections_lock.py.
+
 # Substring -> replacement table. Ordered longest-first inside apply_corrections.
 # Empty placeholder so the import does not fail when there are no entries —
 # keeps the module importable for tests that just want to inspect the API.
