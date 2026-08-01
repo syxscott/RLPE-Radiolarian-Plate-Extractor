@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import tempfile
 import threading
 import time
 import xml
@@ -24,6 +26,57 @@ class PipelineCancelledError(Exception):
     ``cancel_event`` and raises this error instead of waiting for all
     retries to elapse.
     """
+
+
+class GrobidParseError(Exception):
+    """Raised when a GROBID TEI response cannot be parsed as XML.
+
+    Audit 2026-08-01 W2 / D18: previously the parse functions in this
+    module caught ``ET.ParseError`` and silently returned an empty list,
+    which masked both torn-write corruption (because the atomic-write
+    helper was not used) and genuine server-side malformed responses.
+    Callers now see the failure and can decide whether to retry,
+    surface the error to the user, or fall back to OD / visual stub.
+    """
+
+
+def _write_tei_atomic(tei_path: Path, text: str) -> None:
+    """Write TEI XML to ``tei_path`` atomically.
+
+    Audit 2026-08-01 W2 / D18: the previous ``tei_path.write_text(...)``
+    call was non-atomic. A crash, signal, or filesystem full mid-write
+    left ``tei_path`` truncated; subsequent ``ET.fromstring`` calls then
+    raised ``ParseError`` which the caller silently swallowed (returning
+    empty lists). Now we write to a sibling ``.tmp`` file in the same
+    directory (so ``os.replace`` stays on the same filesystem and is
+    atomic), then ``os.replace`` it into place. Mirrors the pattern used
+    by ``utils.write_json`` and ``export._atomic_write_text``.
+    """
+    tei_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=tei_path.name + ".",
+        suffix=".tmp",
+        dir=str(tei_path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                # Some filesystems (e.g. FUSE) don't support fsync.
+                # The rename still ensures a reader never sees a torn
+                # write of the *content*, only the rename itself.
+                pass
+        os.replace(tmp_name, tei_path)
+    except Exception:
+        # Clean up the temp file on any failure so we don't litter.
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 @dataclass(slots=True)
@@ -153,6 +206,11 @@ class GrobidClient:
         # XML parse error (raised by callers of parse_captions_from_tei)
         if isinstance(exc, (ET.ParseError, xml.etree.ElementTree.ParseError)):
             return "parse_error"
+        # Audit 2026-08-01 W2 / D18: GrobidParseError is now raised by
+        # the parse helpers in this module; classify it the same way
+        # so retry metrics and fallback routing stay consistent.
+        if isinstance(exc, GrobidParseError):
+            return "parse_error"
         return "unknown"
 
     def process_pdf(self, pdf_path: Path, output_dir: Path) -> GrobidResult:
@@ -187,7 +245,12 @@ class GrobidClient:
                         timeout=self.timeout,
                     )
                 resp.raise_for_status()
-                tei_path.write_text(resp.text, encoding="utf-8")
+                # Audit 2026-08-01 W2 / D18: atomic write so torn writes
+                # can't silently corrupt downstream parsers. Without
+                # this, a crash mid-write left ``tei_path`` truncated
+                # and ``parse_captions_from_tei`` returned ``[]`` (a
+                # silent parse-error fallback).
+                _write_tei_atomic(tei_path, resp.text)
                 captions = parse_captions_from_tei(
                     resp.text, paper_id=paper_id, source_xml=str(tei_path)
                 )
@@ -222,14 +285,17 @@ class GrobidClient:
                     # takes effect within ``delay`` seconds instead
                     # of waiting for the full sleep.
                     if self.cancel_event is not None:
+                        # Audit 2026-08-01 W2 / M24: wait() already blocks
+                        # for the full ``delay`` (or until the cancel event
+                        # fires). Previously we followed the wait with a
+                        # second ``time.sleep(delay)``, doubling the
+                        # documented backoff. Remove the duplicate sleep;
+                        # ``wait`` returns True only when the event was
+                        # set during the wait window.
                         if self.cancel_event.wait(timeout=delay):
-                            # Cancel was set; abort the retry loop.
                             raise PipelineCancelledError(
                                 f"Cancellation requested during retry backoff (attempt {attempt})"
                             )
-                        # Timeout elapsed without cancel; sleep the remainder
-                        # as a cooperative yield to avoid busy-waiting.
-                        time.sleep(delay)
                     else:
                         time.sleep(delay)
         # All retries exhausted. Return a structured failure.
@@ -254,8 +320,19 @@ def parse_captions_from_tei(
         return []
     try:
         root = ET.fromstring(tei_xml)
-    except ET.ParseError:
-        return []
+    except ET.ParseError as exc:
+        # Audit 2026-08-01 W2 / D18: previously swallowed the parse
+        # error and returned ``[]``, which hid torn writes and
+        # genuine malformed-TEI responses from operators. Now log
+        # the source for forensics and raise so the caller can
+        # classify / retry / fall back explicitly.
+        logger.warning(
+            "parse_captions_from_tei: ET.ParseError for paper_id=%s source=%s: %s",
+            paper_id,
+            source_xml,
+            exc,
+        )
+        raise GrobidParseError(f"Malformed GROBID TEI for paper_id={paper_id}: {exc}") from exc
 
     ns = {"tei": root.tag.split("}")[0].strip("{") if root.tag.startswith("{") else ""}
     captions: list[CaptionRecord] = []
@@ -365,8 +442,15 @@ def parse_fulltext_sections_from_tei(tei_xml: str) -> list[dict[str, str]]:
         return []
     try:
         root = ET.fromstring(tei_xml)
-    except ET.ParseError:
-        return []
+    except ET.ParseError as exc:
+        # Audit 2026-08-01 W2 / D18: see parse_captions_from_tei —
+        # raise instead of silently returning ``[]`` so the operator
+        # and pipeline can see the failure.
+        logger.warning(
+            "parse_fulltext_sections_from_tei: ET.ParseError: %s",
+            exc,
+        )
+        raise GrobidParseError(f"Malformed GROBID TEI: {exc}") from exc
 
     ns = {"tei": root.tag.split("}")[0].strip("{") if root.tag.startswith("{") else ""}
     sections: list[dict[str, str]] = []
@@ -414,7 +498,21 @@ def infer_section_type(title: str) -> str:
     # were both extracted from a Beccaro 2002 reference). Recognise
     # the references / bibliography sections explicitly so they can
     # be skipped downstream.
-    if "reference" in t or "bibliograph" in t or "cited work" in t or "literature cited" in t:
+    #
+    # Audit 2026-08-01 W2 / M26: previous substring match
+    # (``"reference" in t``) also caught legitimate section titles
+    # like "Cross-referenced Section" or "Biogeographic reference
+    # frame", sending them to ``geology_extraction.py`` which then
+    # skipped them anyway. Use a word-boundary regex so the bare
+    # word ``reference`` / ``references`` matches, but additionally
+    # require ``References?`` to be the *leading* word of the
+    # heading. This excludes content titles where "reference"
+    # appears as a standalone word in the middle
+    # (e.g. "Biogeographic reference frame") while still matching
+    # "Reference Section" / "Reference Frames" (per audit spec).
+    if re.match(r"^\s*references?\b", t, re.IGNORECASE):
+        return "references"
+    if "bibliograph" in t or "cited work" in t or "literature cited" in t:
         return "references"
     return "other"
 
