@@ -28,8 +28,8 @@ import chain is unavailable (e.g. tiny smoke harness).
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,9 +110,7 @@ _LOC_RE = re.compile(
 
 # Bare ``ID-203``, ``ID:42`` when not already captured by the sample regex.
 # We intentionally exclude the ``Sample ID-`` prefix so we don't double-count.
-_ID_RE = re.compile(
-    r"(?<![Ss]ample\s)\bID[-:]\s*([A-Z0-9][A-Za-z0-9\-]{0,15})\b"
-)
+_ID_RE = re.compile(r"(?<![Ss]ample\s)\bID[-:]\s*([A-Z0-9][A-Za-z0-9\-]{0,15})\b")
 
 
 # ---------------------------------------------------------------------------
@@ -131,26 +129,67 @@ _LOCALITY_PHRASE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Sample values that are grammatically attached to the ``Sample`` keyword but
+# are not identifiers (e.g. ``Samples from Tunisia``). Lowercase comparison.
+_SAMPLE_STOPWORDS: frozenset[str] = frozenset(
+    {"from", "at", "in", "of", "near", "the", "and", "to", "for", "with"}
+)
+
 # Reject common false-positive locality phrases (chronostratigraphy terms,
 # paper-grammar stop words, etc.). Lowercase comparison.
-_LOCALITY_BLOCKLIST: frozenset[str] = frozenset({
-    "late cretaceous", "early cretaceous", "middle cretaceous",
-    "early jurassic", "middle jurassic", "late jurassic",
-    "early triassic", "middle triassic", "late triassic",
-    "early devonian", "middle devonian", "late devonian",
-    "early permian", "middle permian", "late permian",
-    "early carboniferous", "late carboniferous",
-    "early cambrian", "middle cambrian", "late cambrian",
-    "early ordovician", "middle ordovician", "late ordovician",
-    "early silurian", "middle silurian", "late silurian",
-    "early paleocene", "middle paleocene", "late paleocene",
-    "early eocene", "middle eocene", "late eocene",
-    "early miocene", "middle miocene", "late miocene",
-    "early oligocene", "late oligocene",
-    "early pliocene", "late pliocene",
-    "this paper", "the paper", "this study", "the study",
-    "figure", "plate", "section", "sample", "locality", "localities",
-})
+_LOCALITY_BLOCKLIST: frozenset[str] = frozenset(
+    {
+        "late cretaceous",
+        "early cretaceous",
+        "middle cretaceous",
+        "early jurassic",
+        "middle jurassic",
+        "late jurassic",
+        "early triassic",
+        "middle triassic",
+        "late triassic",
+        "early devonian",
+        "middle devonian",
+        "late devonian",
+        "early permian",
+        "middle permian",
+        "late permian",
+        "early carboniferous",
+        "late carboniferous",
+        "early cambrian",
+        "middle cambrian",
+        "late cambrian",
+        "early ordovician",
+        "middle ordovician",
+        "late ordovician",
+        "early silurian",
+        "middle silurian",
+        "late silurian",
+        "early paleocene",
+        "middle paleocene",
+        "late paleocene",
+        "early eocene",
+        "middle eocene",
+        "late eocene",
+        "early miocene",
+        "middle miocene",
+        "late miocene",
+        "early oligocene",
+        "late oligocene",
+        "early pliocene",
+        "late pliocene",
+        "this paper",
+        "the paper",
+        "this study",
+        "the study",
+        "figure",
+        "plate",
+        "section",
+        "sample",
+        "locality",
+        "localities",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -162,42 +201,119 @@ _LOCALITY_BLOCKLIST: frozenset[str] = frozenset({
 # "Cretaceous" when both are present.
 _AGE_TERMS: tuple[str, ...] = (
     # Series / epoch combinations first
-    "early cambrian", "middle cambrian", "late cambrian",
-    "lower cambrian", "middle cambrian", "upper cambrian",
-    "early ordovician", "middle ordovician", "late ordovician",
-    "lower ordovician", "upper ordovician",
-    "early silurian", "middle silurian", "late silurian",
-    "lower silurian", "upper silurian", "pridoli", "ludlow", "wenlock", "llandovery",
-    "early devonian", "middle devonian", "late devonian",
-    "lower devonian", "middle devonian", "upper devonian",
-    "early carboniferous", "late carboniferous",
-    "mississippian", "pennsylvanian",
-    "early permian", "middle permian", "late permian",
-    "cisuralian", "guadalupian", "lopingian",
-    "early triassic", "middle triassic", "late triassic",
-    "lower triassic", "middle triassic", "upper triassic",
-    "inderbian", "olenekian", "anisian", "ladinian", "carnian", "norian", "rhaetian",
-    "early jurassic", "middle jurassic", "late jurassic",
-    "lower jurassic", "middle jurassic", "upper jurassic",
-    "hettangian", "sinemurian", "pliensbachian", "toarcian",
-    "aalenian", "bajocian", "bathonian", "callovian",
-    "oxfordian", "kimmeridgian", "tithonian",
-    "early cretaceous", "middle cretaceous", "late cretaceous",
-    "lower cretaceous", "upper cretaceous",
-    "berriasian", "valanginian", "hauterivian", "barremian",
-    "aptian", "albian", "cenomanian", "turonian", "coniacian",
-    "santonian", "campanian", "maastrichtian",
-    "early paleocene", "middle paleocene", "late paleocene",
-    "paleocene", "eocene", "oligocene",
-    "early eocene", "middle eocene", "late eocene",
-    "early oligocene", "late oligocene",
-    "miocene", "pliocene",
-    "early miocene", "middle miocene", "late miocene",
-    "early pliocene", "late pliocene",
-    "pleistocene", "holocene",
+    "early cambrian",
+    "middle cambrian",
+    "late cambrian",
+    "lower cambrian",
+    "middle cambrian",
+    "upper cambrian",
+    "early ordovician",
+    "middle ordovician",
+    "late ordovician",
+    "lower ordovician",
+    "upper ordovician",
+    "early silurian",
+    "middle silurian",
+    "late silurian",
+    "lower silurian",
+    "upper silurian",
+    "pridoli",
+    "ludlow",
+    "wenlock",
+    "llandovery",
+    "early devonian",
+    "middle devonian",
+    "late devonian",
+    "lower devonian",
+    "middle devonian",
+    "upper devonian",
+    "early carboniferous",
+    "late carboniferous",
+    "mississippian",
+    "pennsylvanian",
+    "early permian",
+    "middle permian",
+    "late permian",
+    "cisuralian",
+    "guadalupian",
+    "lopingian",
+    "early triassic",
+    "middle triassic",
+    "late triassic",
+    "lower triassic",
+    "middle triassic",
+    "upper triassic",
+    "inderbian",
+    "olenekian",
+    "anisian",
+    "ladinian",
+    "carnian",
+    "norian",
+    "rhaetian",
+    "early jurassic",
+    "middle jurassic",
+    "late jurassic",
+    "lower jurassic",
+    "middle jurassic",
+    "upper jurassic",
+    "hettangian",
+    "sinemurian",
+    "pliensbachian",
+    "toarcian",
+    "aalenian",
+    "bajocian",
+    "bathonian",
+    "callovian",
+    "oxfordian",
+    "kimmeridgian",
+    "tithonian",
+    "early cretaceous",
+    "middle cretaceous",
+    "late cretaceous",
+    "lower cretaceous",
+    "upper cretaceous",
+    "berriasian",
+    "valanginian",
+    "hauterivian",
+    "barremian",
+    "aptian",
+    "albian",
+    "cenomanian",
+    "turonian",
+    "coniacian",
+    "santonian",
+    "campanian",
+    "maastrichtian",
+    "early paleocene",
+    "middle paleocene",
+    "late paleocene",
+    "paleocene",
+    "eocene",
+    "oligocene",
+    "early eocene",
+    "middle eocene",
+    "late eocene",
+    "early oligocene",
+    "late oligocene",
+    "miocene",
+    "pliocene",
+    "early miocene",
+    "middle miocene",
+    "late miocene",
+    "early pliocene",
+    "late pliocene",
+    "pleistocene",
+    "holocene",
     # Period roots (catch-all; longer phrases above win when matched first)
-    "cambrian", "ordovician", "silurian", "devonian", "carboniferous",
-    "permian", "triassic", "jurassic", "cretaceous",
+    "cambrian",
+    "ordovician",
+    "silurian",
+    "devonian",
+    "carboniferous",
+    "permian",
+    "triassic",
+    "jurassic",
+    "cretaceous",
 )
 
 _AGE_TERMS_SET: frozenset[str] = frozenset(_AGE_TERMS)
@@ -212,6 +328,7 @@ _AGE_ROOT_RE = re.compile(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def _dedupe_preserve(values: Iterable[str]) -> list[str]:
     """Return ``values`` deduplicated, preserving first-seen order."""
@@ -242,6 +359,8 @@ def extract_sample_ids(caption: str) -> list[SampleID]:
     for m in _SAMPLE_RE.finditer(caption):
         value = m.group(1).strip()
         if not value:
+            continue
+        if value.casefold() in _SAMPLE_STOPWORDS:
             continue
         # When the prefix was "Sample ID-N", strip the leading "ID-" so
         # we report just the numeric part as the canonical token. This
@@ -311,7 +430,9 @@ def extract_locality(caption: str) -> list[str]:
     # Run a second-pass over the caption that also captures trailing
     # ``and <Locality>`` and ``, <Locality>`` so we get both halves of
     # "from Tunisia and Greece".
-    tail_re = re.compile(r"(?:,|and)\s+([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3})", re.IGNORECASE)
+    tail_re = re.compile(
+        r"(?:,|and)\s+([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3})", re.IGNORECASE
+    )
     for m in _LOCALITY_PHRASE_RE.finditer(caption):
         phrase = m.group(1).strip()
         if not phrase:
@@ -355,7 +476,7 @@ def extract_age_terms(caption: str) -> list[str]:
 
     raw: list[str] = []
     for m in _AGE_ROOT_RE.finditer(caption):
-        phrase = caption[m.start(1):m.end(1)].strip()
+        phrase = caption[m.start(1) : m.end(1)].strip()
         if not phrase:
             continue
         raw.append(phrase)
