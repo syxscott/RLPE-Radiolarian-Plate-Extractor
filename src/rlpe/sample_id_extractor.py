@@ -243,7 +243,7 @@ _AGE_TERMS: tuple[str, ...] = (
     "lower triassic",
     "middle triassic",
     "upper triassic",
-    "inderbian",
+    "induan",
     "olenekian",
     "anisian",
     "ladinian",
