@@ -16,16 +16,28 @@ import cv2
 logger = logging.getLogger(__name__)
 
 
+# audit 2026-08-01 (D2): module-level lock serialising the
+# "switch to local fallback backend" path. ``_switch_to_fallback_backend``
+# builds a new local model runtime and reassigns it onto
+# ``self.gemma_runtime`` + ``self.m3_engine.backend``. Without a lock
+# N worker threads can each catch a ``FallbackRecommendedError`` at
+# once and each spin up their own copy of the model — a fast path
+# to OOM on a single-GPU box. A plain ``threading.Lock`` is enough
+# (the critical section is a few attribute assignments, no IO to
+# block on for long).
+_BACKEND_SWITCH_LOCK = threading.Lock()
+
+
 # --- Pre-filters for non-specimen content ----------------------------------
 # ``_looks_like_placeholder_caption`` lives in ``text_filters`` so the
 # evaluation harness and unit tests can import it without dragging in
 # the torch/gemma/paddleocr chain pulled by the full pipeline.
 
 from .association import (
+    _TAXON_STOP_WORDS,
     _iou,
     _label_in_pair_lookup,
     _normalize_panel_label,
-    _TAXON_STOP_WORDS,
     is_valid_panel_label,
     match_panels,
 )
@@ -59,7 +71,9 @@ from .scale_bar import (
 from .schema_models import ProvenanceRecord
 from .segmentation import PanelSegmenter, SegmentationConfig
 from .taxon import TaxonRecognizer
-from .text_filters import looks_like_placeholder_caption as _looks_like_placeholder_caption
+from .text_filters import (
+    looks_like_placeholder_caption as _looks_like_placeholder_caption,
+)
 from .types import (
     CaptionEntity,
     CaptionRecord,
@@ -76,7 +90,7 @@ class RadiolarianPipeline:
         self,
         config: PipelineConfig,
         progress_callback=None,
-        cancel_event: "threading.Event | None" = None,
+        cancel_event: threading.Event | None = None,
     ) -> None:
         self.config = config
         # Optional progress callback: ``cb(current, total, message)``.
@@ -206,7 +220,9 @@ class RadiolarianPipeline:
                     self._od_extractor = OpenDataLoaderExtractor(
                         use_ocr=bool(self.config.extra.get("od_use_ocr", False)),
                         ocr_lang=str(self.config.extra.get("od_ocr_lang", "en")),
-                        merge_gap_pt=float(self.config.extra.get("od_merge_gap_pt", 72.0)),
+                        merge_gap_pt=float(
+                            self.config.extra.get("od_merge_gap_pt", 72.0)
+                        ),
                         # Phase 28: forward the OD path page-distance
                         # limit. Default 5 on PipelineConfig; CLI
                         # overrides via ``--od-caption-window``.
@@ -225,9 +241,12 @@ class RadiolarianPipeline:
         #      produced zero LLM calls unless the user also passed
         #      --use-gemma4.
         minimax_backends = {"minimax", "minimax-m3", "minimax_api"}
-        backend_name = str(self.config.extra.get("llm_backend") or "").lower() or "transformers"
+        backend_name = (
+            str(self.config.extra.get("llm_backend") or "").lower() or "transformers"
+        )
         has_minimax_key = bool(
-            self.config.extra.get("MiniMax_api_key") or os.environ.get("MINIMAX_API_KEY")
+            self.config.extra.get("MiniMax_api_key")
+            or os.environ.get("MINIMAX_API_KEY")
         )
         # Round 16 audit: ANTHROPIC_API_KEY used to be a fallback
         # source. That silently routed Claude Code users to MiniMax
@@ -254,7 +273,9 @@ class RadiolarianPipeline:
             or self.config.extra.get("ollama_model")
             or self.config.extra.get("llama_model")
         )
-        use_minimax = backend_name in minimax_backends or (has_minimax_key and not has_local_model)
+        use_minimax = backend_name in minimax_backends or (
+            has_minimax_key and not has_local_model
+        )
         if not use_minimax and not self.config.extra.get("use_gemma4", False):
             return
         model_path = self.config.extra.get("gemma_model_path") or self.config.extra.get(
@@ -280,7 +301,9 @@ class RadiolarianPipeline:
             # called set_fallback_backend).
             fb_name = self.config.extra.get("fallback_llm_backend")
             if fb_name and hasattr(self.gemma_runtime, "backend"):
-                setter = getattr(self.gemma_runtime.backend, "set_fallback_backend", None)
+                setter = getattr(
+                    self.gemma_runtime.backend, "set_fallback_backend", None
+                )
                 if setter is not None:
                     try:
                         setter(fb_name)
@@ -297,7 +320,9 @@ class RadiolarianPipeline:
                 else:
                     from .llm_backends import FallbackHandler
 
-                    default_action = str(self.config.extra.get("MiniMax_fallback_default", "rules"))
+                    default_action = str(
+                        self.config.extra.get("MiniMax_fallback_default", "rules")
+                    )
                     handler = FallbackHandler(default_action=default_action)
                     if bool(self.config.extra.get("MiniMax_interactive", False)):
                         from .llm_backends import cli_fallback_prompt
@@ -324,7 +349,9 @@ class RadiolarianPipeline:
         if self.gemma_runtime is not None:
             want_m3 = self.config.extra.get("m3_enhanced_mode", False)
             if want_m3:
-                m3_cfg = {k: v for k, v in self.config.extra.items() if k.startswith("m3_")}
+                m3_cfg = {
+                    k: v for k, v in self.config.extra.items() if k.startswith("m3_")
+                }
                 # If user didn't set stage toggles, enable all 5 by default.
                 m3_cfg.setdefault("m3_stage_1", True)
                 m3_cfg.setdefault("m3_stage_2", True)
@@ -340,6 +367,15 @@ class RadiolarianPipeline:
                 self.m3_engine = M3Engine(
                     backend=self.gemma_runtime.backend,
                     config=m3_cfg,
+                    # audit 2026-08-01 (M16): forward the pipeline's
+                    # cancel_event so the engine's retry-loop back-off
+                    # honours user cancellation. Without this, the
+                    # engine sits out 30s+ sleeps per failed call while
+                    # the user waits for a Cancel that already
+                    # arrived. ``None`` for callers that don't
+                    # construct with a cancel_event (e.g. legacy
+                    # tests / single-shot CLI invocations).
+                    cancel_event=self._cancel_event,
                 )
                 logger.info(
                     "M3Engine initialized (stages 1-5: %s/%s/%s/%s/%s, diag=%s)",
@@ -458,7 +494,9 @@ class RadiolarianPipeline:
                         pool.shutdown(wait=False, cancel_futures=True)
                         raise
                     except Exception:
-                        logger.exception("PDF processing failed; continuing with remaining PDFs")
+                        logger.exception(
+                            "PDF processing failed; continuing with remaining PDFs"
+                        )
                     else:
                         rows.extend(result_rows)
                     completed += 1
@@ -499,10 +537,14 @@ class RadiolarianPipeline:
                 match_results = [match_result_from_dict(d) for d in rows]
                 provenance_internal = build_provenance(self.config, pdf_files)
                 provenance_record = ProvenanceRecord(**provenance_internal.to_dict())
-                run_output_dict = run_output_from_provenance(provenance_record, match_results)
+                run_output_dict = run_output_from_provenance(
+                    provenance_record, match_results
+                )
                 write_json(manifest_path.parent / "run_output.json", run_output_dict)
             except Exception:
-                logger.exception("Failed to write run_output.json; matches.jsonl is unaffected")
+                logger.exception(
+                    "Failed to write run_output.json; matches.jsonl is unaffected"
+                )
             # Run-level LLM usage sidecar. Independent of RunOutput schema
             # so /system/llm-status and the audit trail can see the actual
             # MiniMax call / token / cost totals even before the per-row
@@ -513,7 +555,9 @@ class RadiolarianPipeline:
                 if summary:
                     write_json(manifest_path.parent / "llm_usage.json", summary)
             except Exception:
-                logger.exception("Failed to write llm_usage.json; matches.jsonl is unaffected")
+                logger.exception(
+                    "Failed to write llm_usage.json; matches.jsonl is unaffected"
+                )
         self._emit_progress(total, total, f"Done — {len(rows)} matches")
         return rows
 
@@ -581,7 +625,9 @@ class RadiolarianPipeline:
             md = r.get("metadata") or {}
             for loc in md.get("location_names") or []:
                 if loc:
-                    map_locs_by_paper.setdefault(pid, []).append((loc, r.get("figure_id", "")))
+                    map_locs_by_paper.setdefault(pid, []).append(
+                        (loc, r.get("figure_id", ""))
+                    )
         if not map_locs_by_paper:
             return results
 
@@ -644,7 +690,11 @@ class RadiolarianPipeline:
                     # is an acronym of the section's full name.
                     if len(sec_alpha) >= 2 and "-" in loc:
                         words = [
-                            w for w in loc.replace("Range", "").replace("River", "").split("-") if w
+                            w
+                            for w in loc.replace("Range", "")
+                            .replace("River", "")
+                            .split("-")
+                            if w
                         ]
                         if len(words) == len(sec_alpha):
                             if all(
@@ -701,7 +751,9 @@ class RadiolarianPipeline:
         # Gemma4 loader).
         # Phase 55 audit: config takes priority over env vars so users can
         # override ANTHROPIC_API_KEY (project-wide) with a per-run MiniMax_api_key.
-        api_key = self.config.extra.get("MiniMax_api_key") or os.environ.get("ANTHROPIC_API_KEY")
+        api_key = self.config.extra.get("MiniMax_api_key") or os.environ.get(
+            "ANTHROPIC_API_KEY"
+        )
         base_url = os.environ.get("ANTHROPIC_BASE_URL") or self.config.extra.get(
             "MiniMax_endpoint", "https://api.minimaxi.com/anthropic"
         )
@@ -710,7 +762,9 @@ class RadiolarianPipeline:
         )
         if not api_key:
             logger.warning(
-                "range_chart: no ANTHROPIC_API_KEY set; skipping %s/%s", paper_id, figure_id
+                "range_chart: no ANTHROPIC_API_KEY set; skipping %s/%s",
+                paper_id,
+                figure_id,
             )
             return [
                 {
@@ -866,7 +920,20 @@ class RadiolarianPipeline:
                         p = int(el.get("page number", 0))
                         if p > 0:
                             od_image_pages.append(p)
-                if images_dir:
+                # audit 2026-08-01 (M10): single ``images_dir`` scan. The
+                # previous code listed the directory twice — first to
+                # compute ``page_diff`` from ``od_image_pages``, then
+                # again to assign a flat ``page_diff=0`` to every
+                # un-referenced file. The second pass dominated the
+                # sort key: an orphan on the correct page was being
+                # sorted as ``page_diff=0`` (same as all un-referenced
+                # images) so the final pick was made purely on file
+                # size. Merge into one scan: each image gets its
+                # ``page_diff`` computed once (from ``od_image_pages``
+                # if available, else a small filename-based heuristic
+                # that prefers PNGs whose numeric suffix looks like
+                # the target page).
+                if images_dir and _os.path.isdir(images_dir):
                     png_files = sorted(
                         f
                         for f in _os.listdir(images_dir)
@@ -879,10 +946,15 @@ class RadiolarianPipeline:
                         except OSError:
                             sz = 0
                         is_referenced = fname in referenced
-                        # Map file index → OD image page. If we have
-                        # fewer OD entries than files, fall back to 0
-                        # (unknown page).
-                        img_page = od_image_pages[i] if i < len(od_image_pages) else 0
+                        # Prefer ``od_image_pages[i]`` (the correct
+                        # mapping) when in range; fall back to a
+                        # filename-derived page number (extract any
+                        # digits from the stem); only then to ``999``
+                        # (truly unknown).
+                        if i < len(od_image_pages) and od_image_pages[i]:
+                            img_page = od_image_pages[i]
+                        else:
+                            img_page = _page_from_filename(fname) or 0
                         page_diff = abs(img_page - target_page) if img_page else 999
                         unpaired.append((page_diff, sz, fpath, is_referenced))
                         logger.debug(
@@ -892,36 +964,6 @@ class RadiolarianPipeline:
                             img_page,
                             page_diff,
                             is_referenced,
-                        )
-                # Enumerate the images directory and match by reading
-                # the page number from each file (use PyMuPDF to get
-                # the page count — too expensive). Simpler: just
-                # collect all PNGs in images_dir and let the caller
-                # pick by page_diff.
-                if images_dir and _os.path.isdir(images_dir):
-                    for fname in sorted(_os.listdir(images_dir)):
-                        if not fname.lower().endswith(".png"):
-                            continue
-                        fpath = _os.path.join(images_dir, fname)
-                        if _os.path.basename(fpath) in referenced:
-                            logger.debug("raw OD scan: skipping %s (referenced)", fname)
-                            continue
-                        try:
-                            sz = _os.path.getsize(fpath)
-                        except OSError:
-                            sz = 0
-                        # All raw OD unpaired images are assigned page_diff=0
-                        # because we don't have per-file page info here
-                        # (the OD JSON's image elements have page numbers,
-                        # but the file naming is sequential, not page-
-                        # indexed). The caller will then merge these with
-                        # the figure-level orphans which DO have page_diff.
-                        # For now, treat them all as same-page candidates.
-                        unpaired.append((0, sz, fpath, None))
-                        logger.info(
-                            "raw OD unpaired image: %s (size=%d)",
-                            fpath,
-                            sz,
                         )
             except Exception as exc:
                 logger.debug("raw OD scan failed: %s", exc)
@@ -1009,7 +1051,9 @@ class RadiolarianPipeline:
             },
         }
 
-    def _process_one_pdf_od(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+    def _process_one_pdf_od(
+        self, paper_id: str, pdf_path: Path
+    ) -> list[dict[str, Any]]:
         if not self._enter_od_grobid_guard(paper_id, "OD"):
             return [self._make_od_grobid_cycle_stub(paper_id, pdf_path, "od")]
         try:
@@ -1017,8 +1061,12 @@ class RadiolarianPipeline:
         finally:
             self._exit_od_grobid_guard()
 
-    def _process_one_pdf_od_inner(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
-        od_result = self.od_extractor.extract(pdf_path, self.config.resolved_output_dir())
+    def _process_one_pdf_od_inner(
+        self, paper_id: str, pdf_path: Path
+    ) -> list[dict[str, Any]]:
+        od_result = self.od_extractor.extract(
+            pdf_path, self.config.resolved_output_dir()
+        )
 
         if not od_result.success:
             error = od_result.error or "unknown error"
@@ -1074,7 +1122,9 @@ class RadiolarianPipeline:
         # second call is virtually always stable.
         if not figures and od_result.json_data:
             try:
-                od_result = self.od_extractor.extract(pdf_path, self.config.resolved_output_dir())
+                od_result = self.od_extractor.extract(
+                    pdf_path, self.config.resolved_output_dir()
+                )
                 figures = od_result.figures
                 if figures:
                     logger.info(
@@ -1110,7 +1160,8 @@ class RadiolarianPipeline:
                         all_taxon_names.append(ent.text)
         species_seed = sorted(set(all_taxon_names))
         use_geology_llm = (
-            bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
+            bool(self.config.extra.get("use_geology_llm", False))
+            and self.gemma_runtime is not None
         )
         section_links: dict[str, list[dict[str, Any]]] = {}
         knowledge_graph: dict[str, Any] | None = None
@@ -1188,7 +1239,9 @@ class RadiolarianPipeline:
                         figures, pair, od_result.json_data
                     )
                     logger.info(
-                        "range_chart %s: orphan search returned %s", pair.figure_id, rc_image
+                        "range_chart %s: orphan search returned %s",
+                        pair.figure_id,
+                        rc_image,
                     )
                     if rc_image is not None:
                         logger.info(
@@ -1448,7 +1501,9 @@ class RadiolarianPipeline:
                         "panel_path": schematic_image_path,
                         "bbox": None,
                         "confidence": (
-                            float(schematic_data.get("confidence", 0.0)) if schematic_data else 0.0
+                            float(schematic_data.get("confidence", 0.0))
+                            if schematic_data
+                            else 0.0
                         ),
                         "label_text": None,
                         "caption_snippet": (pair.caption_text or "")[:240],
@@ -1528,7 +1583,9 @@ class RadiolarianPipeline:
             # instead of falling back to the PDF page number — that was a copy-paste
             # bug that made downstream code think every page-N figure was "figure N".
             figure_number = (
-                extract_figure_number(caption_text) or pair.figure_id or str(pair.page_number)
+                extract_figure_number(caption_text)
+                or pair.figure_id
+                or str(pair.page_number)
             )
             caption = CaptionRecord(
                 paper_id=paper_id,
@@ -1562,7 +1619,9 @@ class RadiolarianPipeline:
 
         # Fallback: if OD returned no results even with figures, try GROBID.
         if not results:
-            logger.info("OpenDataLoader produced no matches; falling back to GROBID+layout.")
+            logger.info(
+                "OpenDataLoader produced no matches; falling back to GROBID+layout."
+            )
             return self._process_one_pdf_grobid(paper_id, pdf_path)
         # Cross-figure panel reassignment: orphan figures (no species, no real
         # caption) sitting between two real plate figures on adjacent pages
@@ -1588,7 +1647,10 @@ class RadiolarianPipeline:
         # range, coordinates). Opt-in via ``use_geo_vision=True`` to
         # avoid silent cost on existing users. We append to existing
         # geology_links — no dedup (deferred to a future cleanup).
-        if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
+        if (
+            self.config.extra.get("use_geo_vision", False)
+            and self.m3_engine is not None
+        ):
             results = self._apply_geo_vision(results, paper_id)
         # Round-4 P2-5: Stage 3 bbox + crop enrichment. When M3 Stage 3
         # produced ``m3_panels`` with bbox+visible_label for this figure
@@ -1610,7 +1672,10 @@ class RadiolarianPipeline:
         # rows are merged into ``results`` ONLY if they fill a real gap
         # (caption_parser claimed N panels but the existing rows have
         # fewer than N panel_ids for this figure).
-        if self.config.extra.get("m3_multi_plate_enrich", False) and self.m3_engine is not None:
+        if (
+            self.config.extra.get("m3_multi_plate_enrich", False)
+            and self.m3_engine is not None
+        ):
             results = self._apply_multi_plate_enrichment(
                 results,
                 paper_id,
@@ -1824,7 +1889,9 @@ class RadiolarianPipeline:
                 if not od_fid:
                     continue
                 # Skip stubs / non-plate figures.
-                src = (getattr(od_fig, "metadata", {}) or {}).get("extraction_source", "")
+                src = (getattr(od_fig, "metadata", {}) or {}).get(
+                    "extraction_source", ""
+                )
                 od_caption = getattr(od_fig, "caption_text", "") or ""
                 if not od_caption:
                     # No caption → can't meaningfully enrich
@@ -1866,7 +1933,9 @@ class RadiolarianPipeline:
             # earlier stub filter). Re-check here for safety.
             sample_src = ""
             if fig_rows:
-                sample_src = (fig_rows[0].get("metadata") or {}).get("extraction_source", "")
+                sample_src = (fig_rows[0].get("metadata") or {}).get(
+                    "extraction_source", ""
+                )
             if sample_src in {"map", "range_chart", "geo_vision"}:
                 continue
             # Also skip by figure_id keyword: 'od_fig_' (non-plate) figures
@@ -1996,7 +2065,9 @@ class RadiolarianPipeline:
                             "extraction_source": "multi_plate_enrich",
                             "panel_id_source": "m3_vision",
                             "expected_plate_label": plate_label,
-                            "figure_number": ((plate_label or "").replace("Plate ", "") or None),
+                            "figure_number": (
+                                (plate_label or "").replace("Plate ", "") or None
+                            ),
                         },
                     }
                 )
@@ -2010,7 +2081,9 @@ class RadiolarianPipeline:
             )
         return results
 
-    def _link_range_chart_geology(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _link_range_chart_geology(
+        self, results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Attach range-chart geology context to matching panel records.
 
         Iterates over all paper-level RangeChartResult objects produced
@@ -2058,7 +2131,12 @@ class RadiolarianPipeline:
                     RangeChartSection(
                         **{
                             k: sec.get(k, "")
-                            for k in ("name", "age_range", "formation_thickness_m", "coordinates")
+                            for k in (
+                                "name",
+                                "age_range",
+                                "formation_thickness_m",
+                                "coordinates",
+                            )
                         },
                         formations=list(sec.get("formations") or []),
                     )
@@ -2072,7 +2150,13 @@ class RadiolarianPipeline:
                     SpeciesRange(
                         **{
                             k: sr.get(k, "")
-                            for k in ("species", "section", "range_top", "range_base", "biozone")
+                            for k in (
+                                "species",
+                                "section",
+                                "range_top",
+                                "range_base",
+                                "biozone",
+                            )
                         }
                     )
                 )
@@ -2081,7 +2165,9 @@ class RadiolarianPipeline:
                 if not isinstance(bz, dict):
                     continue
                 chart.biozones.append(
-                    BiozoneRecord(**{k: bz.get(k, "") for k in ("name", "age", "thickness_m")})
+                    BiozoneRecord(
+                        **{k: bz.get(k, "") for k in ("name", "age", "thickness_m")}
+                    )
                 )
             chart.other_fossils = list(rc_dict.get("other_fossils") or [])
             rc_by_paper.setdefault(chart.paper_id, []).append(chart)
@@ -2307,7 +2393,9 @@ class RadiolarianPipeline:
                 {
                     "figure_id": row.get("figure_id") or md.get("figure_id") or "",
                     "paper_id": paper_id,
-                    "figure_type": str(md.get("figure_type") or row.get("figure_type") or ""),
+                    "figure_type": str(
+                        md.get("figure_type") or row.get("figure_type") or ""
+                    ),
                     "caption": md.get("caption_text") or md.get("caption") or "",
                     "formation": formation,
                     "age": age,
@@ -2426,7 +2514,9 @@ class RadiolarianPipeline:
                 pmd = prow.get("metadata") or {}
                 all_figure_views.append(
                     {
-                        "figure_id": prow.get("figure_id") or pmd.get("figure_id") or "",
+                        "figure_id": prow.get("figure_id")
+                        or pmd.get("figure_id")
+                        or "",
                         "paper_id": paper_id,
                         "figure_type": str(pmd.get("figure_type") or "plate"),
                         "caption": pmd.get("caption") or pmd.get("caption_text") or "",
@@ -2459,7 +2549,9 @@ class RadiolarianPipeline:
                 for row in plate_rows:
                     row_pid = row.get("panel_id") or row.get("canonical_panel_id") or ""
                     row_fid = (
-                        row.get("figure_id") or (row.get("metadata") or {}).get("figure_id") or ""
+                        row.get("figure_id")
+                        or (row.get("metadata") or {}).get("figure_id")
+                        or ""
                     )
                     if row_pid == pid and row_fid == fid:
                         md = row.setdefault("metadata", {})
@@ -2481,7 +2573,9 @@ class RadiolarianPipeline:
     # Original GROBID + layout path
     # -----------------------------------------------------------------------
 
-    def _process_one_pdf_grobid(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+    def _process_one_pdf_grobid(
+        self, paper_id: str, pdf_path: Path
+    ) -> list[dict[str, Any]]:
         # audit 2026-07-31: depth-guard the GROBID entry too. The
         # OD "success but zero results" branches re-enter this
         # method; without a bound here, GROBID-down + OD-empty
@@ -2493,7 +2587,9 @@ class RadiolarianPipeline:
         finally:
             self._exit_od_grobid_guard()
 
-    def _process_one_pdf_grobid_impl(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+    def _process_one_pdf_grobid_impl(
+        self, paper_id: str, pdf_path: Path
+    ) -> list[dict[str, Any]]:
         # Phase 43: fast-fail when GROBID is offline. The GrobidClient
         # retry loop burns ``max_retries * timeout`` seconds (up to
         # 900s by default) hammering a closed port. Probe first; if
@@ -2532,7 +2628,9 @@ class RadiolarianPipeline:
             with self._grobid_lock:
                 self._grobid_in_progress.discard(paper_id)
 
-    def _process_one_pdf_grobid_inner(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+    def _process_one_pdf_grobid_inner(
+        self, paper_id: str, pdf_path: Path
+    ) -> list[dict[str, Any]]:
         """Inner body of ``_process_one_pdf_grobid`` (Phase 29 split).
 
         Extracted so the cycle-guard setup / teardown at the
@@ -2540,7 +2638,9 @@ class RadiolarianPipeline:
         single ``try / finally`` block without rewriting 150 lines of
         indent.
         """
-        grobid_result = self.grobid.process_pdf(pdf_path, self.config.resolved_output_dir())
+        grobid_result = self.grobid.process_pdf(
+            pdf_path, self.config.resolved_output_dir()
+        )
 
         if not grobid_result.success:
             error = grobid_result.error or "GROBID returned no result"
@@ -2562,10 +2662,16 @@ class RadiolarianPipeline:
         section_links: dict[str, list[dict[str, Any]]] = {}
         knowledge_graph: dict[str, Any] | None = None
         use_geology_llm = (
-            bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
+            bool(self.config.extra.get("use_geology_llm", False))
+            and self.gemma_runtime is not None
         )
         species_seed = sorted(
-            {ent.text for cap in tei_captions for ent in (cap.entities or []) if ent and ent.text}
+            {
+                ent.text
+                for cap in tei_captions
+                for ent in (cap.entities or [])
+                if ent and ent.text
+            }
         )
         if grobid_result.fulltext_sections:
             section_links = link_species_to_geology(
@@ -2633,7 +2739,9 @@ class RadiolarianPipeline:
         # GROBID path re-detected per caption. YOLO on CPU is
         # seconds/inference, so redundant calls added minutes to a
         # 20-caption run.
-        yolo_path = self.config.yolo_model_path if self.config.use_yolo_figures else None
+        yolo_path = (
+            self.config.yolo_model_path if self.config.use_yolo_figures else None
+        )
         regions_cache: dict[int, list] = {}
 
         for idx, caption in enumerate(tei_captions, start=1):
@@ -2644,7 +2752,10 @@ class RadiolarianPipeline:
             )
 
             best_page = choose_best_page(
-                pages, caption.figure_number, caption.caption, window=self.config.caption_window
+                pages,
+                caption.figure_number,
+                caption.caption,
+                window=self.config.caption_window,
             )
             if best_page is None:
                 continue
@@ -2676,7 +2787,9 @@ class RadiolarianPipeline:
                 )
                 if _PLATE_KW_RE.search(caption.caption):
                     plate_pages = [
-                        p for p in find_plate_pages(pages) if p.page_index not in existing_indexes
+                        p
+                        for p in find_plate_pages(pages)
+                        if p.page_index not in existing_indexes
                     ]
                     candidate_pages.extend(plate_pages[:3])
 
@@ -2696,7 +2809,9 @@ class RadiolarianPipeline:
             if not chosen_regions:
                 continue
 
-            chosen_regions.sort(key=lambda r: (-r.score, r.page_index, r.bbox[1], r.bbox[0]))
+            chosen_regions.sort(
+                key=lambda r: (-r.score, r.page_index, r.bbox[1], r.bbox[0])
+            )
             region = chosen_regions[0]
             region_img = (
                 cv2.imread(region.crop_path)
@@ -2736,7 +2851,10 @@ class RadiolarianPipeline:
         # silently skipped all four enrichment steps.
         results = self._link_range_chart_geology(results)
         results = self._cross_link_map_and_range_chart(results)
-        if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
+        if (
+            self.config.extra.get("use_geo_vision", False)
+            and self.m3_engine is not None
+        ):
             results = self._apply_geo_vision(results, paper_id)
         if self.config.extra.get("m3_stage3", False) and self.m3_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
@@ -2770,7 +2888,8 @@ class RadiolarianPipeline:
                     "paper_metadata": None,
                     "metadata": {
                         "extraction_source": "grobid_failed",
-                        "ingestion_error": grobid_result.error or "GROBID returned no result",
+                        "ingestion_error": grobid_result.error
+                        or "GROBID returned no result",
                         "ingestion_warning": True,
                     },
                 }
@@ -2800,7 +2919,12 @@ class RadiolarianPipeline:
     # ``_process_one_pdf`` (cross-link / range-chart linking pass has
     # already copied their content to other rows), so we strip them.
     _STUB_PANEL_IDS = frozenset(
-        {"MAP_CONTEXT", "RANGE_CHART", "_ingestion_od_failed", "_ingestion_grobid_failed"}
+        {
+            "MAP_CONTEXT",
+            "RANGE_CHART",
+            "_ingestion_od_failed",
+            "_ingestion_grobid_failed",
+        }
     )
 
     @staticmethod
@@ -2872,7 +2996,9 @@ class RadiolarianPipeline:
                 return True
             return False
 
-        return [m for m in matches if _label_in_caption2(getattr(m, "panel_id", None) or "")]
+        return [
+            m for m in matches if _label_in_caption2(getattr(m, "panel_id", None) or "")
+        ]
 
     def _finalize_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Round 11 post-processing for one paper's emitted rows.
@@ -3007,7 +3133,9 @@ class RadiolarianPipeline:
             pid = r.get("panel_id")
             # Phase 59: only drop rows whose panel_id is a malformed
             # STRING (not a None — None is now allowed through).
-            if pid is not None and (not isinstance(pid, str) or not SHAPE.fullmatch(pid.strip())):
+            if pid is not None and (
+                not isinstance(pid, str) or not SHAPE.fullmatch(pid.strip())
+            ):
                 logger.debug(
                     "Drop row with invalid panel_id=%r (fig=%s)",
                     pid,
@@ -3079,7 +3207,9 @@ class RadiolarianPipeline:
 
         return kept
 
-    def _apply_review_corrections(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _apply_review_corrections(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Overlay human review corrections on finalized rows.
 
         Reads ``<work_dir>/corrections/corrections.jsonl`` (one JSON
@@ -3220,7 +3350,9 @@ Rules:
                 with _PILImage.open(str(region_img)) as _im:
                     plate_pil = _im.convert("RGB")
         except Exception as exc:
-            logger.warning("LLM-first image load failed for %s/%s: %s", paper_id, figure_id, exc)
+            logger.warning(
+                "LLM-first image load failed for %s/%s: %s", paper_id, figure_id, exc
+            )
             return None
 
         # Phase 61 Plan 4 (Bug 4.1): token-aware caption truncation.
@@ -3296,7 +3428,9 @@ Rules:
 
                 parsed = _safe_json_loads(raw)
                 if isinstance(parsed, dict):
-                    panels_data = parsed.get("panels") or parsed.get("answer") or [parsed]
+                    panels_data = (
+                        parsed.get("panels") or parsed.get("answer") or [parsed]
+                    )
                 else:
                     panels_data = parsed
             except Exception:
@@ -3346,9 +3480,11 @@ Rules:
                 bbox=None,
                 confidence=conf,
                 label_text=label,
-                caption_snippet=((caption.caption or "").strip()[:240] or None)
-                if hasattr(caption, "caption")
-                else None,
+                caption_snippet=(
+                    ((caption.caption or "").strip()[:240] or None)
+                    if hasattr(caption, "caption")
+                    else None
+                ),
                 ocr_text=None,
                 paper_metadata=paper_metadata,
                 # Phase 55 audit CRITICAL-2 fix: explicitly pass panel_index=None
@@ -3483,7 +3619,9 @@ Rules:
                         caption_pairs = self._m3_call_with_fallback(
                             self.m3_engine.parse_caption,
                             caption.caption or "",
-                            lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
+                            lang=_resolve_m3_prompt_lang(
+                                self.config.extra.get("m3_prompt_lang")
+                            ),
                         )
                         for cp in caption_pairs:
                             for lbl in cp.labels or []:
@@ -3494,7 +3632,9 @@ Rules:
                 # Bound (pair_lookup <= 100) guards against runaway
                 # regex over-matching on degenerate captions (rare
                 # but seen on wever2006 1918-panel runs).
-                caption_has_more = bool(pair_lookup) and len(pair_lookup) > len(llm_results)
+                caption_has_more = bool(pair_lookup) and len(pair_lookup) > len(
+                    llm_results
+                )
                 if (
                     missing_species
                     or len(llm_results) < 2
@@ -3510,7 +3650,9 @@ Rules:
                         # "00" → "0" and keeps "1a" / "1A" as-is (no
                         # case folding), so we also lowercase.
                         existing_labels = {
-                            _normalize_panel_label(r.get("panel_id") or r.get("label_text") or "")
+                            _normalize_panel_label(
+                                r.get("panel_id") or r.get("label_text") or ""
+                            )
                             .strip()
                             .lower()
                             for r in llm_results
@@ -3539,9 +3681,9 @@ Rules:
 
                                     if not _is_valid_species(candidate_species):
                                         skipped_invalid += 1
-                                        r.setdefault("metadata", {})["hybrid_species_rejected"] = (
-                                            candidate_species
-                                        )
+                                        r.setdefault("metadata", {})[
+                                            "hybrid_species_rejected"
+                                        ] = candidate_species
                                         continue
                                 except Exception:
                                     # If the helper is unavailable for
@@ -3565,7 +3707,11 @@ Rules:
                         #    ~85% on beccaro.
                         added = 0
                         for lbl, species in pair_lookup.items():
-                            lbl_norm = _normalize_panel_label(lbl).strip().lower() if lbl else ""
+                            lbl_norm = (
+                                _normalize_panel_label(lbl).strip().lower()
+                                if lbl
+                                else ""
+                            )
                             if lbl_norm and lbl_norm in existing_labels:
                                 continue
                             # Phase 54 audit: M7 — use the *normalised*
@@ -3626,7 +3772,10 @@ Rules:
                                     # so the UI / exporters can
                                     # distinguish "no caption" from
                                     # "empty placeholder".
-                                    caption_snippet=(caption.caption or "").strip()[:240] or None,
+                                    caption_snippet=(caption.caption or "").strip()[
+                                        :240
+                                    ]
+                                    or None,
                                     ocr_text=None,
                                     paper_metadata=paper_metadata,
                                     # Phase 55 audit CRITICAL-2 fix: same as above —
@@ -3636,7 +3785,9 @@ Rules:
                                     metadata={
                                         "extraction_method": "llm_first",
                                         "llm_backend": getattr(
-                                            self.gemma_runtime, "backend_name", "unknown"
+                                            self.gemma_runtime,
+                                            "backend_name",
+                                            "unknown",
                                         ),
                                         "panel_count": pre_append_count + 1,
                                         "figure_number": caption.figure_number,
@@ -3708,7 +3859,9 @@ Rules:
                         # ``_hybrid_added`` or ``caption_parser_hybrid``)
                         # drop when an LLM-native row exists; LLM rows
                         # themselves always win.
-                        is_caption_added = (r.get("metadata") or {}).get("species_source") in (
+                        is_caption_added = (r.get("metadata") or {}).get(
+                            "species_source"
+                        ) in (
                             "caption_parser_hybrid",
                             "regex_caption_hybrid_added",
                         )
@@ -3761,7 +3914,9 @@ Rules:
 
                     pre_filter = len(llm_results)
                     llm_results = [
-                        r for r in llm_results if _label_in_caption(r.get("panel_id") or "")
+                        r
+                        for r in llm_results
+                        if _label_in_caption(r.get("panel_id") or "")
                     ]
                     dropped = pre_filter - len(llm_results)
                     if dropped:
@@ -3787,7 +3942,9 @@ Rules:
                 )
                 return llm_results
             logger.debug(
-                "LLM-first failed for %s/%s, falling back to classical path", paper_id, figure_id
+                "LLM-first failed for %s/%s, falling back to classical path",
+                paper_id,
+                figure_id,
             )
 
         # ---- Classical path (segmentation + OCR + matching) --------------------
@@ -3812,7 +3969,9 @@ Rules:
                     m3_caption_pairs = self._m3_call_with_fallback(
                         self.m3_engine.parse_caption,
                         caption.caption or "",
-                        lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
+                        lang=_resolve_m3_prompt_lang(
+                            self.config.extra.get("m3_prompt_lang")
+                        ),
                     )
                     m3_diag["stage1_pairs"] = len(m3_caption_pairs)
                 # Stage 2: plate classifier — early exit on non-radiolarian
@@ -3857,10 +4016,14 @@ Rules:
                         if m3_plate_cls and m3_plate_cls.panel_count_estimate
                         else None
                     )
-                    m3_panels = self.m3_engine.segment_panels(plate_pil, hint_count=hint)
+                    m3_panels = self.m3_engine.segment_panels(
+                        plate_pil, hint_count=hint
+                    )
                     m3_diag["stage3_panels"] = [p.to_dict() for p in m3_panels]
             except Exception as exc:
-                logger.exception("M3 stage 1-3 failed; falling back to classical pipeline: %s", exc)
+                logger.exception(
+                    "M3 stage 1-3 failed; falling back to classical pipeline: %s", exc
+                )
                 m3_caption_pairs = []
                 m3_panels = []
                 m3_plate_cls = None
@@ -3875,7 +4038,12 @@ Rules:
             panels = [
                 PanelCandidate(
                     panel_id=mp.panel_id,
-                    bbox=(int(mp.bbox[0]), int(mp.bbox[1]), int(mp.bbox[2]), int(mp.bbox[3])),
+                    bbox=(
+                        int(mp.bbox[0]),
+                        int(mp.bbox[1]),
+                        int(mp.bbox[2]),
+                        int(mp.bbox[3]),
+                    ),
                     score=mp.confidence,
                     metadata={
                         "method": "m3_stage3",
@@ -3885,7 +4053,9 @@ Rules:
                 )
                 for mp in m3_panels
             ]
-            logger.info("M3 Stage 3: substituted %d panels for empty SAM2 result", len(panels))
+            logger.info(
+                "M3 Stage 3: substituted %d panels for empty SAM2 result", len(panels)
+            )
         # Augment classical panels with M3's visible_label / morphology hints
         elif m3_panels and panels:
             try:
@@ -3959,7 +4129,9 @@ Rules:
             if crop.size == 0:
                 continue
             panel_dir = ensure_dir(
-                self.config.panels_dir() / paper_id / (figure_id or f"fig_{figure_index}")
+                self.config.panels_dir()
+                / paper_id
+                / (figure_id or f"fig_{figure_index}")
             )
             panel_path = panel_dir / f"panel_{panel_index:02d}.png"
             # Round 15 audit: cv2.imwrite returns False on failure
@@ -3980,7 +4152,9 @@ Rules:
                 panel_tokens = self.ocr.recognize_panel(region_img, (x, y, w, h))
                 if panel_tokens:
                     panel.metadata = panel.metadata or {}
-                    panel.metadata["panel_ocr_text"] = " ".join(t.text for t in panel_tokens)
+                    panel.metadata["panel_ocr_text"] = " ".join(
+                        t.text for t in panel_tokens
+                    )
                     panel.metadata["panel_ocr_token_count"] = len(panel_tokens)
             except Exception:
                 pass
@@ -4009,7 +4183,9 @@ Rules:
                         panel.metadata["label_region_fallback"] = "full_panel"
                 if label_tokens:
                     panel.metadata = panel.metadata or {}
-                    panel.metadata["label_region_ocr"] = " ".join(t.text for t in label_tokens)
+                    panel.metadata["label_region_ocr"] = " ".join(
+                        t.text for t in label_tokens
+                    )
                     # Pick the best short label-like token
                     best = None
                     for tok in label_tokens:
@@ -4195,7 +4371,9 @@ Rules:
                 # ``geology_scope`` marker on the first panel tells
                 # the operator that the data is figure-level, not
                 # panel-specific.
-                key = panel_keys[i] if i < len(panel_keys) else (m.panel_id or f"idx_{i}")
+                key = (
+                    panel_keys[i] if i < len(panel_keys) else (m.panel_id or f"idx_{i}")
+                )
                 panel_local_geo = panel_geo.get(key, [])
                 if panel_local_geo and not _looks_like_placeholder_caption(
                     panel_captions.get(key, "")
@@ -4294,7 +4472,11 @@ Rules:
                 # Round 18 fix: only the FIRST panel in a figure
                 # inherits figure-level geology; others stay empty
                 # so we don't fabricate per-panel data.
-                key = panel_keys[i] if i < len(panel_keys) else (row.get("panel_id") or f"idx_{i}")
+                key = (
+                    panel_keys[i]
+                    if i < len(panel_keys)
+                    else (row.get("panel_id") or f"idx_{i}")
+                )
                 panel_local_geo = panel_geo.get(key, [])
                 if panel_local_geo and not _looks_like_placeholder_caption(
                     panel_captions.get(key, "")
@@ -4320,20 +4502,34 @@ Rules:
         transformers, whichever is configured) and points both the
         pipeline runtime and the M3 engine at the new backend.
         """
-        from .llm_backends import FallbackRecommendedError  # noqa: F401 (re-export clarity)
+        from .llm_backends import (
+            FallbackRecommendedError,
+        )  # noqa: F401 (re-export clarity)
 
-        new_runtime = self._build_local_gemma_fallback()
-        if new_runtime is None:
-            logger.warning(
-                "FallbackRecommendedError but no local backend configured; "
-                "giving up on M3 for this call"
+        # audit 2026-08-01 (D2): the assignment pair below
+        # (``self.gemma_runtime = ...`` + ``self.m3_engine.backend = ...``)
+        # used to be unprotected. Multiple workers can each catch a
+        # FallbackRecommendedError at the same time and call this
+        # method concurrently — N callers each load a fresh local
+        # model in parallel, OOMing the box. Take the module-level
+        # lock so the local backend is built and swapped exactly once
+        # even under fan-out. The second caller sees the already-
+        # swapped runtime and returns immediately.
+        with _BACKEND_SWITCH_LOCK:
+            new_runtime = self._build_local_gemma_fallback()
+            if new_runtime is None:
+                logger.warning(
+                    "FallbackRecommendedError but no local backend configured; "
+                    "giving up on M3 for this call"
+                )
+                return False
+            self.gemma_runtime = new_runtime
+            if self.m3_engine is not None:
+                self.m3_engine.backend = new_runtime.backend
+            logger.info(
+                "Switched M3 backend to %s", getattr(new_runtime, "backend_name", "?")
             )
-            return False
-        self.gemma_runtime = new_runtime
-        if self.m3_engine is not None:
-            self.m3_engine.backend = new_runtime.backend
-        logger.info("Switched M3 backend to %s", getattr(new_runtime, "backend_name", "?"))
-        return True
+            return True
 
     def _m3_call_with_fallback(self, fn, *args, **kwargs):
         """Call an M3Engine method; on FallbackRecommendedError switch
@@ -4385,7 +4581,9 @@ Rules:
         from PIL import Image as _PILImage
 
         # If caption parsing found nothing AND the user opted to skip, fall through
-        if not caption_pairs and self.m3_engine.config.get("m3_skip_match_on_empty_caption", True):
+        if not caption_pairs and self.m3_engine.config.get(
+            "m3_skip_match_on_empty_caption", True
+        ):
             return matches
         # Deduplicate matches by (panel_id, bbox-tuple) before calling
         # M3 stage 4. The pre-fix code called M3 once per match row,
@@ -4453,7 +4651,10 @@ Rules:
                     # (M3 has the visual signal that rules don't).
                     if m3_conf >= 0.40 and (
                         m3_conf > rule_conf
-                        or (m.species and panel_match.species.lower() != m.species.lower())
+                        or (
+                            m.species
+                            and panel_match.species.lower() != m.species.lower()
+                        )
                         or (not m.species)
                     ):
                         use_m3 = True
@@ -4493,7 +4694,9 @@ Rules:
                         )
                     else:
                         md["gemma_fallback"] = True
-                        md["gemma_reasoning"] = panel_match.reasoning or "M3 below threshold"
+                        md["gemma_reasoning"] = (
+                            panel_match.reasoning or "M3 below threshold"
+                        )
                 m.metadata = md
                 new_matches.append(m)
             except Exception as exc:
@@ -4639,7 +4842,9 @@ Rules:
 
         if action == "rules":
             logger.warning(
-                "[MiniMax] API error, falling back to rule pipeline for %s/%s", paper_id, figure_id
+                "[MiniMax] API error, falling back to rule pipeline for %s/%s",
+                paper_id,
+                figure_id,
             )
             for m in result:
                 m.metadata["MiniMax_fallback_action"] = "rules"
@@ -4647,7 +4852,9 @@ Rules:
 
         if action == "gemma4":
             logger.warning(
-                "[MiniMax] API error, switching to local Gemma4 for %s/%s", paper_id, figure_id
+                "[MiniMax] API error, switching to local Gemma4 for %s/%s",
+                paper_id,
+                figure_id,
             )
             # Bug #7 fix: cache the local Gemma4 runtime after the first
             # successful build so subsequent fallbacks don't reload a multi-GB
@@ -4659,9 +4866,13 @@ Rules:
             if self._fallback_gemma_runtime is None:
                 with self._gemma_lock:
                     if self._fallback_gemma_runtime is None:
-                        self._fallback_gemma_runtime = self._build_local_gemma_fallback()
+                        self._fallback_gemma_runtime = (
+                            self._build_local_gemma_fallback()
+                        )
             if self._fallback_gemma_runtime is None:
-                logger.warning("Local Gemma4 fallback unavailable; keeping rule results.")
+                logger.warning(
+                    "Local Gemma4 fallback unavailable; keeping rule results."
+                )
                 for m in result:
                     m.metadata["MiniMax_fallback_action"] = "rules_no_local_gemma"
                 return result
@@ -4671,7 +4882,9 @@ Rules:
             return retried
 
         if action == "retry":
-            logger.warning("[MiniMax] API error, retrying once for %s/%s", paper_id, figure_id)
+            logger.warning(
+                "[MiniMax] API error, retrying once for %s/%s", paper_id, figure_id
+            )
             retried = _call_once(self.gemma_runtime)
             for m in retried:
                 m.metadata["MiniMax_fallback_action"] = "retry"
@@ -4797,7 +5010,8 @@ Rules:
         # FallbackHandler popup surfaces to the user.
         first_err = next(
             (
-                m.metadata.get("gemma_error", "") or m.metadata.get("gemma_reasoning", "")
+                m.metadata.get("gemma_error", "")
+                or m.metadata.get("gemma_reasoning", "")
                 for m in matches
                 if m.metadata.get("gemma_error") or m.metadata.get("gemma_reasoning")
             ),
@@ -4805,9 +5019,11 @@ Rules:
         )
         first_type = next(
             (
-                m.metadata.get("gemma_error_type", "") or m.metadata.get("gemma_fallback_type", "")
+                m.metadata.get("gemma_error_type", "")
+                or m.metadata.get("gemma_fallback_type", "")
                 for m in matches
-                if m.metadata.get("gemma_error_type") or m.metadata.get("gemma_fallback_type")
+                if m.metadata.get("gemma_error_type")
+                or m.metadata.get("gemma_fallback_type")
             ),
             "",
         )
@@ -4820,7 +5036,8 @@ Rules:
             False,
         )
         return {
-            "error": first_err or "MiniMax returned fallback_used=True (see stderr for traceback)",
+            "error": first_err
+            or "MiniMax returned fallback_used=True (see stderr for traceback)",
             "error_type": first_type or ("MiniMaxAPIError" if first_fb else "Unknown"),
             "context": f"paper={paper_id} figure={figure_id} affected_panels="
             f"{sum(1 for m in matches if m.metadata.get('gemma_error') or m.metadata.get('gemma_fallback'))}",
@@ -4943,7 +5160,9 @@ Rules:
         results: list[dict[str, Any]] = []
         # Build geology links from OCR text across all pages.
         all_ocr_text = " ".join(page.text or "" for page in pages)
-        species_seed = sorted({t.text for t in self.taxon.predict(all_ocr_text) if t.text})
+        species_seed = sorted(
+            {t.text for t in self.taxon.predict(all_ocr_text) if t.text}
+        )
         section_links: dict[str, list[dict[str, Any]]] = {}
         if species_seed:
             section_links = link_species_to_geology(
@@ -4956,16 +5175,24 @@ Rules:
                         "text": all_ocr_text,
                     }
                 ],
-                llm_runtime=self.gemma_runtime
-                if bool(self.config.extra.get("use_geology_llm", False))
-                else None,
+                llm_runtime=(
+                    self.gemma_runtime
+                    if bool(self.config.extra.get("use_geology_llm", False))
+                    else None
+                ),
             )
-        knowledge_graph = build_knowledge_graph(section_links) if section_links else None
+        knowledge_graph = (
+            build_knowledge_graph(section_links) if section_links else None
+        )
 
         # Two-pass: enumerate total regions across all pages so the progress
         # callback can map (current, total) onto a smooth 30-90% band.
-        all_regions: list[tuple[Any, Any, int]] = []  # (page, region, region_idx_on_page)
-        yolo_path = self.config.yolo_model_path if self.config.use_yolo_figures else None
+        all_regions: list[tuple[Any, Any, int]] = (
+            []
+        )  # (page, region, region_idx_on_page)
+        yolo_path = (
+            self.config.yolo_model_path if self.config.use_yolo_figures else None
+        )
         for page in pages:
             for ridx, region in enumerate(
                 detect_figure_regions(
@@ -4982,7 +5209,9 @@ Rules:
 
         for page, region, ridx in all_regions:
             region_img = (
-                cv2.imread(region.crop_path) if region.crop_path else cv2.imread(page.image_path)
+                cv2.imread(region.crop_path)
+                if region.crop_path
+                else cv2.imread(page.image_path)
             )
             if region_img is None:
                 done += 1
@@ -5029,7 +5258,9 @@ Rules:
 
         return results
 
-    def _cross_figure_reassign(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _cross_figure_reassign(
+        self, results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Reassign panels from orphan figures to the nearest real plate figure.
 
         Thin instance wrapper around the module-level helper so the
@@ -5085,6 +5316,30 @@ def stage3_rescale_bbox(
         except (TypeError, ValueError):
             out.append(0)
     return (out[0], out[1], out[2], out[3])
+
+
+def _page_from_filename(fname: str) -> int | None:
+    """Best-effort page number extraction from an image filename.
+
+    Used by the orphan-image-for-range-chart search (audit 2026-08-01 M10)
+    as a fallback when the OD JSON's image-element page list is shorter
+    than the directory listing. Returns the last integer found in the
+    stem (so ``plate_3.png`` -> 3, ``imageFile12.png`` -> 12), or None
+    if no integer is present.
+    """
+    import os as _os_for_page
+
+    stem = _os_for_page.path.splitext(_os_for_page.path.basename(fname))[0]
+    # Take the last numeric run — that matches OD's ``imageFile1.png``
+    # naming where the trailing number is the index. Ignore the year-like
+    # 4-digit prefix if there is one and a trailing shorter number exists.
+    matches = re.findall(r"\d+", stem)
+    if not matches:
+        return None
+    try:
+        return int(matches[-1])
+    except (TypeError, ValueError):
+        return None
 
 
 def _resolve_m3_prompt_lang(value: Any) -> str | None:
@@ -5184,7 +5439,12 @@ def _add_unmatched_m3_panels(
         classical_panels.append(
             PanelCandidate(
                 panel_id=mp.panel_id or f"M3_{idx:02d}",
-                bbox=(int(mp.bbox[0]), int(mp.bbox[1]), int(mp.bbox[2]), int(mp.bbox[3])),
+                bbox=(
+                    int(mp.bbox[0]),
+                    int(mp.bbox[1]),
+                    int(mp.bbox[2]),
+                    int(mp.bbox[3]),
+                ),
                 score=mp.confidence,
                 metadata=md,
             )
@@ -5200,7 +5460,9 @@ def _extract_taxon_entities_from_text(text: str) -> list[CaptionEntity]:
     # audit 2026-07-31: ≥3-letter tokens on both sides so English
     # phrase fragments ("An attempt", "Explanation of") can't match;
     # the stopword filter mirrors association._TAXON_STOP_WORDS.
-    pattern = re.compile(r"\b([A-Z][a-zA-Z-]{2,}\s+(?:sp\.|spp\.|cf\.|aff\.|[a-z][a-zA-Z-]{2,}))\b")
+    pattern = re.compile(
+        r"\b([A-Z][a-zA-Z-]{2,}\s+(?:sp\.|spp\.|cf\.|aff\.|[a-z][a-zA-Z-]{2,}))\b"
+    )
     out: list[CaptionEntity] = []
     seen: set[str] = set()
     for m in pattern.finditer(text):
@@ -5215,6 +5477,12 @@ def _extract_taxon_entities_from_text(text: str) -> list[CaptionEntity]:
         if taxon not in seen:
             seen.add(taxon)
             out.append(
-                CaptionEntity(text=taxon, start=m.start(1), end=m.end(1), label="taxon", score=0.65)
+                CaptionEntity(
+                    text=taxon,
+                    start=m.start(1),
+                    end=m.end(1),
+                    label="taxon",
+                    score=0.65,
+                )
             )
     return out

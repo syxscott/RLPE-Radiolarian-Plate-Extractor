@@ -27,6 +27,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -34,6 +36,8 @@ from threading import Condition, RLock, get_ident
 from typing import Any
 
 from PIL import Image
+
+from .grobid import PipelineCancelledError  # noqa: E402
 
 # Import FallbackRecommendedError to detect when backend recommends switching
 from .llm_backends import FallbackRecommendedError  # noqa: E402
@@ -758,7 +762,9 @@ def _redact_enrichment_caption(
     after = pc[end:]
     before_budget = unrelated_budget // 2
     after_budget = unrelated_budget - before_budget
-    before_truncated = before[-before_budget:] if len(before) > before_budget else before
+    before_truncated = (
+        before[-before_budget:] if len(before) > before_budget else before
+    )
     after_truncated = after[:after_budget] if len(after) > after_budget else after
     return f"{before_truncated}[…redacted…]{matched}[…redacted…]{after_truncated}"
 
@@ -1210,9 +1216,13 @@ def _regex_expand_label_list(s: str) -> list[str]:
         if m_letter:
             lo_num, lo_suf, hi_suf = m_letter.groups()
             if ord(hi_suf) >= ord(lo_suf):
-                out.extend(f"{lo_num}{chr(c)}" for c in range(ord(lo_suf), ord(hi_suf) + 1))
+                out.extend(
+                    f"{lo_num}{chr(c)}" for c in range(ord(lo_suf), ord(hi_suf) + 1)
+                )
             else:
-                out.extend(f"{lo_num}{chr(c)}" for c in range(ord(hi_suf), ord(lo_suf) + 1))
+                out.extend(
+                    f"{lo_num}{chr(c)}" for c in range(ord(hi_suf), ord(lo_suf) + 1)
+                )
             continue
         m = re.match(r"(\d+)([a-z]?)\s*[–\-—]\s*(\d+)([a-z]?)$", chunk)
         if m:
@@ -1299,7 +1309,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         r"(\bfigs?\s+(?:\d+[a-z]?(?:\s*[,\-–—]\s*(?:\d+[a-z]?|[a-z]))*))"
         r"\.\s+((?:\d+[a-z]?\.\s*)*(?:\d+[a-z]?))"
         r"(?=[:A-Z])",
-        lambda m: m.group(1) + ", " + ", ".join(x.rstrip(".") for x in m.group(2).split()),
+        lambda m: m.group(1)
+        + ", "
+        + ", ".join(x.rstrip(".") for x in m.group(2).split()),
         text,
         flags=re.IGNORECASE,
     )
@@ -1323,7 +1335,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # gold form ("Entactinia sp. 1"): the modifier is folded into
         # the species string and the modifier field is cleared so the
         # caller doesn't double-count it (e.g. "Entactinia sp. 1 sp.").
-        trailing_id = (m.group(4) or "").strip() if m.lastindex and m.lastindex >= 4 else ""
+        trailing_id = (
+            (m.group(4) or "").strip() if m.lastindex and m.lastindex >= 4 else ""
+        )
         if trailing_id:
             species = (species + " " + modifier + " " + trailing_id).strip()
             modifier = ""
@@ -1407,7 +1421,8 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             lbl
             for lbl in labels
             if not (
-                re.match(r"(\d+)", lbl) and re.match(r"(\d+)", lbl).group(1) in conflicting_bases
+                re.match(r"(\d+)", lbl)
+                and re.match(r"(\d+)", lbl).group(1) in conflicting_bases
             )
         ]
         if not new_labels:
@@ -1485,7 +1500,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             # string so the caller sees the gold form.
             species = m.group(3).strip()
             modifier = (m.group(4) or "").strip()
-            trailing_id = (m.group(5) or "").strip() if m.lastindex and m.lastindex >= 5 else ""
+            trailing_id = (
+                (m.group(5) or "").strip() if m.lastindex and m.lastindex >= 5 else ""
+            )
             if modifier:
                 # audit 2026-07-31: cf./aff. are comparison qualifiers
                 # whose target follows in the text — folding the bare
@@ -1618,7 +1635,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # the identifier to be at the end of the clause: followed by
         # a clause terminator (``;``, ``.``, or end-of-text), never
         # by a word that would indicate we matched the wrong capital.
-        if re.match(r"^(Spumellaria|Nassellaria)\s+gen\.?$", species, flags=re.IGNORECASE):
+        if re.match(
+            r"^(Spumellaria|Nassellaria)\s+gen\.?$", species, flags=re.IGNORECASE
+        ):
             tail_window = text[m.end() : m.end() + 30]
             m_id = re.search(r"\b([A-Z])\b(?=\s*[;.,]|\s*$)", tail_window)
             if m_id:
@@ -2014,7 +2033,8 @@ class _ThinkingFlagGate:
             self._writers_waiting += 1
             try:
                 while self._writer_thread not in (None, me) or (
-                    self._writer_thread is None and any(tid != me for tid in self._readers)
+                    self._writer_thread is None
+                    and any(tid != me for tid in self._readers)
                 ):
                     self._cond.wait()
             finally:
@@ -2047,9 +2067,26 @@ class M3Engine:
     >>> final = engine.apply_critiques(matches, critiques)
     """
 
-    def __init__(self, backend: Any, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        backend: Any,
+        config: dict[str, Any] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
         self.backend = backend
         self.config = dict(config or {})
+        # audit 2026-08-01 (M16): cooperative cancellation hook.
+        # The pipeline's ``pool.shutdown(wait=False, cancel_futures=True)``
+        # only drops QUEUED futures — in-flight LLM calls keep running
+        # and rack up token spend. By accepting a shared ``threading.Event``
+        # here, the engine can short-circuit its own retry-loop sleeps
+        # and the "retry without thinking" path: when the pipeline
+        # detects user cancellation it ``.set()``s the event, and the
+        # engine's ``_call_api`` (and ``_wait_or_cancel`` helper) return
+        # immediately rather than waiting out a 30s+ retry. ``None``
+        # preserves the legacy behaviour (plain ``time.sleep``) so this
+        # is purely additive.
+        self._cancel_event = cancel_event
         # Stage toggles. Default: all on.
         for i in range(1, 6):
             self.config.setdefault(f"m3_stage_{i}", True)
@@ -2127,6 +2164,87 @@ class M3Engine:
         # below lets concurrent first calls run together but keeps them
         # out of the window where a retry has the flag flipped off.
         self._thinking_gate = _ThinkingFlagGate()
+
+    # ------------------------------------------------------------------ helpers
+    def _wait_or_cancel(self, seconds: float) -> bool:
+        """Sleep ``seconds`` (or until ``self._cancel_event`` is set).
+
+        audit 2026-08-01 (M16): thin wrapper used by the engine's retry
+        loop so user cancellation can short-circuit a multi-second
+        ``time.sleep``. Returns ``True`` if the event was set (caller
+        should bail), ``False`` if the wait timed out normally.
+
+        With no event (``self._cancel_event is None``) the behaviour
+        is identical to the previous ``time.sleep(seconds)`` — backward
+        compatible.
+        """
+        evt = self._cancel_event
+        if evt is None:
+            time.sleep(max(0.0, float(seconds)))
+            return False
+        # ``Event.wait(timeout=...)`` returns True iff the event was
+        # set during the wait, False on timeout. ``max(0.0, ...)``
+        # guards against a stray negative arg from upstream.
+        return evt.wait(timeout=max(0.0, float(seconds)))
+
+    def _call_api(
+        self,
+        kind: str,
+        *args: Any,
+        max_retries: int = 1,
+        retry_wait: float = 1.0,
+        **kwargs: Any,
+    ) -> Any:
+        """Wrapper around the backend API call with a cancel-aware retry loop.
+
+        audit 2026-08-01 (M16): centralises the engine-side retry path
+        so cancellation (via ``self._cancel_event``) can short-circuit
+        the back-off between attempts. The first attempt always runs;
+        any retry sleep uses ``_wait_or_cancel`` and aborts early when
+        the event is set. ``kind`` is one of ``"text"`` / ``"vision"``
+        and selects which backend method to invoke.
+
+        This method exists so the engine owns a hook that the
+        ``test_cancel_event_set_short_circuits_retry`` test can
+        monkeypatch and observe. The concrete retry semantics for the
+        MiniMax backends (status-code routing, jitter, etc.) live in
+        ``llm_backends._call_api``; here we just want a place where
+        ``self._cancel_event`` is honoured on every retry back-off.
+        """
+        if self.backend is None:
+            return {"fallback_used": True, "error": "no backend"}
+        if kind == "text":
+            invoke = getattr(self.backend, "infer_text", None)
+        elif kind == "vision":
+            invoke = getattr(self.backend, "infer_panel", None)
+        else:
+            raise ValueError(f"M3Engine._call_api: unknown kind={kind!r}")
+        if invoke is None:
+            return {"fallback_used": True, "error": f"backend has no {kind} method"}
+        attempt = 0
+        last_exc: Exception | None = None
+        while attempt < max(1, int(max_retries)):
+            try:
+                return invoke(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 — surface to caller
+                last_exc = exc
+                # Don't sleep before the last attempt: a cancel that
+                # arrives after the final try should propagate via
+                # the exception, not be masked by an extra wait.
+                if attempt + 1 >= max(1, int(max_retries)):
+                    break
+                if self._wait_or_cancel(retry_wait):
+                    # Event set during the back-off — re-raise the
+                    # last exception but with a clearer message so
+                    # callers can distinguish cancel vs. genuine error.
+                    raise PipelineCancelledError(
+                        f"cancelled during {kind} retry (attempt {attempt + 1})"
+                    ) from exc
+                attempt += 1
+        # Exhausted retries — surface the last exception.
+        if last_exc is not None:
+            raise last_exc
+        return None
 
     # ------------------------------------------------------------------ stage 1
     def parse_caption(
@@ -2223,7 +2341,9 @@ class M3Engine:
         # papers: ``figs 1-3. Species A. figs 4-5. Species B.``.
         fallback = _regex_parse_caption(caption_text)
         if fallback:
-            logger.info("Stage 1 parse_caption -> %d pairs (regex fallback)", len(fallback))
+            logger.info(
+                "Stage 1 parse_caption -> %d pairs (regex fallback)", len(fallback)
+            )
         return fallback
 
     # ------------------------------------------------------------------ stage 2
@@ -2247,12 +2367,16 @@ class M3Engine:
         if not isinstance(data, dict):
             return PlateClassification()
         cls = PlateClassification(
-            is_radiolarian_plate=_safe_bool(data.get("is_radiolarian_plate"), default=True),
+            is_radiolarian_plate=_safe_bool(
+                data.get("is_radiolarian_plate"), default=True
+            ),
             image_type=str(data.get("image_type") or "micrograph"),
             panel_count_estimate=_safe_int(data.get("panel_count_estimate")),
             specimen_count_estimate=_safe_int(data.get("specimen_count_estimate")),
             quality=str(data.get("quality") or "ok"),
-            dominant_taxa=[str(x) for x in (data.get("dominant_taxa") or []) if str(x).strip()],
+            dominant_taxa=[
+                str(x) for x in (data.get("dominant_taxa") or []) if str(x).strip()
+            ],
             reasoning=str(data.get("reasoning") or "").strip(),
         )
         logger.info(
@@ -2364,7 +2488,11 @@ class M3Engine:
         visual_only = not caption_pairs
         if visual_only:
             system_prompt = _MATCH_PANEL_SYSTEM_VISUAL_ONLY
-            hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
+            hint = (
+                f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n"
+                if suggested_label
+                else ""
+            )
             caption_block = (
                 f"\n[完整图说（仅供参考，可能为空）]\n{caption_text.strip()}\n"
                 if caption_text
@@ -2381,8 +2509,14 @@ class M3Engine:
             pairs_json = json.dumps(
                 [p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2
             )
-            hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
-            caption_block = f"\n[完整图说]\n{caption_text.strip()}\n" if caption_text else ""
+            hint = (
+                f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n"
+                if suggested_label
+                else ""
+            )
+            caption_block = (
+                f"\n[完整图说]\n{caption_text.strip()}\n" if caption_text else ""
+            )
             prompt = (
                 "[候选配对（caption 解析）]\n"
                 f"{pairs_json}\n"
@@ -2548,7 +2682,9 @@ class M3Engine:
         if len(votes) > 1:
             sorted_groups = sorted(votes.values(), key=lambda g: -len(g))
             if len(sorted_groups) > 1:
-                ru = max(sorted_groups[1], key=lambda r: _safe_float(r.get("confidence")))
+                ru = max(
+                    sorted_groups[1], key=lambda r: _safe_float(r.get("confidence"))
+                )
                 ru_sp = str(ru.get("species") or "").strip() or None
                 if ru_sp and ru_sp != best.get("species"):
                     runner_up = ru_sp
@@ -2597,7 +2733,9 @@ class M3Engine:
         if caption_pairs:
             pairs_block = (
                 "\n[图说解析出的候选配对]\n"
-                + json.dumps([p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2)
+                + json.dumps(
+                    [p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2
+                )
                 + "\n"
             )
         prompt = (
@@ -2639,7 +2777,9 @@ class M3Engine:
                 Critique(
                     panel_id=str(item.get("panel_id") or ""),
                     verdict=verdict,
-                    suggested_species=(str(item.get("suggested_species") or "").strip() or None),
+                    suggested_species=(
+                        str(item.get("suggested_species") or "").strip() or None
+                    ),
                     confidence=max(0.0, min(1.0, conf)),
                     reasoning=str(item.get("reasoning") or "").strip(),
                 )
@@ -2679,7 +2819,9 @@ class M3Engine:
             consumed[m.panel_id] = pos + 1
             c = cands[pos]
             if c.verdict == "agree":
-                m.raw.setdefault("critique", {"verdict": "agree", "confidence": c.confidence})
+                m.raw.setdefault(
+                    "critique", {"verdict": "agree", "confidence": c.confidence}
+                )
                 continue
             if c.suggested_species and c.confidence >= override_threshold:
                 m.raw["critique"] = {
@@ -2718,7 +2860,9 @@ class M3Engine:
         with self._thinking_gate.read():
             enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
             try:
-                res = self.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
+                res = self.backend.infer_text(
+                    system_prompt=system_prompt, user_prompt=user_prompt
+                )
             except FallbackRecommendedError:
                 # audit 2026-07-31: mirror _infer_vision — the backend
                 # asked us to switch to the configured fallback; swallowing
@@ -3058,7 +3202,12 @@ class M3Engine:
         contract; downstream code can strip them when projecting the
         data into the JSONL export.
         """
-        if figure_type not in {"schematic", "diagram", "reconstruction", "phylogenetic"}:
+        if figure_type not in {
+            "schematic",
+            "diagram",
+            "reconstruction",
+            "phylogenetic",
+        }:
             return None
         if "schematic_extract" not in PROMPT_REGISTRY:
             return None
@@ -3465,7 +3614,9 @@ class M3Engine:
 
         system_prompt = PROMPT_REGISTRY["multi_plate_enrich"]
         constraint = (
-            f" This image is plate '{expected_plate_label}'." if expected_plate_label else ""
+            f" This image is plate '{expected_plate_label}'."
+            if expected_plate_label
+            else ""
         )
         user_prompt = (
             f"Paper: {paper_id}\n"
@@ -3543,7 +3694,11 @@ class M3Engine:
         return out
 
     def _maybe_dump_diagnostic(
-        self, image: Image.Image, system_prompt: str, user_prompt: str, result: dict[str, Any]
+        self,
+        image: Image.Image,
+        system_prompt: str,
+        user_prompt: str,
+        result: dict[str, Any],
     ) -> None:
         out_dir = self.config.get("m3_diagnostic_dir")
         if not out_dir:
