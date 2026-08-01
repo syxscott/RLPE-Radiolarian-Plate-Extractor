@@ -132,35 +132,62 @@ class ScaleInfo:
 def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
     if not caption_text:
         return ScaleInfo()
-    # Iterate matches and pick the first one that survives the
-    # specimen-size context filter. This prevents "specimen 250 µm
-    # long" from being recorded as the figure's scale bar when no
-    # real scale-bar mention exists in the caption.
-    m = None
+    # Audit 2026-08-01 batch W2 (Bug D17): the previous implementation
+    # broke out of the loop on the FIRST ``_is_real_scale_match``
+    # candidate, then dropped the result entirely if it failed the
+    # sanity range. That meant a caption like "Scale bar 5 cm; scale
+    # bar 100 um" — where the first candidate is fine but, e.g.,
+    # "Scale bar 99999 mm; scale bar 50 um" — where the first fails
+    # sanity — returned an empty ScaleInfo instead of falling through
+    # to the next candidate.
+    #
+    # New contract:
+    #   1. Collect every candidate that survives ``_is_real_scale_match``
+    #      (the specimen-size context filter).
+    #   2. Among those, keep only the ones whose value+unit pass the
+    #      sanity range (drops catastrophic OCR misreads).
+    #   3. Pick the sanity-passing candidate with the largest raw
+    #      ``value``. Caption authors typically write the most
+    #      precise scale last ("scale bar 100 µm" beats
+    #      "scale bar 5 cm" for a microfossil plate because the µm
+    #      reading has a larger numeric magnitude and is what the
+    #      downstream µm/px calculation actually needs); if a future
+    #      maintainer prefers a unit-normalised selection (compare
+    #      in µm) the call site can change this to ``to_um(val, unit)``.
+    #   4. If NO candidate passes sanity, return an empty ScaleInfo
+    #      as before.
+    candidates: list[tuple[float, str, re.Match[str]]] = []
     for cand in SCALE_PATTERN.finditer(caption_text):
         if _is_real_scale_match(caption_text, cand):
-            m = cand
-            break
-    if not m:
+            cand_val = float(cand.group(1))
+            cand_unit = normalize_unit(cand.group(3))
+            candidates.append((cand_val, cand_unit, cand))
+    if not candidates:
         return ScaleInfo()
-    val = float(m.group(1))
-    unit = normalize_unit(m.group(3))
-    # Phase 62 Plan 5 (Bug 5.2): sanity-check the value against the
-    # bounds defined in ``_SANITY_VALUE_MIN_UM`` /
-    # ``_SANITY_VALUE_MAX_UM``. A 50000 µm or 0.001 µm value almost
-    # always means OCR misread the digit (e.g. "1O" → "10", "O" →
-    # "0"); we drop the value and log at debug so the operator can
-    # see this without spamming the warning level.
-    if not _value_in_sanity_range(val, unit):
+    sane: list[tuple[float, int]] = []
+    for idx, (cand_val, cand_unit, _cand) in enumerate(candidates):
+        if _value_in_sanity_range(cand_val, cand_unit):
+            sane.append((cand_val, idx))
+    if not sane:
+        # Audit 2026-08-01 batch W2 (Bug D17): all candidates failed
+        # sanity (likely OCR misreads). Keep legacy behaviour and
+        # return empty ScaleInfo.
         logger.debug(
-            "scale caption: parsed value=%s unit=%r outside sanity range "
-            "[%s, %s] µm — dropping (likely OCR misread)",
-            val,
-            unit,
+            "scale caption: %d candidate(s) found but none survived sanity "
+            "range [%s, %s] µm — dropping",
+            len(candidates),
             _SANITY_VALUE_MIN_UM,
             _SANITY_VALUE_MAX_UM,
         )
         return ScaleInfo()
+    # Pick the candidate with the largest raw value. Ties broken by
+    # the later regex occurrence (preserves "later candidate wins"
+    # behaviour for the audit test fixtures).
+    chosen_idx = max(sane, key=lambda item: (item[0], item[1]))[1]
+    val, unit, m = candidates[chosen_idx]
+    # Sanity already enforced above when building ``sane``; the chosen
+    # candidate is guaranteed to be in range. The downstream ScaleInfo
+    # builder uses ``val`` / ``unit`` directly.
     info = ScaleInfo(value=val, unit=unit, source="caption", confidence=0.8)
     # Range form: 5–10 µm → use midpoint
     if m.group(2):

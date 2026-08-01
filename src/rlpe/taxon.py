@@ -144,6 +144,31 @@ _KNOWN_AUTHOR_SURNAMES: frozenset[str] = frozenset(
         "griffin",
         "diaz",
         "hayes",
+        # Audit 2026-08-01 (Bug M6): Chinese, Japanese, Russian radiolarian
+        # worker surnames that the LLM-first hybrid path was reading as
+        # species binomials. The "Extended set" above is predominantly
+        # Anglo-American surnames; this block adds the East-Asian and
+        # Russian block that audit batch W3 flagged. (zhang was already
+        # present in the "Core" block above.)
+        "afanasieva",
+        "bragin",
+        "chen",
+        "huang",
+        "kamata",
+        "kazintsova",
+        "korchagin",
+        "kurihara",
+        "li",
+        "liu",
+        "mizutani",
+        "nagai",
+        "sakai",
+        "sashida",
+        "tikhomirova",
+        "toyota",
+        "wang",
+        "wu",
+        "yang",
     }
 )
 
@@ -400,12 +425,9 @@ class TaxonRecognizer:
         # so ligatures (``æ`` → ``ae``, ``ﬁ`` → ``fi``, ``œ`` → ``oe``)
         # and combining diacritics (``ö`` → ``o`` + combining diaeresis,
         # stripped on ASCII encode) are flattened to their ASCII
-        # equivalents before the regex runs. The original surface form
-        # is preserved in the entity's ``text`` field because we offset
-        # the match positions back to the un-normalised string via
-        # ``m.start(1)`` / ``m.end(1)`` (which still align with the
-        # cleaned string; both strings have the same length after NFKD
-        # for the Latin / Greek chars we care about).
+        # equivalents before the regex runs. Match positions are mapped
+        # back to ``cleaned`` so expanded ligatures do not corrupt entity
+        # offsets or the original surface form stored in ``text``.
         #
         # Note: Greek letters (α β γ δ …) are NOT preserved by NFKD
         # → ASCII encode (they get dropped). The Greek-letter shape
@@ -415,11 +437,20 @@ class TaxonRecognizer:
         # entirely (they decompose to a+e but encode("ascii","ignore") removes
         # both). Fix: explicit replacement before NFKD+ASCII.
         cleaned_ascii = (
-            cleaned.replace("æ", "ae").replace("œ", "oe")
-            .replace("Æ", "Ae").replace("Œ", "Oe")
+            cleaned.replace("æ", "ae")
+            .replace("œ", "oe")
+            .replace("Æ", "Ae")
+            .replace("Œ", "Oe")
             .encode("ascii", "ignore")
             .decode("ascii")
         )
+        ligature_replacements = {"æ": "ae", "œ": "oe", "Æ": "Ae", "Œ": "Oe"}
+        cleaned_idx_map: list[int] = []
+        for cleaned_idx, char in enumerate(cleaned):
+            ascii_chunk = (
+                ligature_replacements.get(char, char).encode("ascii", "ignore").decode("ascii")
+            )
+            cleaned_idx_map.extend([cleaned_idx] * len(ascii_chunk))
         # Phase 60 Plan 3 (Bug 3.3): extended to also accept isolated-
         # genus open-nomenclature forms (``Genus sp.``, ``Genus spp.``,
         # ``Genus n. sp.``, ``Genus sp. nov.``, ``Genus nom. nov.``,
@@ -486,9 +517,9 @@ class TaxonRecognizer:
                 continue
             if words[epithet_idx].lower() in _NON_TAXON_SECOND_WORDS:
                 continue
-            entities.append(
-                TaxonEntity(text=m.group(1), start=m.start(1), end=m.end(1), score=0.55)
-            )
+            start = cleaned_idx_map[m.start(1)]
+            end = cleaned_idx_map[m.end(1) - 1] + 1
+            entities.append(TaxonEntity(text=cleaned[start:end], start=start, end=end, score=0.55))
         # Phase 60 Plan 3 (Bug 3.5): Greek-letter / ``sp. A`` open-
         # nomenclature shapes on the pre-NFKD text. NFKD→ASCII drops
         # Greek letters so we scan ``cleaned`` (not ``cleaned_ascii``)

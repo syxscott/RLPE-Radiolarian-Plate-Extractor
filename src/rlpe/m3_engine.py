@@ -27,11 +27,17 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from threading import RLock
+from threading import Condition, RLock, get_ident
 from typing import Any
 
 from PIL import Image
+
+from .grobid import PipelineCancelledError  # noqa: E402
 
 # Import FallbackRecommendedError to detect when backend recommends switching
 from .llm_backends import FallbackRecommendedError  # noqa: E402
@@ -296,7 +302,7 @@ PROMPT_REGISTRY: dict[str, str] = {
         '"latitude": float|null, "longitude": float|null, '
         '"biozone": str|null, "confidence": 0.0-1.0}],\n'
         '  "layers": [\n'
-        '    {\n'
+        "    {\n"
         '      "layer_index": int,\n'
         '      "y_top_normalized": float|null,\n'
         '      "y_base_normalized": float|null,\n'
@@ -343,7 +349,7 @@ PROMPT_REGISTRY: dict[str, str] = {
         '"latitude": float|null, "longitude": float|null, '
         '"biozone": str|null, "confidence": 0.0-1.0}],\n'
         '  "layers": [\n'
-        '    {\n'
+        "    {\n"
         '      "layer_index": int,\n'
         '      "y_top_normalized": float|null,\n'
         '      "y_base_normalized": float|null,\n'
@@ -390,7 +396,7 @@ PROMPT_REGISTRY: dict[str, str] = {
         '"latitude": float|null, "longitude": float|null, '
         '"biozone": str|null, "confidence": 0.0-1.0}],\n'
         '  "localities": [\n'
-        '    {\n'
+        "    {\n"
         '      "species": str|null,\n'
         '      "label": str|null,\n'
         '      "latitude": float|null,\n'
@@ -588,16 +594,16 @@ PROMPT_REGISTRY: dict[str, str] = {
         "Return strict JSON only with this shape:\n\n"
         "{\n"
         '  "plate_panels": [\n'
-        '    {\n'
+        "    {\n"
         '      "cell_label": str,\n'
         '      "species": str,\n'
         '      "links_to_strat_layer": int|null,\n'
         '      "links_to_age": str|null,\n'
         '      "links_to_formation": str|null,\n'
         '      "confidence": 0.0-1.0\n'
-        '    },\n'
-        '    ...\n'
-        '  ]\n'
+        "    },\n"
+        "    ...\n"
+        "  ]\n"
         "}\n\n"
         "Rules:\n"
         "- Only emit cells you can link with confidence >= 0.5. Skip\n"
@@ -705,9 +711,17 @@ def _redact_enrichment_caption(
     we fall back to a hard 200-char truncation of the whole thing —
     safe but not ideal.
     """
+    # audit 2026-08-01 (M9): the helper is called with whatever the OD
+    # caption store held, which is not always a ``str`` (None, or a list
+    # for multi-block captions). Coerce defensively so a bad caption type
+    # degrades to "no context" instead of raising inside the M3 call path.
+    if not isinstance(page_caption, str):
+        return ""
     if not page_caption:
         return ""
-    if not current_plate_caption:
+    unrelated_budget = max(0, unrelated_budget)
+    pad = max(0, pad)
+    if not isinstance(current_plate_caption, str) or not current_plate_caption:
         return page_caption[:unrelated_budget]
     pc = page_caption
     cc = current_plate_caption.strip()
@@ -719,10 +733,8 @@ def _redact_enrichment_caption(
     idx = pc.find(cc)
     if idx < 0:
         # Try a normalised match (collapse whitespace).
-        import re as _re
-
-        normalised_cc = _re.sub(r"\s+", " ", cc).strip()
-        normalised_pc = _re.sub(r"\s+", " ", pc)
+        normalised_cc = re.sub(r"\s+", " ", cc).strip()
+        normalised_pc = re.sub(r"\s+", " ", pc)
         idx = normalised_pc.find(normalised_cc)
         if idx < 0:
             # Can't locate the current plate's caption → hard truncate.
@@ -750,11 +762,11 @@ def _redact_enrichment_caption(
     after = pc[end:]
     before_budget = unrelated_budget // 2
     after_budget = unrelated_budget - before_budget
-    before_truncated = before[-before_budget:] if len(before) > before_budget else before
-    after_truncated = after[:after_budget] if len(after) > after_budget else after
-    return (
-        f"{before_truncated}[…redacted…]{matched}[…redacted…]{after_truncated}"
+    before_truncated = (
+        before[-before_budget:] if len(before) > before_budget else before
     )
+    after_truncated = after[:after_budget] if len(after) > after_budget else after
+    return f"{before_truncated}[…redacted…]{matched}[…redacted…]{after_truncated}"
 
 
 def _normalize_caption_text(text: str) -> str:
@@ -1205,13 +1217,11 @@ def _regex_expand_label_list(s: str) -> list[str]:
             lo_num, lo_suf, hi_suf = m_letter.groups()
             if ord(hi_suf) >= ord(lo_suf):
                 out.extend(
-                    f"{lo_num}{chr(c)}"
-                    for c in range(ord(lo_suf), ord(hi_suf) + 1)
+                    f"{lo_num}{chr(c)}" for c in range(ord(lo_suf), ord(hi_suf) + 1)
                 )
             else:
                 out.extend(
-                    f"{lo_num}{chr(c)}"
-                    for c in range(ord(hi_suf), ord(lo_suf) + 1)
+                    f"{lo_num}{chr(c)}" for c in range(ord(hi_suf), ord(lo_suf) + 1)
                 )
             continue
         m = re.match(r"(\d+)([a-z]?)\s*[–\-—]\s*(\d+)([a-z]?)$", chunk)
@@ -1299,9 +1309,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         r"(\bfigs?\s+(?:\d+[a-z]?(?:\s*[,\-–—]\s*(?:\d+[a-z]?|[a-z]))*))"
         r"\.\s+((?:\d+[a-z]?\.\s*)*(?:\d+[a-z]?))"
         r"(?=[:A-Z])",
-        lambda m: m.group(1) + ", " + ", ".join(
-            x.rstrip(".") for x in m.group(2).split()
-        ),
+        lambda m: m.group(1)
+        + ", "
+        + ", ".join(x.rstrip(".") for x in m.group(2).split()),
         text,
         flags=re.IGNORECASE,
     )
@@ -1325,7 +1335,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # gold form ("Entactinia sp. 1"): the modifier is folded into
         # the species string and the modifier field is cleared so the
         # caller doesn't double-count it (e.g. "Entactinia sp. 1 sp.").
-        trailing_id = (m.group(4) or "").strip() if m.lastindex and m.lastindex >= 4 else ""
+        trailing_id = (
+            (m.group(4) or "").strip() if m.lastindex and m.lastindex >= 4 else ""
+        )
         if trailing_id:
             species = (species + " " + modifier + " " + trailing_id).strip()
             modifier = ""
@@ -1406,8 +1418,12 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             seen_labels.add(lbl)
         # Filter to only the labels whose base is not yet consumed.
         new_labels = [
-            lbl for lbl in labels
-            if not (re.match(r"(\d+)", lbl) and re.match(r"(\d+)", lbl).group(1) in conflicting_bases)
+            lbl
+            for lbl in labels
+            if not (
+                re.match(r"(\d+)", lbl)
+                and re.match(r"(\d+)", lbl).group(1) in conflicting_bases
+            )
         ]
         if not new_labels:
             continue
@@ -1484,7 +1500,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             # string so the caller sees the gold form.
             species = m.group(3).strip()
             modifier = (m.group(4) or "").strip()
-            trailing_id = (m.group(5) or "").strip() if m.lastindex and m.lastindex >= 5 else ""
+            trailing_id = (
+                (m.group(5) or "").strip() if m.lastindex and m.lastindex >= 5 else ""
+            )
             if modifier:
                 # audit 2026-07-31: cf./aff. are comparison qualifiers
                 # whose target follows in the text — folding the bare
@@ -1617,7 +1635,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # the identifier to be at the end of the clause: followed by
         # a clause terminator (``;``, ``.``, or end-of-text), never
         # by a word that would indicate we matched the wrong capital.
-        if re.match(r"^(Spumellaria|Nassellaria)\s+gen\.?$", species, flags=re.IGNORECASE):
+        if re.match(
+            r"^(Spumellaria|Nassellaria)\s+gen\.?$", species, flags=re.IGNORECASE
+        ):
             tail_window = text[m.end() : m.end() + 30]
             m_id = re.search(r"\b([A-Z])\b(?=\s*[;.,]|\s*$)", tail_window)
             if m_id:
@@ -1950,6 +1970,87 @@ _CRITIQUE_SYSTEM = """你是放射虫分类学审查员。任务：交叉验证�
 # ---------------------------------------------------------------------------
 
 
+class _ThinkingFlagGate:
+    """Reader/writer gate protecting ``backend.enable_thinking``.
+
+    audit 2026-08-01 (D2): the retry path in ``_infer_text`` /
+    ``_infer_vision`` temporarily flips ``backend.enable_thinking`` to
+    ``False`` while holding ``_thinking_retry_lock``, but a *first*
+    attempt on another worker thread read the flag lock-free — the
+    backend itself reads ``self.enable_thinking`` when it builds its
+    request kwargs. So worker A's paid first call could silently run
+    with thinking disabled purely because worker B happened to be
+    inside its retry window: no error, just a quietly degraded answer.
+
+    Serialising every M3 call behind the retry lock would fix that but
+    throw away worker concurrency (M3 vision calls are seconds long).
+    Instead first attempts take the *read* side — many at a time,
+    blocked only while a retry is actually in flight — and the retry
+    path takes the *write* side (exclusive). Writers take priority over
+    newly arriving readers so a steady stream of first calls can't
+    starve the retry path.
+
+    Both sides are reentrant for the owning thread (mirroring the
+    ``RLock`` choice for ``_thinking_retry_lock``) so a backend that
+    re-enters the engine from inside its own handler cannot deadlock.
+    """
+
+    def __init__(self) -> None:
+        self._cond = Condition()
+        # thread ident -> nesting depth, so the writer can ignore reads
+        # held by itself when it waits for readers to drain.
+        self._readers: dict[int, int] = {}
+        self._writer_thread: int | None = None
+        self._writer_depth = 0
+        self._writers_waiting = 0
+
+    @contextmanager
+    def read(self) -> Iterator[None]:
+        """Hold the shared side for the duration of a first-attempt call."""
+        me = get_ident()
+        with self._cond:
+            while self._writer_thread not in (None, me) or (
+                self._writer_thread is None and self._writers_waiting > 0
+            ):
+                self._cond.wait()
+            self._readers[me] = self._readers.get(me, 0) + 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                depth = self._readers.get(me, 0) - 1
+                if depth > 0:
+                    self._readers[me] = depth
+                else:
+                    self._readers.pop(me, None)
+                self._cond.notify_all()
+
+    @contextmanager
+    def write(self) -> Iterator[None]:
+        """Hold the exclusive side across a save→flip→call→restore retry."""
+        me = get_ident()
+        with self._cond:
+            self._writers_waiting += 1
+            try:
+                while self._writer_thread not in (None, me) or (
+                    self._writer_thread is None
+                    and any(tid != me for tid in self._readers)
+                ):
+                    self._cond.wait()
+            finally:
+                self._writers_waiting -= 1
+            self._writer_thread = me
+            self._writer_depth += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._writer_depth -= 1
+                if self._writer_depth == 0:
+                    self._writer_thread = None
+                self._cond.notify_all()
+
+
 class M3Engine:
     """M3-Centric 5-stage engine.
 
@@ -1966,9 +2067,26 @@ class M3Engine:
     >>> final = engine.apply_critiques(matches, critiques)
     """
 
-    def __init__(self, backend: Any, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        backend: Any,
+        config: dict[str, Any] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
         self.backend = backend
         self.config = dict(config or {})
+        # audit 2026-08-01 (M16): cooperative cancellation hook.
+        # The pipeline's ``pool.shutdown(wait=False, cancel_futures=True)``
+        # only drops QUEUED futures — in-flight LLM calls keep running
+        # and rack up token spend. By accepting a shared ``threading.Event``
+        # here, the engine can short-circuit its own retry-loop sleeps
+        # and the "retry without thinking" path: when the pipeline
+        # detects user cancellation it ``.set()``s the event, and the
+        # engine's ``_call_api`` (and ``_wait_or_cancel`` helper) return
+        # immediately rather than waiting out a 30s+ retry. ``None``
+        # preserves the legacy behaviour (plain ``time.sleep``) so this
+        # is purely additive.
+        self._cancel_event = cancel_event
         # Stage toggles. Default: all on.
         for i in range(1, 6):
             self.config.setdefault(f"m3_stage_{i}", True)
@@ -2040,6 +2158,93 @@ class M3Engine:
         # concern entirely (re-entry by the same thread is fine) and
         # the entire retry+call+restore now happens atomically.
         self._thinking_retry_lock = RLock()
+        # audit 2026-08-01 (D2): ``_thinking_retry_lock`` only excludes
+        # other *retries*; first attempts still read ``enable_thinking``
+        # (inside the backend) with no synchronisation at all. The gate
+        # below lets concurrent first calls run together but keeps them
+        # out of the window where a retry has the flag flipped off.
+        self._thinking_gate = _ThinkingFlagGate()
+
+    # ------------------------------------------------------------------ helpers
+    def _wait_or_cancel(self, seconds: float) -> bool:
+        """Sleep ``seconds`` (or until ``self._cancel_event`` is set).
+
+        audit 2026-08-01 (M16): thin wrapper used by the engine's retry
+        loop so user cancellation can short-circuit a multi-second
+        ``time.sleep``. Returns ``True`` if the event was set (caller
+        should bail), ``False`` if the wait timed out normally.
+
+        With no event (``self._cancel_event is None``) the behaviour
+        is identical to the previous ``time.sleep(seconds)`` — backward
+        compatible.
+        """
+        evt = self._cancel_event
+        if evt is None:
+            time.sleep(max(0.0, float(seconds)))
+            return False
+        # ``Event.wait(timeout=...)`` returns True iff the event was
+        # set during the wait, False on timeout. ``max(0.0, ...)``
+        # guards against a stray negative arg from upstream.
+        return evt.wait(timeout=max(0.0, float(seconds)))
+
+    def _call_api(
+        self,
+        kind: str,
+        *args: Any,
+        max_retries: int = 1,
+        retry_wait: float = 1.0,
+        **kwargs: Any,
+    ) -> Any:
+        """Wrapper around the backend API call with a cancel-aware retry loop.
+
+        audit 2026-08-01 (M16): centralises the engine-side retry path
+        so cancellation (via ``self._cancel_event``) can short-circuit
+        the back-off between attempts. The first attempt always runs;
+        any retry sleep uses ``_wait_or_cancel`` and aborts early when
+        the event is set. ``kind`` is one of ``"text"`` / ``"vision"``
+        and selects which backend method to invoke.
+
+        This method exists so the engine owns a hook that the
+        ``test_cancel_event_set_short_circuits_retry`` test can
+        monkeypatch and observe. The concrete retry semantics for the
+        MiniMax backends (status-code routing, jitter, etc.) live in
+        ``llm_backends._call_api``; here we just want a place where
+        ``self._cancel_event`` is honoured on every retry back-off.
+        """
+        if self.backend is None:
+            return {"fallback_used": True, "error": "no backend"}
+        if kind == "text":
+            invoke = getattr(self.backend, "infer_text", None)
+        elif kind == "vision":
+            invoke = getattr(self.backend, "infer_panel", None)
+        else:
+            raise ValueError(f"M3Engine._call_api: unknown kind={kind!r}")
+        if invoke is None:
+            return {"fallback_used": True, "error": f"backend has no {kind} method"}
+        attempt = 0
+        last_exc: Exception | None = None
+        while attempt < max(1, int(max_retries)):
+            try:
+                return invoke(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 — surface to caller
+                last_exc = exc
+                # Don't sleep before the last attempt: a cancel that
+                # arrives after the final try should propagate via
+                # the exception, not be masked by an extra wait.
+                if attempt + 1 >= max(1, int(max_retries)):
+                    break
+                if self._wait_or_cancel(retry_wait):
+                    # Event set during the back-off — re-raise the
+                    # last exception but with a clearer message so
+                    # callers can distinguish cancel vs. genuine error.
+                    raise PipelineCancelledError(
+                        f"cancelled during {kind} retry (attempt {attempt + 1})"
+                    ) from exc
+                attempt += 1
+        # Exhausted retries — surface the last exception.
+        if last_exc is not None:
+            raise last_exc
+        return None
 
     # ------------------------------------------------------------------ stage 1
     def parse_caption(
@@ -2136,7 +2341,9 @@ class M3Engine:
         # papers: ``figs 1-3. Species A. figs 4-5. Species B.``.
         fallback = _regex_parse_caption(caption_text)
         if fallback:
-            logger.info("Stage 1 parse_caption -> %d pairs (regex fallback)", len(fallback))
+            logger.info(
+                "Stage 1 parse_caption -> %d pairs (regex fallback)", len(fallback)
+            )
         return fallback
 
     # ------------------------------------------------------------------ stage 2
@@ -2160,12 +2367,16 @@ class M3Engine:
         if not isinstance(data, dict):
             return PlateClassification()
         cls = PlateClassification(
-            is_radiolarian_plate=_safe_bool(data.get("is_radiolarian_plate"), default=True),
+            is_radiolarian_plate=_safe_bool(
+                data.get("is_radiolarian_plate"), default=True
+            ),
             image_type=str(data.get("image_type") or "micrograph"),
             panel_count_estimate=_safe_int(data.get("panel_count_estimate")),
             specimen_count_estimate=_safe_int(data.get("specimen_count_estimate")),
             quality=str(data.get("quality") or "ok"),
-            dominant_taxa=[str(x) for x in (data.get("dominant_taxa") or []) if str(x).strip()],
+            dominant_taxa=[
+                str(x) for x in (data.get("dominant_taxa") or []) if str(x).strip()
+            ],
             reasoning=str(data.get("reasoning") or "").strip(),
         )
         logger.info(
@@ -2277,7 +2488,11 @@ class M3Engine:
         visual_only = not caption_pairs
         if visual_only:
             system_prompt = _MATCH_PANEL_SYSTEM_VISUAL_ONLY
-            hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
+            hint = (
+                f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n"
+                if suggested_label
+                else ""
+            )
             caption_block = (
                 f"\n[完整图说（仅供参考，可能为空）]\n{caption_text.strip()}\n"
                 if caption_text
@@ -2294,8 +2509,14 @@ class M3Engine:
             pairs_json = json.dumps(
                 [p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2
             )
-            hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
-            caption_block = f"\n[完整图说]\n{caption_text.strip()}\n" if caption_text else ""
+            hint = (
+                f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n"
+                if suggested_label
+                else ""
+            )
+            caption_block = (
+                f"\n[完整图说]\n{caption_text.strip()}\n" if caption_text else ""
+            )
             prompt = (
                 "[候选配对（caption 解析）]\n"
                 f"{pairs_json}\n"
@@ -2345,9 +2566,8 @@ class M3Engine:
                         old_cost = last_raw_kept.get("cost_cny")
                         new_cost = raw.get("cost_cny")
                         last_raw_kept["cost_cny"] = (
-                            (float(old_cost) if old_cost is not None else 0.0)
-                            + (float(new_cost) if new_cost is not None else 0.0)
-                        )
+                            float(old_cost) if old_cost is not None else 0.0
+                        ) + (float(new_cost) if new_cost is not None else 0.0)
                     except (TypeError, ValueError):
                         # One side is not numeric — give up on accumulating cost.
                         # Don't silently overwrite with 0 which would hide the field.
@@ -2462,7 +2682,9 @@ class M3Engine:
         if len(votes) > 1:
             sorted_groups = sorted(votes.values(), key=lambda g: -len(g))
             if len(sorted_groups) > 1:
-                ru = max(sorted_groups[1], key=lambda r: _safe_float(r.get("confidence")))
+                ru = max(
+                    sorted_groups[1], key=lambda r: _safe_float(r.get("confidence"))
+                )
                 ru_sp = str(ru.get("species") or "").strip() or None
                 if ru_sp and ru_sp != best.get("species"):
                     runner_up = ru_sp
@@ -2511,7 +2733,9 @@ class M3Engine:
         if caption_pairs:
             pairs_block = (
                 "\n[图说解析出的候选配对]\n"
-                + json.dumps([p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2)
+                + json.dumps(
+                    [p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2
+                )
                 + "\n"
             )
         prompt = (
@@ -2553,7 +2777,9 @@ class M3Engine:
                 Critique(
                     panel_id=str(item.get("panel_id") or ""),
                     verdict=verdict,
-                    suggested_species=(str(item.get("suggested_species") or "").strip() or None),
+                    suggested_species=(
+                        str(item.get("suggested_species") or "").strip() or None
+                    ),
                     confidence=max(0.0, min(1.0, conf)),
                     reasoning=str(item.get("reasoning") or "").strip(),
                 )
@@ -2593,7 +2819,9 @@ class M3Engine:
             consumed[m.panel_id] = pos + 1
             c = cands[pos]
             if c.verdict == "agree":
-                m.raw.setdefault("critique", {"verdict": "agree", "confidence": c.confidence})
+                m.raw.setdefault(
+                    "critique", {"verdict": "agree", "confidence": c.confidence}
+                )
                 continue
             if c.suggested_species and c.confidence >= override_threshold:
                 m.raw["critique"] = {
@@ -2624,18 +2852,26 @@ class M3Engine:
         # each call consistently uses the value that was active when the
         # call started — no more silent quality degradation or doubled cost
         # from a race mid-flight.
-        enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
-        try:
-            res = self.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
-        except FallbackRecommendedError:
-            # audit 2026-07-31: mirror _infer_vision — the backend
-            # asked us to switch to the configured fallback; swallowing
-            # it here meant the pipeline never saw the recommendation
-            # and the fallback feature stayed dead.
-            raise
-        except Exception as exc:
-            logger.exception("M3 text inference failed")
-            return {"fallback_used": True, "error": str(exc)}
+        #
+        # audit 2026-08-01 (D2): the snapshot alone wasn't enough — the
+        # backend re-reads ``enable_thinking`` itself when it builds the
+        # request, so the read gate keeps this first attempt out of any
+        # concurrent retry's flip window.
+        with self._thinking_gate.read():
+            enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
+            try:
+                res = self.backend.infer_text(
+                    system_prompt=system_prompt, user_prompt=user_prompt
+                )
+            except FallbackRecommendedError:
+                # audit 2026-07-31: mirror _infer_vision — the backend
+                # asked us to switch to the configured fallback; swallowing
+                # it here meant the pipeline never saw the recommendation
+                # and the fallback feature stayed dead.
+                raise
+            except Exception as exc:
+                logger.exception("M3 text inference failed")
+                return {"fallback_used": True, "error": str(exc)}
         # Retry without thinking if the response is empty.
         if (
             self.config.get("m3_retry_without_thinking", True)
@@ -2643,7 +2879,7 @@ class M3Engine:
             and enable_thinking_snapshot
         ):
             logger.info("M3 text returned empty; retrying with thinking disabled")
-            with self._thinking_retry_lock:
+            with self._thinking_retry_lock, self._thinking_gate.write():
                 saved = self.backend.enable_thinking
                 try:
                     self.backend.enable_thinking = False
@@ -2670,24 +2906,29 @@ class M3Engine:
         # The snapshot is used for both the first-call decision (pass to
         # backend) and the retry condition — ensuring consistent behaviour
         # throughout the lifetime of this call regardless of other workers.
-        enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
-        # First attempt — with thinking enabled (the default).
-        try:
-            res = self.backend.infer_panel(
-                panel_image=image,
-                caption_text="",  # we put context in user_prompt
-                ocr_labels=[],
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-            )
-        except FallbackRecommendedError:
-            # Phase 61 Plan 4 (Bug 4.10): FallbackRecommendedError carries
-            # ``recommended_backend`` - let it propagate to the pipeline
-            # so it can switch to the configured fallback backend.
-            raise
-        except Exception as exc:
-            logger.exception("M3 vision inference failed")
-            return {"fallback_used": True, "error": str(exc)}
+        #
+        # audit 2026-08-01 (D2): hold the gate's read side across the call
+        # so this (paid) first attempt cannot land inside another worker's
+        # retry window, where ``enable_thinking`` is flipped off.
+        with self._thinking_gate.read():
+            enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
+            # First attempt — with thinking enabled (the default).
+            try:
+                res = self.backend.infer_panel(
+                    panel_image=image,
+                    caption_text="",  # we put context in user_prompt
+                    ocr_labels=[],
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+            except FallbackRecommendedError:
+                # Phase 61 Plan 4 (Bug 4.10): FallbackRecommendedError carries
+                # ``recommended_backend`` - let it propagate to the pipeline
+                # so it can switch to the configured fallback backend.
+                raise
+            except Exception as exc:
+                logger.exception("M3 vision inference failed")
+                return {"fallback_used": True, "error": str(exc)}
         self._maybe_dump_diagnostic(image, system_prompt, user_prompt, res)
         # Retry without thinking if the first attempt produced no text
         # (known M3 issue when thinking exhausts the output budget).
@@ -2709,7 +2950,10 @@ class M3Engine:
             # lock cleanly. The whole retry is now atomic from the
             # perspective of other workers: no other thread can flip
             # ``enable_thinking`` in between our save and restore.
-            with self._thinking_retry_lock:
+            #
+            # audit 2026-08-01 (D2): the gate's write side additionally
+            # keeps *first* attempts on other workers out of this window.
+            with self._thinking_retry_lock, self._thinking_gate.write():
                 saved = self.backend.enable_thinking
                 self.backend.enable_thinking = False
                 try:
@@ -2854,24 +3098,26 @@ class M3Engine:
                         or f"paleogeographic_map_vision[{figure_id}] "
                         f"point '{loc.get('label')}' conf={loc.get('confidence')}"
                     )
-                    out.append({
-                        "species": species,
-                        "section_type": "paleogeographic_map",
-                        "link_source": "geo_vision_point",
-                        "age": loc.get("age"),
-                        "ma_top": loc.get("ma_top"),
-                        "ma_base": loc.get("ma_base"),
-                        "formation": loc.get("formation"),
-                        "lithology": loc.get("lithology"),
-                        "biozone": loc.get("biozone"),
-                        "latitude": loc.get("latitude"),
-                        "longitude": loc.get("longitude"),
-                        "paleo_latitude": loc.get("paleo_latitude"),
-                        "paleo_longitude": loc.get("paleo_longitude"),
-                        "evidence_text": evidence,
-                        "confidence": loc.get("confidence", 0.0),
-                        "figure_id": figure_id,
-                    })
+                    out.append(
+                        {
+                            "species": species,
+                            "section_type": "paleogeographic_map",
+                            "link_source": "geo_vision_point",
+                            "age": loc.get("age"),
+                            "ma_top": loc.get("ma_top"),
+                            "ma_base": loc.get("ma_base"),
+                            "formation": loc.get("formation"),
+                            "lithology": loc.get("lithology"),
+                            "biozone": loc.get("biozone"),
+                            "latitude": loc.get("latitude"),
+                            "longitude": loc.get("longitude"),
+                            "paleo_latitude": loc.get("paleo_latitude"),
+                            "paleo_longitude": loc.get("paleo_longitude"),
+                            "evidence_text": evidence,
+                            "confidence": loc.get("confidence", 0.0),
+                            "figure_id": figure_id,
+                        }
+                    )
 
         # --- Phase X: parse per-layer entries for strat / litholog columns ---
         # Each layer carries its own formation/lithology/age/ma, forming
@@ -2889,25 +3135,27 @@ class M3Engine:
                         or f"{figure_type}_vision[{figure_id}] "
                         f"layer {layer.get('layer_index')} conf={layer.get('confidence')}"
                     )
-                    out.append({
-                        "section_type": section_type,
-                        "link_source": "geo_vision_layer",
-                        "age": layer.get("age"),
-                        "ma_top": layer.get("ma_top"),
-                        "ma_base": layer.get("ma_base"),
-                        "formation": layer.get("formation"),
-                        "member": layer.get("member"),
-                        "lithology": layer.get("lithology"),
-                        "biozone": layer.get("biozone"),
-                        "evidence_text": evidence,
-                        "confidence": layer.get("confidence", 0.0),
-                        # layer index is informational provenance, not a formal field
-                        "_layer_index": layer.get("layer_index"),
-                        "_y_top_normalized": layer.get("y_top_normalized"),
-                        "_y_base_normalized": layer.get("y_base_normalized"),
-                        "_thickness_m": layer.get("thickness_m"),
-                        "figure_id": figure_id,
-                    })
+                    out.append(
+                        {
+                            "section_type": section_type,
+                            "link_source": "geo_vision_layer",
+                            "age": layer.get("age"),
+                            "ma_top": layer.get("ma_top"),
+                            "ma_base": layer.get("ma_base"),
+                            "formation": layer.get("formation"),
+                            "member": layer.get("member"),
+                            "lithology": layer.get("lithology"),
+                            "biozone": layer.get("biozone"),
+                            "evidence_text": evidence,
+                            "confidence": layer.get("confidence", 0.0),
+                            # layer index is informational provenance, not a formal field
+                            "_layer_index": layer.get("layer_index"),
+                            "_y_top_normalized": layer.get("y_top_normalized"),
+                            "_y_base_normalized": layer.get("y_base_normalized"),
+                            "_thickness_m": layer.get("thickness_m"),
+                            "figure_id": figure_id,
+                        }
+                    )
 
         return out
 
@@ -2954,7 +3202,12 @@ class M3Engine:
         contract; downstream code can strip them when projecting the
         data into the JSONL export.
         """
-        if figure_type not in {"schematic", "diagram", "reconstruction", "phylogenetic"}:
+        if figure_type not in {
+            "schematic",
+            "diagram",
+            "reconstruction",
+            "phylogenetic",
+        }:
             return None
         if "schematic_extract" not in PROMPT_REGISTRY:
             return None
@@ -3069,8 +3322,12 @@ class M3Engine:
         """
         if self.backend is None:
             return {
-                "species": None, "age": None, "formation": None,
-                "locality": None, "figure_id": None, "confidence": 0.0,
+                "species": None,
+                "age": None,
+                "formation": None,
+                "locality": None,
+                "figure_id": None,
+                "confidence": 0.0,
             }
         paper_context = paper_context or {}
         figures = paper_context.get("figures") or []
@@ -3114,26 +3371,42 @@ class M3Engine:
         except Exception:
             logger.exception("infer_species_age_formation: backend call failed")
             return {
-                "species": None, "age": None, "formation": None,
-                "locality": None, "figure_id": None, "confidence": 0.0,
+                "species": None,
+                "age": None,
+                "formation": None,
+                "locality": None,
+                "figure_id": None,
+                "confidence": 0.0,
             }
         if res.get("fallback_used") or not (res.get("raw_text") or "").strip():
             return {
-                "species": None, "age": None, "formation": None,
-                "locality": None, "figure_id": None, "confidence": 0.0,
+                "species": None,
+                "age": None,
+                "formation": None,
+                "locality": None,
+                "figure_id": None,
+                "confidence": 0.0,
             }
         try:
             parsed = _safe_json_loads(res.get("raw_text") or "")
         except ValueError:
             logger.warning("infer_species_age_formation: failed to parse JSON")
             return {
-                "species": None, "age": None, "formation": None,
-                "locality": None, "figure_id": None, "confidence": 0.0,
+                "species": None,
+                "age": None,
+                "formation": None,
+                "locality": None,
+                "figure_id": None,
+                "confidence": 0.0,
             }
         if not isinstance(parsed, dict):
             return {
-                "species": None, "age": None, "formation": None,
-                "locality": None, "figure_id": None, "confidence": 0.0,
+                "species": None,
+                "age": None,
+                "formation": None,
+                "locality": None,
+                "figure_id": None,
+                "confidence": 0.0,
             }
         # Clamp confidence to the spec band [0.3, 0.6] for this strategy.
         conf = parsed.get("confidence", 0.4)
@@ -3229,8 +3502,10 @@ class M3Engine:
         # a vision call. Same threshold as extract_geology / extract_schematic.
         try:
             if (
-                plate_image.width < 32 or plate_image.height < 32
-                or strat_image.width < 32 or strat_image.height < 32
+                plate_image.width < 32
+                or plate_image.height < 32
+                or strat_image.width < 32
+                or strat_image.height < 32
             ):
                 return empty
         except (AttributeError, TypeError):
@@ -3288,14 +3563,16 @@ class M3Engine:
                 conf = 0.0
             conf = max(0.0, min(1.0, conf))
 
-            cleaned.append({
-                "cell_label": str(cell_label),
-                "species": str(species),
-                "links_to_strat_layer": entry.get("links_to_strat_layer"),
-                "links_to_age": entry.get("links_to_age"),
-                "links_to_formation": entry.get("links_to_formation"),
-                "confidence": conf,
-            })
+            cleaned.append(
+                {
+                    "cell_label": str(cell_label),
+                    "species": str(species),
+                    "links_to_strat_layer": entry.get("links_to_strat_layer"),
+                    "links_to_age": entry.get("links_to_age"),
+                    "links_to_formation": entry.get("links_to_formation"),
+                    "confidence": conf,
+                }
+            )
 
         return {"plate_panels": cleaned}
 
@@ -3337,7 +3614,9 @@ class M3Engine:
 
         system_prompt = PROMPT_REGISTRY["multi_plate_enrich"]
         constraint = (
-            f" This image is plate '{expected_plate_label}'." if expected_plate_label else ""
+            f" This image is plate '{expected_plate_label}'."
+            if expected_plate_label
+            else ""
         )
         user_prompt = (
             f"Paper: {paper_id}\n"
@@ -3359,12 +3638,36 @@ class M3Engine:
         # _safe_json_loads handles that, and we accept either {"panels": [...]}
         # at top level (model contract) or a bare list (lenient fallback).
         raw = res.get("raw_text") or ""
-        parsed = _safe_json_loads(raw)
+        # audit 2026-08-01 (M8): every sibling M3 method
+        # (``extract_geology``, ``extract_schematic``,
+        # ``cross_figure_visual_inference``, ``infer_species_age_formation``)
+        # wraps this call and returns ``[]`` on unparseable output. This one
+        # didn't, so a malformed response escaped as an exception and the
+        # caller logged it as a generic "multi_plate_enrich failed".
+        try:
+            parsed = _safe_json_loads(raw)
+        except (ValueError, AttributeError):
+            logger.warning(
+                "enrich_plate_panels %s/%s: could not parse M3 JSON response",
+                paper_id,
+                figure_id,
+            )
+            return []
         panels_data: list[Any] = []
         if isinstance(parsed, dict) and isinstance(parsed.get("panels"), list):
             panels_data = list(parsed.get("panels") or [])
         elif isinstance(parsed, list):
-            panels_data = list(parsed)
+            # audit 2026-08-01 (M10): the balanced-object recovery inside
+            # ``_safe_json_loads`` returns a LIST even when the model emitted
+            # a single ``{"panels": [...]}`` object (typical after a fence /
+            # preamble rescue). Unwrap that shape before treating the list as
+            # a bare panel array — otherwise every recovered response yielded
+            # zero panels because ``{"panels": ...}`` has no ``label`` key.
+            if parsed and isinstance(parsed[0], dict) and "panels" in parsed[0]:
+                inner = parsed[0].get("panels")
+                panels_data = list(inner) if isinstance(inner, list) else []
+            else:
+                panels_data = list(parsed)
         if not panels_data:
             return []
 
@@ -3391,7 +3694,11 @@ class M3Engine:
         return out
 
     def _maybe_dump_diagnostic(
-        self, image: Image.Image, system_prompt: str, user_prompt: str, result: dict[str, Any]
+        self,
+        image: Image.Image,
+        system_prompt: str,
+        user_prompt: str,
+        result: dict[str, Any],
     ) -> None:
         out_dir = self.config.get("m3_diagnostic_dir")
         if not out_dir:

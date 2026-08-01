@@ -121,16 +121,23 @@ class TestBuildProvenance:
         assert p.config_snapshot.get("y") == "hi"
 
     def test_input_sha256_missing_file(self, tmp_path):
-        p = build_provenance(pdf_paths=[tmp_path / "nope.pdf"])
-        assert p.input_sha256["nope.pdf"] == "missing"
+        f = tmp_path / "nope.pdf"
+        p = build_provenance(pdf_paths=[f])
+        # Audit 2026-08-01 D13: key is now parent/name to disambiguate
+        # files with the same basename from different sub-directories.
+        key = f"{f.parent.name}/nope.pdf"
+        assert p.input_sha256[key] == "missing"
 
     def test_input_sha256_real_file(self, tmp_path):
         f = tmp_path / "x.pdf"
         f.write_bytes(b"hello world")
         p = build_provenance(pdf_paths=[f])
         expected = _sha256_file(f)
-        assert p.input_sha256["x.pdf"] == expected
-        assert len(p.input_sha256["x.pdf"]) == 64  # SHA-256 hex
+        # Audit 2026-08-01 D13: key is now parent/name to disambiguate
+        # files with the same basename from different sub-directories.
+        key = f"{f.parent.name}/x.pdf"
+        assert p.input_sha256[key] == expected
+        assert len(p.input_sha256[key]) == 64  # SHA-256 hex
 
     def test_git_commit_present(self):
         p = build_provenance(repo_root=REPO_ROOT)

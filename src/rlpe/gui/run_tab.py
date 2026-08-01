@@ -1,4 +1,5 @@
 """Run tab — pick a PDF, configure pipeline, start a job."""
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -64,8 +65,15 @@ from .constants import (
     RANGE_PALEO_OCC,
 )
 from .i18n_widgets import (
-    tr_button, tr_checkbox, tr_combobox, tr_doublespinbox,
-    tr_form_row, tr_groupbox, tr_label, tr_lineedit, tr_spinbox,
+    tr_button,
+    tr_checkbox,
+    tr_combobox,
+    tr_doublespinbox,
+    tr_form_row,
+    tr_groupbox,
+    tr_label,
+    tr_lineedit,
+    tr_spinbox,
 )
 from . import i18n
 from .styles import SPACE_L, SPACE_M, SPACE_S, SPACE_XL
@@ -81,10 +89,10 @@ class RunTab(QWidget):
     """First tab — configure + start a single-paper pipeline run."""
 
     # Emitted to the parent (MainWindow) to broadcast job state.
-    job_started = Signal(str, str)        # job_id, pdf_path
+    job_started = Signal(str, str)  # job_id, pdf_path
     job_progress = Signal(str, int, int, str)  # job_id, cur, total, msg
-    job_finished = Signal(str, list)     # job_id, results
-    job_failed = Signal(str, str)        # job_id, error
+    job_finished = Signal(str, list)  # job_id, results
+    job_failed = Signal(str, str)  # job_id, error
 
     def __init__(self, settings: dict[str, Any], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -173,14 +181,17 @@ class RunTab(QWidget):
         # OCR backend — friendly names shown in the UI, raw code stored in userData.
         from .constants import ocr_backend_friendly_options
         from PySide6.QtWidgets import QSizePolicy
+
         basic_layout.addWidget(tr_label("runtab.label.ocr_backend"), row, 0)
         self._ocr_combo = QComboBox()
         self._ocr_combo.setObjectName("runtab.ocr_backend")
         self._ocr_combo.setMinimumHeight(32)
         self._ocr_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         from .i18n_widgets import populate_friendly_combo
+
         populate_friendly_combo(
-            self._ocr_combo, ocr_backend_friendly_options,
+            self._ocr_combo,
+            ocr_backend_friendly_options,
             default_code=DEFAULT_OCR_BACKEND,
         )
         basic_layout.addWidget(self._ocr_combo, row, 1)
@@ -189,28 +200,33 @@ class RunTab(QWidget):
         # Friendly language names in the combo; ISO codes stored in userData.
         # setEditable allows custom comma-separated lists (e.g. "en,ja").
         from .constants import ocr_lang_friendly_options
+
         self._ocr_lang_edit = QComboBox()
         self._ocr_lang_edit.setObjectName("runtab.ocr_lang")
         self._ocr_lang_edit.setEditable(True)
         from PySide6.QtWidgets import QSizePolicy
+
         self._ocr_lang_edit.setMinimumHeight(32)
         self._ocr_lang_edit.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self._ocr_lang_edit.lineEdit().setMinimumHeight(32)
         from .i18n_widgets import populate_friendly_combo
+
         populate_friendly_combo(
-            self._ocr_lang_edit, ocr_lang_friendly_options,
+            self._ocr_lang_edit,
+            ocr_lang_friendly_options,
             default_code=DEFAULT_OCR_LANG,
         )
         self._ocr_lang_edit.setMinimumWidth(INPUT_WIDTH_OCR_LANG)
         # Translate tooltip via the i18n registry.
         from . import i18n as _i18n_tooltip
+
         self._ocr_lang_edit.setObjectName("runtab.ocr_lang")
         _i18n_tooltip.register_widget_text(
-            "runtab.ocr_lang", "toolTip", "runtab.ocr_lang.tooltip",
+            "runtab.ocr_lang",
+            "toolTip",
+            "runtab.ocr_lang.tooltip",
         )
-        self._ocr_lang_edit.setToolTip(
-            _i18n_tooltip._tr("runtab.ocr_lang.tooltip")
-        )
+        self._ocr_lang_edit.setToolTip(_i18n_tooltip._tr("runtab.ocr_lang.tooltip"))
         basic_layout.addWidget(self._ocr_lang_edit, row, 3)
         row += 1
 
@@ -249,7 +265,9 @@ class RunTab(QWidget):
         self._caption_window = tr_spinbox(
             "runtab.label.caption_window",
             min_width=INPUT_WIDTH_SHORT,
-            min_val=1, max_val=50, value=2,
+            min_val=1,
+            max_val=50,
+            value=2,
         )
         self._caption_window.setToolTip("GROBID caption→page lookup window")
         basic_layout.addWidget(self._caption_window, row, 1)
@@ -270,13 +288,18 @@ class RunTab(QWidget):
         self._workers = tr_spinbox(
             "runtab.label.workers",
             min_width=INPUT_WIDTH_SHORT,
-            min_val=1, max_val=32, value=1,
+            min_val=1,
+            max_val=32,
+            value=1,
         )
         basic_layout.addWidget(self._workers, row, 1)
         basic_layout.addWidget(tr_label("runtab.label.panel_score"), row, 2)
         self._panel_score = tr_doublespinbox(
             min_width=INPUT_WIDTH_SHORT,
-            min_val=0.0, max_val=1.0, value=0.80, step=0.05,
+            min_val=0.0,
+            max_val=1.0,
+            value=0.80,
+            step=0.05,
         )
         basic_layout.addWidget(self._panel_score, row, 3)
         row += 1
@@ -301,11 +324,14 @@ class RunTab(QWidget):
         # Friendly backend names — stored as userData, displayed as itemText.
         from .constants import llm_backend_friendly_options
         from PySide6.QtWidgets import QSizePolicy
+
         self._llm_combo.setMinimumHeight(32)
         self._llm_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         from .i18n_widgets import populate_friendly_combo
+
         populate_friendly_combo(
-            self._llm_combo, llm_backend_friendly_options,
+            self._llm_combo,
+            llm_backend_friendly_options,
             default_code=DEFAULT_LLM_BACKEND,
         )
         lbl, w = tr_form_row("runtab.label.llm_backend", self._llm_combo)
@@ -314,10 +340,12 @@ class RunTab(QWidget):
         self._m3_lang = QComboBox()
         from .constants import m3_prompt_lang_friendly_options
         from PySide6.QtWidgets import QSizePolicy
+
         self._m3_lang.setMinimumHeight(32)
         self._m3_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         populate_friendly_combo(
-            self._m3_lang, m3_prompt_lang_friendly_options,
+            self._m3_lang,
+            m3_prompt_lang_friendly_options,
             default_code=DEFAULT_M3_PROMPT_LANG,
         )
         lbl, w = tr_form_row("runtab.label.m3_lang", self._m3_lang)
@@ -602,6 +630,7 @@ class RunTab(QWidget):
         # Phase 56 audit: defer refresh to next event loop iteration so
         # it doesn't race with worker signal handlers on the main thread.
         from PySide6.QtCore import QTimer as _QTimer
+
         _QTimer.singleShot(0, self._refresh_formats)
 
     def _remove_i18n_listener(self) -> None:
@@ -684,9 +713,7 @@ class RunTab(QWidget):
         # the first. QThread can only be started() once; re-starting
         # raises RuntimeError which we surface to the user.
         if self._worker is not None and self._worker.isRunning():
-            self._log.warning(
-                "Start clicked while another job is running; ignored."
-            )
+            self._log.warning("Start clicked while another job is running; ignored.")
             return
         pdf = self._path_edit.text().strip()
         out_dir = self._out_edit.text().strip()
@@ -711,8 +738,7 @@ class RunTab(QWidget):
             QMessageBox.warning(
                 self,
                 i18n._tr("runtab.prompt.no_outdir.title"),
-                i18n._tr("runtab.prompt.no_outdir.body")
-                + f"\n\n{type(exc).__name__}: {exc}",
+                i18n._tr("runtab.prompt.no_outdir.body") + f"\n\n{type(exc).__name__}: {exc}",
             )
             return
         work_dir = out_path / "work"
@@ -738,9 +764,7 @@ class RunTab(QWidget):
         # quit()+terminate()d the *new* worker (batch job 2 died
         # ~2s in). The partial carries the owning worker so the
         # handler can only ever touch its own thread.
-        self._worker.finished.connect(
-            functools.partial(self._on_thread_done, self._worker)
-        )
+        self._worker.finished.connect(functools.partial(self._on_thread_done, self._worker))
         # Toggle buttons
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
@@ -791,7 +815,11 @@ class RunTab(QWidget):
             # escaping to %% made the user see "matched 95%% of
             # panels". Pass the message through unchanged.
             safe_message = message or ""
-            self._progress.setFormat(f"{{value}} / {{maxValue}}  ·  {{message}}".replace("{value}", "%v").replace("{maxValue}", "%m").replace("{message}", safe_message))
+            self._progress.setFormat(
+                f"{{value}} / {{maxValue}}  ·  {{message}}".replace("{value}", "%v")
+                .replace("{maxValue}", "%m")
+                .replace("{message}", safe_message)
+            )
         else:
             self._progress.setRange(0, 0)
         self._show_live_progress(message or "Working…")
@@ -883,11 +911,26 @@ class RunTab(QWidget):
         except (TypeError, RuntimeError):
             pass  # already disconnected or worker partially deleted
         if worker.isRunning():
-            worker.quit()
-            if not worker.wait(2000):  # 2s timeout
-                # Thread didn't exit cleanly; ask it to terminate.
-                worker.terminate()
-                worker.wait(500)
+            # audit 2026-08-01 D20: replace ``worker.terminate()`` with
+            # ``requestInterruption()`` + a 30s bounded wait. ``terminate()``
+            # forcibly kills the QThread mid-Python execution, which can
+            # orphan subprocesses (OpenDataLoader JVM, in-flight LLM HTTP
+            # requests) and leave partial temp dirs like
+            # ``od_output/<paper_id>/`` behind. ``requestInterruption()``
+            # sets the interrupt flag the pipeline polls between stages;
+            # the 30s wait gives it time to flush and clean up. If the
+            # worker is still running after 30s, log a warning rather than
+            # killing it — the OS will reclaim the thread on process exit,
+            # and forcibly killing a worker that owns a live JVM is worse
+            # than letting the parent process exit normally.
+            worker.requestInterruption()
+            if not worker.wait(30000):  # 30s timeout
+                self._log.warning(
+                    "PipelineWorker did not exit within 30s after "
+                    "requestInterruption; leaving thread alive (process "
+                    "exit will reclaim it). OpenDataLoader JVM or LLM "
+                    "HTTP request may still be in flight."
+                )
         # Only reset the shared state when this worker is still the
         # active one (single-job mode). In batch mode the next worker
         # is already running; clearing its bookkeeping would corrupt

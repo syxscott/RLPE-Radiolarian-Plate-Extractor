@@ -188,6 +188,15 @@ _LOCALITY_BLOCKLIST: frozenset[str] = frozenset(
         "sample",
         "locality",
         "localities",
+        # Lithostratigraphic formation names (Italian papers): shape like
+        # locality names but are rock units, not places. Audit 2026-08-01 M7.
+        "scaglia",
+        "rosso ammonitico",
+        "maiolica",
+        "biancone",
+        "fonzaso",
+        "sicani",
+        "radiolarian chert",
     }
 )
 
@@ -243,7 +252,7 @@ _AGE_TERMS: tuple[str, ...] = (
     "lower triassic",
     "middle triassic",
     "upper triassic",
-    "inderbian",
+    "induan",
     "olenekian",
     "anisian",
     "ladinian",

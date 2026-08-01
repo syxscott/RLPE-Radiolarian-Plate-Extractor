@@ -310,7 +310,9 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
     # then got species-mined ("An attempt of" shipped as a species).
     # Match "plate"/"plates" as a whole word and veto the words that
     # merely contain the substring.
-    if not any(w in low for w in _PLATE_SUBSTRING_VETO_WORDS) and _PLATE_WORD_RE.search(low):
+    if not any(w in low for w in _PLATE_SUBSTRING_VETO_WORDS) and _PLATE_WORD_RE.search(
+        low
+    ):
         # Even if plate-like, check if the caption ALSO mentions
         # range/distribution — that overrides.
         for rc_kw in _FIGURE_TYPE_PROMPT_KEYWORDS["range_chart"]:
@@ -436,9 +438,11 @@ class RangeChartResult:
     # couldn't distinguish "the API said no range data here" from
     # "we never got a response". ``status`` is ``"ok"`` on success
     # and ``"error"`` on any failure; ``error`` carries the human-
-    # readable reason.
+    # readable reason; ``error_message`` carries exception class +
+    # message for programmatic consumption (audit 2026-08-01 M21).
     status: str = "ok"
     error: str | None = None
+    error_message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -457,6 +461,10 @@ class RangeChartResult:
             # 'HTTP 500 / JSON decode error'.
             "status": self.status,
             "error": self.error,
+            # Audit 2026-08-01 M21: programmatic error_message (exception
+            # class + message) for callers that need structured failure
+            # context (e.g. UI banners, log aggregators).
+            "error_message": self.error_message,
         }
 
 
@@ -628,6 +636,14 @@ def extract_range_chart(
             img_bytes = f.read()
     except OSError as exc:
         logger.warning("range_chart: cannot open %s: %s", image_path, exc)
+        # M21 (audit 2026-08-01): previously this returned a
+        # ``status="ok"`` empty result — indistinguishable from
+        # "API said no data here". Mark as error and surface the
+        # exception class + message so callers can distinguish
+        # transport failures from genuine empty extractions.
+        result.status = "error"
+        result.error = f"OSError: cannot open {image_path}: {exc}"
+        result.error_message = f"OSError: {exc}"
         return result
 
     mime, _ = mimetypes.guess_type(image_path)
@@ -694,6 +710,7 @@ def extract_range_chart(
                     # the actual failure mode.
                     result.status = "error"
                     result.error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    result.error_message = f"HTTPError: status={resp.status_code}"
                     return result
                 try:
                     payload = resp.json()
@@ -703,14 +720,19 @@ def extract_range_chart(
                     # with the underlying message.
                     result.status = "error"
                     result.error = f"JSON decode error: {exc}"
+                    result.error_message = f"ValueError: {exc}"
                     return result
         except requests.RequestException as exc:
-            logger.warning("range_chart API call failed for %s/%s: %s", paper_id, figure_id, exc)
+            logger.warning(
+                "range_chart API call failed for %s/%s: %s", paper_id, figure_id, exc
+            )
             # M21: transport-level failures (DNS, connect, timeout)
             # used to return an empty result indistinguishable from
             # success-with-no-data. Mark as error.
             result.status = "error"
+            exc_cls = exc.__class__.__name__
             result.error = str(exc)
+            result.error_message = f"{exc_cls}: {exc}"
             return result
     finally:
         # Belt-and-braces: ``with`` already closed, but if the
@@ -728,10 +750,22 @@ def extract_range_chart(
     try:
         parsed = _safe_json_loads(raw_text)
     except ValueError as exc:
-        logger.warning("range_chart JSON parse failed for %s/%s: %s", paper_id, figure_id, exc)
+        logger.warning(
+            "range_chart JSON parse failed for %s/%s: %s", paper_id, figure_id, exc
+        )
+        # M21 (audit 2026-08-01): previously this returned a
+        # ``status="ok"`` empty result — indistinguishable from
+        # "API said no data here". Mark as error and surface the
+        # exception class + message so callers can distinguish
+        # JSON-parse failures from genuine empty extractions.
+        result.status = "error"
+        result.error = f"JSON parse error: {exc}"
+        result.error_message = f"ValueError: {exc}"
         return result
 
-    return _parse_extraction_response(parsed=parsed, paper_id=paper_id, figure_id=figure_id, base_result=result)
+    return _parse_extraction_response(
+        parsed=parsed, paper_id=paper_id, figure_id=figure_id, base_result=result
+    )
 
 
 def _parse_extraction_response(
@@ -752,9 +786,7 @@ def _parse_extraction_response(
     Extracted from ``extract_range_chart`` so tests can drive the
     JSON → dataclass conversion without making a real API call.
     """
-    result = base_result or RangeChartResult(
-        figure_id=figure_id, paper_id=paper_id
-    )
+    result = base_result or RangeChartResult(figure_id=figure_id, paper_id=paper_id)
     for sec in parsed.get("sections") or []:
         if not isinstance(sec, dict):
             continue
@@ -933,12 +965,31 @@ def build_geology_links_for_panels(
         # Direct hit: panel species exact-matches a range species
         candidates = by_species.get(ps_norm, [])
         if not candidates and len(ps_norm.split()) == 1:
-            # Panel has only a genus name — accept any range-chart
-            # species in the same genus.
+            # Panel has only a genus name — collect ALL range-chart
+            # species in that genus. Audit 2026-08-01 (M3): previously
+            # we took the FIRST genus-prefix match silently, which
+            # linked bare-genus panels to whichever species happened
+            # to be encountered first in the chart (e.g. Bandini 2006
+            # ``Archaeodictyomitra`` → ``A. rigida`` when the chart
+            # actually carries 5 species of the genus). Disambiguation
+            # requires species-level matching: if the chart has ≥ 2
+            # distinct species under this genus, we cannot pick one
+            # without guessing, so we skip the link entirely.
+            genus_candidates: list[SpeciesRange] = []
             for sp_key, sp_list in by_species.items():
                 if sp_key.startswith(ps_norm + " "):
-                    candidates = sp_list
-                    break
+                    genus_candidates.extend(sp_list)
+            distinct_species = {sr.species for sr in genus_candidates}
+            if len(distinct_species) >= 2:
+                logger.info(
+                    "range_chart: panel species %r is bare genus with "
+                    "%d distinct species in chart %s — skipping ambiguous link",
+                    pspecies,
+                    len(distinct_species),
+                    chart.figure_id,
+                )
+                continue
+            candidates = genus_candidates
         for sr in candidates:
             if not _species_match(sr.species, pspecies):
                 continue
@@ -948,7 +999,9 @@ def build_geology_links_for_panels(
                 "chronostratigraphy": sr.biozone or None,
                 "chronostratigraphy_rank": "biozone" if sr.biozone else None,
                 "formation": (
-                    ", ".join(sec_meta.formations) if sec_meta and sec_meta.formations else None
+                    ", ".join(sec_meta.formations)
+                    if sec_meta and sec_meta.formations
+                    else None
                 ),
                 "locality": sr.section or None,
                 "latitude": None,

@@ -162,15 +162,21 @@ class TestPaperWhitelistNoCorruption:
 
 class TestSubgenusForms:
     def test_subgenus_keeps_epithet(self):
+        # audit 2026-08-01 W3 M1: subgenus now goes to ``generic_name``
+        # (DwC subgenus column) instead of ``qualifier`` — Phase 63 introduced
+        # the ``generic_name`` field for proper ICZN subgenus handling.
         from rlpe.converters import _taxon_parts
         from rlpe.taxon import _is_valid_species
 
         parts = _taxon_parts("Podocyrtis (Podocyrtites) amphora")
         assert parts["specific_epithet"] == "amphora"
-        assert parts["qualifier"] == "(Podocyrtites)"
+        assert parts["generic_name"] == "Podocyrtites"
+        assert parts.get("qualifier") is None
         assert _is_valid_species("Podocyrtis (Podocyrtites) amphora") is True
 
     def test_uncertainty_marker_keeps_epithet(self):
+        # The ``(?)`` marker is an uncertainty qualifier (NOT a subgenus),
+        # so it correctly stays in the ``qualifier`` field per ICZN.
         from rlpe.converters import _taxon_parts
         from rlpe.taxon import _is_valid_species
 

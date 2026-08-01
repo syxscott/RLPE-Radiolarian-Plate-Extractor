@@ -42,10 +42,25 @@ _PADDLE_LANG_MAP: dict[str, str] = {
     "ja": "japan",
     "ch_sim": "ch",
     "ch_tra": "chinese_cht",
-    "zh": "ch",          # zh (Simplified Chinese) -> ch for PaddleOCR
+    "zh": "ch",  # zh (Simplified Chinese) -> ch for PaddleOCR
     "de": "german",
     # Note: "en", "fr", "ko", "ru", "japan", "ch" all pass through
     # unchanged (PaddleOCR accepts those spellings natively).
+}
+
+# Audit 2026-08-01 (Bug M25): accept PaddleOCR-native long spellings
+# like "japan", "ch", "chinese_cht", "german" as input. The
+# ``_normalise_lang`` constructor will rewrite these to our internal
+# short codes ("ja", "ch_sim", "ch_tra", "de") before whitelisting so
+# callers can pass either form. Phase-27 docstring promised "either
+# form" but the whitelist silently dropped the long spellings.
+_PADDOCR_LANG_ALIASES: dict[str, str] = {
+    "japan": "ja",
+    "ch": "ch_sim",
+    "chinese_cht": "ch_tra",
+    "chinese_chinese": "ch_sim",
+    "chinese": "ch_sim",
+    "german": "de",
 }
 
 
@@ -81,8 +96,12 @@ class OCRBackend:
             langs = [str(s).strip() for s in lang]
         out: list[str] = []
         for l in langs:
-            if l in OCRBackend.SUPPORTED_LANGS:
-                out.append(l)
+            # Audit 2026-08-01 (Bug M25): normalise PaddleOCR-native
+            # long spellings (e.g. "japan", "ch", "german") to our
+            # internal short codes before whitelist check.
+            canonical = _PADDOCR_LANG_ALIASES.get(l, l)
+            if canonical in OCRBackend.SUPPORTED_LANGS:
+                out.append(canonical)
             else:
                 logger.warning(
                     "OCRBackend: unknown OCR lang %r (supported: %s); ignoring",
@@ -100,8 +119,7 @@ class OCRBackend:
         """
         if len(self.lang) > 1:
             logger.info(
-                "OCRBackend: PaddleOCR supports a single language; "
-                "using first of %r",
+                "OCRBackend: PaddleOCR supports a single language; using first of %r",
                 self.lang,
             )
         first = self.lang[0]
@@ -162,9 +180,7 @@ class OCRBackend:
                     # ch_sim / ch_tra. Passing "zh" made Reader() raise,
                     # and the except below silently DISABLED OCR for
                     # users who explicitly asked for Chinese.
-                    easyocr_langs = [
-                        "ch_sim" if l == "zh" else l for l in self.lang
-                    ]
+                    easyocr_langs = ["ch_sim" if l == "zh" else l for l in self.lang]
                     self._engine = easyocr.Reader(easyocr_langs, gpu=self.use_gpu)
                     return self._engine
                 except Exception:
@@ -280,15 +296,17 @@ class OCRBackend:
         if isinstance(result, dict):
             rec_texts = result.get("rec_texts") or result.get("texts") or []
             rec_scores = result.get("rec_scores") or result.get("scores") or []
-            polys = (
-                result.get("dt_polys")
-                or result.get("rec_boxes")
-                or result.get("boxes")
-                or []
-            )
+            polys = result.get("dt_polys") or result.get("rec_boxes") or result.get("boxes") or []
             for i, text in enumerate(rec_texts):
                 if i >= len(polys):
                     break
+                # Audit 2026-08-01 (Bug C12): paddleocr 3.x can emit
+                # bare ints (or other non-iterable sentinels) in
+                # ``dt_polys`` for some lines; ``polys[i][0]`` would
+                # raise TypeError on those. Skip defensively rather
+                # than blowing up the whole OCR call.
+                if not isinstance(polys[i], (list, tuple)):
+                    continue
                 box = polys[i]
                 # rec_boxes is a 4-corner flat list [x1,y1,x2,y2,...]
                 # dt_polys is a list of 4 points [[x,y], ...].
@@ -296,8 +314,12 @@ class OCRBackend:
                 if box and isinstance(box[0], (int, float)):
                     coords = list(box)
                     if len(coords) == 4:
-                        box = [[coords[0], coords[1]], [coords[2], coords[1]],
-                               [coords[2], coords[3]], [coords[0], coords[3]]]
+                        box = [
+                            [coords[0], coords[1]],
+                            [coords[2], coords[1]],
+                            [coords[2], coords[3]],
+                            [coords[0], coords[3]],
+                        ]
                     # Phase 54 audit m2: paddleocr 2.x sometimes returns
                     # 8-element flat lists (the 4 corner coordinates
                     # in xy order) instead of 4-element [x, y, x+w, y+h]
