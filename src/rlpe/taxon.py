@@ -144,6 +144,31 @@ _KNOWN_AUTHOR_SURNAMES: frozenset[str] = frozenset(
         "griffin",
         "diaz",
         "hayes",
+        # Audit 2026-08-01 (Bug M6): Chinese, Japanese, Russian radiolarian
+        # worker surnames that the LLM-first hybrid path was reading as
+        # species binomials. The "Extended set" above is predominantly
+        # Anglo-American surnames; this block adds the East-Asian and
+        # Russian block that audit batch W3 flagged. (zhang was already
+        # present in the "Core" block above.)
+        "afanasieva",
+        "bragin",
+        "chen",
+        "huang",
+        "kamata",
+        "kazintsova",
+        "korchagin",
+        "kurihara",
+        "li",
+        "liu",
+        "mizutani",
+        "nagai",
+        "sakai",
+        "sashida",
+        "tikhomirova",
+        "toyota",
+        "wang",
+        "wu",
+        "yang",
     }
 )
 
