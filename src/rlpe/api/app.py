@@ -765,14 +765,17 @@ async def upload_pdf(
     # Starlette's shared anyio worker pool (40 tokens). Wrap with the
     # ``JOB_CONCURRENCY`` semaphore so a flood of uploads cannot
     # monopolise the pool and stall /jobs/{id}/status, /results etc.
-    def _run_job_with_concurrency() -> None:
+    # The args are forwarded positionally so that tests asserting
+    # ``bg.calls[0][1][2]`` (the 3rd positional arg = job_options dict)
+    # keep working.
+    def _run_job_with_concurrency(*args, **kwargs) -> None:
         JOB_CONCURRENCY.acquire()
         try:
-            return _run_job(job_id, save_path, job_options)
+            return _run_job(*args, **kwargs)
         finally:
             JOB_CONCURRENCY.release()
 
-    background_tasks.add_task(_run_job_with_concurrency)
+    background_tasks.add_task(_run_job_with_concurrency, job_id, save_path, job_options)
     return JobStatus(job_id=job_id, status="queued", created_at=now, filename=safe_filename)
 
 
