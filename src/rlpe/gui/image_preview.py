@@ -75,6 +75,10 @@ class ImagePreviewWidget(QWidget):
         # removed in _overlay_bboxes().
         self._text_items: list[QGraphicsTextItem] = []
         self._zoom: float = 1.0
+        # audit 2026-08-01 W1 (C1): _overlay_bboxes reads this to skip
+        # bboxes outside the image bounds. Initialized so attribute
+        # access in __init__/early-returns is safe.
+        self._pixmap: QPixmap | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -140,6 +144,11 @@ class ImagePreviewWidget(QWidget):
         """Load an image from disk and display it."""
         if image_path is None:
             self._current_path = None
+            # audit 2026-08-01 W1 (C1): clear self._pixmap so the
+            # bounds-skip guard at line 274 reads (0, 0) and silently
+            # skips the off-image bbox filter — i.e. behaves like the
+            # pre-fix guard intentionally did for the "no image" case.
+            self._pixmap = None
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
             self._text_items.clear()  # Phase 55: also clear text items (bugfix)
@@ -148,6 +157,7 @@ class ImagePreviewWidget(QWidget):
         path = Path(image_path)
         self._current_path = path
         if not path.exists():
+            self._pixmap = None
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
             self._text_items.clear()  # Phase 55: also clear text items (bugfix)
@@ -155,11 +165,17 @@ class ImagePreviewWidget(QWidget):
             return
         pix = self._load_pixmap(path)
         if pix is None:
+            self._pixmap = None
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
             self._text_items.clear()  # Phase 55: also clear text items (bugfix)
             self._path_label.setText(i18n._tr("preview.failed").format(name=path.name))
             return
+        # audit 2026-08-01 W1 (C1): _overlay_bboxes reads self._pixmap
+        # to detect off-image bboxes; before this fix the field was
+        # never assigned so the guard silently treated img_w=img_h=0
+        # and the bounds-skip never fired.
+        self._pixmap = pix
         self._scene.clear()
         # Phase 41: also clear our explicit bbox item list so old
         # overlays don't survive a set_image() call.
