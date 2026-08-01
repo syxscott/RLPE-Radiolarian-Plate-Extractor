@@ -2867,7 +2867,7 @@ class RadiolarianPipeline:
             m = _re_hallu2.match(r"^(\d+)", nn)
             if m and m.group(1) in caption_labels:
                 return True
-            m = _re_hallu2.match(r"^([A-H])", nn)
+            m = _re_hallu2.match(r"^([A-H])", nn, _re_hallu2.IGNORECASE)
             if m and m.group(1).lower() in caption_labels:
                 return True
             return False
