@@ -191,8 +191,7 @@ class RadiolarianPipeline:
         ):
             self.config.extra["MiniMax_api_key"] = os.environ.get("ANTHROPIC_API_KEY")
             logger.info(
-                "Pipeline: using ANTHROPIC_API_KEY as MiniMax_api_key "
-                "(Anthropic env-var fallback)"
+                "Pipeline: using ANTHROPIC_API_KEY as MiniMax_api_key (Anthropic env-var fallback)"
             )
         self._try_init_gemma()
 
@@ -423,7 +422,8 @@ class RadiolarianPipeline:
                         # workers (they may be stuck in an LLM API
                         # call with a 30s+ timeout).
                         self._emit_progress(
-                            completed, total,
+                            completed,
+                            total,
                             f"Cancelled by user after {completed}/{total} PDFs",
                         )
                         # Audit 2026-07-26 M6+M7: mark fast-shutdown so
@@ -435,9 +435,7 @@ class RadiolarianPipeline:
                         # this return path.
                         cancelled_fast = True
                         pool.shutdown(wait=False, cancel_futures=True)
-                        write_jsonl(
-                            self.config.manifests_dir() / "matches.jsonl", rows
-                        )
+                        write_jsonl(self.config.manifests_dir() / "matches.jsonl", rows)
                         return rows
                     pdf = futures[fut]
                     if fut.cancelled():
@@ -761,9 +759,11 @@ class RadiolarianPipeline:
                 "caption_snippet": caption_text[:240] if caption_text else None,
                 "ocr_text": None,
                 "paper_metadata": None,
+                "figure_type": "range_chart",
                 "metadata": {
                     "extraction_method": "range_chart_vision",
                     "extraction_source": "range_chart",
+                    "figure_type": "range_chart",
                     "section": sr.section,
                     "range_top": sr.range_top,
                     "range_base": sr.range_base,
@@ -1035,8 +1035,7 @@ class RadiolarianPipeline:
                 cycle_detected = paper_id in self._grobid_in_progress
             if cycle_detected:
                 logger.warning(
-                    "Skipping recursive GROBID fallback for %s; "
-                    "OD↔GROBID cycle detected.",
+                    "Skipping recursive GROBID fallback for %s; OD↔GROBID cycle detected.",
                     paper_id,
                 )
                 fallback = []
@@ -1297,7 +1296,8 @@ class RadiolarianPipeline:
 
                         with _PILImage.open(geo_image_path) as im:
                             geo_image = im.convert("RGB")
-                        geo_links = self._m3_call_with_fallback(self.m3_engine.extract_geology, 
+                        geo_links = self._m3_call_with_fallback(
+                            self.m3_engine.extract_geology,
                             image=geo_image,
                             caption=pair.caption_text or "",
                             figure_type=fig_type,
@@ -1409,7 +1409,8 @@ class RadiolarianPipeline:
 
                         with _PILImage.open(schematic_image_path) as im:
                             schematic_image = im.convert("RGB")
-                        schematic_data = self._m3_call_with_fallback(self.m3_engine.extract_schematic, 
+                        schematic_data = self._m3_call_with_fallback(
+                            self.m3_engine.extract_schematic,
                             image=schematic_image,
                             caption=pair.caption_text or "",
                             figure_type=fig_type,
@@ -1432,9 +1433,7 @@ class RadiolarianPipeline:
                 stored_schematic: dict[str, Any] | None = None
                 if schematic_data:
                     stored_schematic = {
-                        k: v
-                        for k, v in schematic_data.items()
-                        if not k.startswith("_")
+                        k: v for k, v in schematic_data.items() if not k.startswith("_")
                     }
                 # Always emit a stub so the figure isn't silently
                 # lost — same Round 23 audit fix. The stub uses a
@@ -1449,9 +1448,7 @@ class RadiolarianPipeline:
                         "panel_path": schematic_image_path,
                         "bbox": None,
                         "confidence": (
-                            float(schematic_data.get("confidence", 0.0))
-                            if schematic_data
-                            else 0.0
+                            float(schematic_data.get("confidence", 0.0)) if schematic_data else 0.0
                         ),
                         "label_text": None,
                         "caption_snippet": (pair.caption_text or "")[:240],
@@ -1946,7 +1943,8 @@ class RadiolarianPipeline:
                 continue
 
             try:
-                panels = self._m3_call_with_fallback(self.m3_engine.enrich_plate_panels, 
+                panels = self._m3_call_with_fallback(
+                    self.m3_engine.enrich_plate_panels,
                     image=plate_image,
                     page_caption=page_caption[:3000],  # cap to avoid token bloat
                     paper_id=paper_id,
@@ -2197,7 +2195,8 @@ class RadiolarianPipeline:
 
                 with _PILImage.open(image_path) as im:
                     panel_image = im.convert("RGB")
-                geo_links = self._m3_call_with_fallback(self.m3_engine.extract_geology, 
+                geo_links = self._m3_call_with_fallback(
+                    self.m3_engine.extract_geology,
                     image=panel_image,
                     caption=caption_text,
                     figure_type=figure_type,
@@ -2271,7 +2270,10 @@ class RadiolarianPipeline:
             md = row.get("metadata") or {}
             ftype = str(md.get("figure_type") or row.get("figure_type") or "").lower()
             if ftype in (
-                "strat_column", "litholog_column", "paleogeographic_map", "range_chart",
+                "strat_column",
+                "litholog_column",
+                "paleogeographic_map",
+                "range_chart",
             ):
                 paper_figures.append(row)
             elif ftype in ("plate", "") or ftype.startswith("plate"):
@@ -2301,31 +2303,37 @@ class RadiolarianPipeline:
                 formation = gl[0].get("formation")
                 age = gl[0].get("age") or gl[0].get("chronostratigraphy")
                 locality = gl[0].get("locality")
-            figure_views.append({
-                "figure_id": row.get("figure_id") or md.get("figure_id") or "",
-                "paper_id": paper_id,
-                "figure_type": str(md.get("figure_type") or row.get("figure_type") or ""),
-                "caption": md.get("caption_text") or md.get("caption") or "",
-                "formation": formation,
-                "age": age,
-                "locality": locality,
-            })
+            figure_views.append(
+                {
+                    "figure_id": row.get("figure_id") or md.get("figure_id") or "",
+                    "paper_id": paper_id,
+                    "figure_type": str(md.get("figure_type") or row.get("figure_type") or ""),
+                    "caption": md.get("caption_text") or md.get("caption") or "",
+                    "formation": formation,
+                    "age": age,
+                    "locality": locality,
+                }
+            )
 
         # Build panel views. The linker accepts MatchResult-shaped dicts.
         panel_views: list[dict[str, Any]] = []
         for row in plate_rows:
             md = row.get("metadata") or {}
-            panel_views.append({
-                "paper_id": paper_id,
-                "figure_id": row.get("figure_id") or md.get("figure_id") or "",
-                "panel_id": row.get("panel_id") or row.get("canonical_panel_id"),
-                "species": row.get("species"),
-                "caption_snippet": (
-                    row.get("caption_snippet") or md.get("caption_snippet")
-                    or md.get("caption") or ""
-                ),
-                "metadata": md,
-            })
+            panel_views.append(
+                {
+                    "paper_id": paper_id,
+                    "figure_id": row.get("figure_id") or md.get("figure_id") or "",
+                    "panel_id": row.get("panel_id") or row.get("canonical_panel_id"),
+                    "species": row.get("species"),
+                    "caption_snippet": (
+                        row.get("caption_snippet")
+                        or md.get("caption_snippet")
+                        or md.get("caption")
+                        or ""
+                    ),
+                    "metadata": md,
+                }
+            )
 
         # Run the linker.
         results = link_species_to_geology(
@@ -2358,26 +2366,28 @@ class RadiolarianPipeline:
             if lr is None:
                 continue
             existing = list(md.get("geology_links") or [])
-            existing.append({
-                "age": lr.age,
-                "formation": lr.formation,
-                "locality": lr.locality,
-                "confidence": lr.confidence,
-                "evidence_text": lr.evidence,
-                "section_type": "cross_figure_link",
-                "coord_source": f"cross_figure_linker:{lr.source}",
-                # Audit fix 2026-07-24 (Agent B H3): propagate
-                # LinkResult.figure_id so downstream consumers
-                # (Darwin Core archives, GBIF/PBDB audits, the
-                # GUI's "Link source" badge) can trace each link
-                # back to the figure that produced it. Without
-                # this, a geologist auditing the output cannot
-                # tell whether a panel's age came from Figure 3
-                # (strat column) or Figure 7 (paleogeographic
-                # map), making reproduction impossible.
-                "figure_id": lr.figure_id,
-                "link_source": lr.source,
-            })
+            existing.append(
+                {
+                    "age": lr.age,
+                    "formation": lr.formation,
+                    "locality": lr.locality,
+                    "confidence": lr.confidence,
+                    "evidence_text": lr.evidence,
+                    "section_type": "cross_figure_link",
+                    "coord_source": f"cross_figure_linker:{lr.source}",
+                    # Audit fix 2026-07-24 (Agent B H3): propagate
+                    # LinkResult.figure_id so downstream consumers
+                    # (Darwin Core archives, GBIF/PBDB audits, the
+                    # GUI's "Link source" badge) can trace each link
+                    # back to the figure that produced it. Without
+                    # this, a geologist auditing the output cannot
+                    # tell whether a panel's age came from Figure 3
+                    # (strat column) or Figure 7 (paleogeographic
+                    # map), making reproduction impossible.
+                    "figure_id": lr.figure_id,
+                    "link_source": lr.source,
+                }
+            )
             md["geology_links"] = existing
             # Surface a per-row "link_source" tag so the GUI can
             # badge Strategy 1/2/3/unlinked without parsing the
@@ -2414,12 +2424,14 @@ class RadiolarianPipeline:
             all_figure_views = list(figure_views)
             for prow in plate_rows:
                 pmd = prow.get("metadata") or {}
-                all_figure_views.append({
-                    "figure_id": prow.get("figure_id") or pmd.get("figure_id") or "",
-                    "paper_id": paper_id,
-                    "figure_type": str(pmd.get("figure_type") or "plate"),
-                    "caption": pmd.get("caption") or pmd.get("caption_text") or "",
-                })
+                all_figure_views.append(
+                    {
+                        "figure_id": prow.get("figure_id") or pmd.get("figure_id") or "",
+                        "paper_id": paper_id,
+                        "figure_type": str(pmd.get("figure_type") or "plate"),
+                        "caption": pmd.get("caption") or pmd.get("caption_text") or "",
+                    }
+                )
 
             visual_per_panel = link_visual_coordinates(
                 panels=panel_views,
@@ -2446,7 +2458,9 @@ class RadiolarianPipeline:
                 # the wrong row. Mirrors the P1-2 fix at line ~2237.
                 for row in plate_rows:
                     row_pid = row.get("panel_id") or row.get("canonical_panel_id") or ""
-                    row_fid = row.get("figure_id") or (row.get("metadata") or {}).get("figure_id") or ""
+                    row_fid = (
+                        row.get("figure_id") or (row.get("metadata") or {}).get("figure_id") or ""
+                    )
                     if row_pid == pid and row_fid == fid:
                         md = row.setdefault("metadata", {})
                         existing = list(md.get("cross_figure_visual_links") or [])
@@ -2492,7 +2506,8 @@ class RadiolarianPipeline:
                     logger.warning(
                         "GROBID server unavailable at %s; skipping retries, "
                         "falling back to OpenDataLoader for %s",
-                        self.config.grobid_url, paper_id,
+                        self.config.grobid_url,
+                        paper_id,
                     )
                     if not self.config.extra.get("disable_od_fallback", False):
                         return self._process_one_pdf_od(paper_id, pdf_path)
@@ -2517,9 +2532,7 @@ class RadiolarianPipeline:
             with self._grobid_lock:
                 self._grobid_in_progress.discard(paper_id)
 
-    def _process_one_pdf_grobid_inner(
-        self, paper_id: str, pdf_path: Path
-    ) -> list[dict[str, Any]]:
+    def _process_one_pdf_grobid_inner(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         """Inner body of ``_process_one_pdf_grobid`` (Phase 29 split).
 
         Extracted so the cycle-guard setup / teardown at the
@@ -2600,13 +2613,11 @@ class RadiolarianPipeline:
                         row.setdefault("extraction_source", "od_after_grobid_failed")
                         row.setdefault(
                             "ingestion_warning",
-                            f"GROBID failed ({grobid_result.error_type}); "
-                            f"OD fallback used.",
+                            f"GROBID failed ({grobid_result.error_type}); OD fallback used.",
                         )
                     return od_results
                 logger.warning(
-                    "OpenDataLoader fallback also failed for %s; "
-                    "falling back to visual-only stub.",
+                    "OpenDataLoader fallback also failed for %s; falling back to visual-only stub.",
                     paper_id,
                 )
             return self._fallback_process_without_captions(
@@ -2665,8 +2676,7 @@ class RadiolarianPipeline:
                 )
                 if _PLATE_KW_RE.search(caption.caption):
                     plate_pages = [
-                        p for p in find_plate_pages(pages)
-                        if p.page_index not in existing_indexes
+                        p for p in find_plate_pages(pages) if p.page_index not in existing_indexes
                     ]
                     candidate_pages.extend(plate_pages[:3])
 
@@ -2773,6 +2783,7 @@ class RadiolarianPipeline:
         # enrichment is in-place and a no-op when modern coords or an
         # age are missing.
         from .paleo_reconstruction import enrich_geology_record
+
         for r in results:
             md = r.get("metadata") or {}
             for gl in md.get("geology_links") or []:
@@ -2996,10 +3007,7 @@ class RadiolarianPipeline:
             pid = r.get("panel_id")
             # Phase 59: only drop rows whose panel_id is a malformed
             # STRING (not a None — None is now allowed through).
-            if pid is not None and (
-                not isinstance(pid, str)
-                or not SHAPE.fullmatch(pid.strip())
-            ):
+            if pid is not None and (not isinstance(pid, str) or not SHAPE.fullmatch(pid.strip())):
                 logger.debug(
                     "Drop row with invalid panel_id=%r (fig=%s)",
                     pid,
@@ -3071,9 +3079,7 @@ class RadiolarianPipeline:
 
         return kept
 
-    def _apply_review_corrections(
-        self, rows: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _apply_review_corrections(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Overlay human review corrections on finalized rows.
 
         Reads ``<work_dir>/corrections/corrections.jsonl`` (one JSON
@@ -3094,11 +3100,7 @@ class RadiolarianPipeline:
             return rows
         try:
             with corr_path.open(encoding="utf-8") as fh:
-                corrections = [
-                    json.loads(line)
-                    for line in fh
-                    if line.strip()
-                ]
+                corrections = [json.loads(line) for line in fh if line.strip()]
         except (OSError, json.JSONDecodeError):
             logger.warning("Review corrections file unreadable: %s", corr_path)
             return rows
@@ -3294,9 +3296,7 @@ Rules:
 
                 parsed = _safe_json_loads(raw)
                 if isinstance(parsed, dict):
-                    panels_data = parsed.get("panels") or parsed.get("answer") or [
-                        parsed
-                    ]
+                    panels_data = parsed.get("panels") or parsed.get("answer") or [parsed]
                 else:
                     panels_data = parsed
             except Exception:
@@ -3346,9 +3346,9 @@ Rules:
                 bbox=None,
                 confidence=conf,
                 label_text=label,
-                caption_snippet=(
-                    (caption.caption or "").strip()[:240] or None
-                ) if hasattr(caption, "caption") else None,
+                caption_snippet=((caption.caption or "").strip()[:240] or None)
+                if hasattr(caption, "caption")
+                else None,
                 ocr_text=None,
                 paper_metadata=paper_metadata,
                 # Phase 55 audit CRITICAL-2 fix: explicitly pass panel_index=None
@@ -3480,10 +3480,11 @@ Rules:
                     logger.debug("Regex caption parser failed: %s", exc)
                 if not pair_lookup and self.m3_engine is not None:
                     try:
-                        caption_pairs = self._m3_call_with_fallback(self.m3_engine.parse_caption, 
-                        caption.caption or "",
-                        lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
-                    )
+                        caption_pairs = self._m3_call_with_fallback(
+                            self.m3_engine.parse_caption,
+                            caption.caption or "",
+                            lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
+                        )
                         for cp in caption_pairs:
                             for lbl in cp.labels or []:
                                 pair_lookup.setdefault(lbl.strip(), cp.species)
@@ -3538,9 +3539,9 @@ Rules:
 
                                     if not _is_valid_species(candidate_species):
                                         skipped_invalid += 1
-                                        r.setdefault("metadata", {})[
-                                            "hybrid_species_rejected"
-                                        ] = candidate_species
+                                        r.setdefault("metadata", {})["hybrid_species_rejected"] = (
+                                            candidate_species
+                                        )
                                         continue
                                 except Exception:
                                     # If the helper is unavailable for
@@ -3690,9 +3691,7 @@ Rules:
                 # The remaining caption-only rows (the LLM
                 # truncation case) survive unchanged.
                 if llm_results and pair_lookup:
-                    seen_panel_keys: dict[
-                        tuple[str, str, str], dict[str, Any]
-                    ] = {}
+                    seen_panel_keys: dict[tuple[str, str, str], dict[str, Any]] = {}
                     deduped_llm: list[dict[str, Any]] = []
                     for r in llm_results:
                         pid = r.get("panel_id")
@@ -3709,9 +3708,7 @@ Rules:
                         # ``_hybrid_added`` or ``caption_parser_hybrid``)
                         # drop when an LLM-native row exists; LLM rows
                         # themselves always win.
-                        is_caption_added = (r.get("metadata") or {}).get(
-                            "species_source"
-                        ) in (
+                        is_caption_added = (r.get("metadata") or {}).get("species_source") in (
                             "caption_parser_hybrid",
                             "regex_caption_hybrid_added",
                         )
@@ -3757,7 +3754,7 @@ Rules:
                         m = _re_hallu.match(r"^(\d+)", nn)
                         if m and m.group(1) in caption_labels:
                             return True
-                        m = _re_hallu.match(r"^([A-H])", nn)
+                        m = _re_hallu.match(r"^([A-H])", nn, _re_hallu.IGNORECASE)
                         if m and m.group(1).lower() in caption_labels:
                             return True
                         return False
@@ -3812,14 +3809,17 @@ Rules:
                         plate_pil = _im.convert("RGB")
                 # Stage 1: caption parser
                 if self.m3_engine._stage_enabled(1):
-                    m3_caption_pairs = self._m3_call_with_fallback(self.m3_engine.parse_caption, 
+                    m3_caption_pairs = self._m3_call_with_fallback(
+                        self.m3_engine.parse_caption,
                         caption.caption or "",
                         lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
                     )
                     m3_diag["stage1_pairs"] = len(m3_caption_pairs)
                 # Stage 2: plate classifier — early exit on non-radiolarian
                 if self.m3_engine._stage_enabled(2):
-                    m3_plate_cls = self._m3_call_with_fallback(self.m3_engine.classify_plate, plate_pil)
+                    m3_plate_cls = self._m3_call_with_fallback(
+                        self.m3_engine.classify_plate, plate_pil
+                    )
                     m3_diag["stage2_class"] = m3_plate_cls.to_dict()
                     if not m3_plate_cls.is_radiolarian_plate:
                         logger.info(
@@ -4621,8 +4621,7 @@ Rules:
         # audit the skip after the run.
         if error_info.get("is_non_specimen_figure"):
             logger.info(
-                "M3 returned 'non-specimen' refusal for %s/%s; "
-                "silently skipping (no popup): %s",
+                "M3 returned 'non-specimen' refusal for %s/%s; silently skipping (no popup): %s",
                 paper_id,
                 figure_id,
                 (error_info.get("error") or "")[:200],
@@ -4859,17 +4858,49 @@ Rules:
         # ("bar chart", "no specimen panels") markers; lowercased
         # for case-insensitive matching.
         non_specimen_markers = (
-            "该panel", "并非", "不涉及", "无标签", "无物种", "不可判定",
-            "不是放射虫", "不是标本", "非标本", "非放射虫", "不是图版",
-            "不是放射虫图版", "非图版", "非显微", "bar chart",
-            "bar graph", "柱状图", "统计图", "折线图", "数量统计",
-            "publication count", "publication number", "no specimen",
-            "no panel", "not a radiolarian", "not a specimen",
-            "no radiolarian", "is not a radiolarian", "is not a specimen",
-            "no specimen panels", "no panels found", "chart of",
-            "graph of", "table of", "is a chart", "is a table",
-            "is a graph", "is a diagram", "is a map", "is a photo",
-            "is a photomicrograph", "is text", "is a title page",
+            "该panel",
+            "并非",
+            "不涉及",
+            "无标签",
+            "无物种",
+            "不可判定",
+            "不是放射虫",
+            "不是标本",
+            "非标本",
+            "非放射虫",
+            "不是图版",
+            "不是放射虫图版",
+            "非图版",
+            "非显微",
+            "bar chart",
+            "bar graph",
+            "柱状图",
+            "统计图",
+            "折线图",
+            "数量统计",
+            "publication count",
+            "publication number",
+            "no specimen",
+            "no panel",
+            "not a radiolarian",
+            "not a specimen",
+            "no radiolarian",
+            "is not a radiolarian",
+            "is not a specimen",
+            "no specimen panels",
+            "no panels found",
+            "chart of",
+            "graph of",
+            "table of",
+            "is a chart",
+            "is a table",
+            "is a graph",
+            "is a diagram",
+            "is a map",
+            "is a photo",
+            "is a photomicrograph",
+            "is text",
+            "is a title page",
             "is a reference",
         )
         haystack = ((err or "") + " " + (err_type or "")).lower()
