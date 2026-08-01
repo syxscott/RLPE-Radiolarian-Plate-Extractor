@@ -384,7 +384,63 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
     """
     name = _normalise_species_name(species)
     if not name:
-        return {"genus": None, "specific_epithet": None, "qualifier": None}
+        return {
+            "genus": None,
+            "specific_epithet": None,
+            "qualifier": None,
+            "authority": None,
+            "generic_name": None,
+        }
+
+    # Audit 2026-08-01 M1/M2: pre-extract authority and subgenus from
+    # the raw name string before tokenization, so they do not get
+    # swept into the qualifier field.  Authority lives in
+    # ``authority`` (parens preserved), subgenus in ``generic_name``.
+    # The remaining (cleaned) name flows through the existing token
+    # loop below.  Order matters: postfix-subgenus must be checked
+    # BEFORE authority, otherwise ``(Podocyrtites)`` would match the
+    # authority surname pattern and steal the subgenus field.
+    working = name
+    authority: str | None = None
+    generic_name: str | None = None
+
+    # M1 (postfix subgenus): ``Podocyrtis amphora (Podocyrtites)``
+    # → ``generic_name="Podocyrtites"``.  Anchored at end of string
+    # so we don't grab the epithet's own parentheses.  Require a
+    # binomial (genus + epithet) before the paren — bare "X (Smith)"
+    # is an authority citation, not a subgenus.
+    postfix_m = re.search(r"\s\(([A-Z][\w\-']+)\)\s*$", working)
+    if postfix_m:
+        prefix_tokens = working[: postfix_m.start()].strip().split()
+        if len(prefix_tokens) >= 2:
+            generic_name = postfix_m.group(1).strip()
+            working = working[: postfix_m.start()].rstrip()
+
+    # M2 (authority in parens): ``(Haeckel, 1887)`` or ``(Smith)``.
+    # Require either a 4-digit year OR a leading capitalised
+    # surname, so that ``(Podocyrtites)`` (now stripped above) and
+    # ``(?)`` (qualifier marker) do not match.  Parens are kept in
+    # the ``authority`` value to mirror ICZN's parenthesised-author
+    # convention.
+    auth_m = re.search(
+        r"\(([^()]*\d{4}[a-z]?|[A-Z][a-z]+(?:[,\s]+\d{4}[a-z]?)?)\)\s*$",
+        working,
+    )
+    if auth_m:
+        authority = auth_m.group(0).strip()
+        working = (working[: auth_m.start()] + working[auth_m.end() :]).strip()
+
+    # Prefix subgenus (already worked for the authorship helper;
+    # mirror here so ``generic_name`` is populated for the prefix
+    # shape too): ``Podocyrtis (Podocyrtites) amphora``.
+    if generic_name is None:
+        prefix_m = re.match(r"^([A-Z][\w\-']+)\s+\(([A-Z][\w\-']+)\)\s+", working)
+        if prefix_m:
+            generic_name = prefix_m.group(2).strip()
+            working = (prefix_m.group(1) + " " + working[prefix_m.end() :]).strip()
+
+    # The cleaned name drives the token loop below.
+    name = working
 
     def _is_author_initial(token: str) -> bool:
         bare = token.rstrip(".")
@@ -415,7 +471,13 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
 
     tokens = name.split()
     if not tokens:
-        return {"genus": None, "specific_epithet": None, "qualifier": None}
+        return {
+            "genus": None,
+            "specific_epithet": None,
+            "qualifier": None,
+            "authority": None,
+            "generic_name": None,
+        }
 
     # Genus heuristic: only accept the first token if it starts with an
     # upper-case letter. Strip a trailing ``?`` so "Theocorys?" produces
@@ -424,10 +486,22 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
     # genus to avoid emitting genus="cf." in the data package.
     first = tokens[0]
     if not (first[:1].isalpha() and first[:1].isupper()):
-        return {"genus": None, "specific_epithet": None, "qualifier": None}
+        return {
+            "genus": None,
+            "specific_epithet": None,
+            "qualifier": None,
+            "authority": None,
+            "generic_name": None,
+        }
     genus = first.rstrip("?")
     if not genus:
-        return {"genus": None, "specific_epithet": None, "qualifier": None}
+        return {
+            "genus": None,
+            "specific_epithet": None,
+            "qualifier": None,
+            "authority": None,
+            "generic_name": None,
+        }
 
     # If the genus itself ended in "?", capture the marker as a
     # separate qualifier. The remaining tokens (if any) are treated as
@@ -442,9 +516,17 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
                 "genus": genus,
                 "specific_epithet": None,
                 "qualifier": " ".join(rest),
+                "authority": authority,
+                "generic_name": generic_name,
             }
         if not rest:
-            return {"genus": genus, "specific_epithet": None, "qualifier": "?"}
+            return {
+                "genus": genus,
+                "specific_epithet": None,
+                "qualifier": "?",
+                "authority": authority,
+                "generic_name": generic_name,
+            }
         # Locate the next qualifier boundary inside rest. The first
         # lower-cased token (after the optional initial author-prefix)
         # becomes the epithet; everything from the next qualifier /
@@ -468,6 +550,8 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
             "genus": genus,
             "specific_epithet": gen_epithet,
             "qualifier": gen_qualifier,
+            "authority": authority,
+            "generic_name": generic_name,
         }
 
     # If the second token is itself a qualifier (e.g. "cf."), the
@@ -482,6 +566,8 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
             "genus": genus,
             "specific_epithet": None,
             "qualifier": " ".join(tokens[1:]),
+            "authority": authority,
+            "generic_name": generic_name,
         }
 
     # Walk the rest. The qualifier is everything from the first
@@ -536,7 +622,13 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
         else:
             qualifier = " ".join(tokens[qualifier_idx:])
 
-    return {"genus": genus, "specific_epithet": epithet, "qualifier": qualifier}
+    return {
+        "genus": genus,
+        "specific_epithet": epithet,
+        "qualifier": qualifier,
+        "authority": authority,
+        "generic_name": generic_name,
+    }
 
 
 def _extract_authorship(species: str | None) -> tuple[str | None, str | None, str | None]:
@@ -585,6 +677,23 @@ def _extract_authorship(species: str | None) -> tuple[str | None, str | None, st
         sm = re.match(r"^([A-Z][\w\-']+)\s+\(([A-Z][\w\-']+)\)\s+", rest)
         if sm:
             subgenus = sm.group(2).strip()
+
+    # 4. Audit 2026-08-01 M1: POSTFIX subgenus e.g.
+    # ``Podocyrtis amphora (Podocyrtites)`` — the parenthesised
+    # subgenus trails the epithet instead of following the genus
+    # (Sanfilippo & Riedel 1985, O'Dogherty 1994, De Wever et al.
+    # 2001 routinely use this shape).  Only fires when no prefix
+    # subgenus was matched above, and only on the trailing
+    # parenthetical (anchored at end-of-string with whitespace
+    # before the opening paren).  Require at least 2 tokens before
+    # the paren — a single-token prefix like ``X (Smith)`` is an
+    # authority citation, not a postfix subgenus.
+    if subgenus is None and rest:
+        pm = re.search(r"\s\(([A-Z][\w\-']+)\)\s*$", rest)
+        if pm:
+            prefix_tokens = rest[: pm.start()].strip().split()
+            if len(prefix_tokens) >= 2:
+                subgenus = pm.group(1).strip()
 
     return None, subgenus, authorship
 
@@ -693,7 +802,12 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
         geology_context_id=geology_context_id,
         panel_path=match.panel_path,
         figure_image_path=meta.get("figure_image_path") or meta.get("image_path"),
-        bbox=_validate_bbox(match.bbox, paper_id=getattr(match, "paper_id", None), figure_id=getattr(match, "figure_id", None), panel_id=match.panel_id),
+        bbox=_validate_bbox(
+            match.bbox,
+            paper_id=getattr(match, "paper_id", None),
+            figure_id=getattr(match, "figure_id", None),
+            panel_id=match.panel_id,
+        ),
         confidence=float(match.confidence),
         label_text=match.label_text,
         caption_snippet=match.caption_snippet,
@@ -732,8 +846,7 @@ def _coerce_provenance(provenance: ProvenanceRecord | dict[str, Any]) -> Provena
         return provenance
     if not isinstance(provenance, dict):
         raise TypeError(
-            f"provenance must be ProvenanceRecord or dict, got "
-            f"{type(provenance).__name__}"
+            f"provenance must be ProvenanceRecord or dict, got {type(provenance).__name__}"
         )
     prov = dict(provenance)
     allowed_keys = {
@@ -1017,11 +1130,7 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         # ``TaxonRecord`` for the same purpose; ``taxon_remarks`` is
         # the explicit DwC term so the export self-documents.
         extraction_method = meta.get("extraction_method") or ""
-        taxon_remarks = (
-            f"extraction_method={extraction_method}"
-            if extraction_method
-            else None
-        )
+        taxon_remarks = f"extraction_method={extraction_method}" if extraction_method else None
         # P3-4 fix: when PBDB provides taxonomy, tag source as "paleodb"
         pbdb_provided_taxonomy = bool(
             pbdb_tax.get("family") or pbdb_tax.get("order") or pbdb_tax.get("class")
@@ -1215,9 +1324,7 @@ def _pbdb_enrich_geology(
     (drifting them away from the original PBDB values).
     """
     # Phase 60 Plan 3 (Bug 3.7): idempotency guard.
-    if matches and all(
-        (m.metadata or {}).get("pbdb_enriched") for m in matches
-    ):
+    if matches and all((m.metadata or {}).get("pbdb_enriched") for m in matches):
         return
     # Aggregate per species: most-common non-None value per field.
     species_agg: dict[str, dict[str, Any]] = {}
@@ -1271,9 +1378,11 @@ def _pbdb_enrich_geology(
         # centre of the largest cluster and is robust to outliers.
         if agg["ma_top"]:
             import statistics as _stats
+
             top["ma_top"] = _stats.median(agg["ma_top"])
         if agg["ma_base"]:
             import statistics as _stats
+
             top["ma_base"] = _stats.median(agg["ma_base"])
         if agg["lat"]:
             top["lat"] = sum(agg["lat"]) / len(agg["lat"])
@@ -1286,7 +1395,7 @@ def _pbdb_enrich_geology(
         if not sp or sp not in species_top:
             continue
         top = species_top[sp]
-        for g in ((m.metadata or {}).get("geology_links") or []):
+        for g in (m.metadata or {}).get("geology_links") or []:
             if not isinstance(g, dict):
                 continue
             if not g.get("biozone") and top.get("early_interval"):
@@ -1371,9 +1480,7 @@ def geology_contexts_from_matches(matches: list[MatchResult]) -> list[dict[str, 
                 group=g.get("group"),
                 lithology=g.get("lithology"),
                 biozone=g.get("biozone"),
-                locality_id=_locality_id(g, m.paper_id)
-                if g.get("locality")
-                else None,
+                locality_id=_locality_id(g, m.paper_id) if g.get("locality") else None,
                 evidence_text=g.get("evidence_text"),
                 confidence=float(g.get("confidence", 0.0) or 0.0),
             )
@@ -1426,8 +1533,7 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
                 # fallback (Round 21). The fallback signal is
                 # preserved here so the operator can distinguish.
                 coordinate_source=(
-                    g.get("coord_source")
-                    or ("caption" if g.get("latitude") is not None else None)
+                    g.get("coord_source") or ("caption" if g.get("latitude") is not None else None)
                 ),
                 geocoding_source=None,
                 confidence=float(g.get("confidence", 0.0) or 0.0),
@@ -1681,17 +1787,12 @@ def warnings_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
         # the count distribution at a glance without scrolling
         # through 100s of per-panel rows.
         summary = {
-            "warning_id": _stable_id(
-                "warn", "summary", "round24", *sorted(code_counts.keys())
-            ),
+            "warning_id": _stable_id("warn", "summary", "round24", *sorted(code_counts.keys())),
             "level": "info",
             "code": "panel_review_summary",
             "message": (
                 "Per-panel review reasons: "
-                + ", ".join(
-                    f"{c}={n}" for c, n in
-                    sorted(code_counts.items(), key=lambda x: -x[1])
-                )
+                + ", ".join(f"{c}={n}" for c, n in sorted(code_counts.items(), key=lambda x: -x[1]))
             ),
             "entity_type": "run",
             "entity_id": None,
