@@ -6,6 +6,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# audit 2026-08-02 (Wave D): default to radiolarian-trained model
+DEFAULT_YOLO_MODEL_PATH = "models/radiolarian_yolo_v1.pt"  # radiolarian-tuned
+
 # Audit 2026-08-02 (Fix 1-B2): Ultralytics' stock COCO checkpoints. Picking
 # one of these means the detector was never trained on radiolarian plates.
 _COCO_YOLO_BASENAMES = {
@@ -167,7 +170,7 @@ class PipelineConfig:
     # detections below this confidence; ``yolo_iou_threshold`` (default 0.45)
     # merges overlapping detections via Non-Maximum Suppression.
     use_yolo_figures: bool = False
-    yolo_model_path: str = ""
+    yolo_model_path: str = DEFAULT_YOLO_MODEL_PATH
     yolo_conf_threshold: float = 0.25
     yolo_iou_threshold: float = 0.45
     # audit 2026-07-27 M-YO-1: YOLO device independent of ``use_gpu``.
