@@ -82,6 +82,7 @@ _KNOWN_EXTRA_KEYS = {
     # GROBID failure, no OD retry).
     "grobid_max_retries",
     "grobid_timeout",
+    "max_regions_per_caption",
     "grobid_no_probe",  # Phase 43: skip is_available() probe
     "disable_od_fallback",
     # M3 5-stage semantic engine
@@ -147,6 +148,9 @@ class PipelineConfig:
     # body text. Default 2 (legacy). Operators can widen via
     # ``--caption-window N``.
     caption_window: int = 2
+    # Audit 2026-08-02 (Wave B cost control): cap per-caption regions
+    # to prevent LLM cost explosion on dense papers.
+    max_regions_per_caption: int = 3
     # Phase 28: OpenDataLoader path page-distance limit for caption↔image
     # pairing. Replaces four previously hard-coded limits in
     # ``opendataloader_extractor.py`` (the +2 plate forward window,
@@ -241,6 +245,11 @@ class PipelineConfig:
         if self.caption_window < 1 or self.caption_window > 50:
             raise ValueError(
                 f"caption_window must be in [1, 50], got {self.caption_window}"
+            )
+        if self.max_regions_per_caption < 1 or self.max_regions_per_caption > 50:
+            raise ValueError(
+                "max_regions_per_caption must be in [1, 50], "
+                f"got {self.max_regions_per_caption}"
             )
         # Align with gui/constants.RANGE_OD_CAPTION_WINDOW=(1,200), the
         # web JobOptions validator, and the CLI help text. Phase 28's

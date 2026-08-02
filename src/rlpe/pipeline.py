@@ -2812,13 +2812,25 @@ class RadiolarianPipeline:
             chosen_regions.sort(
                 key=lambda r: (-r.score, r.page_index, r.bbox[1], r.bbox[0])
             )
+            # Audit 2026-08-02 (Wave B cost control): cap regions to bound LLM
+            # cost on dense papers. Default 3 per caption.
+            if len(chosen_regions) > self.config.max_regions_per_caption:
+                dropped = len(chosen_regions) - self.config.max_regions_per_caption
+                logger.info(
+                    "max_regions_per_caption=%d cap dropped %d lower-scored "
+                    "regions for fig=%s",
+                    self.config.max_regions_per_caption,
+                    dropped,
+                    caption.figure_id,
+                )
+                chosen_regions = chosen_regions[: self.config.max_regions_per_caption]
             # Audit 2026-08-02 (multi-region fallback): this used to take
             # only the first (best-scoring) chosen region and
             # discard the rest. Multi-plate papers (Bandini 2011: 9 plates
             # / 215 panels) put each plate in its own region, so 8/9 plates
-            # were silently dropped. We now process EVERY chosen region and
-            # merge the rows, keeping the highest-scoring region's version
-            # of any panel that two regions both detect.
+            # were silently dropped. We now process every retained chosen
+            # region and merge the rows, keeping the highest-scoring region's
+            # version of any panel that two regions both detect.
             all_region_results: list[dict[str, Any]] = []
             seen_panels: set[tuple[Any, Any]] = set()
             for region in chosen_regions:
