@@ -2812,29 +2812,52 @@ class RadiolarianPipeline:
             chosen_regions.sort(
                 key=lambda r: (-r.score, r.page_index, r.bbox[1], r.bbox[0])
             )
-            region = chosen_regions[0]
-            region_img = (
-                cv2.imread(region.crop_path)
-                if region.crop_path
-                else cv2.imread(best_page.image_path)
-            )
-            if region_img is None:
-                continue
+            # Audit 2026-08-02 (multi-region fallback): this used to take
+            # only the first (best-scoring) chosen region and
+            # discard the rest. Multi-plate papers (Bandini 2011: 9 plates
+            # / 215 panels) put each plate in its own region, so 8/9 plates
+            # were silently dropped. We now process EVERY chosen region and
+            # merge the rows, keeping the highest-scoring region's version
+            # of any panel that two regions both detect.
+            all_region_results: list[dict[str, Any]] = []
+            seen_panels: set[tuple[Any, Any]] = set()
+            for region in chosen_regions:
+                region_img = (
+                    cv2.imread(region.crop_path)
+                    if region.crop_path
+                    else cv2.imread(best_page.image_path)
+                )
+                if region_img is None:
+                    continue
 
-            figure_matches = self._process_region(
-                paper_id=paper_id,
-                figure_id=caption.figure_id,
-                caption=caption,
-                region_img=region_img,
-                region=region,
-                figure_index=idx,
-                section_links=section_links,
-                grobid_sections=grobid_result.fulltext_sections,
-                knowledge_graph=knowledge_graph,
-                best_page_index=best_page.page_index,
-                paper_metadata=paper_meta,
-            )
-            results.extend(figure_matches)
+                figure_matches = self._process_region(
+                    paper_id=paper_id,
+                    figure_id=caption.figure_id,
+                    caption=caption,
+                    region_img=region_img,
+                    region=region,
+                    figure_index=idx,
+                    section_links=section_links,
+                    grobid_sections=grobid_result.fulltext_sections,
+                    knowledge_graph=knowledge_graph,
+                    best_page_index=best_page.page_index,
+                    paper_metadata=paper_meta,
+                )
+                # Dedup by (figure_id, panel_id). Rows without a panel_id
+                # (stubs such as RANGE_CHART placeholders / ingestion
+                # warnings carry panel_id=None) are never deduped — they
+                # are not panels and collapsing them would lose data.
+                for match in figure_matches:
+                    panel_id = match.get("panel_id")
+                    if not panel_id:
+                        all_region_results.append(match)
+                        continue
+                    key = (match.get("figure_id"), panel_id)
+                    if key in seen_panels:
+                        continue
+                    seen_panels.add(key)
+                    all_region_results.append(match)
+            results.extend(all_region_results)
         # Cross-figure panel reassignment (same rationale as the OD path
         # at the bottom of ``_process_one_pdf_od``): GROBID can also emit
         # orphan figures — a thumbnail or sub-image of the real plate that
