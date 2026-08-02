@@ -9,6 +9,9 @@ logger = logging.getLogger(__name__)
 # audit 2026-08-02 (Wave D): default to radiolarian-trained model
 DEFAULT_YOLO_MODEL_PATH = "models/radiolarian_yolo_v1.pt"  # radiolarian-tuned
 
+# audit 2026-08-02 (Wave D): default to radiolarian-trained model
+DEFAULT_YOLO_MODEL_PATH = "models/radiolarian_yolo_v1.pt"  # radiolarian-tuned
+
 # Audit 2026-08-02 (Fix 1-B2): Ultralytics' stock COCO checkpoints. Picking
 # one of these means the detector was never trained on radiolarian plates.
 _COCO_YOLO_BASENAMES = {

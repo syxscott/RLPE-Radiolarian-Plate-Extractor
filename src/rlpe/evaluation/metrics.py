@@ -50,6 +50,53 @@ _BRAGIN_PLATE_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# Paper_id aliases — eval-side normalisation for hash-vs-slug mismatches.
+# ---------------------------------------------------------------------------
+# The gold standard records Bragin 2025 with the human-readable paper slug
+# ``bragin2025``, but the upstream OpenDataLoader extractor emits the
+# 16-char content hash ``2e85364a3c605326`` in its prediction rows. The
+# figure_id fix (commit ``f97f33a``, ``_BRAGIN_PLATE_RE`` above) closed
+# the plate-number side; the paper_id side was missed, so the eval still
+# failed to match Bragin panels and the paper reported 0% panel_match.
+#
+# The map is keyed by the *raw* paper_id (any direction — pred or gold
+# value), and values are the canonical paper_id the eval should treat the
+# row as belonging to. We map to the slug used by the gold file because
+# every other paper in the corpus uses a content hash on BOTH sides and
+# only Bragin has the asymmetry, so we align everything to the gold slug.
+_PAPER_ID_ALIASES: dict[str, str] = {
+    "2e85364a3c605326": "bragin2025",
+}
+
+
+def _normalize_paper_id(paper_id: str | None) -> str:
+    """Resolve a raw paper_id through :data:`_PAPER_ID_ALIASES`.
+
+    A missing/empty paper_id passes through unchanged (the caller is
+    expected to skip those rows). Unknown paper_ids pass through
+    unchanged so the rest of the corpus keeps its strict string
+    equality semantics — only the listed asymmetric pairs are aliased.
+    """
+    if not paper_id:
+        return paper_id or ""
+    return _PAPER_ID_ALIASES.get(paper_id, paper_id)
+
+
+def normalize_paper_id_for_eval(pred_id: str | None, gold_id: str | None) -> bool:
+    """Public helper: do these two paper_ids refer to the same paper?
+
+    Both inputs are run through :data:`_PAPER_ID_ALIASES` and the
+    canonical forms are compared. Symmetric in argument order (a
+    caller can pass either the pred-side or gold-side id first) so
+    external reporting layers do not need to know which side carries
+    the alias. Empty / ``None`` inputs are non-matches; the eval
+    loop already filters those rows but the helper stays safe to
+    call from arbitrary contexts.
+    """
+    return bool(pred_id) and bool(gold_id) and _normalize_paper_id(pred_id) == _normalize_paper_id(gold_id)
+
+
 def _figure_id_logical_key(figure_id: str) -> str:
     """Reduce ``od_plate_<pid>_p<page>_pl<N>`` and ``od_fig_<pid>_p<page>_<idx>``
     to the same canonical ``<pid>_p<page>`` key.
@@ -371,8 +418,14 @@ def evaluate(
     """
     by_paper: dict[str, PaperMetrics] = defaultdict(lambda: PaperMetrics(paper_id=""))
     for g in gold:
-        m = by_paper[g.paper_id]
-        m.paper_id = g.paper_id
+        # Resolve the gold paper_id through the alias map so a Bragin
+        # gold row (slug ``bragin2025``) and a Bragin pred row
+        # (hash ``2e85364a3c605326``) land in the same PaperMetrics
+        # bucket. Without this, Bragin showed 0% panel_match because
+        # the two streams keyed off different identifiers.
+        canonical_paper_id = _normalize_paper_id(g.paper_id)
+        m = by_paper[canonical_paper_id]
+        m.paper_id = canonical_paper_id
         m.n_gold += 1
 
     # Build a list of predictions per (paper_id, figure_id, panel_id).
@@ -387,7 +440,11 @@ def evaluate(
         if not _is_real_prediction(p):
             n_skipped += 1
             continue
-        pid = p.get("paper_id")
+        # Resolve the pred paper_id through the alias map (see comment
+        # in the gold ingestion block above). This makes the per-paper
+        # equality check ``pid != g.paper_id`` later in this function
+        # succeed for Bragin.
+        pid = _normalize_paper_id(p.get("paper_id"))
         fid = p.get("figure_id") or ""
         plabel = p.get("panel_id")
         if not pid or not plabel:
@@ -418,7 +475,12 @@ def evaluate(
     consumed_pred_keys: set[tuple[str, str, str]] = set()
 
     for g in gold:
-        m = by_paper[g.paper_id]
+        # Resolve the gold paper_id through the alias map at the per-
+        # paper loop too — defence-in-depth in case a future caller
+        # hands in raw GoldPanels whose paper_id wasn't pre-normalised
+        # at ingestion time.
+        canonical_paper_id = _normalize_paper_id(g.paper_id)
+        m = by_paper[canonical_paper_id]
         # audit 2026-08-02: apply Layer B normalisation (roman→arabic,
         # cf./aff.→cf/aff, parenthesised-content strip, whitespace
         # collapse, lowercase) BEFORE the existing taxonomy-aware
@@ -432,7 +494,7 @@ def evaluate(
         for (pid, fid, plabel), preds in pred_groups.items():
             if (pid, fid, plabel) in consumed_pred_keys:
                 continue
-            if pid != g.paper_id:
+            if pid != canonical_paper_id:
                 continue
             # Phase 55 audit: explicit guard — skip when both are non-empty
             # and differ. The Phase 68 audit relax this to also allow a
