@@ -346,8 +346,12 @@ class TestMissLists:
         assert len(m.mismatches) == 1
         assert m.mismatches[0]["panel_id"] == "1"
         assert m.mismatches[0]["figure_id"] == "f1"
-        assert m.mismatches[0]["expected"] == "Genus species"
-        assert m.mismatches[0]["predicted"] == "Other species"
+        # audit 2026-08-02: mismatches now record Layer B-normalised
+        # species (lowercase + cf./aff. fold + parenthesised-content
+        # strip) so the report can be diffed against the normalised
+        # comparison pipeline without re-normalising by the reader.
+        assert m.mismatches[0]["expected"] == "genus species"
+        assert m.mismatches[0]["predicted"] == "other species"
         assert m.unmatched == []
 
     def test_unmatched_recorded_when_no_pred(self):
@@ -358,7 +362,7 @@ class TestMissLists:
         assert m.mismatches == []
         assert len(m.unmatched) == 1
         assert m.unmatched[0]["panel_id"] == "5"
-        assert m.unmatched[0]["expected"] == "Genus species"
+        assert m.unmatched[0]["expected"] == "genus species"
         assert "predicted" not in m.unmatched[0]
 
     def test_perfect_match_has_no_miss_lists(self):
@@ -376,7 +380,9 @@ class TestMissLists:
         d = report.papers["p1"].to_dict()
         assert "mismatches" in d
         assert "unmatched" in d
-        assert d["mismatches"][0]["expected"] == "Genus species"
+        # audit 2026-08-02: expected/predicted fields are now Layer B
+        # normalised — see test_mismatch_recorded_when_species_differs.
+        assert d["mismatches"][0]["expected"] == "genus species"
 
     def test_unmatched_gold_with_no_species_not_counted(self):
         """A gold panel with an empty species string is not counted as

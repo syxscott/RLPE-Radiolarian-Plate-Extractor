@@ -24,9 +24,41 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .gold import GoldPanel, load_gold, match_panel
+from .gold import GoldPanel, load_gold, match_panel, normalize_species
 
 logger = logging.getLogger(__name__)
+
+
+# Figure_id schemas in the RLPE corpus come in two flavours:
+#   - new:   od_plate_<pid>_p<page>_pl<N>   (plate-caption matcher)
+#   - legacy: od_fig_<pid>_p<page>_<idx>    (per-figure matcher)
+# When the gold was re-keyed to the new schema but a paper's pred rows
+# still carry the legacy schema (Bandini 2011 pl08/pl09), strict
+# string-equality on figure_id falsely rejects valid matches. We
+# normalise both sides to a (paper_id, page) canonical key for the
+# figure_id guard so legacy pred rows can still satisfy verified
+# gold rows on the same page.
+_FIG_PAGE_RE = re.compile(r"^(?:od_plate_|od_fig_)([^_]+)_p(\d{3})")
+
+
+def _figure_id_logical_key(figure_id: str) -> str:
+    """Reduce ``od_plate_<pid>_p<page>_pl<N>`` and ``od_fig_<pid>_p<page>_<idx>``
+    to the same canonical ``<pid>_p<page>`` key.
+
+    Both schemas identify the same logical figure when (paper_id, page)
+    agree; the trailing ``_pl<N>`` vs ``_<idx>`` discriminator is an
+    internal extraction artefact that should not gate panel matching.
+
+    Returns the empty string for empty input and the raw figure_id when
+    no ``_pNNN`` page token is recognised (preserves the old strict-
+    equality behaviour for non-OD figure_ids like ``plate_1``).
+    """
+    if not figure_id:
+        return ""
+    m = _FIG_PAGE_RE.match(figure_id)
+    if m:
+        return f"{m.group(1)}_p{m.group(2)}"
+    return figure_id
 
 
 @dataclass(slots=True)
@@ -360,7 +392,12 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
 
     for g in gold:
         m = by_paper[g.paper_id]
-        gold_species = _norm_species(g.species)
+        # audit 2026-08-02: apply Layer B normalisation (roman→arabic,
+        # cf./aff.→cf/aff, parenthesised-content strip, whitespace
+        # collapse, lowercase) BEFORE the existing taxonomy-aware
+        # ``_norm_species`` rules. This closes the hollis2006 (61.9% F1)
+        # and feng2007 (83.9% F1) gap caused by surface-form mismatches.
+        gold_species = _norm_species(normalize_species(g.species))
         # Find a matching prediction. Restrict to predictions in the
         # same figure so panel labels in different figures don't collide.
         matched_pred: dict[str, Any] | None = None
@@ -370,10 +407,19 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
                 continue
             if pid != g.paper_id:
                 continue
-            # Phase 55 audit: explicit guard — skip when both are non-empty and differ
+            # Phase 55 audit: explicit guard — skip when both are non-empty
+            # and differ. The Phase 68 audit relax this to also allow a
+            # match when the gold uses the new ``od_plate_<pid>_p<page>_pl<N>``
+            # schema and the pred uses the legacy ``od_fig_<pid>_p<page>_<idx>``
+            # schema for the same (paper_id, page). Without this fallback,
+            # Bandini 2011 pl08 (22 panels) + pl09 (18 panels) miss the
+            # eval entirely because the verified gold was re-keyed to
+            # ``od_plate_*`` but the legacy extraction never re-emitted
+            # those figures with the new schema.
             gold_fig = g.figure_id or ""
             if gold_fig and fid and fid != gold_fig:
-                continue
+                if _figure_id_logical_key(gold_fig) != _figure_id_logical_key(fid):
+                    continue
             if match_panel(g, pid, plabel):
                 cand = _best_pred(preds)
                 if cand is None:
@@ -383,15 +429,17 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
                     matched_key = (pid, fid, plabel)
                 else:
                     # Prefer the candidate that matches the gold species
-                    cand_sp = _norm_species(cand.get("species"))
-                    cur_sp = _norm_species(matched_pred.get("species"))
+                    cand_sp = _norm_species(normalize_species(cand.get("species")))
+                    cur_sp = _norm_species(normalize_species(matched_pred.get("species")))
                     if (
                         cand_sp.lower() == gold_species.lower()
                         and cur_sp.lower() != gold_species.lower()
                     ):
                         matched_pred = cand
                         matched_key = (pid, fid, plabel)
-        matched_pred_species = _norm_species(matched_pred.get("species")) if matched_pred else None
+        matched_pred_species = (
+            _norm_species(normalize_species(matched_pred.get("species"))) if matched_pred else None
+        )
         if matched_pred is not None:
             m.panel_match += 1
             if matched_key is not None:
