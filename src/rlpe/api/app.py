@@ -241,6 +241,12 @@ class JobOptions(BaseModel):
     # the paper or captions sit on the page adjacent to the figure.
     caption_window: int | None = None  # 1..50
     od_caption_window: int | None = None  # 1..200
+    # ---- YOLO figure detection ----
+    use_yolo_figures: bool = False
+    yolo_model_path: str = ""
+    yolo_conf_threshold: float = 0.25
+    yolo_iou_threshold: float = 0.45
+    yolo_device: str = "auto"
     # ---- Phase 29 GROBID retry + OD-fallback knobs ----
     # ``grobid_max_retries`` is the total HTTP attempts; ``grobid_timeout``
     # is the per-attempt request timeout. ``disable_od_fallback`` is the
@@ -2203,6 +2209,14 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             pipeline_kwargs["caption_window"] = int(options["caption_window"])
         if options.get("od_caption_window") is not None:
             pipeline_kwargs["od_caption_window"] = int(options["od_caption_window"])
+        # YOLO figure detection is opt-in; forward its complete configuration
+        # only when enabled so the PipelineConfig defaults remain unchanged.
+        if options.get("use_yolo_figures"):
+            pipeline_kwargs["use_yolo_figures"] = True
+            pipeline_kwargs["yolo_model_path"] = options.get("yolo_model_path", "")
+            pipeline_kwargs["yolo_conf_threshold"] = float(options.get("yolo_conf_threshold", 0.25))
+            pipeline_kwargs["yolo_iou_threshold"] = float(options.get("yolo_iou_threshold", 0.45))
+            pipeline_kwargs["yolo_device"] = options.get("yolo_device", "auto")
         # Phase 29: forward GROBID retry + timeout + OD-fallback opt-out.
         # ``caption_window`` (GROBID) and ``od_caption_window`` (OD) are
         # first-class PipelineConfig fields; the GROBID retry + OD-fallback
