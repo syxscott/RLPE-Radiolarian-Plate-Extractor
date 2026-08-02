@@ -786,7 +786,8 @@ class TestProductDataPackage:
 
     def test_schema_version_pinned_to_current(self):
         """The external data-contract version is published via
-        ``SCHEMA_VERSION`` (currently ``1.1.0`` after audit 2026-08-02).
+        ``SCHEMA_VERSION`` (currently ``1.2.0`` after audit 2026-08-02;
+        bumped from 1.1.0 for Stage-6 morphology records).
 
         The test reads the version through the module constant rather
         than hard-coding the literal so a future minor bump only
@@ -795,7 +796,7 @@ class TestProductDataPackage:
         ``RunOutput.schema_version`` echoed by ``validate_run_output``
         is a contract break and must fail this test.
         """
-        assert SCHEMA_VERSION == "1.1.0"
+        assert SCHEMA_VERSION == "1.2.0"
         prov = ProvenanceRecord(**build_provenance().to_dict())
         ro = validate_run_output(
             {
@@ -804,4 +805,4 @@ class TestProductDataPackage:
                 "panels": [],
             }
         )
-        assert ro.schema_version == "1.1.0"
+        assert ro.schema_version == "1.2.0"

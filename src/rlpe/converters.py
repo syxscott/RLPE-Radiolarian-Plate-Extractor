@@ -22,6 +22,7 @@ from .schema_models import (
     GeologyContextRecord,
     GeologyLinkRecord,
     LocalityRecord,
+    MorphologyRecord,
     PaleoCoordinateRecord,
     PanelMetadata,
     PanelRecord,
@@ -883,6 +884,8 @@ def _coerce_provenance(provenance: ProvenanceRecord | dict[str, Any]) -> Provena
 def run_output_from_provenance(
     provenance: ProvenanceRecord | dict[str, Any],
     matches: list[MatchResult] | None,
+    *,
+    paper_morphologies: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-serializable RunOutput dict from a provenance and a
     list of ``MatchResult`` instances. Use this before writing the
@@ -908,6 +911,12 @@ def run_output_from_provenance(
     A partial dict is backfilled with stub fields so the GUI's
     truncated provenance (``{job_id, source}``) does not blow up
     ``ProvenanceRecord.model_validate``.
+
+    Audit 2026-08-02: ``paper_morphologies`` carries the Stage-6
+    MorphologyRecord dicts produced by
+    ``RadiolarianPipeline._apply_morphology_enrichment`` for the
+    paper. Merged with per-row ``metadata["morphology"]`` fallbacks
+    so existing tests keep working.
     """
     provenance = _coerce_provenance(provenance)
     if matches is None:
@@ -942,6 +951,13 @@ def run_output_from_provenance(
     paleo_dump, paleo_warns = paleo_coordinates_from_localities(locality_dump, geology_dump)
     if paleo_warns:
         warnings_dump = warnings_dump + paleo_warns
+    # Audit 2026-08-02: Stage 6 morphology records. ``paper_morphologies``
+    # is a list of dicts the pipeline helper built per-paper; the
+    # ``matches`` parameter is also checked so per-row ``metadata[
+    # "morphology"]`` fallbacks keep working (tests + legacy paths).
+    morphology_dump = morphology_records_from_matches(
+        matches, paper_morphologies=paper_morphologies
+    )
     return {
         "schema_version": provenance.schema_version,
         "provenance": provenance.model_dump(),
@@ -953,6 +969,7 @@ def run_output_from_provenance(
         "geology_contexts": geology_dump,
         "localities": locality_dump,
         "paleo_coordinates": paleo_dump,
+        "morphologies": morphology_dump,
         "warnings": warnings_dump,
     }
 
@@ -1126,6 +1143,14 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         meta = m.metadata or {}
         pbdb = meta.get("paleodb") or {}
         pbdb_tax = pbdb.get("taxonomy") or {}
+        # Audit 2026-08-02: collect morphology_ids attached to this
+        # species by the Stage-6 morphology enrichment. The pipeline
+        # helper attaches morphology records at the paper level
+        # (``_apply_morphology_enrichment``) but we also accept
+        # per-row ``m.metadata["morphology_ids"]`` for backwards
+        # compatibility with tests that wire morphology at the
+        # MatchResult level.
+        morph_ids = list(meta.get("morphology_ids") or [])
         # Phase 63 Plan 6.17/6.18 (Bugs 6.17/6.18): extract the
         # authority/year and subgenus from the verbatim species
         # string. ``_extract_authorship`` recognises both
@@ -1176,9 +1201,88 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             generic_name=subgenus,
             # Phase 63 Plan 6.19 (Bug 6.19)
             taxon_remarks=taxon_remarks,
+            # Audit 2026-08-02: link to MorphologyRecord entries
+            # produced by Stage 6. May be empty when Stage 6 is off,
+            # the species had no anchorable description, or M3
+            # returned an empty dict.
+            morphology_ids=morph_ids,
         )
         seen[taxon_id] = rec.model_dump()
     return list(seen.values())
+
+
+def morphology_records_from_matches(
+    matches: list[MatchResult] | None,
+    *,
+    paper_morphologies: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Build MorphologyRecord dicts ready for ``RunOutput.morphologies``.
+
+    Audit 2026-08-02 — Stage 6 morphology enrichment (opt-in).
+
+    Two input paths are supported and merged:
+
+    1. ``paper_morphologies``: list of dicts the pipeline's
+       ``_apply_morphology_enrichment`` produced for a single paper
+       (each entry is already a dict-shaped MorphologyRecord payload).
+       These are validated through ``MorphologyRecord.model_validate``
+       so unknown fields are rejected (extra="forbid" on the schema).
+
+    2. ``matches``: legacy / test fallback — any MatchResult whose
+       metadata carries ``metadata["morphology"]`` (a dict shaped like
+       a MorphologyRecord) is converted to a record. Same shape as
+       ``paper_morphologies`` but reads from per-row metadata.
+
+    The function is idempotent: dedup by ``morphology_id`` so a paper
+    that produces records via both paths keeps the first occurrence.
+    Invalid entries (missing required fields, wrong types) are skipped
+    with a logged warning so a single malformed record doesn't break
+    the entire export.
+    """
+    out: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for entry in paper_morphologies or []:
+        if not isinstance(entry, dict):
+            continue
+        rec = _safe_morphology_record(entry)
+        if rec is None:
+            continue
+        if rec["morphology_id"] in seen_ids:
+            continue
+        seen_ids.add(rec["morphology_id"])
+        out.append(rec)
+    for m in matches or []:
+        meta = m.metadata or {}
+        entry = meta.get("morphology")
+        if not isinstance(entry, dict):
+            continue
+        rec = _safe_morphology_record(entry)
+        if rec is None:
+            continue
+        if rec["morphology_id"] in seen_ids:
+            continue
+        seen_ids.add(rec["morphology_id"])
+        out.append(rec)
+    return out
+
+
+def _safe_morphology_record(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate a morphology dict through ``MorphologyRecord``.
+
+    Returns the dumped dict on success, ``None`` on any validation
+    failure. Logs a warning so the operator can see which entry was
+    dropped.
+    """
+    try:
+        rec = MorphologyRecord.model_validate(entry)
+    except Exception as exc:
+        logger.warning(
+            "morphology_records_from_matches: dropping malformed entry (%s): %s",
+            exc,
+            {k: entry.get(k) for k in ("morphology_id", "taxon_id", "paper_id")},
+        )
+        return None
+    return rec.model_dump()
 
 
 def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:

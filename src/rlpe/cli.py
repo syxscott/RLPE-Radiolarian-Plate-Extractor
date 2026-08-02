@@ -273,6 +273,27 @@ def build_parser() -> argparse.ArgumentParser:
         "Plate 7-9): asks M3 to extract the panel list from the plate "
         "image + page-level caption. Off by default (avoids M3 API cost).",
     )
+    p.add_argument(
+        "--m3-stage-6",
+        "--no-m3-stage-6",
+        dest="m3_stage_6",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Audit 2026-08-02: enable Stage 6 M3 morphology extraction. "
+        "When set, the pipeline sends each unique (paper, species) "
+        "caption or Description-section excerpt to M3 and emits a "
+        "MorphologyRecord (test shape, segments, pores, spines, "
+        "diagnostic features). Off by default (opt-in due to API "
+        "cost). Use --no-m3-stage-6 to explicitly disable.",
+    )
+    p.add_argument(
+        "--m3-morphology-max-species-per-paper",
+        type=int,
+        default=None,
+        help="Audit 2026-08-02: cap how many species per paper Stage 6 "
+        "calls M3 for (default 100). Lower to control API cost on "
+        "papers with many panels.",
+    )
     # ---- OpenDataLoader PDF parser (replaces GROBID) -----------------------
     p.add_argument(
         "--use-opendataloader",
@@ -475,6 +496,7 @@ def main() -> int:
             "use_geo_vision": args.use_geo_vision,
             "use_m3_stage3": args.use_m3_stage3,
             "m3_multi_plate_enrich": args.m3_multi_plate_enrich,
+            "m3_stage_6": args.m3_stage_6,
             "geo_vision_figure_types": (
                 [t.strip() for t in args.geo_vision_figure_types.split(",") if t.strip()]
                 if args.geo_vision_figure_types
@@ -502,6 +524,15 @@ def main() -> int:
         cfg.extra["m3_retry_without_thinking"] = bool(args.m3_retry_without_thinking)
     if args.m3_skip_match_on_empty_caption is not None:
         cfg.extra["m3_skip_match_on_empty_caption"] = bool(args.m3_skip_match_on_empty_caption)
+    # Audit 2026-08-02: Stage-6 morphology knobs. ``--m3-stage-6`` is
+    # opt-in (default None → off); ``--m3-morphology-max-species-per-
+    # paper`` overrides the PipelineConfig default.
+    if args.m3_stage_6 is not None:
+        cfg.extra["m3_stage_6"] = bool(args.m3_stage_6)
+    if args.m3_morphology_max_species_per_paper is not None:
+        cfg.m3_morphology_max_species_per_paper = int(
+            args.m3_morphology_max_species_per_paper
+        )
     ensure_dir(cfg.work_dir)
     pipeline = RadiolarianPipeline(cfg)
     rows = pipeline.run()

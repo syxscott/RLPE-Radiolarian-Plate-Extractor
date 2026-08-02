@@ -23,7 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 
 # Strict mode for exported records. ``extra="forbid"`` means a JSONL
 # record with an unknown field is rejected, which protects downstream
@@ -279,6 +279,13 @@ class TaxonRecord(BaseModel):
     # how the taxon name was determined (caption regex vs. llm-first
     # vs. hybrid).
     taxon_remarks: str | None = None
+    # Audit 2026-08-02: link from TaxonRecord to one or more
+    # MorphologyRecord entries extracted for the same species. Empty
+    # list when Stage 6 is off, the species had no anchorable
+    # description section, or M3 returned an empty dict. Stable IDs
+    # (see ``converters.morphology_records_from_matches``) so the
+    # JSONL export round-trips.
+    morphology_ids: list[str] = Field(default_factory=list)
 
 
 class SampleRecord(BaseModel):
@@ -315,6 +322,56 @@ class GeologyContextRecord(BaseModel):
     biozone: str | None = None
     locality_id: str | None = None
     evidence_text: str | None = None
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class MorphologyRecord(BaseModel):
+    """Structured morphological description for one species.
+
+    Audit 2026-08-02 — Stage 6 (M3 morphology extraction, opt-in).
+    For each unique (paper, species) pair with an anchorable
+    Description / Diagnosis section, the pipeline emits ONE
+    MorphologyRecord. Fields the source text doesn't mention are
+    left ``None`` — never ``False`` / ``0`` / ``""`` — so the JSONL
+    export distinguishes "M3 said yes" from "M3 had nothing to
+    say".
+    """
+
+    model_config = StrictModel
+    morphology_id: str
+    taxon_id: str
+    paper_id: str
+    # Provenance.
+    source: str = ""  # "caption" | "body_text" | "m3_vision"
+    section_id: str | None = None
+    section_title: str | None = None
+    figure_id: str | None = None
+    panel_id: str | None = None
+    page_index: int | None = None
+    evidence_text: str | None = None
+    # Test / overall shape.
+    test_shape: str | None = None
+    test_length_um_min: float | None = Field(default=None, ge=0.0)
+    test_length_um_max: float | None = Field(default=None, ge=0.0)
+    test_width_um_min: float | None = Field(default=None, ge=0.0)
+    test_width_um_max: float | None = Field(default=None, ge=0.0)
+    # Segmented-shell geometry (nassellarians).
+    num_segments: int | None = Field(default=None, ge=0)
+    cephalis_shape: str | None = None
+    thorax_shape: str | None = None
+    abdomen_shape: str | None = None
+    # Pore architecture.
+    pore_pattern: str | None = None
+    pore_diameter_um_min: float | None = Field(default=None, ge=0.0)
+    pore_diameter_um_max: float | None = Field(default=None, ge=0.0)
+    # Spines.
+    spines_present: bool | None = None
+    spine_count: int | None = Field(default=None, ge=0)
+    # Aperture.
+    apertural_structure: str | None = None
+    # Diagnostic / distinguishing features (verbatim short phrases).
+    diagnostic_features: list[str] = Field(default_factory=list)
+    # Confidence in the extraction (clamped 0..1 by the engine).
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
@@ -557,6 +614,7 @@ class RunOutput(BaseModel):
     geology_contexts: list[GeologyContextRecord] = Field(default_factory=list)
     localities: list[LocalityRecord] = Field(default_factory=list)
     paleo_coordinates: list[PaleoCoordinateRecord] = Field(default_factory=list)
+    morphologies: list[MorphologyRecord] = Field(default_factory=list)
     warnings: list[WarningRecord] = Field(default_factory=list)
 
 

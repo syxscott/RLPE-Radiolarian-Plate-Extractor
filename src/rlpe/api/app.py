@@ -213,6 +213,15 @@ class JobOptions(BaseModel):
     m3_stage_4: bool | None = None
     m3_stage_5: bool | None = None
     m3_match_samples: int | None = None
+    # ---- Audit 2026-08-02: M3 morphology Stage-6 (opt-in) ----
+    # When True, the pipeline asks M3 for one MorphologyRecord per
+    # unique (paper, species) pair with an anchorable Description /
+    # Diagnosis section. Privacy: api_redacted → caption-only;
+    # local_only → skip entirely.
+    m3_stage_6: bool | None = None
+    m3_morphology_max_species_per_paper: int | None = None
+    m3_morphology_max_context_chars: int | None = None
+    m3_morphology_min_caption_chars: int | None = None
     # ---- Paleobiology Database (opt-in) ----
     use_paleodb: bool = False
     paleodb_max_occurrences: int = 25
@@ -2157,6 +2166,8 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             "m3_stage_5",
             "m3_match_samples",
             "m3_diagnostic_dir",
+            # Audit 2026-08-02: Stage-6 morphology knobs.
+            "m3_stage_6",
             # Paleobiology Database (opt-in)
             "use_paleodb",
             "paleodb_max_occurrences",
@@ -2227,6 +2238,22 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             extra["grobid_timeout"] = int(options["grobid_timeout"])
         if options.get("disable_od_fallback"):
             extra["disable_od_fallback"] = True
+        # Audit 2026-08-02: Stage-6 morphology int overrides are
+        # first-class PipelineConfig fields (not extras) — set them
+        # before constructing PipelineConfig so ``__post_init__``
+        # validation runs against the user-supplied values.
+        if options.get("m3_morphology_max_species_per_paper") is not None:
+            pipeline_kwargs["m3_morphology_max_species_per_paper"] = int(
+                options["m3_morphology_max_species_per_paper"]
+            )
+        if options.get("m3_morphology_max_context_chars") is not None:
+            pipeline_kwargs["m3_morphology_max_context_chars"] = int(
+                options["m3_morphology_max_context_chars"]
+            )
+        if options.get("m3_morphology_min_caption_chars") is not None:
+            pipeline_kwargs["m3_morphology_min_caption_chars"] = int(
+                options["m3_morphology_min_caption_chars"]
+            )
         cfg = PipelineConfig(**pipeline_kwargs)
 
         # If using MiniMax, register a web-popup fallback handler.
