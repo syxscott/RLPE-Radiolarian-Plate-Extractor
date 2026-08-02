@@ -250,7 +250,11 @@ def _norm_species(s: str | None) -> str:
         if bare in _TRINOMIAL_STOP or _has_trailing_uncertainty(p):
             trinomial_safe = False
             break
-    if len(parts) >= 3 and trinomial_safe and all(p and p[0].islower() for p in parts[1:]):
+    if (
+        len(parts) >= 3
+        and trinomial_safe
+        and all(p and p[0].islower() for p in parts[1:])
+    ):
         # audit 2026-07-31: only the AUTONYM trinomial (third word
         # equals the second — "Lamptonium fabaeforme fabaeforme") is
         # the same species under ICZN Art. 46.1 and folds to the
@@ -270,7 +274,12 @@ def _norm_species(s: str | None) -> str:
     # 1. "Archaeo" always appears at start of genus names (not mid-word)
     # 2. The concern about "Archaeozoology" is moot since it's not a genus
     #    and the replacement is at string start only (not global)
-    if s.startswith("Archaeo"):
+    # audit 2026-08-02: case-insensitive Archaeo fold so all-caps
+    # OCR (e.g. "ARCHAEODICTYOMITRA") matches its Title-case canonical
+    # form. The old case-sensitive check was fragile because pred
+    # rows in all-caps fired but the same gold row in Title-case did
+    # not.
+    if s.lower().startswith("archaeo"):
         s = "Archeo" + s[len("Archaeo") :]
     # 5) "X gen" (parser truncation) ↔ "X indet" (gold long form).
     #    The "gen. et sp. indet" → "indet" collapse above handles the
@@ -329,7 +338,9 @@ def _is_real_prediction(p: dict[str, Any]) -> bool:
     return True
 
 
-def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> EvaluationReport:
+def evaluate(
+    predictions: list[dict[str, Any]], gold: list[GoldPanel]
+) -> EvaluationReport:
     """Score predictions against a gold set.
 
     Predictions are dicts with keys: paper_id, panel_id, species.
@@ -430,7 +441,9 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
                 else:
                     # Prefer the candidate that matches the gold species
                     cand_sp = _norm_species(normalize_species(cand.get("species")))
-                    cur_sp = _norm_species(normalize_species(matched_pred.get("species")))
+                    cur_sp = _norm_species(
+                        normalize_species(matched_pred.get("species"))
+                    )
                     if (
                         cand_sp.lower() == gold_species.lower()
                         and cur_sp.lower() != gold_species.lower()
@@ -438,7 +451,9 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
                         matched_pred = cand
                         matched_key = (pid, fid, plabel)
         matched_pred_species = (
-            _norm_species(normalize_species(matched_pred.get("species"))) if matched_pred else None
+            _norm_species(normalize_species(matched_pred.get("species")))
+            if matched_pred
+            else None
         )
         if matched_pred is not None:
             m.panel_match += 1
@@ -710,7 +725,11 @@ def bootstrap_confidence_interval(
     except ImportError:
         # numpy unavailable: fall back to point estimate only
         if paper_metrics:
-            fe = paper_metrics[0].f1 if hasattr(paper_metrics[0], "f1") else paper_metrics[0].species_f1
+            fe = (
+                paper_metrics[0].f1
+                if hasattr(paper_metrics[0], "f1")
+                else paper_metrics[0].species_f1
+            )
             return (fe, fe, fe)
         return (0.0, 0.0, 0.0)
 

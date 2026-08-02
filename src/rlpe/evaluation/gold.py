@@ -107,6 +107,17 @@ def normalize_species(s: str | None) -> str:
       - trinomial autonym fold
       - ``Archaeo`` → ``Archeo`` fold (case-sensitive ``startswith``)
       - ``X gen`` → ``X indet`` fold
+
+    The full pipeline comparison (used inside
+    :func:`rlpe.evaluation.metrics.evaluate`) is::
+
+        _species_compatible(
+            _norm_species(normalize_species(g.species)),
+            _norm_species(normalize_species(pred.species)),
+        )
+
+    which lowercases after :func:`_norm_species` runs, so the final
+    TP/FP decision is case-insensitive as required by the test suite.
     """
     if not s:
         return ""
@@ -130,7 +141,11 @@ def _normalize_panel_id(s: str) -> str:
     here, so a single token always flows through this function as-is.
     """
     stripped = s.strip()
-    ascii_folded = unicodedata.normalize("NFKD", stripped).encode("ascii", "ignore").decode("ascii")
+    ascii_folded = (
+        unicodedata.normalize("NFKD", stripped)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
     return ascii_folded.lower()
 
 

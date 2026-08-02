@@ -12,14 +12,20 @@ file:
   matches three independent pred rows while compound forms like
   ``"1-3"`` or ``"1a"`` are preserved unchanged.
 
-* **Layer B (species)** — ``gold.normalize_species`` lowercases, converts
-  Roman → Arabic (II → 2, III → 3, IV → 4), strips ``cf.``/``aff.`` to
-  ``cf``/``aff``, drops parenthesised content, and collapses whitespace.
-  ``metrics._norm_species`` runs on top of this for taxonomy rules
-  (trinomial fold, sp./spp. strip, ``Archaeo`` → ``Archeo``).
+* **Layer B (species)** — ``gold.normalize_species`` converts Roman →
+  Arabic (``II`` → ``2``, ``III`` → ``3``, ``IV`` → ``4``), strips
+  ``cf.``/``aff.`` to ``cf``/``aff``, drops parenthesised content, and
+  collapses whitespace. ``metrics._norm_species`` runs on top of this
+  for taxonomy rules (trinomial fold, sp./spp. strip, ``Archaeo`` →
+  ``Archeo``). The final TP/FP comparison is case-insensitive via
+  :func:`rlpe.evaluation.metrics._species_compatible`.
 
 These tests cover both layers through the public ``normalize_species``
-and ``match_panel`` entry points.
+and ``match_panel`` entry points. The species tests use the full
+``Layer B → _norm_species`` pipeline (not just Layer B alone) because
+``_norm_species`` rules are case-sensitive and require the original
+casing — testing only Layer B would either mask case-handling bugs OR
+over-fold genuine distinctions.
 """
 
 from __future__ import annotations
@@ -34,10 +40,20 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from rlpe.evaluation.gold import GoldPanel, match_panel, normalize_species  # noqa: E402
+from rlpe.evaluation.metrics import _norm_species  # noqa: E402
+
+
+def _pipeline_match(a: str, b: str) -> bool:
+    """Run both surface-form layers (``gold.normalize_species`` →
+    ``metrics._norm_species``) and compare case-insensitively — mirrors
+    the comparison path in :func:`metrics.evaluate`."""
+    aa = _norm_species(normalize_species(a)).lower()
+    bb = _norm_species(normalize_species(b)).lower()
+    return aa == bb
 
 
 # ---------------------------------------------------------------------------
-# Layer B — species normalisation
+# Layer B — species normalisation (full pipeline)
 # ---------------------------------------------------------------------------
 
 
@@ -49,14 +65,14 @@ class TestSpeciesNormalization:
         figure caption with Arabic in the OCR'd species list. The eval
         should treat them as the same name.
         """
-        assert normalize_species("Hastigerina II") == normalize_species("Hastigerina 2")
+        assert _pipeline_match("Hastigerina II", "Hastigerina 2")
 
     def test_cf_normalization(self):
         """``cf.`` (gold) and ``cf`` (pred) are the same open-nomenclature
         qualifier — only the trailing period differs.
         """
-        assert normalize_species("Archaeodictyomitra cf. tumandae") == normalize_species(
-            "Archaeodictyomitra cf tumandae"
+        assert _pipeline_match(
+            "Archaeodictyomitra cf. tumandae", "Archaeodictyomitra cf tumandae"
         )
 
     def test_aff_normalization(self):
@@ -65,21 +81,23 @@ class TestSpeciesNormalization:
         Same open-nomenclature rule as cf., but for ``affinis``. The
         suffix ``W. sp. S`` is preserved — only ``aff.`` is normalised.
         """
-        assert normalize_species("Williriedellum aff. W. sp. S") == normalize_species(
-            "Williriedellum aff W. sp. S"
+        assert _pipeline_match(
+            "Williriedellum aff. W. sp. S", "Williriedellum aff W. sp. S"
         )
 
     def test_whitespace_collapsing(self):
         """Run of whitespace (typical OCR artefact) collapses to single
         space. ``Entactinia  modesta`` (two spaces) is the same as
         ``Entactinia modesta`` (one space)."""
-        assert normalize_species("Entactinia  modesta") == normalize_species("Entactinia modesta")
+        assert _pipeline_match("Entactinia  modesta", "Entactinia modesta")
 
     def test_case_insensitive(self):
         """All-caps ``ARCHAEODICTYOMITRA`` (typical of older figure OCR
         that lifted the genus name straight from the captioned header)
-        matches the canonical Title-case spelling."""
-        assert normalize_species("ARCHAEODICTYOMITRA") == normalize_species("Archaeodictyomitra")
+        matches the canonical Title-case spelling.``_species_compatible``
+        lowercases for the final equality so this works regardless of
+        which side is upper / title case."""
+        assert _pipeline_match("ARCHAEODICTYOMITRA", "Archaeodictyomitra")
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +115,9 @@ class TestPanelIdNormalization:
         """
         gold = GoldPanel(paper_id="p", figure_id="f", panel_id="1, 2, 3", species=None)
         for tok in ("1", "2", "3"):
-            assert match_panel(gold, "p", tok), f"pred {tok!r} should match gold '1, 2, 3'"
+            assert match_panel(
+                gold, "p", tok
+            ), f"pred {tok!r} should match gold '1, 2, 3'"
         # Pred 4 must NOT match — it's outside the gold range.
         assert not match_panel(gold, "p", "4")
 
