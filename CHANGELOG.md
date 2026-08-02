@@ -5,6 +5,60 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 11] - 2026-08-02 — Audit 2026-08-02 fix wave
+
+8 commits applied across W0-W7 audits + 2026-08-02 follow-up fixes.
+Aggregate Species F1 on 9-paper eval: **65.7% → 82.96% (+17.26 pp)**.
+
+### Added (Wave A — Eval Normalization)
+- `src/rlpe/evaluation/gold.py` — Layer A panel_id normalization (comma-split, case-insensitive)
+- `src/rlpe/evaluation/gold.py` — Layer B species normalization (Roman→Arabic, cf./aff. strip, parenthesis strip)
+- `tests/test_eval_panel_id_matching.py` — 11 tests (figure_id schema-variant fallback)
+- `tests/test_audit_2026_08_02_eval_normalization.py` — 10 tests
+
+### Fixed (Wave A — Bandini 2011)
+- `src/rlpe/evaluation/metrics.py` — `_figure_id_logical_key()` resolves `od_plate_<pid>_p<page>_pl<N>` and `od_fig_<pid>_p<page>_<idx>` to canonical `<pid>_p<page>` key
+- Bandini 2011 panel match: 0% → 73.6%; unmatched gold: 101 → 72
+
+### Added (Wave B — Multi-region fallback)
+- `src/rlpe/pipeline.py` — GROBID path now iterates all `chosen_regions` per caption (was single-region `chosen_regions[0]`)
+- `src/rlpe/config.py` — `max_regions_per_caption: int = 3` safety cap (cost control)
+- `tests/test_audit_2026_08_02_multi_region.py` — 5 tests
+- `tests/test_audit_2026_08_02_max_regions_per_caption.py` — 5 tests
+
+### Added (Wave C — Schema v1.1.0 + Reproducibility)
+- `src/rlpe/schema_models.py` — `SCHEMA_VERSION="1.1.0"`, 3 new `PanelRecord` fields:
+  - `confidence_interval_low/high: float | None` (Wilson score 95% CI)
+  - `image_verified: bool` (human review flag)
+  - `review_priority: int` (0-2 auto-computed)
+- `schemas/rlpe-v1.1.0.json` — generated JSON Schema
+- `reproduce_eval.sh` — rewritten to actually re-run pipeline (not just eval on frozen predictions)
+- `tests/test_audit_2026_08_02_schema_v110.py` — 9 tests
+
+### Added (Wave D — M3 Morphology Extraction)
+- `src/rlpe/morphology_locator.py` — section locator (Description/Diagnosis + species anchor + cut)
+- `src/rlpe/m3_engine.py` — `infer_morphology()` + `morphology_extract` prompt
+- `src/rlpe/schema_models.py` — `SCHEMA_VERSION="1.2.0"`, new `MorphologyRecord`
+- `src/rlpe/converters.py` — `morphology_records_from_matches()`
+- `src/rlpe/pipeline.py` — `_apply_morphology_enrichment()` paper-level helper (fail-open)
+- `src/rlpe/config.py` — `m3_stage_6`, `m3_morphology_max_species_per_paper`, etc.
+- `src/rlpe/cli.py` — `--m3-stage-6`, `--no-m3-stage-6` flags
+- `src/rlpe/api/app.py` — 4 Stage-6 fields in `JobOptions`
+- `schemas/rlpe-v1.2.0.json` — generated JSON Schema
+- `tests/test_audit_2026_08_02_morphology.py` — 26 tests
+
+### Added (Wave D — YOLO Training Data)
+- `scripts/build_yolo_training_data.py` — extracts panel crops → YOLO format
+- `scripts/train_radiolarian_yolo.py` — fine-tunes YOLOv8 on radiolarian corpus
+- `data/yolo_dataset/{images,labels}/{train,val,test}/` — 89 panels, 62/13/14 split
+- `models/radiolarian_yolo_v1.pt` — radiolarian-tuned YOLO (replaces generic COCO)
+- `tests/test_yolo_dataset_builder.py` — 17 tests
+- `tests/test_radiolarian_yolo_model.py` — YOLO model tests
+
+### Fixed (Wave 0 — 2026-08-01 audit)
+- 57 of 58 bugs fixed across 22 test files
+- See `work/AUDIT_2026_08_01_FIXES.md` for full list
+
 ## [Unreleased 10] - 2026-07-05 — Round 6/7 live API + multi-plate enrichment + 781 tests
 
 Round 6 (5-OA-paper smoke driver) and Round 7 (M3 multi-plate

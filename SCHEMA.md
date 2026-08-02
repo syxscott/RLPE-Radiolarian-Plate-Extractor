@@ -2,6 +2,7 @@
 
 This document describes the canonical output shape of an RLPE run.
 The machine-readable JSON Schema lives at `schemas/rlpe-v1.0.0.json`.
+Newer schema versions (`v1.1.0`, `v1.2.0`) are listed under "Schema versions" below.
 
 ## Top-level shape
 
@@ -18,6 +19,14 @@ The machine-readable JSON Schema lives at `schemas/rlpe-v1.0.0.json`.
 | `schema_version` | string | yes | Semver of the output schema. Bumped on any field change. |
 | `provenance` | object | yes | See Provenance below. |
 | `panels` | array of PanelRecord | yes | One entry per detected panel. |
+
+## Schema versions
+
+| Version | Status | Notable additions |
+| --- | --- | --- |
+| `1.0.0` | shipped | Initial release. `PanelRecord`, `ScaleBarRecord`, `GeologyLinkRecord`, `PaperMetadataRecord`. |
+| `1.1.0` | shipped (2026-08-02) | Adds 3 `PanelRecord` fields: `confidence_interval_low`, `confidence_interval_high`, `image_verified`, `review_priority`. |
+| `1.2.0` | shipped (2026-08-02) | Adds `MorphologyRecord` (Stage 6, opt-in via `--m3-stage-6`). |
 
 ## Provenance
 
@@ -56,6 +65,10 @@ A single detected specimen panel.
 | `ocr_text` | string \| null | no | OCR text inside the panel crop. |
 | `metadata` | object | yes | Diagnostic metadata. See below. |
 | `paper_metadata` | object \| null | no | Bibliographic metadata. See below. |
+| `confidence_interval_low` | float \| null | no | **(v1.1.0+)** Wilson score 95% CI lower bound for `confidence`. |
+| `confidence_interval_high` | float \| null | no | **(v1.1.0+)** Wilson score 95% CI upper bound for `confidence`. |
+| `image_verified` | bool | no | **(v1.1.0+)** Human-review flag indicating the panel label/species was visually verified. Default `False`. |
+| `review_priority` | int | no | **(v1.1.0+)** Auto-computed priority 0..2 (0 = low, 2 = urgent) based on confidence + unmatched-species signals. Used by the Web UI to triage human review. |
 
 ## PanelMetadata
 
@@ -119,6 +132,32 @@ A single detected specimen panel.
 | `publisher` | string \| null | |
 | `page_count` | int \| null | |
 | `source` | string | "grobid" \| "opendataloader" \| "none" |
+| `confidence` | float | 0..1 |
+
+## MorphologyRecord (v1.2.0+)
+
+Structured morphological description for one species. Emitted by
+Stage 6 (M3 morphology extraction, opt-in via `--m3-stage-6`). For
+each unique `(paper_id, species)` pair with an anchorable Description
+or Diagnosis section, the pipeline emits ONE `MorphologyRecord`.
+Fields the source text doesn't mention are left `null` — never `False`
+/ `0` / `""` — so the JSONL export distinguishes "M3 said yes" from
+"M3 had nothing to say".
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `morphology_id` | string | Stable id for this record. |
+| `paper_id` | string | Owning paper. |
+| `species` | string | Target species. |
+| `figure_id` | string \| null | Figure this species was illustrated on. |
+| `page_index` | int \| null | Page where the Description/Diagnosis was located. |
+| `cephalis_shape` | string \| null | Cephalis / dome shape description. |
+| `thorax_shape` | string \| null | Thorax shape description. |
+| `abdomen_shape` | string \| null | Abdomen shape description. |
+| `apertural_structure` | string \| null | Aperture / opening description. |
+| `num_segments` | int \| null | Number of segments reported. |
+| `diagnostic_features` | list of string | Free-text bullets of distinctive features. |
+| `evidence_text` | string \| null | Quoted source text supporting the record. |
 | `confidence` | float | 0..1 |
 
 ## Validation rules

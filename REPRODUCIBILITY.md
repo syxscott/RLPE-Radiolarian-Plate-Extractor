@@ -3,7 +3,47 @@
 This document explains how to reproduce any RLPE result bit-for-bit,
 and how to verify that an existing result is genuine.
 
-## TL;DR — Reproducing the batch4_v2 E2E + post-fix evaluation
+## TL;DR — Reproducing the 9-paper F1 (recommended entry point)
+
+The `reproduce_eval.sh` script is the canonical "show me the number"
+entry point. As of the 2026-08-02 audit fix wave, it actually RE-RUNS
+the full PDF→predictions pipeline (instead of just re-running the eval
+harness on a frozen jsonl). Defaults to a 3-paper subset
+(`beccaro2006`, `bandini2011`, `pouille2014`) so wall time stays under
+~45 min and M3 cost under ~¥15.
+
+```bash
+# 1. Clone and install
+git clone <repo> && cd <repo>
+pip install -e ".[schema]"
+pip install -r requirements.txt
+
+# 2. Make sure ANTHROPIC_API_KEY is exported (MiniMax M3 backend)
+export ANTHROPIC_API_KEY=sk-...
+
+# 3. Run the 3-paper subset (default)
+bash reproduce_eval.sh
+
+# Or pick a smaller / larger subset
+bash reproduce_eval.sh --limit 3            # 3-paper (default)
+bash reproduce_eval.sh --limit 9            # full 9-paper gold set
+bash reproduce_eval.sh --paper hollis2006   # one specific paper
+
+# Outputs land under work/reproduce_eval/:
+#   predictions.jsonl          # concat of per-paper jsonl
+#   per_paper/<name>/          # each paper's work-dir
+#   eval.json                  # scripts/evaluate.py JSON dump
+#   REPORT.md                  # human-readable report
+#   per_paper_metrics.tsv      # per-paper F1 table
+```
+
+Aggregate F1 on the 9-paper set (as of 2026-08-02): **82.96%**.
+
+> Note: the previous version of `reproduce_eval.sh` only re-ran the
+> eval harness on a frozen prediction file. That version is kept
+> documented in git history (commits before 2026-08-02).
+
+## TL;DR — Reproducing the batch4_v2 E2E + post-fix evaluation (legacy)
 
 ```bash
 # 1. Clone and install

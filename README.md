@@ -12,6 +12,28 @@ Radiolarian Literature Plate Extractor（放射虫文献图版提取流水线）
 
 ---
 
+## Recent updates (2026-08-02)
+
+### F1 progress: 65.7% → 82.96% on 9-paper gold set
+
+After the August 1 audit (58 bugs → 57 fixed) + August 2 follow-up wave:
+
+| Metric | Before | After |
+|---|---:|---:|
+| Species F1 | 65.7% | **82.96%** |
+| Panel match | 58.8% | 84.31% |
+| Recall | 52.2% | 75.98% |
+
+Key wins:
+- Bandini 2011 (215 panels): **0% → 73.6%** panel match (figure_id schema fix)
+- New M3-based morphology extraction (Stage 6, opt-in via `--m3-stage-6`)
+- New radiolarian-trained YOLO detector (replaces generic COCO model)
+- Schema v1.2.0 with morphology records + review priority
+
+See `work/F1_PROGRESS_2026_08_02.md` and `work/AUDIT_FOLLOWUP_2026_08_02.md` for details.
+
+---
+
 ## 快速导航
 
 ### 🎯 新手入门（强烈推荐）
