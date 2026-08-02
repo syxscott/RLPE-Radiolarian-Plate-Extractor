@@ -815,6 +815,15 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
         extraction_method=str(meta.get("extraction_method", "") or ""),
         needs_review=bool(review_reasons) or bool(meta.get("needs_review", False)),
         review_reasons=review_reasons,
+        # audit 2026-08-02 (Schema v1.1.0): forward the three new
+        # optional fields from match metadata onto the published
+        # PanelRecord. All three are producer-side hints: the
+        # defaults (None / False / 0) keep legacy matches valid and
+        # the Pydantic model enforces the [0,1] / [0,2] ranges.
+        confidence_interval_low=meta.get("confidence_interval_low"),
+        confidence_interval_high=meta.get("confidence_interval_high"),
+        image_verified=bool(meta.get("image_verified", False)),
+        review_priority=int(meta.get("review_priority", 0) or 0),
         metadata=panel_metadata_from_match(match),
         paper_metadata=paper_metadata_from_internal(match.paper_metadata),
     )

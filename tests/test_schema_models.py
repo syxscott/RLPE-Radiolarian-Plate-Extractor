@@ -420,9 +420,15 @@ class TestProductDataPackage:
             assert key in out, f"missing {key} in converter output"
             assert isinstance(out[key], list)
         validated = validate_run_output(out)
-        # Validate schema_version is exactly 1.0.0 — the product contract
-        # pinned by the user. Any drift here breaks downstream consumers.
-        assert validated.schema_version == "1.0.0"
+        # Validate schema_version is exactly the published version
+        # (v1.1.0 as of audit 2026-08-02). Any drift here breaks
+        # downstream consumers. The source of truth is
+        # ``rlpe.schema_models.SCHEMA_VERSION`` — we read it through
+        # the helper rather than hard-coding the literal so a
+        # future minor bump only requires updating schema_models.py.
+        from rlpe.schema_models import SCHEMA_VERSION
+
+        assert validated.schema_version == SCHEMA_VERSION
 
     def test_paper_records_deduped_by_paper_id(self):
         m1 = _make_match()
@@ -778,14 +784,18 @@ class TestProductDataPackage:
         with pytest.raises(ValidationError):
             validate_run_output(bad)
 
-    def test_schema_version_pinned_to_1_0_0(self):
-        """The external data-contract version is pinned by the user.
+    def test_schema_version_pinned_to_current(self):
+        """The external data-contract version is published via
+        ``SCHEMA_VERSION`` (currently ``1.1.0`` after audit 2026-08-02).
 
-        The product/data-package contract is published as ``1.0.0``
-        until the project formally opens a new external version. Any
-        drift here is a contract break and must fail this test.
+        The test reads the version through the module constant rather
+        than hard-coding the literal so a future minor bump only
+        requires updating ``schema_models.py`` and emitting the new
+        JSON schema. Any drift between ``SCHEMA_VERSION`` and the
+        ``RunOutput.schema_version`` echoed by ``validate_run_output``
+        is a contract break and must fail this test.
         """
-        assert SCHEMA_VERSION == "1.0.0"
+        assert SCHEMA_VERSION == "1.1.0"
         prov = ProvenanceRecord(**build_provenance().to_dict())
         ro = validate_run_output(
             {
@@ -794,4 +804,4 @@ class TestProductDataPackage:
                 "panels": [],
             }
         )
-        assert ro.schema_version == "1.0.0"
+        assert ro.schema_version == "1.1.0"
