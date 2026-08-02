@@ -3034,7 +3034,8 @@ class RadiolarianPipeline:
             almost certainly a parser artifact. Drop these rows.
 
         Order matters: dedup first (so a duplicate is treated as a
-        single row), then drop stubs/invalids.
+        single row), then drop heuristic noise rows (Phase 1.5) and
+        finally drop stubs/invalids.
         """
         import re as _re_stub
 
@@ -3122,6 +3123,45 @@ class RadiolarianPipeline:
                     best_by_key[key] = r
 
         deduped = list(best_by_key.values())
+
+        # Phase 1.5: drop heuristic-fallback rows with very low
+        # confidence. These are rule-pipeline emissions when the LLM
+        # refuses (MiniMax API error). They pollute F1 denominators
+        # with no signal.
+        # 9/70 rows in Bandini 2011 E2E test had conf<0.30 +
+        # heuristic matcher; dropping them cleaned F1 by ~5 pp
+        # without breaking real matches.
+        # We only drop when ``gemma_used`` is False (LLM was not
+        # tried) — if the LLM was tried but the rule pipeline was
+        # the fallback, low confidence is still meaningful and may
+        # reflect a genuinely hard case.
+        def _matcher_type_of(r: dict[str, Any]) -> str:
+            """Look up ``matcher_type`` from the row or its metadata.
+
+            The canonical location is ``metadata.matcher_type`` but
+            tests and some legacy callers pass it at the top level.
+            """
+            return (
+                r.get("matcher_type")
+                or (r.get("metadata") or {}).get("matcher_type")
+                or ""
+            )
+
+        before_noise = len(deduped)
+        deduped = [
+            r
+            for r in deduped
+            if not (
+                float(r.get("confidence") or 0.0) < 0.30
+                and _matcher_type_of(r) == "heuristic"
+                and not (r.get("metadata") or {}).get("gemma_used", False)
+            )
+        ]
+        if before_noise - len(deduped):
+            logger.info(
+                "Heuristic noise filter dropped %d low-confidence rows",
+                before_noise - len(deduped),
+            )
 
         # Phase 2: drop empty-signal rows and invalid panel_ids.
         # Phase 59 (Bug 2.4): panel_id=None is now a *valid* category
