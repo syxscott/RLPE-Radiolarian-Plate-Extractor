@@ -85,6 +85,7 @@ class PanelSegmenter:
                 self._predictor = SAM2ImagePredictor(model)
             except Exception as exc:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "SAM2 model failed to initialise (falling back to OpenCV): %s: %s",
                     type(exc).__name__,
@@ -563,4 +564,69 @@ class PanelSegmenter:
             accepted = new_accepted
 
         accepted.sort(key=lambda c: (c.bbox[1], c.bbox[0]))
+
+        # Audit 2026-08-02 (Fix 2): if standard pass returns <=1 panel
+        # and image is large, try tiling. This recovers dense-plate
+        # panels (e.g. Bandini 2011 pl07 has 23 specimens in one plate).
+        h, w = image.shape[:2]
+        if len(accepted) <= 1 and h >= 600 and w >= 600:
+            try:
+                tiled = self._tile_and_segment(image, grid=(2, 2))
+                if len(tiled) > len(accepted):
+                    accepted = tiled
+            except Exception as exc:
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    "tile-and-segment fallback failed: %s",
+                    exc,
+                )
+
         return accepted
+
+    def _tile_and_segment(
+        self,
+        image: np.ndarray,
+        grid: tuple[int, int] = (2, 2),
+        overlap: int = 20,
+    ) -> list[PanelCandidate]:
+        """Fallback: tile the image into a grid and run CC on each tile.
+
+        For dense plates where morphological close fuses many specimens into
+        one giant CC rejected by ``max_single_panel_area_frac``, this fallback
+        splits the plate into sub-tiles, runs OpenCV CC on each, and merges
+        results with offsets applied back to original-frame coordinates.
+
+        Audit 2026-08-02 (Fix 2): Bandini 2011 pl07 has 23 specimens in one
+        plate image; the standard CC pass fuses them all into one giant blob
+        that's > 0.20 of plate area -> 0 panels -> only 1 fullpage fallback row.
+        Tiling recovers 20+ panels in the audit's E2E data.
+        """
+        h, w = image.shape[:2]
+        rows, cols = grid
+        th_h = h // rows
+        th_w = w // cols
+        out: list[PanelCandidate] = []
+        for r in range(rows):
+            for c in range(cols):
+                y0 = max(0, r * th_h - overlap)
+                x0 = max(0, c * th_w - overlap)
+                y1 = min(h, (r + 1) * th_h + overlap) if r < rows - 1 else h
+                x1 = min(w, (c + 1) * th_w + overlap) if c < cols - 1 else w
+                tile = image[y0:y1, x0:x1].copy()
+                tile_panels = self._segment_with_opencv(tile)
+                for p in tile_panels:
+                    bx, by, bw, bh = p.bbox
+                    # Convert tile-frame bbox back to original-frame
+                    out.append(
+                        PanelCandidate(
+                            panel_id=p.panel_id,
+                            bbox=(int(bx + x0), int(by + y0), int(bw), int(bh)),
+                            score=p.score,
+                            metadata={
+                                **(p.metadata or {}),
+                                "method": (p.metadata or {}).get("method", "opencv") + "+tiled",
+                            },
+                        )
+                    )
+        return out
