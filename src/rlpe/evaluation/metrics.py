@@ -39,6 +39,15 @@ logger = logging.getLogger(__name__)
 # figure_id guard so legacy pred rows can still satisfy verified
 # gold rows on the same page.
 _FIG_PAGE_RE = re.compile(r"^(?:od_plate_|od_fig_)([^_]+)_p(\d{3})")
+# Bragin 2025 is a schema variant of the plate matcher: the gold key uses
+# the paper slug and plate number (``..._bragin2025_p001_pl01``), while the
+# extracted prediction retains the OpenDataLoader document hash and the PDF
+# page containing that plate (``..._2e85364a3c605326_p006_pl01``).  For this
+# paper the stable identity is the printed plate discriminator, not the
+# source-specific hash/page pair.
+_BRAGIN_PLATE_RE = re.compile(
+    r"^od_plate_(?:bragin2025|2e85364a3c605326)_p\d{3}_pl(\d+)$"
+)
 
 
 def _figure_id_logical_key(figure_id: str) -> str:
@@ -55,6 +64,13 @@ def _figure_id_logical_key(figure_id: str) -> str:
     """
     if not figure_id:
         return ""
+    # Bragin 2025's gold and prediction disagree in both the document token
+    # and the page token: gold records the paper slug/plate page, whereas the
+    # raw extraction uses the OD document hash/PDF page.  Both still carry the
+    # same printed ``pl<N>`` discriminator, which is the logical figure id.
+    bragin = _BRAGIN_PLATE_RE.match(figure_id)
+    if bragin:
+        return f"bragin2025_pl{int(bragin.group(1)):02d}"
     m = _FIG_PAGE_RE.match(figure_id)
     if m:
         return f"{m.group(1)}_p{m.group(2)}"
