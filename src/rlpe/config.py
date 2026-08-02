@@ -6,6 +6,26 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Audit 2026-08-02 (Fix 1-B2): Ultralytics' stock COCO checkpoints. Picking
+# one of these means the detector was never trained on radiolarian plates.
+_COCO_YOLO_BASENAMES = {
+    "yolo11n.pt",
+    "yolo11s.pt",
+    "yolo11m.pt",
+    "yolo11l.pt",
+    "yolo11x.pt",
+    "yolov8n.pt",
+    "yolov8s.pt",
+    "yolov8m.pt",
+    "yolov8l.pt",
+    "yolov8x.pt",
+    "yolo11n-seg.pt",
+    "yolo11s-seg.pt",
+    "yolo11m-seg.pt",
+    "yolo11l-seg.pt",
+    "yolo11x-seg.pt",
+}
+
 # Recognised extra-config keys; any key outside this set triggers a warning.
 _KNOWN_EXTRA_KEYS = {
     "sam2_checkpoint",
@@ -241,6 +261,20 @@ class PipelineConfig:
             if not model_path.is_file():
                 raise ValueError(
                     f"yolo_model_path={model_path!r} does not exist or is not a file"
+                )
+            # Audit 2026-08-02 (Fix 1-B2): warn when the user picks a known
+            # COCO placeholder. Filename "yolo11*.pt" is the Ultralytics
+            # generic COCO checkpoint — detecting radiolarian plates with it
+            # produces random COCO-class bboxes (person, bicycle, etc.) that
+            # downstream caption routing will ingest as if correct.
+            if model_path.name in _COCO_YOLO_BASENAMES:
+                logger.warning(
+                    "yolo_model_path=%r looks like a generic COCO-pretrained "
+                    "model. Detections will be unreliable on radiolarian "
+                    "pages — train a domain-specific .pt or set "
+                    "--use-yolo-figures=False. See docs/ for the training "
+                    "recipe.",
+                    model_path.name,
                 )
         # audit 2026-07-26: align with gui.constants.RANGE_YOLO_CONF/IOU
         # (0.01 lower bound) and the settings_tab spinbox minimum 0.01.

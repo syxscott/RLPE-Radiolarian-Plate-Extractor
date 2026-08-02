@@ -314,6 +314,29 @@ def detect_figure_regions_yolo(
                 logging.getLogger(__name__).warning(
                     "YOLO warmup failed (%s); continuing without warmup", exc
                 )
+            # Audit 2026-08-02 (Fix 1-B2 runtime check): if the loaded model
+            # exposes class 0 as 'person', it's clearly a COCO model, not a
+            # radiolarian-trained one. Warn loudly (don't raise — backward
+            # compat for any non-COCO users).
+            try:
+                names = getattr(model, "names", None) or {}
+                if isinstance(names, dict) and str(names.get(0, "")).lower() in {
+                    "person",
+                    "bicycle",
+                    "car",
+                }:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "YOLO model at %r exposes COCO classes (class 0=%r) — "
+                        "this is NOT a radiolarian-trained detector. Results "
+                        "will be unreliable. Train a domain-specific .pt or "
+                        "disable YOLO.",
+                        str(model_path),
+                        names.get(0),
+                    )
+            except Exception:
+                pass  # don't fail the load just because class-name check failed
             setattr(detect_figure_regions_yolo, cache_key, model)
 
     model: "ultralytics.YOLO" = getattr(detect_figure_regions_yolo, cache_key)
