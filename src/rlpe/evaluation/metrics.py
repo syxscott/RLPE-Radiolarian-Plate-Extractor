@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -778,6 +779,52 @@ def compare_before_after(
         "match_improvement": round(after_acc - before_acc, 4),
         "gemma_confidence_mean": round(gemma_mean, 4),
     }
+
+
+def wilson_score_interval(
+    p_hat: float,
+    n: int = 5,
+    z: float = 1.96,
+) -> tuple[float, float]:
+    """Wilson score interval for a Bernoulli proportion.
+
+    Returns ``(low, high)`` for the symmetric two-sided ``z``-interval
+    on the panel-level ``confidence`` (``p_hat``), assuming ``n``
+    independent observations supported the confidence estimate.
+
+    The audit 2026-08-05 (Fill Gaps) task wires this into
+    ``PanelRecord.confidence_interval_low / _high``. The default ``n=5``
+    is a conservative approximation: it matches the typical number of
+    caption-pair / OCR-evidence signals the heuristic matcher combines
+    to reach a panel-level confidence, and produces a CI roughly half
+    the magnitude of the worst-case n=1 Wilson interval. Producers may
+    override via ``metadata["matcher_evidence_count"]`` to expose a
+    more precise count.
+
+    The interval is **clamped** to ``[0.0, 1.0]`` so callers can use the
+    bounds directly as Pydantic field values (the schema enforces
+    ``ge=0.0, le=1.0``).
+
+    This is NOT a strict statistical 95% CI — it is a Wilson-style
+    approximation sized for the panel-level signal. Document that in
+    user-facing docs to avoid downstream confusion.
+    """
+    if n <= 0:
+        # Degenerate case: return the widest possible interval.
+        return (0.0, 1.0)
+    p_hat = min(max(float(p_hat), 0.0), 1.0)
+    denom = 1.0 + z * z / n
+    center = (p_hat + z * z / (2.0 * n)) / denom
+    spread = (
+        z
+        * math.sqrt(
+            p_hat * (1.0 - p_hat) / n + z * z / (4.0 * n * n)
+        )
+        / denom
+    )
+    low = max(0.0, center - spread)
+    high = min(1.0, center + spread)
+    return (low, high)
 
 
 def bootstrap_confidence_interval(

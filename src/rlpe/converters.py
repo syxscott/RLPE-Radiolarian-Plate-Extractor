@@ -36,6 +36,7 @@ from .schema_models import (
 )
 from .types import MatchResult
 from .types import PaperMetadata as InternalPaperMetadata
+from .evaluation.metrics import wilson_score_interval
 
 logger = logging.getLogger(__name__)
 
@@ -756,6 +757,46 @@ def _panel_review_reasons(match: MatchResult) -> list[str]:
     return reasons
 
 
+# Reasons that flag a panel as **critical** for the review queue —
+# missing any of these means downstream consumers can't trust the row
+# without human eyes. Critical reasons map to priority 2; any other
+# reason maps to 1; no reason maps to 0. Producers that want to
+# override (e.g. an LLM-verified row with no review reasons) can
+# still set ``meta["review_priority"]`` directly and the converter
+# will respect it.
+_CRITICAL_REVIEW_REASONS: frozenset[str] = frozenset(
+    {
+        "missing_species",
+        "missing_bbox",
+        "missing_printed_panel_id",
+        "missing_panel_image",
+    }
+)
+
+
+def _review_priority_from_reasons(reasons: list[str]) -> int:
+    """Map review reasons to a 0/1/2 priority bucket.
+
+    Audit 2026-08-05 (Fill Gaps): ``PanelRecord.review_priority``
+    was previously always 0 because no producer wrote it. The Web UI
+    review queue (``restab.review_priority`` filter) sorts on this
+    field, so panels with critical review needs should surface at
+    the top of the human queue.
+
+    Bucketing rules:
+      2 (high)   — any critical reason (missing species / bbox /
+                   printed_panel_id). These rows cannot be used
+                   downstream without verification.
+      1 (medium) — at least one non-critical review reason.
+      0 (low)    — no review reasons; row is publishable as-is.
+    """
+    if any(r in _CRITICAL_REVIEW_REASONS for r in reasons):
+        return 2
+    if reasons:
+        return 1
+    return 0
+
+
 def panel_record_from_match(match: MatchResult) -> PanelRecord:
     """Convert an internal ``MatchResult`` to a published ``PanelRecord``."""
     meta = match.metadata or {}
@@ -780,6 +821,31 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
         # different prefix and dropped ``member``, so the join was
         # always broken.
         geology_context_id = _geology_context_id(geos[0])
+    # audit 2026-08-05 (Fill Gaps): compute Wilson 95% CI from
+    # ``confidence`` and an evidence-count hint
+    # (``metadata["matcher_evidence_count"]``, default 5) when the
+    # producer did not stamp its own CI bounds. Likewise compute
+    # review_priority from review_reasons when the producer did not
+    # stamp it directly. Both fall back to the meta-pass-through for
+    # producers that already populated the fields (e.g. live review
+    # UI, replay scripts, audit scripts).
+    _p_hat = float(meta.get("confidence", match.confidence))
+    _n_ev = int(meta.get("matcher_evidence_count", 5))
+    _ci_low, _ci_high = wilson_score_interval(_p_hat, _n_ev)
+    _ci_low_meta = meta.get("confidence_interval_low")
+    _ci_high_meta = meta.get("confidence_interval_high")
+    _priority_meta = meta.get("review_priority")
+    _ci_low_final = (
+        float(_ci_low_meta) if _ci_low_meta is not None else _ci_low
+    )
+    _ci_high_final = (
+        float(_ci_high_meta) if _ci_high_meta is not None else _ci_high
+    )
+    _priority_final = (
+        int(_priority_meta)
+        if _priority_meta is not None
+        else _review_priority_from_reasons(review_reasons)
+    )
     return PanelRecord(
         paper_id=match.paper_id,
         figure_id=match.figure_id,
@@ -821,10 +887,14 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
         # PanelRecord. All three are producer-side hints: the
         # defaults (None / False / 0) keep legacy matches valid and
         # the Pydantic model enforces the [0,1] / [0,2] ranges.
-        confidence_interval_low=meta.get("confidence_interval_low"),
-        confidence_interval_high=meta.get("confidence_interval_high"),
+        # audit 2026-08-05 (Fill Gaps): the v1.1.0 fields are now
+        # COMPUTED locally (Wilson CI / priority heuristic) when the
+        # upstream pipeline didn't stamp them — see the variables
+        # computed just before the ``return PanelRecord(`` call.
+        confidence_interval_low=_ci_low_final,
+        confidence_interval_high=_ci_high_final,
         image_verified=bool(meta.get("image_verified", False)),
-        review_priority=int(meta.get("review_priority", 0) or 0),
+        review_priority=_priority_final,
         metadata=panel_metadata_from_match(match),
         paper_metadata=paper_metadata_from_internal(match.paper_metadata),
     )
