@@ -135,6 +135,15 @@ class ReviewCorrection(BaseModel):
     corrected_label: str | None = None
     reviewer: str | None = None
     notes: str | None = None
+    # audit 2026-08-05 (Fill Gaps): the v1.1.0 ``image_verified``
+    # flag on PanelRecord is a HUMAN-controlled bit (it records
+    # "a human has looked at the panel image and confirmed the
+    # species assignment"). The pipeline can never set it to True
+    # on its own. We extend the existing POST /review/correction
+    # endpoint to flip it instead of standing up a parallel
+    # PATCH endpoint — keeps the API surface small and reuses the
+    # existing JSONL rotation behaviour.
+    image_verified: bool | None = None
 
 
 class ResultRecord(BaseModel):
@@ -1371,7 +1380,51 @@ def submit_correction(payload: ReviewCorrection):
     row = {**payload.model_dump(), "timestamp": datetime.now().isoformat()}
     with target.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    # audit 2026-08-05 (Fill Gaps): if the caller asked to flip
+    # ``image_verified``, mutate the in-memory RESULT_CACHE so the
+    # next /results read returns the updated value. We persist via
+    # the corrections.jsonl row above (already written) so a server
+    # restart can replay it; no separate run_output rewrite is
+    # needed for the cache hit, which keeps this handler fast and
+    # avoids touching the immutable matches.jsonl artefact.
+    if payload.image_verified is not None:
+        _flip_image_verified_in_cache(payload)
     return {"status": "ok", "saved_to": str(target)}
+
+
+def _flip_image_verified_in_cache(payload: ReviewCorrection) -> int:
+    """Flip ``image_verified`` for every (paper_id, figure_id, panel_path)
+    tuple across all loaded RESULT_CACHE entries that matches.
+
+    Returns the count of mutated rows so the caller / tests can assert
+    it worked. Audit 2026-08-05 (Fill Gaps): the v1.1.0 schema field
+    ``PanelRecord.image_verified`` is HUMAN-controlled; this helper
+    is the single point where human review actions land on the
+    cache.
+    """
+    flipped = 0
+    target_panel = (payload.panel_path or "").rstrip("/").split("/")[-1]
+    for job_id, entry in RESULT_CACHE.items():
+        result = entry.get("result") if isinstance(entry, dict) else None
+        if not isinstance(result, dict):
+            continue
+        panels = result.get("panels") or []
+        for panel in panels:
+            if not isinstance(panel, dict):
+                continue
+            if panel.get("paper_id") != payload.paper_id:
+                continue
+            if panel.get("figure_id") != payload.figure_id:
+                continue
+            if target_panel:
+                panel_path = (panel.get("panel_path") or "").rstrip("/").split("/")[-1]
+                if panel_path != target_panel:
+                    continue
+            meta = panel.get("metadata") or {}
+            meta["image_verified"] = bool(payload.image_verified)
+            panel["metadata"] = meta
+            flipped += 1
+    return flipped
 
 
 @app.get("/results")
