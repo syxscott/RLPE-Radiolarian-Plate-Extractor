@@ -1357,6 +1357,47 @@ def _safe_morphology_record(entry: dict[str, Any]) -> dict[str, Any] | None:
 
 def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
     seen: dict[tuple[str, str], dict[str, Any]] = {}
+    # audit 2026-08-05 (Fill Gaps): try the canonical
+    # ``extract_sample_ids`` helper from
+    # ``src/rlpe/sample_id_extractor.py`` first. It already covers
+    # the most common shapes ("Sample 12", "Loc. 5",
+    # "ID-N", Boughdiri short codes) and returns a list of
+    # typed ``SampleID`` dataclasses with kind + value + confidence.
+    # The legacy _SAMPLE_PATTERNS tuple below is kept as a fallback
+    # because it covers some niche patterns (parenthesised
+    # numbered lists, "pl. N" abbreviated plate refs) that the
+    # helper does not. Using ``X_`` prefix so the operator can
+    # tell the extract_sample_ids source from the legacy regex
+    # sources (S_/B_/R_/N_/L_/P_).
+    try:
+        from .sample_id_extractor import extract_sample_ids
+    except Exception:  # pragma: no cover - module is shipped
+        extract_sample_ids = None  # type: ignore[assignment]
+    if extract_sample_ids is not None:
+        for m in matches:
+            text = m.caption_snippet or ""
+            if not text or not m.paper_id:
+                continue
+            try:
+                sample_ids = extract_sample_ids(text)
+            except Exception:
+                sample_ids = []
+            for sid in sample_ids:
+                key = (m.paper_id, f"X_{sid.value}")
+                if key in seen:
+                    continue
+                rec = SampleRecord(
+                    sample_id=f"X_{sid.value}",
+                    paper_id=m.paper_id,
+                    figure_id=m.figure_id,
+                    caption_panel_range=None,
+                    locality_id=None,
+                    geology_context_id=None,
+                    evidence_text=text[:300],
+                    page_index=(m.metadata or {}).get("page_index"),
+                    confidence=sid.confidence,
+                )
+                seen[key] = rec.model_dump()
     # Round 20 sampling: Boughdiri 2007 captions use the formats
     # ``CH4, specimen 7``, ``MB4, specimen 15`` — the old regex
     # ``Sample\\s+[A-Za-z0-9\\-]+`` matched none of these, leaving
