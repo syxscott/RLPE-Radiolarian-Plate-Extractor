@@ -1596,6 +1596,41 @@ class RadiolarianPipeline:
             for m in figure_matches:
                 meta = m.get("metadata", {})
                 meta["extraction_source"] = "opendataloader"
+                # audit 2026-08-05 (Fill Gaps): forward the
+                # ``classify_figure_type`` result onto every
+                # MatchResult produced by this figure so that the
+                # FigureRecord exporter
+                # (``src/rlpe/converters.py:figure_records_from_matches``)
+                # can populate ``figure_type``. Previously the
+                # variable ``fig_type`` was in scope but only the
+                # range_chart / geo_vision / schematic_vision
+                # branches stamped it; the regular plate path
+                # dropped it on the floor.
+                meta["figure_type"] = fig_type
+                # Plate-level image path: ``primary_path`` is the
+                # highest-resolution image OpenDataLoader surfaced
+                # for this figure. Forward both keys (the FigureRecord
+                # reader looks for ``image_path`` /
+                # ``figure_image_path`` and PanelRecord reads
+                # ``figure_image_path``).
+                if primary_path is not None:
+                    meta["image_path"] = primary_path
+                    meta["figure_image_path"] = primary_path
+                # Panel IDs known to this figure (used to populate
+                # FigureRecord.panel_ids). Computed once outside
+                # the loop below.
+                meta["panel_ids"] = [
+                    other.get("panel_id")
+                    for other in figure_matches
+                    if other.get("panel_id")
+                ]
+                # ``extraction_method`` defaults to the classical
+                # heuristic path's "heuristic" string. LLM-first
+                # MatchResults already stamp "llm_first" via their
+                # own construction sites, so we use ``or`` to keep
+                # the upstream value when present.
+                if not meta.get("extraction_method"):
+                    meta["extraction_method"] = "heuristic"
                 m["metadata"] = meta
                 results.append(m)
 
@@ -3052,8 +3087,39 @@ class RadiolarianPipeline:
                 # (stubs such as RANGE_CHART placeholders / ingestion
                 # warnings carry panel_id=None) are never deduped — they
                 # are not panels and collapsing them would lose data.
+                # audit 2026-08-05 (Fill Gaps): stamp ``figure_type``,
+                # ``figure_image_path`` / ``image_path``, ``panel_ids``,
+                # and ``extraction_method`` on every match produced
+                # by this GROBID region. The FigureRecord exporter
+                # (``src/rlpe/converters.py:figure_records_from_matches``)
+                # reads these keys from ``match.metadata``; without
+                # the stamps the GROBID path emitted FigureRecords
+                # with all four fields at defaults.
+                _grobid_fig_type = (
+                    getattr(caption, "figure_type", None)
+                    or classify_figure_type(getattr(caption, "text", "") or "", region.crop_path)
+                )
+                _grobid_panel_ids = [
+                    other.get("panel_id")
+                    for other in figure_matches
+                    if other.get("panel_id")
+                ]
+                _grobid_image_path = (
+                    region.crop_path or best_page.image_path
+                )
                 for match in figure_matches:
                     panel_id = match.get("panel_id")
+                    match_meta = match.get("metadata", {})
+                    match_meta["figure_type"] = _grobid_fig_type
+                    if _grobid_image_path is not None:
+                        match_meta["image_path"] = _grobid_image_path
+                        match_meta["figure_image_path"] = _grobid_image_path
+                    match_meta["panel_ids"] = _grobid_panel_ids
+                    if not match_meta.get("extraction_method"):
+                        match_meta["extraction_method"] = "grobid_heuristic"
+                    if not match_meta.get("extraction_source"):
+                        match_meta["extraction_source"] = "grobid"
+                    match["metadata"] = match_meta
                     if not panel_id:
                         all_region_results.append(match)
                         continue
