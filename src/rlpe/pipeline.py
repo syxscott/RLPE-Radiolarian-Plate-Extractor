@@ -3783,7 +3783,14 @@ Rules:
 
         # Convert to MatchResult dicts
         out: list[dict[str, Any]] = []
-        for p in panels_data:
+        # audit 2026-08-05 (Fill Gaps): use enumerate(..., start=1) so
+        # the 1-based ``pipeline_panel_index`` field on PanelRecord
+        # carries the LLM's panel position within this figure. Phase
+        # 55 had hard-coded ``panel_index=None`` here on the (then
+        # correct) ground that no PanelCandidate existed; with schema
+        # v1.1.0+ declaring the field as a recoverable integer, the
+        # natural position-in-panels_data is the right value to stamp.
+        for _panel_idx, p in enumerate(panels_data, start=1):
             label = str(p.get("label", "")).strip()
             species = p.get("species")
             conf = float(p.get("confidence", 0.0))
@@ -3810,14 +3817,17 @@ Rules:
                 ),
                 ocr_text=None,
                 paper_metadata=paper_metadata,
-                # Phase 55 audit CRITICAL-2 fix: explicitly pass panel_index=None
-                # for this LLM-first path (no PanelCandidate exists, so None is
-                # correct). The field must be present so
-                # converters.panel_record_from_match reads getattr(match,
-                # "panel_index", None) and gets the explicit None rather than
-                # relying on the MatchResult default — this makes the None
-                # explicit and traceable in the to_dict() output.
-                panel_index=None,
+                # Audit 2026-08-05 (Fill Gaps): stamp the 1-based
+                # panel position so PanelRecord.pipeline_panel_index
+                # reflects where in the LLM's panels_data list this
+                # row came from. Phase 55's CRITICAL-2 fix
+                # (commit ``6defce2``) had hard-coded None because
+                # the field was unused; with the v1.1.0+ schema
+                # declaring it as a 1-based integer, the natural
+                # list position is the right value. The
+                # converter (``panel_record_from_match``) reads it
+                # via ``getattr(match, 'panel_index', None)``.
+                panel_index=_panel_idx,
                 metadata={
                     "extraction_method": "llm_first",
                     "llm_backend": getattr(backend, "backend_name", "unknown"),
@@ -4064,6 +4074,14 @@ Rules:
                             if not _new_row_species_is_valid:
                                 skipped_invalid += 1
                                 continue
+                            # audit 2026-08-05 (Fill Gaps): 1-based
+                            # ``pipeline_panel_index`` for this hybrid
+                            # caption-enrichment row. Uses the
+                            # post-append length so the value is the
+                            # final 1-based position within this
+                            # figure, matching the classical
+                            # OpenCV-segmenter indexing.
+                            _hybrid_panel_idx = pre_append_count + 1
                             llm_results.append(
                                 MatchResult(
                                     paper_id=paper_id,
@@ -4088,10 +4106,14 @@ Rules:
                                     caption_snippet=(caption.caption or "").strip()[:240] or None,
                                     ocr_text=None,
                                     paper_metadata=paper_metadata,
-                                    # Phase 55 audit CRITICAL-2 fix: same as above —
-                                    # hybrid caption-enrichment path has no
-                                    # PanelCandidate, so panel_index is None.
-                                    panel_index=None,
+                                    # audit 2026-08-05 (Fill Gaps):
+                                    # 1-based position-in-figure so
+                                    # PanelRecord.pipeline_panel_index
+                                    # is recoverable here too. Phase
+                                    # 55's CRITICAL-2 had hard-coded
+                                    # None for the same reason as the
+                                    # primary LLM-first site.
+                                    panel_index=_hybrid_panel_idx,
                                     metadata={
                                         "extraction_method": "llm_first",
                                         "llm_backend": getattr(
