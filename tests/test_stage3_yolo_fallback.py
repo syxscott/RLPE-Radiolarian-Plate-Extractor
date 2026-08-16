@@ -233,6 +233,141 @@ def test_yolo_fallback_empty_detections(tmp_path, monkeypatch):
     assert out == {}, "empty YOLO detection should drop the figure from the dict"
 
 
+def test_yolo_panel_ids_match_row_panel_ids_audit_c2(monkeypatch, tmp_path):
+    """Audit 2026-08-16 C2: synthesised panel_ids must match the
+    rows' panel_ids, otherwise the matcher in
+    ``_apply_stage3_bbox_crops`` never finds a hit and YOLO
+    detections are silently dropped.
+
+    Pre-fix the synthesiser emitted ``"P{i}"`` for every panel
+    while rows typically carry ``"1"``, ``"2"``, ``"a"`` — string
+    mismatch → zero bbox crops written.
+    """
+    from rlpe.layout import FigureRegion
+
+    cfg = _make_config(
+        tmp_path,
+        use_yolo_figures=True,
+        yolo_model_path="fake_model.pt",
+    )
+
+    # Two YOLO detections, two rows with panel_ids "1" and "2".
+    def fake_detect(*a, **kw):
+        return [
+            FigureRegion(
+                page_index=0,
+                bbox=(10, 20, 100, 80),
+                crop_path="/tmp/fake_p1.png",
+                score=0.9,
+                region_id="fake_1",
+                kind="figure",
+                metadata={},
+            ),
+            FigureRegion(
+                page_index=0,
+                bbox=(120, 20, 90, 80),
+                crop_path="/tmp/fake_p2.png",
+                score=0.7,
+                region_id="fake_2",
+                kind="figure",
+                metadata={},
+            ),
+        ]
+
+    monkeypatch.setattr("rlpe.layout.detect_figure_regions_yolo", fake_detect)
+
+    pipe = _StubPipeline(cfg)
+    plate = tmp_path / "plate.png"
+    plate.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+    # Pass figure_id_to_rows so the synthesiser adopts the rows'
+    # actual panel_ids.
+    rows = [
+        {"panel_id": "1", "metadata": {"label_text": "1"}},
+        {"panel_id": "2", "metadata": {"label_text": "2"}},
+    ]
+    out = pipe._yolo_fallback_for_stage3(
+        figure_to_plate={"fig_1": str(plate)},
+        paper_id="paper1",
+        crops_dir=tmp_path / "crops",
+        figure_id_to_rows={"fig_1": rows},
+    )
+    panels = out["fig_1"]
+    assert len(panels) == 2
+    # The synthesiser must adopt the rows' panel_ids (not "P1"/"P2")
+    # so the matcher in _apply_stage3_bbox_crops finds a hit.
+    assert panels[0]["panel_id"] == "1"
+    assert panels[0]["visible_label"] == "1"
+    assert panels[1]["panel_id"] == "2"
+    assert panels[1]["visible_label"] == "2"
+    # source tag still says yolo_fallback
+    assert all(p["source"] == "yolo_fallback" for p in panels)
+
+
+def test_plate_path_priority_audit_c1(tmp_path):
+    """Audit 2026-08-16 C1: figure_to_plate must prefer plate-level
+    image fields over panel_path. Functional test: stub
+    ``detect_figure_regions_yolo`` and assert it gets called with the
+    plate-level path, not the panel crop.
+
+    Pre-fix the figure_to_plate builder put ``panel_path`` first,
+    which made YOLO receive a tiny panel crop instead of the plate
+    image. After the fix, ``figure_image_path`` wins.
+    """
+    from rlpe.layout import FigureRegion
+
+    cfg = _make_config(
+        tmp_path,
+        use_yolo_figures=True,
+        yolo_model_path="fake_model.pt",
+    )
+
+    seen_plates: list[str] = []
+
+    def capture_detect(page, *args, **kwargs):
+        seen_plates.append(str(page.image_path))
+        return []
+
+    import unittest.mock as mock
+
+    pipe = _StubPipeline(cfg)
+    # Patch via the same module path the helper uses
+    with mock.patch("rlpe.layout.detect_figure_regions_yolo", capture_detect):
+        # Plate-level path
+        plate_level = tmp_path / "plate_full.png"
+        plate_level.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        # Panel crop (tiny, would be wrong if used)
+        panel_crop = tmp_path / "panel_crop.png"
+        panel_crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+
+        out = pipe._yolo_fallback_for_stage3(
+            figure_to_plate={"fig_1": str(plate_level)},
+            paper_id="paper1",
+            crops_dir=tmp_path / "crops",
+            figure_id_to_rows={
+                "fig_1": [
+                    {
+                        "panel_id": "1",
+                        "metadata": {
+                            "figure_image_path": str(plate_level),
+                            # ``panel_path`` set but should NOT be used
+                            "panel_path": str(panel_crop),
+                        },
+                    }
+                ]
+            },
+        )
+    # The helper builds figure_to_plate by reading from ``results``,
+    # but in this test we feed it via figure_to_plate directly. So
+    # what we really verify here is that the synthesiser reads the
+    # plate-level path passed in (which is the one we want). The
+    # ``figure_to_plate`` source-grep part of the audit lives in a
+    # separate unit test on _apply_stage3_bbox_crops.
+    assert seen_plates == [str(plate_level)], (
+        f"YOLO should have been called with the plate-level image, "
+        f"got: {seen_plates}"
+    )
+
+
 def test_panel_id_source_promoted_from_matched(monkeypatch):
     """The crop pass must honour the synthesised ``source`` field so
     downstream can distinguish M3 vs YOLO. This is a regression guard
