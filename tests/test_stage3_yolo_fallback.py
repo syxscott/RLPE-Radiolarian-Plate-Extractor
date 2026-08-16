@@ -26,7 +26,6 @@ import pytest
 
 from rlpe.config import PipelineConfig
 
-
 # ---------------------------------------------------------------------------
 # Helper: build a minimal config + pipeline skeleton for unit-testing
 # ``_yolo_fallback_for_stage3`` without spinning up the real pipeline.
