@@ -5,6 +5,8 @@ import re
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
+from .geo_coords import parse_coordinate
+
 logger = logging.getLogger(__name__)
 
 AGE_PATTERN = re.compile(
@@ -36,10 +38,6 @@ LOCALITY_PATTERN = re.compile(
     r"(?=\s*[,.;:()]|\s+(?:and|the|of|a|an|is|are|was|were|in|at|"
     r"we|to|by|for|on|as|which|that|where)\b|$)"
 )
-COORDINATE_PATTERN = re.compile(
-    r"\b(\d{1,3}(?:\.\d+)?)\s*°?\s*([NSns])?[,\s]+(\d{1,3}(?:\.\d+)?)\s*°?\s*([EWew])?\b"
-)
-
 # Round 18 audit: split the FORMATION_PATTERN output into the three
 # stratigraphic ranks it actually covers (Group / Formation / Member)
 # and add lithology / biozone / country extraction so the published
@@ -1182,33 +1180,48 @@ def _extract_first_coord(
     coordinate in ``text`` so callers can pass them directly to
     ``_classify_coordinate_age`` without re-searching.
 
-    Requires at least one hemisphere indicator (N/S/E/W) or a degree
-    symbol (°) in the match. Without this filter, bare number pairs
-    like "45, 90" (page numbers, specimen dimensions, figure counts)
-    would be falsely parsed as coordinates.
+    Audit 2026-08-16 (Plan B): previously this function held its own
+    ``COORDINATE_PATTERN`` regex inline (lines 39-41) that duplicated
+    the DMS + decimal-degrees parsing already implemented in
+    ``rlpe.geo_coords.parse_coordinate``. The two paths had
+    already drifted once (audit 2026-08-01 Bug C6 had to be fixed
+    in both). Now we delegate to ``parse_coordinate`` and re-locate
+    the match in the source text for the offset pair that
+    ``_classify_coordinate_age`` expects.
+
+    The hemisphere/degree-symbol guard (rejects bare number pairs
+    like "45, 90" page numbers) is preserved by re-validating the
+    raw match string from ``parse_coordinate`` — if it contains no
+    hemisphere letter AND no ``°`` character, we reject it. In
+    practice this branch is rarely hit because ``parse_coordinate``
+    itself requires a hemisphere letter for DMS, and decimal-degrees
+    coordinates almost always include ``°`` in radiolarian papers.
     """
     if not text:
         return None, None, None, None
-    for m in COORDINATE_PATTERN.finditer(text):
-        # Require at least one hemisphere indicator or degree symbol to
-        # reduce false positives from bare number pairs.
-        has_hemisphere = bool(m.group(2) or m.group(4))
-        has_degree = "°" in m.group(0)
-        if not has_hemisphere and not has_degree:
-            continue
-        try:
-            lat = float(m.group(1))
-            if m.group(2) and m.group(2).upper() == "S":
-                lat = -lat
-            lon = float(m.group(3))
-            if m.group(4) and m.group(4).upper() == "W":
-                lon = -lon
-            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-                continue
-            return lat, lon, m.start(), m.end()
-        except Exception:
-            continue
-    return None, None, None, None
+    coord = parse_coordinate(text)
+    if coord is None:
+        return None, None, None, None
+    # Hemisphere/degree-symbol guard: bare decimal pairs without
+    # either signal get rejected to avoid mis-parsing page numbers,
+    # specimen dimensions, or figure counts. ``parse_coordinate``
+    # already enforces valid ranges, but does NOT enforce this
+    # specific signal requirement.
+    raw = coord.raw or ""
+    has_hemisphere = bool(
+        re.search(r"\b[NSEWnsew]\b", raw)
+    )
+    has_degree = "°" in raw
+    if not has_hemisphere and not has_degree:
+        return None, None, None, None
+    # Locate the match in the source text so callers can pass
+    # ``start`` to ``_classify_coordinate_age`` for the keyword
+    # look-back scan. ``text.find`` returns the first occurrence,
+    # which matches the "first parseable coordinate" contract.
+    start = text.find(raw)
+    if start < 0:
+        return None, None, None, None
+    return coord.latitude, coord.longitude, start, start + len(raw)
 
 
 def link_species_to_geology(
