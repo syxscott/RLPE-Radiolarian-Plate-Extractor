@@ -1754,11 +1754,38 @@ class RadiolarianPipeline:
 
         # Index figures that have stage3 panels by figure_id.
         figure_to_panels: dict[str, list[dict[str, Any]]] = {}
+        figure_to_plate: dict[str, str] = {}
         for r in results:
             md = r.get("metadata") or {}
             stage3 = (md.get("m3_diagnostic") or {}).get("stage3_panels") or []
             if stage3:
                 figure_to_panels[r.get("figure_id")] = stage3
+            # Track the first plate image we find for each figure so
+            # the YOLO fallback below can re-use it.
+            fid = r.get("figure_id")
+            plate = (
+                r.get("panel_path")
+                or md.get("figure_image_path")
+                or md.get("primary_image")
+                or md.get("image_path")
+            )
+            if fid and plate and fid not in figure_to_plate:
+                figure_to_plate[fid] = plate
+
+        # Audit 2026-08-16 (Plan C): YOLO fallback. When M3 stage 3
+        # returned zero panels for a figure but YOLO is enabled, run
+        # YOLO on the plate image and synthesise stage3 panel records
+        # so the rest of this method (panel-id matching, crop write,
+        # panel_path stamp) still produces useful output. Without
+        # this fallback a paper that exhausts the M3 quota, or whose
+        # plates the vision model declines to segment, would silently
+        # lose the bbox crop pass — the existing rows keep their
+        # (possibly stale) panel_path and ``panel_id_source`` stays
+        # at "legacy".
+        if not figure_to_panels:
+            figure_to_panels = self._yolo_fallback_for_stage3(
+                figure_to_plate, paper_id, crops_dir
+            )
 
         if not figure_to_panels:
             return results
@@ -1846,10 +1873,113 @@ class RadiolarianPipeline:
             # this row was verified by Stage 3 vision (vs caption or
             # image OCR). The previous round left every row at
             # "legacy" because the diag info wasn't lifted.
-            md["panel_id_source"] = "m3_vision"
+            #
+            # Audit 2026-08-16 (Plan C): honour the synthesised
+            # ``source`` field so YOLO-fallback detections are
+            # tagged "yolo_fallback" instead of being mis-attributed
+            # to M3 vision.
+            stage3_source = matched.get("source") or "m3_vision"
+            md["panel_id_source"] = stage3_source
             md["stage3_confidence"] = matched.get("confidence")
             r["metadata"] = md
         return results
+
+    def _yolo_fallback_for_stage3(
+        self,
+        figure_to_plate: dict[str, str],
+        paper_id: str,
+        crops_dir: Path,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Synthesise Stage 3 panel records from YOLO when M3 vision returns [].
+
+        Audit 2026-08-16 (Plan C): previously, when M3 vision stage 3
+        returned zero panels for a figure (quota exhausted, model
+        refused, network failure, …), the bbox crop pass in
+        ``_apply_stage3_bbox_crops`` short-circuited and the rows
+        kept their existing panel_path / panel_id_source = "legacy".
+        This helper runs YOLO on the plate image and produces
+        stage3_panel-shaped dicts so the crop pass produces output.
+
+        Requirements:
+        - ``self.config.use_yolo_figures`` must be True
+        - ``self.config.yolo_model_path`` must point to a valid .pt
+
+        Returns
+        -------
+        dict[str, list[dict]]
+            Mapping ``figure_id -> [stage3_panel, ...]``. Empty dict
+            if YOLO is disabled / not configured / produced no
+            detections, so the caller can fall through to its
+            existing early-return path.
+
+        Each synthesised stage3_panel dict matches the M3 shape:
+            ``panel_id``      — synthetic id "P1", "P2", …
+            ``bbox``          — [x, y, w, h] in plate-image pixels
+            ``visible_label`` — None (YOLO doesn't emit labels)
+            ``morphology``    — None
+            ``confidence``    — float from YOLO detection
+            ``source``        — "yolo_fallback" (audit tag)
+        """
+        if not self.config.use_yolo_figures:
+            return {}
+        yolo_path = self.config.yolo_model_path
+        if not yolo_path:
+            return {}
+        try:
+            from .layout import detect_figure_regions_yolo
+            from .layout import PageRecord
+        except ImportError:
+            return {}
+        out: dict[str, list[dict[str, Any]]] = {}
+        for fig_id, plate_path in figure_to_plate.items():
+            plate_p = Path(plate_path)
+            if not plate_p.is_file():
+                continue
+            try:
+                # Re-use detect_figure_regions_yolo's PageRecord shim.
+                # It writes crops into ``plate_p.parent / "regions"``
+                # and returns FigureRegion objects with bbox + score.
+                page = PageRecord(
+                    page_index=0,
+                    image_path=str(plate_p),
+                    text="",
+                )
+                regions = detect_figure_regions_yolo(
+                    page,
+                    model_path=yolo_path,
+                    conf=self.config.yolo_conf_threshold,
+                    iou=self.config.yolo_iou_threshold,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "Stage 3 YOLO fallback failed for paper=%s fig=%s: %s",
+                    paper_id,
+                    fig_id,
+                    exc,
+                )
+                continue
+            if not regions:
+                continue
+            panels: list[dict[str, Any]] = []
+            for i, region in enumerate(regions, start=1):
+                panels.append(
+                    {
+                        "panel_id": f"P{i}",
+                        "bbox": list(region.bbox),
+                        "visible_label": None,
+                        "morphology": None,
+                        "confidence": float(region.score),
+                        "source": "yolo_fallback",
+                    }
+                )
+            out[fig_id] = panels
+            logger.info(
+                "Stage 3 YOLO fallback: paper=%s fig=%s detected %d panels",
+                paper_id,
+                fig_id,
+                len(panels),
+            )
+        return out
 
     def _apply_multi_plate_enrichment(
         self,
