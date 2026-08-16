@@ -1755,22 +1755,34 @@ class RadiolarianPipeline:
         # Index figures that have stage3 panels by figure_id.
         figure_to_panels: dict[str, list[dict[str, Any]]] = {}
         figure_to_plate: dict[str, str] = {}
+        figure_id_to_rows: dict[str, list[dict[str, Any]]] = {}
         for r in results:
             md = r.get("metadata") or {}
             stage3 = (md.get("m3_diagnostic") or {}).get("stage3_panels") or []
             if stage3:
                 figure_to_panels[r.get("figure_id")] = stage3
             # Track the first plate image we find for each figure so
-            # the YOLO fallback below can re-use it.
+            # the YOLO fallback below can re-use it. Priority is
+            # plate-level image first (figure_image_path / primary_image
+            # / image_path), panel_path LAST — a panel crop is the
+            # wrong input for YOLO (it would re-detect crops of crops).
+            # Audit 2026-08-16 (C1): the previous order put panel_path
+            # first, which silently fed tiny crops into YOLO.
             fid = r.get("figure_id")
             plate = (
-                r.get("panel_path")
-                or md.get("figure_image_path")
+                md.get("figure_image_path")
                 or md.get("primary_image")
                 or md.get("image_path")
+                or r.get("panel_path")
             )
             if fid and plate and fid not in figure_to_plate:
                 figure_to_plate[fid] = plate
+            # Group rows by figure_id for the YOLO synthesiser.
+            # Audit 2026-08-16 (C2): the synthesiser uses each row's
+            # actual ``panel_id`` so the matcher in
+            # ``_apply_stage3_bbox_crops`` finds a match.
+            if fid:
+                figure_id_to_rows.setdefault(fid, []).append(r)
 
         # Audit 2026-08-16 (Plan C): YOLO fallback. When M3 stage 3
         # returned zero panels for a figure but YOLO is enabled, run
@@ -1784,7 +1796,18 @@ class RadiolarianPipeline:
         # at "legacy".
         if not figure_to_panels:
             figure_to_panels = self._yolo_fallback_for_stage3(
-                figure_to_plate, paper_id, crops_dir
+                figure_to_plate,
+                paper_id,
+                crops_dir,
+                # Audit 2026-08-16 (C2): pass per-figure row lists so
+                # the synthesised stage3 panels can carry the
+                # existing rows' panel_ids — the matcher in
+                # ``_apply_stage3_bbox_crops`` keys on panel_id /
+                # visible_label, and YOLO has no labels. Without
+                # this, every synthesised panel_id was "P{i}" while
+                # every row's panel_id was "1", "2", "a" → zero
+                # matches → the whole fallback produced no effect.
+                figure_id_to_rows=figure_id_to_rows,
             )
 
         if not figure_to_panels:
@@ -1820,17 +1843,21 @@ class RadiolarianPipeline:
             bbox = matched.get("bbox")
             if not bbox or len(bbox) != 4:
                 continue
-            # The plate image is the row's panel_path or its
-            # figure_image_path; we need the plate-level image (not a
-            # panel crop) to slice from. The classical CV stage
-            # stores the plate on ``metadata.figure_image_path`` /
-            # ``metadata.primary_image`` when running with the
-            # OpenDataLoader path.
+            # The plate image MUST be plate-level (not a panel crop) to
+            # slice from — bbox coords are relative to the plate. The
+            # classical CV stage stores the plate on
+            # ``metadata.figure_image_path`` / ``metadata.primary_image``
+            # when running with the OpenDataLoader path. ``panel_path``
+            # is a last-resort fallback only (the YOLO path may not
+            # have set the plate-level keys). Audit 2026-08-16 (C1):
+            # the previous order put ``panel_path`` first, which made
+            # the bbox slice operate on a small crop and produced
+            # visibly wrong bboxes downstream.
             plate_path = (
-                r.get("panel_path")
-                or md.get("figure_image_path")
+                md.get("figure_image_path")
                 or md.get("primary_image")
                 or md.get("image_path")
+                or r.get("panel_path")
             )
             if not plate_path:
                 continue
@@ -1889,6 +1916,7 @@ class RadiolarianPipeline:
         figure_to_plate: dict[str, str],
         paper_id: str,
         crops_dir: Path,
+        figure_id_to_rows: dict[str, list[dict[str, Any]]] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Synthesise Stage 3 panel records from YOLO when M3 vision returns [].
 
@@ -1960,13 +1988,55 @@ class RadiolarianPipeline:
                 continue
             if not regions:
                 continue
+            # Audit 2026-08-16 (C2): use the actual rows' panel_ids
+            # for the synthesised panels, sorted by reading order
+            # (top-to-bottom, then left-to-right) so the existing
+            # matcher in ``_apply_stage3_bbox_crops`` finds a hit.
+            # YOLO regions are already in detection-confidence order;
+            # we sort by ``(bbox.y, bbox.x)`` to mimic reading order.
+            sorted_regions = sorted(
+                regions, key=lambda r: (int(r.bbox[1]), int(r.bbox[0]))
+            )
+            figure_rows = (figure_id_to_rows or {}).get(fig_id, [])
+            # Rows may have panel_ids in any order — sort them by
+            # the same reading order heuristic (no bbox on rows, so
+            # use panel_id ordinal position as the tiebreaker).
+            sorted_rows = sorted(
+                figure_rows,
+                key=lambda r: (
+                    # Top-to-bottom via page_index when available
+                    int((r.get("metadata") or {}).get("page_index") or 0),
+                    str(r.get("panel_id") or ""),
+                ),
+            )
             panels: list[dict[str, Any]] = []
-            for i, region in enumerate(regions, start=1):
+            for i, region in enumerate(sorted_regions):
+                # Pick the row at this ordinal position so the
+                # synthesised stage3 panel can carry the same
+                # ``panel_id`` (and ``visible_label`` as a backup).
+                row_pid = ""
+                row_visible = None
+                if i < len(sorted_rows):
+                    matched_row = sorted_rows[i]
+                    row_pid = str(matched_row.get("panel_id") or "")
+                    row_visible = (
+                        (matched_row.get("metadata") or {}).get("label_text")
+                        or row_pid
+                        or None
+                    )
+                else:
+                    # More YOLO detections than rows → synthesise a
+                    # ``P{i+1}`` placeholder. The matcher will not
+                    # find a hit, but the crop + bbox stamp still
+                    # happens so the operator can review the new
+                    # detection in the GUI.
+                    row_pid = f"P{i + 1}"
+                    row_visible = None
                 panels.append(
                     {
-                        "panel_id": f"P{i}",
+                        "panel_id": row_pid,
                         "bbox": list(region.bbox),
-                        "visible_label": None,
+                        "visible_label": row_visible,
                         "morphology": None,
                         "confidence": float(region.score),
                         "source": "yolo_fallback",
@@ -1974,10 +2044,11 @@ class RadiolarianPipeline:
                 )
             out[fig_id] = panels
             logger.info(
-                "Stage 3 YOLO fallback: paper=%s fig=%s detected %d panels",
+                "Stage 3 YOLO fallback: paper=%s fig=%s detected %d panels (matched to %d rows)",
                 paper_id,
                 fig_id,
                 len(panels),
+                len(sorted_rows),
             )
         return out
 
@@ -2796,6 +2867,18 @@ class RadiolarianPipeline:
                     "formation": formation,
                     "age": age,
                     "locality": locality,
+                    # Audit 2026-08-16 (A3): stamp figure_number so
+                    # ``_extract_figure_number`` in cross_figure_linker
+                    # uses Step 1 (figure_number field) instead of
+                    # Step 2 (regex on figure_id). Without this, the
+                    # linker extracts "03" from ``..._pl03`` but
+                    # ``parse_cross_refs`` returns target_figure_num
+                    # "3" — string equality fails and Strategy 4
+                    # never fires on production papers.
+                    "figure_number": (
+                        str(md.get("figure_number") or row.get("figure_number") or "")
+                        .strip()
+                    ),
                 }
             )
 
