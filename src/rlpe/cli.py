@@ -143,8 +143,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sam2-grid-size", type=int, default=6)
     p.add_argument("--sam2-max-point-prompts", type=int, default=48)
     p.add_argument("--sam2-max-box-prompts", type=int, default=24)
-    p.add_argument("--use-neural-matcher", action="store_true")
-    p.add_argument("--matcher-checkpoint-path", type=str, default=None)
+    p.add_argument(
+        "--use-neural-matcher",
+        action="store_true",
+        help=(
+            "Enable the trained NeuralGraphMatcher. REQUIRES "
+            "`--matcher-checkpoint-path` pointing to a .pt file produced by "
+            "`scripts/train_matcher.py`. Without it, the matcher falls back "
+            "to the heuristic path silently."
+        ),
+    )
+    p.add_argument(
+        "--matcher-checkpoint-path",
+        type=str,
+        default=None,
+        help=(
+            "Path to the trained matcher checkpoint. Without this, "
+            "`--use-neural-matcher` is a no-op."
+        ),
+    )
     p.add_argument("--taxon-hf-model-path", type=str, default=None)
     p.add_argument("--taxon-lexicon-path", type=str, default=None)
     p.add_argument("--use-gemma4", action="store_true")

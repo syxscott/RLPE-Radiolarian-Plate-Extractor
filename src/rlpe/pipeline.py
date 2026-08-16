@@ -93,6 +93,19 @@ class RadiolarianPipeline:
         cancel_event: threading.Event | None = None,
     ) -> None:
         self.config = config
+        # Plan D: explicit --use-neural-matcher gate. Setting the flag
+        # without --matcher-checkpoint-path silently falls back to the
+        # heuristic matcher (the NeuralGraphMatcher class is real but
+        # inaccessible without a trained checkpoint). Warn loudly so
+        # operators don't think the neural path is engaged when it isn't.
+        if bool(self.config.extra.get("use_neural_matcher", False)) and not self.config.extra.get(
+            "matcher_checkpoint_path"
+        ):
+            logger.warning(
+                "--use-neural-matcher set but no --matcher-checkpoint-path provided; "
+                "falling back to heuristic matcher. Train one via "
+                "scripts/train_matcher.py to enable the neural path."
+            )
         # Optional progress callback: ``cb(current, total, message)``.
         # ``current`` and ``total`` are 0-indexed ints; the API uses
         # ``current/total`` to map a real pipeline position onto the 30-90%
@@ -2812,6 +2825,38 @@ class RadiolarianPipeline:
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(
                 "visual coordinate linker failed for paper=%s: %s",
+                paper_id,
+                exc,
+            )
+
+        # Audit 2026-08-16 (fill-gaps): stamp the raw parse_cross_refs
+        # result on every plate row's metadata so the
+        # export.flatten_for_csv path (which lifts metadata.cross_refs
+        # to a top-level column) sees the data. The linker chain above
+        # already CONSUMED the parse result via Strategy 4, but the
+        # raw list of CrossRefs is also useful as audit evidence and
+        # downstream tooling (e.g. CLI export, GUI triage).
+        try:
+            from .cross_refs import parse_cross_refs
+
+            for row in plate_rows:
+                md = row.setdefault("metadata", {})
+                if md.get("cross_refs"):
+                    continue  # already populated
+                cap = (
+                    md.get("caption")
+                    or md.get("caption_text")
+                    or row.get("caption_snippet")
+                    or ""
+                )
+                fig_id = row.get("figure_id") or md.get("figure_id") or ""
+                refs = parse_cross_refs(cap, current_fig_id=fig_id)
+                if refs:
+                    md["cross_refs"] = [r.to_dict() for r in refs]
+                    row["metadata"] = md
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(
+                "cross_refs stamping failed for paper=%s: %s",
                 paper_id,
                 exc,
             )
