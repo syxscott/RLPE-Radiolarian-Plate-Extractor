@@ -1,6 +1,6 @@
 """Cross-figure linker: link plate species to paper's strat column / map.
 
-Phase 65 Plan A.2: implements a 3-strategy linker that produces one
+Phase 65 Plan A.2: implements a 4-strategy linker that produces one
 ``LinkResult`` per panel, encoding which paper-level geology fact
 (strat column / litholog / paleogeographic map) the panel's species
 most likely came from. The strategies, in order of confidence:
@@ -10,11 +10,17 @@ most likely came from. The strategies, in order of confidence:
    from the panel's caption and look them up in the paper's
    strat-column / litholog / paleogeographic-map figures. A hit
    directly links the panel to that figure's geology context.
-2. **Locality string share** (``confidence=0.7``,
+2. **Cross-reference match** (``confidence=0.85``,
+   ``source="cross_ref"``) — when the panel's caption mentions
+   another figure by display name ("see Fig. 3"), resolve it to a
+   paper-level figure via ``parse_cross_refs``. Audit 2026-08-16:
+   wired between Strategy 1 and Strategy 2 so the higher-confidence
+   tier wins.
+3. **Locality string share** (``confidence=0.7``,
    ``source="locality_match"``) — same paper, same locality string
    (``Tunisia``, ``Greece``, ``Sicily``, ``NW Turkey``, …) shared
    between the plate caption and any paper-level geo figure.
-3. **M3 cross-figure inference** (``confidence=0.3-0.6``,
+4. **M3 cross-figure inference** (``confidence=0.3-0.6``,
    ``source="m3_inference"``) — for unlinked plates, send paper
    figure summary + plate caption to M3 and let it infer the most
    likely formation / age. Implemented as an optional callback so
@@ -606,6 +612,9 @@ def _strategy4_cross_refs_match(
       (handled by ``current_fig_id`` inside ``parse_cross_refs``)
     - Not fired if no cross-ref resolves to a paper-level figure in
       the index
+    - Only "Fig" mentions are considered; "Pl" mentions are filtered
+      out because the index contains strat/litholog/map/range figures
+      only, not plates (audit 2026-08-16 A4)
 
     Audit 2026-08-16 (fill-gaps): this strategy was previously dead
     code (``rlpe.cross_refs`` had tests but no caller). Wiring it in
@@ -621,11 +630,21 @@ def _strategy4_cross_refs_match(
     if not refs:
         return None
 
+    # Audit 2026-08-16: filter by ``kind``. Only "Fig" mentions should
+    # match a strat / litholog / paleogeo / range-chart index entry;
+    # a "Pl. N" mention is another plate, not a paper-level figure
+    # (the index deliberately excludes plate figures). Without this
+    # filter, a panel on Plate 2 mentioning "Pl. 3 for comparison"
+    # would falsely link to the strat column with conf 0.85.
+    fig_refs = [r for r in refs if r.target_figure.startswith("Fig")]
+    if not fig_refs:
+        return None
+
     # Map each CrossRef to a paper figure via ``figure_num``.
     # First match wins per CrossRef; we keep the unique set of figures.
     matched_figs: dict[str, PaperFigureLike] = {}
     evidence_tokens: list[str] = []
-    for ref in refs:
+    for ref in fig_refs:
         for s in fig_index.summary:
             if s.get("figure_num") == ref.target_figure_num:
                 fid = str(s.get("figure_id") or "")
@@ -736,8 +755,8 @@ def link_species_to_geology(
 
         result = (
             _strategy1_sample_match(panel, fig_index)
-            or _strategy2_locality_match(panel, fig_index)
             or _strategy4_cross_refs_match(panel, fig_index)
+            or _strategy2_locality_match(panel, fig_index)
             or _strategy3_m3_inference(panel, fig_index, callback)
             or _unlinked_fallback(panel)
         )
@@ -934,16 +953,3 @@ def link_visual_coordinates(
         out.append(links)
 
     return out
-
-
-__all__ = [
-    "LinkResult",
-    "M3InferenceCallable",
-    "link_species_to_geology",
-    "link_visual_coordinates",
-    "LINK_SOURCE_SAMPLE",
-    "LINK_SOURCE_LOCALITY",
-    "LINK_SOURCE_M3",
-    "LINK_SOURCE_UNLINKED",
-    "VISUAL_LINK_SOURCE",
-]

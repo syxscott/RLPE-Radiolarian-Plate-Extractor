@@ -64,23 +64,58 @@ def parse_cross_refs(
     """
     if not caption_text:
         return []
-    # Self-reference patterns to skip: extract number from current_fig_id
+    # Self-reference patterns to skip. Anchor on a trailing
+    # ``_pl\d+`` / ``_fig\d+`` / ``_plate\d+`` suffix (the convention
+    # used by the production figure_id builder in
+    # ``opendataloader_extractor.py``). The previous implementation
+    # used a bare ``re.search(r"(\d+)")`` which grabbed the first
+    # digit run — for production ids like
+    # ``od_plate_bandini2011_pl03`` that yielded ``"2011"`` (the year)
+    # instead of ``"03"`` (the plate number), silently failing to
+    # suppress self-references.
+    #
+    # Audit 2026-08-16 fix: we extract both the kind ("Pl" / "Fig")
+    # and the numeric suffix, then only suppress a ref when BOTH
+    # match. A plate caption that mentions "Fig. 3" should NOT be
+    # suppressed by a current_fig_id of ``..._pl03`` (different kind)
+    # and vice versa.
+    self_kind = ""
     self_num = ""
     if current_fig_id:
-        m = re.search(r"(\d+)", current_fig_id)
+        m = re.search(r"_pl(\d+)$", current_fig_id)
         if m:
-            self_num = m.group(1)
+            self_kind = "Pl"
+            self_num = m.group(1).lstrip("0") or "0"
+        else:
+            m2 = re.search(r"_(?:fig|figure|plate)(\d+)$", current_fig_id)
+            if m2:
+                self_kind = "Fig"
+                self_num = m2.group(1).lstrip("0") or "0"
+            else:
+                # Fallback for short synthetic ids like "fig_2":
+                # detect kind from leading alpha, parse trailing num.
+                m3 = re.match(r"^([A-Za-z]+)_?(\d+)$", current_fig_id)
+                if m3:
+                    alpha = m3.group(1).lower()
+                    if alpha.startswith("pl"):
+                        self_kind = "Pl"
+                    elif alpha.startswith("fig") or alpha.startswith("figure"):
+                        self_kind = "Fig"
+                    self_num = m3.group(2).lstrip("0") or "0"
     out: list[CrossRef] = []
     for m in _PATTERN.finditer(caption_text):
-        target_num = m.group(1)
-        if self_num and target_num == self_num:
-            continue
+        target_num = m.group(1).lstrip("0") or "0"
         # Build canonical "Fig. N" or "Pl. N" form
         kind_raw = m.group(0).split()[0].rstrip(".").lower()
         if kind_raw.startswith("plat") or kind_raw == "pl":
             kind = "Pl"
         else:
             kind = "Fig"
+        # Suppress self-reference only when kind AND number match.
+        # Audit 2026-08-16: previously ``self_num`` alone could
+        # match a different-kind ref (e.g. pl03 vs "Fig. 3" caption).
+        if self_kind and kind == self_kind and target_num == self_num:
+            continue
         target = f"{kind}. {target_num}"
         # Extract species hint from the right side of the reference (where
         # the species name typically appears in "Fig. 2C-E shows Cromyomma sp.")
