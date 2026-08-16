@@ -45,6 +45,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Protocol
 
+from .cross_refs import CrossRef, parse_cross_refs
 from .sample_id_extractor import (
     SampleID,
     _LOCALITY_BLOCKLIST,
@@ -61,6 +62,7 @@ from .sample_id_extractor import (
 LINK_SOURCE_SAMPLE = "sample_match"
 LINK_SOURCE_LOCALITY = "locality_match"
 LINK_SOURCE_M3 = "m3_inference"
+LINK_SOURCE_CROSS_REF = "cross_ref"
 LINK_SOURCE_UNLINKED = "unlinked"
 
 
@@ -175,6 +177,49 @@ def _figure_type(figure: PaperFigureLike) -> str:
     return str(val).lower()
 
 
+# Display-number suffix of a figure, e.g. "3" for "Fig. 3" / "Pl. 3".
+# Strategy 4 (cross_refs) needs this to map a caption mention like
+# "see Fig. 3" back to the underlying figure dict. We prefer the
+# pipeline-stamped ``figure_number`` / ``figure_num`` field, then fall
+# back to scraping the figure_id string ("fig_3" / "od_plate_..._pl03"
+# → "3"), then to scanning the caption.
+_FIG_NUM_FROM_ID = re.compile(r"(?:\b|_)(?:fig|pl|plate)?_?(\d+)(?:\b|$)")
+
+
+def _extract_figure_number(
+    figure: PaperFigureLike, *, fid: str = "", ftype: str = ""
+) -> str | None:
+    """Return the display number of a figure, e.g. "3" for "Fig. 3".
+
+    Looks at three sources in order of preference:
+
+    1. ``figure.figure_number`` / ``figure.figure_num`` (pipeline-stamped)
+    2. Regex extraction from the figure_id string
+    3. Regex extraction from the caption (delegated to layout)
+    """
+    # 1. Explicit field
+    for key in ("figure_number", "figure_num"):
+        val = figure.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    # 2. From figure_id
+    if fid:
+        m = _FIG_NUM_FROM_ID.search(fid)
+        if m:
+            return m.group(1)
+    # 3. From caption (avoid heavy layout import; use inline regex)
+    cap = _figure_caption(figure)
+    if cap:
+        m = re.search(
+            r"\b(?:Fig(?:ure)?|Pl(?:ate)?)\s*\.?\s*(\d+[A-Za-z]?)",
+            cap,
+            re.IGNORECASE,
+        )
+        if m:
+            return m.group(1)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Index paper figures for fast lookup
 # ---------------------------------------------------------------------------
@@ -257,6 +302,11 @@ def _build_figure_index(
             "formation": formation,
             "age": age,
             "locality": locality,
+            # ``figure_num`` is the display-number extracted from the
+            # caption (e.g. "3" from "Fig. 3"). Strategy 4
+            # (cross_refs) uses this to map ``CrossRef.target_figure_num``
+            # back to the underlying figure.
+            "figure_num": _extract_figure_number(fig, fid=fig_id, ftype=ftype),
             "figure": fig,
         })
 
@@ -352,6 +402,31 @@ def _panel_panel_id(panel: Any) -> str | None:
     if isinstance(panel, dict):
         return panel.get("panel_id")
     return None
+
+
+def _panel_figure_id(panel: Any) -> str | None:
+    """Return the figure_id that the panel belongs to.
+
+    Used by Strategy 4 (cross_refs) to filter out self-references in
+    the panel's caption ("Fig. 2" mentioned inside Fig. 2's own
+    caption). Looks at ``panel.figure_id`` directly, then
+    ``panel.metadata.figure_id``.
+    """
+    if isinstance(panel, dict):
+        val = panel.get("figure_id")
+        if val:
+            return str(val)
+        meta = panel.get("metadata") or {}
+        val = meta.get("figure_id")
+        if val:
+            return str(val)
+        return None
+    val = getattr(panel, "figure_id", None)
+    if val:
+        return str(val)
+    meta = getattr(panel, "metadata", None) or {}
+    val = meta.get("figure_id") if isinstance(meta, dict) else None
+    return str(val) if val else None
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +586,73 @@ def _strategy3_m3_inference(
     )
 
 
+def _strategy4_cross_refs_match(
+    panel: Any,
+    fig_index: _FigureIndex,
+) -> LinkResult | None:
+    """Cross-reference match (Strategy 4).
+
+    When a panel's caption mentions another figure by display name
+    ("see Fig. 3", "as in Pl. 2", "compared with Figure 5"), use
+    ``rlpe.cross_refs.parse_cross_refs`` to find those mentions and
+    map each one back to a paper-level figure (strat / litholog /
+    map / range chart) via ``figure_num``.
+
+    Confidence:
+    - 0.85 if exactly one cross-ref resolves to a single figure
+    - 0.75 if multiple cross-refs all point to the same figure (still
+      unambiguous, just less confident than a single clear mention)
+    - Not fired if the only mentions are self-references
+      (handled by ``current_fig_id`` inside ``parse_cross_refs``)
+    - Not fired if no cross-ref resolves to a paper-level figure in
+      the index
+
+    Audit 2026-08-16 (fill-gaps): this strategy was previously dead
+    code (``rlpe.cross_refs`` had tests but no caller). Wiring it in
+    here gives the linker an explicit-textual-match tier between the
+    regex locality match (0.7) and the M3 inference fallback
+    (0.3-0.6).
+    """
+    caption = _panel_caption(panel)
+    if not caption:
+        return None
+    panel_fig_id = _panel_figure_id(panel) or ""
+    refs = parse_cross_refs(caption, current_fig_id=panel_fig_id)
+    if not refs:
+        return None
+
+    # Map each CrossRef to a paper figure via ``figure_num``.
+    # First match wins per CrossRef; we keep the unique set of figures.
+    matched_figs: dict[str, PaperFigureLike] = {}
+    evidence_tokens: list[str] = []
+    for ref in refs:
+        for s in fig_index.summary:
+            if s.get("figure_num") == ref.target_figure_num:
+                fid = str(s.get("figure_id") or "")
+                if fid and fid not in matched_figs:
+                    matched_figs[fid] = s["figure"]
+                    evidence_tokens.append(ref.target_figure)
+                break
+
+    if not matched_figs:
+        return None
+
+    # Pick the first match (insertion order = caption order, stable).
+    best_fid, best_fig = next(iter(matched_figs.items()))
+    confidence = 0.85 if len(matched_figs) == 1 else 0.75
+    return LinkResult(
+        panel_id=_panel_panel_id(panel),
+        species=_panel_species(panel),
+        figure_id=best_fid,
+        formation=_figure_formation(best_fig),
+        age=_figure_age(best_fig),
+        locality=_figure_locality(best_fig),
+        confidence=confidence,
+        source=LINK_SOURCE_CROSS_REF,
+        evidence="cross_ref_match: " + ", ".join(evidence_tokens),
+    )
+
+
 def _unlinked_fallback(panel: Any) -> LinkResult:
     """Returned when no strategy matched.
 
@@ -595,6 +737,7 @@ def link_species_to_geology(
         result = (
             _strategy1_sample_match(panel, fig_index)
             or _strategy2_locality_match(panel, fig_index)
+            or _strategy4_cross_refs_match(panel, fig_index)
             or _strategy3_m3_inference(panel, fig_index, callback)
             or _unlinked_fallback(panel)
         )

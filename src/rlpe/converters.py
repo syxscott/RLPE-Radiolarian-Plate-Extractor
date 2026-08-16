@@ -22,6 +22,7 @@ from .schema_models import (
     GeologyContextRecord,
     GeologyLinkRecord,
     LocalityRecord,
+    MorphologyRecord,
     PaleoCoordinateRecord,
     PanelMetadata,
     PanelRecord,
@@ -35,6 +36,7 @@ from .schema_models import (
 )
 from .types import MatchResult
 from .types import PaperMetadata as InternalPaperMetadata
+from .evaluation.metrics import wilson_score_interval
 
 logger = logging.getLogger(__name__)
 
@@ -755,6 +757,46 @@ def _panel_review_reasons(match: MatchResult) -> list[str]:
     return reasons
 
 
+# Reasons that flag a panel as **critical** for the review queue —
+# missing any of these means downstream consumers can't trust the row
+# without human eyes. Critical reasons map to priority 2; any other
+# reason maps to 1; no reason maps to 0. Producers that want to
+# override (e.g. an LLM-verified row with no review reasons) can
+# still set ``meta["review_priority"]`` directly and the converter
+# will respect it.
+_CRITICAL_REVIEW_REASONS: frozenset[str] = frozenset(
+    {
+        "missing_species",
+        "missing_bbox",
+        "missing_printed_panel_id",
+        "missing_panel_image",
+    }
+)
+
+
+def _review_priority_from_reasons(reasons: list[str]) -> int:
+    """Map review reasons to a 0/1/2 priority bucket.
+
+    Audit 2026-08-05 (Fill Gaps): ``PanelRecord.review_priority``
+    was previously always 0 because no producer wrote it. The Web UI
+    review queue (``restab.review_priority`` filter) sorts on this
+    field, so panels with critical review needs should surface at
+    the top of the human queue.
+
+    Bucketing rules:
+      2 (high)   — any critical reason (missing species / bbox /
+                   printed_panel_id). These rows cannot be used
+                   downstream without verification.
+      1 (medium) — at least one non-critical review reason.
+      0 (low)    — no review reasons; row is publishable as-is.
+    """
+    if any(r in _CRITICAL_REVIEW_REASONS for r in reasons):
+        return 2
+    if reasons:
+        return 1
+    return 0
+
+
 def panel_record_from_match(match: MatchResult) -> PanelRecord:
     """Convert an internal ``MatchResult`` to a published ``PanelRecord``."""
     meta = match.metadata or {}
@@ -779,6 +821,31 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
         # different prefix and dropped ``member``, so the join was
         # always broken.
         geology_context_id = _geology_context_id(geos[0])
+    # audit 2026-08-05 (Fill Gaps): compute Wilson 95% CI from
+    # ``confidence`` and an evidence-count hint
+    # (``metadata["matcher_evidence_count"]``, default 5) when the
+    # producer did not stamp its own CI bounds. Likewise compute
+    # review_priority from review_reasons when the producer did not
+    # stamp it directly. Both fall back to the meta-pass-through for
+    # producers that already populated the fields (e.g. live review
+    # UI, replay scripts, audit scripts).
+    _p_hat = float(meta.get("confidence", match.confidence))
+    _n_ev = int(meta.get("matcher_evidence_count", 5))
+    _ci_low, _ci_high = wilson_score_interval(_p_hat, _n_ev)
+    _ci_low_meta = meta.get("confidence_interval_low")
+    _ci_high_meta = meta.get("confidence_interval_high")
+    _priority_meta = meta.get("review_priority")
+    _ci_low_final = (
+        float(_ci_low_meta) if _ci_low_meta is not None else _ci_low
+    )
+    _ci_high_final = (
+        float(_ci_high_meta) if _ci_high_meta is not None else _ci_high
+    )
+    _priority_final = (
+        int(_priority_meta)
+        if _priority_meta is not None
+        else _review_priority_from_reasons(review_reasons)
+    )
     return PanelRecord(
         paper_id=match.paper_id,
         figure_id=match.figure_id,
@@ -820,10 +887,14 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
         # PanelRecord. All three are producer-side hints: the
         # defaults (None / False / 0) keep legacy matches valid and
         # the Pydantic model enforces the [0,1] / [0,2] ranges.
-        confidence_interval_low=meta.get("confidence_interval_low"),
-        confidence_interval_high=meta.get("confidence_interval_high"),
+        # audit 2026-08-05 (Fill Gaps): the v1.1.0 fields are now
+        # COMPUTED locally (Wilson CI / priority heuristic) when the
+        # upstream pipeline didn't stamp them — see the variables
+        # computed just before the ``return PanelRecord(`` call.
+        confidence_interval_low=_ci_low_final,
+        confidence_interval_high=_ci_high_final,
         image_verified=bool(meta.get("image_verified", False)),
-        review_priority=int(meta.get("review_priority", 0) or 0),
+        review_priority=_priority_final,
         metadata=panel_metadata_from_match(match),
         paper_metadata=paper_metadata_from_internal(match.paper_metadata),
     )
@@ -883,6 +954,8 @@ def _coerce_provenance(provenance: ProvenanceRecord | dict[str, Any]) -> Provena
 def run_output_from_provenance(
     provenance: ProvenanceRecord | dict[str, Any],
     matches: list[MatchResult] | None,
+    *,
+    paper_morphologies: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-serializable RunOutput dict from a provenance and a
     list of ``MatchResult`` instances. Use this before writing the
@@ -908,6 +981,12 @@ def run_output_from_provenance(
     A partial dict is backfilled with stub fields so the GUI's
     truncated provenance (``{job_id, source}``) does not blow up
     ``ProvenanceRecord.model_validate``.
+
+    Audit 2026-08-02: ``paper_morphologies`` carries the Stage-6
+    MorphologyRecord dicts produced by
+    ``RadiolarianPipeline._apply_morphology_enrichment`` for the
+    paper. Merged with per-row ``metadata["morphology"]`` fallbacks
+    so existing tests keep working.
     """
     provenance = _coerce_provenance(provenance)
     if matches is None:
@@ -942,6 +1021,13 @@ def run_output_from_provenance(
     paleo_dump, paleo_warns = paleo_coordinates_from_localities(locality_dump, geology_dump)
     if paleo_warns:
         warnings_dump = warnings_dump + paleo_warns
+    # Audit 2026-08-02: Stage 6 morphology records. ``paper_morphologies``
+    # is a list of dicts the pipeline helper built per-paper; the
+    # ``matches`` parameter is also checked so per-row ``metadata[
+    # "morphology"]`` fallbacks keep working (tests + legacy paths).
+    morphology_dump = morphology_records_from_matches(
+        matches, paper_morphologies=paper_morphologies
+    )
     return {
         "schema_version": provenance.schema_version,
         "provenance": provenance.model_dump(),
@@ -953,6 +1039,7 @@ def run_output_from_provenance(
         "geology_contexts": geology_dump,
         "localities": locality_dump,
         "paleo_coordinates": paleo_dump,
+        "morphologies": morphology_dump,
         "warnings": warnings_dump,
     }
 
@@ -1126,6 +1213,14 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         meta = m.metadata or {}
         pbdb = meta.get("paleodb") or {}
         pbdb_tax = pbdb.get("taxonomy") or {}
+        # Audit 2026-08-02: collect morphology_ids attached to this
+        # species by the Stage-6 morphology enrichment. The pipeline
+        # helper attaches morphology records at the paper level
+        # (``_apply_morphology_enrichment``) but we also accept
+        # per-row ``m.metadata["morphology_ids"]`` for backwards
+        # compatibility with tests that wire morphology at the
+        # MatchResult level.
+        morph_ids = list(meta.get("morphology_ids") or [])
         # Phase 63 Plan 6.17/6.18 (Bugs 6.17/6.18): extract the
         # authority/year and subgenus from the verbatim species
         # string. ``_extract_authorship`` recognises both
@@ -1176,13 +1271,133 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             generic_name=subgenus,
             # Phase 63 Plan 6.19 (Bug 6.19)
             taxon_remarks=taxon_remarks,
+            # Audit 2026-08-02: link to MorphologyRecord entries
+            # produced by Stage 6. May be empty when Stage 6 is off,
+            # the species had no anchorable description, or M3
+            # returned an empty dict.
+            morphology_ids=morph_ids,
         )
         seen[taxon_id] = rec.model_dump()
     return list(seen.values())
 
 
+def morphology_records_from_matches(
+    matches: list[MatchResult] | None,
+    *,
+    paper_morphologies: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Build MorphologyRecord dicts ready for ``RunOutput.morphologies``.
+
+    Audit 2026-08-02 — Stage 6 morphology enrichment (opt-in).
+
+    Two input paths are supported and merged:
+
+    1. ``paper_morphologies``: list of dicts the pipeline's
+       ``_apply_morphology_enrichment`` produced for a single paper
+       (each entry is already a dict-shaped MorphologyRecord payload).
+       These are validated through ``MorphologyRecord.model_validate``
+       so unknown fields are rejected (extra="forbid" on the schema).
+
+    2. ``matches``: legacy / test fallback — any MatchResult whose
+       metadata carries ``metadata["morphology"]`` (a dict shaped like
+       a MorphologyRecord) is converted to a record. Same shape as
+       ``paper_morphologies`` but reads from per-row metadata.
+
+    The function is idempotent: dedup by ``morphology_id`` so a paper
+    that produces records via both paths keeps the first occurrence.
+    Invalid entries (missing required fields, wrong types) are skipped
+    with a logged warning so a single malformed record doesn't break
+    the entire export.
+    """
+    out: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for entry in paper_morphologies or []:
+        if not isinstance(entry, dict):
+            continue
+        rec = _safe_morphology_record(entry)
+        if rec is None:
+            continue
+        if rec["morphology_id"] in seen_ids:
+            continue
+        seen_ids.add(rec["morphology_id"])
+        out.append(rec)
+    for m in matches or []:
+        meta = m.metadata or {}
+        entry = meta.get("morphology")
+        if not isinstance(entry, dict):
+            continue
+        rec = _safe_morphology_record(entry)
+        if rec is None:
+            continue
+        if rec["morphology_id"] in seen_ids:
+            continue
+        seen_ids.add(rec["morphology_id"])
+        out.append(rec)
+    return out
+
+
+def _safe_morphology_record(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate a morphology dict through ``MorphologyRecord``.
+
+    Returns the dumped dict on success, ``None`` on any validation
+    failure. Logs a warning so the operator can see which entry was
+    dropped.
+    """
+    try:
+        rec = MorphologyRecord.model_validate(entry)
+    except Exception as exc:
+        logger.warning(
+            "morphology_records_from_matches: dropping malformed entry (%s): %s",
+            exc,
+            {k: entry.get(k) for k in ("morphology_id", "taxon_id", "paper_id")},
+        )
+        return None
+    return rec.model_dump()
+
+
 def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
     seen: dict[tuple[str, str], dict[str, Any]] = {}
+    # audit 2026-08-05 (Fill Gaps): try the canonical
+    # ``extract_sample_ids`` helper from
+    # ``src/rlpe/sample_id_extractor.py`` first. It already covers
+    # the most common shapes ("Sample 12", "Loc. 5",
+    # "ID-N", Boughdiri short codes) and returns a list of
+    # typed ``SampleID`` dataclasses with kind + value + confidence.
+    # The legacy _SAMPLE_PATTERNS tuple below is kept as a fallback
+    # because it covers some niche patterns (parenthesised
+    # numbered lists, "pl. N" abbreviated plate refs) that the
+    # helper does not. Using ``X_`` prefix so the operator can
+    # tell the extract_sample_ids source from the legacy regex
+    # sources (S_/B_/R_/N_/L_/P_).
+    try:
+        from .sample_id_extractor import extract_sample_ids
+    except Exception:  # pragma: no cover - module is shipped
+        extract_sample_ids = None  # type: ignore[assignment]
+    if extract_sample_ids is not None:
+        for m in matches:
+            text = m.caption_snippet or ""
+            if not text or not m.paper_id:
+                continue
+            try:
+                sample_ids = extract_sample_ids(text)
+            except Exception:
+                sample_ids = []
+            for sid in sample_ids:
+                key = (m.paper_id, f"X_{sid.value}")
+                if key in seen:
+                    continue
+                rec = SampleRecord(
+                    sample_id=f"X_{sid.value}",
+                    paper_id=m.paper_id,
+                    figure_id=m.figure_id,
+                    caption_panel_range=None,
+                    locality_id=None,
+                    geology_context_id=None,
+                    evidence_text=text[:300],
+                    page_index=(m.metadata or {}).get("page_index"),
+                    confidence=sid.confidence,
+                )
+                seen[key] = rec.model_dump()
     # Round 20 sampling: Boughdiri 2007 captions use the formats
     # ``CH4, specimen 7``, ``MB4, specimen 15`` — the old regex
     # ``Sample\\s+[A-Za-z0-9\\-]+`` matched none of these, leaving

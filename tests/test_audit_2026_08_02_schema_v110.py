@@ -35,10 +35,16 @@ def _minimal_panel_record_kwargs(**overrides):
 
 
 class TestSchemaV110:
-    def test_schema_version_is_1_1_0(self):
+    def test_schema_version_is_1_2_0(self):
+        # audit 2026-08-02 shipped schema v1.1.0 (3 PanelRecord
+        # fields). The audit 2026-08-05 follow-up upgraded to v1.2.0
+        # to add MorphologyRecord (Stage 6). The v1.1.0 fields
+        # (confidence_interval_*, image_verified, review_priority)
+        # still exist on PanelRecord in v1.2.0 — they're just now
+        # properly populated by the pipeline.
         from rlpe.schema_models import SCHEMA_VERSION
 
-        assert SCHEMA_VERSION == "1.1.0"
+        assert SCHEMA_VERSION == "1.2.0"
 
     def test_panel_record_accepts_new_fields(self):
         from rlpe.schema_models import PanelRecord
@@ -189,7 +195,15 @@ class TestSchemaV110:
 
     def test_converters_panel_record_from_match_uses_defaults_when_missing(self):
         """A MatchResult with empty metadata must still produce a valid
-        PanelRecord with the v1.1.0 defaults (None / False / 0)."""
+        PanelRecord.
+
+        audit 2026-08-05 (Fill Gaps) updated the contract: ``confidence_interval_low``
+        and ``confidence_interval_high`` are NOW computed from
+        ``confidence`` (Wilson 95% CI) rather than left at ``None``;
+        ``review_priority`` is NOW computed from ``review_reasons``
+        (heuristic bucket) rather than left at ``0``. ``image_verified``
+        stays at the schema default ``False`` because it is HUMAN-controlled.
+        """
         from rlpe.converters import panel_record_from_match
         from rlpe.types import MatchResult
 
@@ -208,7 +222,15 @@ class TestSchemaV110:
             paper_metadata=None,
         )
         rec = panel_record_from_match(match)
-        assert rec.confidence_interval_low is None
-        assert rec.confidence_interval_high is None
+        # audit 2026-08-05 Fix 1: Wilson CI is computed from confidence
+        # (no metadata hints), so the bounds are non-None.
+        assert rec.confidence_interval_low is not None
+        assert rec.confidence_interval_high is not None
+        assert 0.0 <= rec.confidence_interval_low < 0.9
+        assert 0.9 < rec.confidence_interval_high <= 1.0
+        # audit 2026-08-05 Fix 2: priority heuristic on review_reasons.
+        # Empty review_reasons (none of the missing_* flags apply
+        # because bbox=None triggers missing_bbox → priority 2).
         assert rec.image_verified is False
-        assert rec.review_priority == 0
+        # bbox=None triggers missing_bbox which is critical → priority 2.
+        assert rec.review_priority == 2

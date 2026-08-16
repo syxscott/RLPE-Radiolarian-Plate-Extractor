@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -39,6 +40,62 @@ logger = logging.getLogger(__name__)
 # figure_id guard so legacy pred rows can still satisfy verified
 # gold rows on the same page.
 _FIG_PAGE_RE = re.compile(r"^(?:od_plate_|od_fig_)([^_]+)_p(\d{3})")
+# Bragin 2025 is a schema variant of the plate matcher: the gold key uses
+# the paper slug and plate number (``..._bragin2025_p001_pl01``), while the
+# extracted prediction retains the OpenDataLoader document hash and the PDF
+# page containing that plate (``..._2e85364a3c605326_p006_pl01``).  For this
+# paper the stable identity is the printed plate discriminator, not the
+# source-specific hash/page pair.
+_BRAGIN_PLATE_RE = re.compile(
+    r"^od_plate_(?:bragin2025|2e85364a3c605326)_p\d{3}_pl(\d+)$"
+)
+
+
+# ---------------------------------------------------------------------------
+# Paper_id aliases — eval-side normalisation for hash-vs-slug mismatches.
+# ---------------------------------------------------------------------------
+# The gold standard records Bragin 2025 with the human-readable paper slug
+# ``bragin2025``, but the upstream OpenDataLoader extractor emits the
+# 16-char content hash ``2e85364a3c605326`` in its prediction rows. The
+# figure_id fix (commit ``f97f33a``, ``_BRAGIN_PLATE_RE`` above) closed
+# the plate-number side; the paper_id side was missed, so the eval still
+# failed to match Bragin panels and the paper reported 0% panel_match.
+#
+# The map is keyed by the *raw* paper_id (any direction — pred or gold
+# value), and values are the canonical paper_id the eval should treat the
+# row as belonging to. We map to the slug used by the gold file because
+# every other paper in the corpus uses a content hash on BOTH sides and
+# only Bragin has the asymmetry, so we align everything to the gold slug.
+_PAPER_ID_ALIASES: dict[str, str] = {
+    "2e85364a3c605326": "bragin2025",
+}
+
+
+def _normalize_paper_id(paper_id: str | None) -> str:
+    """Resolve a raw paper_id through :data:`_PAPER_ID_ALIASES`.
+
+    A missing/empty paper_id passes through unchanged (the caller is
+    expected to skip those rows). Unknown paper_ids pass through
+    unchanged so the rest of the corpus keeps its strict string
+    equality semantics — only the listed asymmetric pairs are aliased.
+    """
+    if not paper_id:
+        return paper_id or ""
+    return _PAPER_ID_ALIASES.get(paper_id, paper_id)
+
+
+def normalize_paper_id_for_eval(pred_id: str | None, gold_id: str | None) -> bool:
+    """Public helper: do these two paper_ids refer to the same paper?
+
+    Both inputs are run through :data:`_PAPER_ID_ALIASES` and the
+    canonical forms are compared. Symmetric in argument order (a
+    caller can pass either the pred-side or gold-side id first) so
+    external reporting layers do not need to know which side carries
+    the alias. Empty / ``None`` inputs are non-matches; the eval
+    loop already filters those rows but the helper stays safe to
+    call from arbitrary contexts.
+    """
+    return bool(pred_id) and bool(gold_id) and _normalize_paper_id(pred_id) == _normalize_paper_id(gold_id)
 
 
 def _figure_id_logical_key(figure_id: str) -> str:
@@ -55,6 +112,13 @@ def _figure_id_logical_key(figure_id: str) -> str:
     """
     if not figure_id:
         return ""
+    # Bragin 2025's gold and prediction disagree in both the document token
+    # and the page token: gold records the paper slug/plate page, whereas the
+    # raw extraction uses the OD document hash/PDF page.  Both still carry the
+    # same printed ``pl<N>`` discriminator, which is the logical figure id.
+    bragin = _BRAGIN_PLATE_RE.match(figure_id)
+    if bragin:
+        return f"bragin2025_pl{int(bragin.group(1)):02d}"
     m = _FIG_PAGE_RE.match(figure_id)
     if m:
         return f"{m.group(1)}_p{m.group(2)}"
@@ -355,8 +419,14 @@ def evaluate(
     """
     by_paper: dict[str, PaperMetrics] = defaultdict(lambda: PaperMetrics(paper_id=""))
     for g in gold:
-        m = by_paper[g.paper_id]
-        m.paper_id = g.paper_id
+        # Resolve the gold paper_id through the alias map so a Bragin
+        # gold row (slug ``bragin2025``) and a Bragin pred row
+        # (hash ``2e85364a3c605326``) land in the same PaperMetrics
+        # bucket. Without this, Bragin showed 0% panel_match because
+        # the two streams keyed off different identifiers.
+        canonical_paper_id = _normalize_paper_id(g.paper_id)
+        m = by_paper[canonical_paper_id]
+        m.paper_id = canonical_paper_id
         m.n_gold += 1
 
     # Build a list of predictions per (paper_id, figure_id, panel_id).
@@ -371,7 +441,11 @@ def evaluate(
         if not _is_real_prediction(p):
             n_skipped += 1
             continue
-        pid = p.get("paper_id")
+        # Resolve the pred paper_id through the alias map (see comment
+        # in the gold ingestion block above). This makes the per-paper
+        # equality check ``pid != g.paper_id`` later in this function
+        # succeed for Bragin.
+        pid = _normalize_paper_id(p.get("paper_id"))
         fid = p.get("figure_id") or ""
         plabel = p.get("panel_id")
         if not pid or not plabel:
@@ -402,7 +476,12 @@ def evaluate(
     consumed_pred_keys: set[tuple[str, str, str]] = set()
 
     for g in gold:
-        m = by_paper[g.paper_id]
+        # Resolve the gold paper_id through the alias map at the per-
+        # paper loop too — defence-in-depth in case a future caller
+        # hands in raw GoldPanels whose paper_id wasn't pre-normalised
+        # at ingestion time.
+        canonical_paper_id = _normalize_paper_id(g.paper_id)
+        m = by_paper[canonical_paper_id]
         # audit 2026-08-02: apply Layer B normalisation (roman→arabic,
         # cf./aff.→cf/aff, parenthesised-content strip, whitespace
         # collapse, lowercase) BEFORE the existing taxonomy-aware
@@ -416,7 +495,7 @@ def evaluate(
         for (pid, fid, plabel), preds in pred_groups.items():
             if (pid, fid, plabel) in consumed_pred_keys:
                 continue
-            if pid != g.paper_id:
+            if pid != canonical_paper_id:
                 continue
             # Phase 55 audit: explicit guard — skip when both are non-empty
             # and differ. The Phase 68 audit relax this to also allow a
@@ -700,6 +779,52 @@ def compare_before_after(
         "match_improvement": round(after_acc - before_acc, 4),
         "gemma_confidence_mean": round(gemma_mean, 4),
     }
+
+
+def wilson_score_interval(
+    p_hat: float,
+    n: int = 5,
+    z: float = 1.96,
+) -> tuple[float, float]:
+    """Wilson score interval for a Bernoulli proportion.
+
+    Returns ``(low, high)`` for the symmetric two-sided ``z``-interval
+    on the panel-level ``confidence`` (``p_hat``), assuming ``n``
+    independent observations supported the confidence estimate.
+
+    The audit 2026-08-05 (Fill Gaps) task wires this into
+    ``PanelRecord.confidence_interval_low / _high``. The default ``n=5``
+    is a conservative approximation: it matches the typical number of
+    caption-pair / OCR-evidence signals the heuristic matcher combines
+    to reach a panel-level confidence, and produces a CI roughly half
+    the magnitude of the worst-case n=1 Wilson interval. Producers may
+    override via ``metadata["matcher_evidence_count"]`` to expose a
+    more precise count.
+
+    The interval is **clamped** to ``[0.0, 1.0]`` so callers can use the
+    bounds directly as Pydantic field values (the schema enforces
+    ``ge=0.0, le=1.0``).
+
+    This is NOT a strict statistical 95% CI — it is a Wilson-style
+    approximation sized for the panel-level signal. Document that in
+    user-facing docs to avoid downstream confusion.
+    """
+    if n <= 0:
+        # Degenerate case: return the widest possible interval.
+        return (0.0, 1.0)
+    p_hat = min(max(float(p_hat), 0.0), 1.0)
+    denom = 1.0 + z * z / n
+    center = (p_hat + z * z / (2.0 * n)) / denom
+    spread = (
+        z
+        * math.sqrt(
+            p_hat * (1.0 - p_hat) / n + z * z / (4.0 * n * n)
+        )
+        / denom
+    )
+    low = max(0.0, center - spread)
+    high = min(1.0, center + spread)
+    return (low, high)
 
 
 def bootstrap_confidence_interval(

@@ -51,6 +51,46 @@ bugs that were uncovered while building this report.
 
 ---
 
+## Audit 2026-08-02 baseline (current)
+
+Following the 2026-08-02 audit fix wave (8 commits, 57/58 audit bugs
+fixed; full commit list in `CHANGELOG.md` § Unreleased 11), the
+9-paper gold set aggregate metrics on a fresh `reproduce_eval.sh`
+run are:
+
+| Metric | Value |
+| --- | ---: |
+| Species F1 | **82.96%** |
+| Species precision | 91.36% |
+| Species recall | 75.98% |
+| Panel match rate | **84.31%** |
+| Exact match | 75.98% |
+| Papers evaluated | 9 |
+| Gold panels | 612 |
+
+Per-paper (sorted by Species F1):
+
+| Paper | Gold | Panel Match | Species F1 |
+| --- | ---: | ---: | ---: |
+| bandini2006 | 27 | 100.0% | 100.0% |
+| beccaro2006 | 6 | 100.0% | 100.0% |
+| baumgartner2008 | 35 | 100.0% | 97.1% |
+| boughdiri2007 | 84 | 96.4% | 95.8% |
+| pouille2014 | 73 | 100.0% | 90.4% |
+| feng2007 | 61 | 83.6% | 89.3% |
+| hollis2006 | 42 | 100.0% | 85.7% |
+| bandini2011 | 273 | **73.6%** | **71.5%** ← recovered from 0% (figure_id schema-variant fallback) |
+| bragin2025 | 11 | 0.0% | 0.0% ← needs fix (panel_id format) |
+
+The biggest single win was **Bandini 2011** (215 panels), whose
+panel match rate jumped from 0% → 73.6% thanks to the
+`_figure_id_logical_key()` helper that resolves
+`od_plate_<pid>_p<page>_pl<N>` and `od_fig_<pid>_p<page>_<idx>` to
+a canonical `<pid>_p<page>` key. See `work/F1_PROGRESS_2026_08_02.md`
+for the full trajectory and remaining-gap analysis.
+
+---
+
 ## ⚠️ Critical caveat: string-match F1 ≠ image-verified accuracy
 
 > **The 96.08% / 83.70% headline F1 numbers are STRING-MATCH metrics.**

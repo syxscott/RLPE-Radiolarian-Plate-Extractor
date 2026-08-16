@@ -12,6 +12,28 @@ Radiolarian Literature Plate Extractor（放射虫文献图版提取流水线）
 
 ---
 
+## Recent updates (2026-08-02)
+
+### F1 progress: 65.7% → 82.96% on 9-paper gold set
+
+After the August 1 audit (58 bugs → 57 fixed) + August 2 follow-up wave:
+
+| Metric | Before | After |
+|---|---:|---:|
+| Species F1 | 65.7% | **82.96%** |
+| Panel match | 58.8% | 84.31% |
+| Recall | 52.2% | 75.98% |
+
+Key wins:
+- Bandini 2011 (215 panels): **0% → 73.6%** panel match (figure_id schema fix)
+- New M3-based morphology extraction (Stage 6, opt-in via `--m3-stage-6`)
+- New radiolarian-trained YOLO detector (replaces generic COCO model)
+- Schema v1.2.0 with morphology records + review priority
+
+See `work/F1_PROGRESS_2026_08_02.md` and `work/AUDIT_FOLLOWUP_2026_08_02.md` for details.
+
+---
+
 ## 快速导航
 
 ### 🎯 新手入门（强烈推荐）
@@ -119,7 +141,7 @@ chmod +x run_web_server.sh
 12. 正文地质信息抽取（Age / Formation / Locality）
 13. 比例尺信息抽取（caption/OCR/视觉线段估计）
 14. Species-Geology 关系链接与知识图谱输出
-15. API服务与任务队列骨架（FastAPI + Celery）
+15. API服务与异步任务执行（FastAPI + BackgroundTasks）
 
 ---
 
@@ -871,7 +893,7 @@ python scripts/run_pipeline.py \
 已提供：
 
 - FastAPI 上传与结果查询接口：[src/rlpe/api/app.py](src/rlpe/api/app.py)
-- Celery任务骨架：[src/rlpe/worker/tasks.py](src/rlpe/worker/tasks.py)
+- 异步任务执行：FastAPI BackgroundTasks（[src/rlpe/api/app.py](src/rlpe/api/app.py)）
 - Docker 镜像（多阶段构建）: [Dockerfile](Dockerfile)
 - GitHub Actions CI（pytest + ruff + mypy + eval smoke）: [.github/workflows/ci.yml](.github/workflows/ci.yml)
 - OpenAPI 快照（v1.1.0，17 paths / 8 schemas）: [docs/openapi-1.1.0.json](docs/openapi-1.1.0.json)。重新生成：`PYTHONPATH=src python scripts/gen_openapi.py`

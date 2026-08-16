@@ -135,6 +135,15 @@ class ReviewCorrection(BaseModel):
     corrected_label: str | None = None
     reviewer: str | None = None
     notes: str | None = None
+    # audit 2026-08-05 (Fill Gaps): the v1.1.0 ``image_verified``
+    # flag on PanelRecord is a HUMAN-controlled bit (it records
+    # "a human has looked at the panel image and confirmed the
+    # species assignment"). The pipeline can never set it to True
+    # on its own. We extend the existing POST /review/correction
+    # endpoint to flip it instead of standing up a parallel
+    # PATCH endpoint — keeps the API surface small and reuses the
+    # existing JSONL rotation behaviour.
+    image_verified: bool | None = None
 
 
 class ResultRecord(BaseModel):
@@ -213,6 +222,15 @@ class JobOptions(BaseModel):
     m3_stage_4: bool | None = None
     m3_stage_5: bool | None = None
     m3_match_samples: int | None = None
+    # ---- Audit 2026-08-02: M3 morphology Stage-6 (opt-in) ----
+    # When True, the pipeline asks M3 for one MorphologyRecord per
+    # unique (paper, species) pair with an anchorable Description /
+    # Diagnosis section. Privacy: api_redacted → caption-only;
+    # local_only → skip entirely.
+    m3_stage_6: bool | None = None
+    m3_morphology_max_species_per_paper: int | None = None
+    m3_morphology_max_context_chars: int | None = None
+    m3_morphology_min_caption_chars: int | None = None
     # ---- Paleobiology Database (opt-in) ----
     use_paleodb: bool = False
     paleodb_max_occurrences: int = 25
@@ -1362,7 +1380,51 @@ def submit_correction(payload: ReviewCorrection):
     row = {**payload.model_dump(), "timestamp": datetime.now().isoformat()}
     with target.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    # audit 2026-08-05 (Fill Gaps): if the caller asked to flip
+    # ``image_verified``, mutate the in-memory RESULT_CACHE so the
+    # next /results read returns the updated value. We persist via
+    # the corrections.jsonl row above (already written) so a server
+    # restart can replay it; no separate run_output rewrite is
+    # needed for the cache hit, which keeps this handler fast and
+    # avoids touching the immutable matches.jsonl artefact.
+    if payload.image_verified is not None:
+        _flip_image_verified_in_cache(payload)
     return {"status": "ok", "saved_to": str(target)}
+
+
+def _flip_image_verified_in_cache(payload: ReviewCorrection) -> int:
+    """Flip ``image_verified`` for every (paper_id, figure_id, panel_path)
+    tuple across all loaded RESULT_CACHE entries that matches.
+
+    Returns the count of mutated rows so the caller / tests can assert
+    it worked. Audit 2026-08-05 (Fill Gaps): the v1.1.0 schema field
+    ``PanelRecord.image_verified`` is HUMAN-controlled; this helper
+    is the single point where human review actions land on the
+    cache.
+    """
+    flipped = 0
+    target_panel = (payload.panel_path or "").rstrip("/").split("/")[-1]
+    for job_id, entry in RESULT_CACHE.items():
+        result = entry.get("result") if isinstance(entry, dict) else None
+        if not isinstance(result, dict):
+            continue
+        panels = result.get("panels") or []
+        for panel in panels:
+            if not isinstance(panel, dict):
+                continue
+            if panel.get("paper_id") != payload.paper_id:
+                continue
+            if panel.get("figure_id") != payload.figure_id:
+                continue
+            if target_panel:
+                panel_path = (panel.get("panel_path") or "").rstrip("/").split("/")[-1]
+                if panel_path != target_panel:
+                    continue
+            meta = panel.get("metadata") or {}
+            meta["image_verified"] = bool(payload.image_verified)
+            panel["metadata"] = meta
+            flipped += 1
+    return flipped
 
 
 @app.get("/results")
@@ -2157,6 +2219,8 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             "m3_stage_5",
             "m3_match_samples",
             "m3_diagnostic_dir",
+            # Audit 2026-08-02: Stage-6 morphology knobs.
+            "m3_stage_6",
             # Paleobiology Database (opt-in)
             "use_paleodb",
             "paleodb_max_occurrences",
@@ -2227,6 +2291,22 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             extra["grobid_timeout"] = int(options["grobid_timeout"])
         if options.get("disable_od_fallback"):
             extra["disable_od_fallback"] = True
+        # Audit 2026-08-02: Stage-6 morphology int overrides are
+        # first-class PipelineConfig fields (not extras) — set them
+        # before constructing PipelineConfig so ``__post_init__``
+        # validation runs against the user-supplied values.
+        if options.get("m3_morphology_max_species_per_paper") is not None:
+            pipeline_kwargs["m3_morphology_max_species_per_paper"] = int(
+                options["m3_morphology_max_species_per_paper"]
+            )
+        if options.get("m3_morphology_max_context_chars") is not None:
+            pipeline_kwargs["m3_morphology_max_context_chars"] = int(
+                options["m3_morphology_max_context_chars"]
+            )
+        if options.get("m3_morphology_min_caption_chars") is not None:
+            pipeline_kwargs["m3_morphology_min_caption_chars"] = int(
+                options["m3_morphology_min_caption_chars"]
+            )
         cfg = PipelineConfig(**pipeline_kwargs)
 
         # If using MiniMax, register a web-popup fallback handler.

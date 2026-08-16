@@ -618,6 +618,73 @@ PROMPT_REGISTRY: dict[str, str] = {
         "  than text-only inference.\n"
         "- Output JSON only, no markdown fences, no commentary."
     ),
+    # Audit 2026-08-02 — morphology_extract prompt. Stage 6 of the M3
+    # pipeline (opt-in via ``m3_stage_6=True``): for each unique
+    # (paper, species) pair, send the caption or body-text excerpt to
+    # M3 and ask for structured morphological-description fields.
+    #
+    # Critical rules (the whole point of having a structured prompt):
+    # 1. NEVER infer a feature that is not in the source text. If
+    #    spines are not mentioned, ``spines_present`` MUST be null
+    #    (NOT false — false means "explicitly absent" which the text
+    #    didn't say). The schema treats null and false as different
+    #    values; conflating them is how hallucinated records enter
+    #    the dataset.
+    # 2. Numeric ranges: when a paper says "180-220 µm", emit
+    #    ``test_length_um_min: 180, test_length_um_max: 220``. When
+    #    the paper says only "approximately 200 µm", emit min and
+    #    max BOTH equal to 200 (or both null if the species is
+    #    mentioned but the dimension isn't).
+    # 3. confidence reflects your certainty in the morphological
+    #    extraction itself; do NOT inflate it for easy fields. A
+    #    clean Description section with explicit measurements → 0.9+;
+    #    a one-sentence mention with no numbers → 0.3-0.5.
+    "morphology_extract": (
+        "You are an expert radiolarian paleontologist. You will be given:\n"
+        "1. A species name.\n"
+        "2. A source text excerpt (either a plate caption or a body\n"
+        "   paragraph from the Description / Diagnosis / Remarks /\n"
+        "   Dimensions section of the paper).\n\n"
+        "Your job: extract the morphological description of THIS\n"
+        "species as documented in the source text.\n\n"
+        "STRICT RULES — these are not optional:\n"
+        "- If a field is NOT explicitly stated in the source text, set\n"
+        "  it to null. NEVER guess or default to false / 0 / \"absent\".\n"
+        "  In particular, ``spines_present`` MUST be null (not false)\n"
+        "  when the text does not mention spines either way.\n"
+        "- For numeric ranges, use the values from the text verbatim.\n"
+        "  If the text says \"180-220 µm\", emit min=180, max=220.\n"
+        "  If the text gives a single value \"approximately 200 µm\",\n"
+        "  emit min=max=200 (or both null if uncertain).\n"
+        "- ``diagnostic_features`` is a list of short verbatim phrases\n"
+        "  that distinguish this species (e.g. \"three-bladed apical\n"
+        "  horn\", \"porous thoracic wall\"). Omit the list (return [])\n"
+        "  if the text has no distinguishing phrases.\n"
+        "- ``evidence_text`` MUST be a short verbatim quote (≤ 200 chars)\n"
+        "  from the source that supports the extracted fields. If the\n"
+        "  source has nothing usable, set to null.\n\n"
+        "Return strict JSON only, no markdown fences:\n\n"
+        "{\n"
+        '  "test_shape": str|null,\n'
+        '  "test_length_um_min": float|null,\n'
+        '  "test_length_um_max": float|null,\n'
+        '  "test_width_um_min": float|null,\n'
+        '  "test_width_um_max": float|null,\n'
+        '  "num_segments": int|null,\n'
+        '  "cephalis_shape": str|null,\n'
+        '  "thorax_shape": str|null,\n'
+        '  "abdomen_shape": str|null,\n'
+        '  "pore_pattern": str|null,\n'
+        '  "pore_diameter_um_min": float|null,\n'
+        '  "pore_diameter_um_max": float|null,\n'
+        '  "spines_present": bool|null,\n'
+        '  "spine_count": int|null,\n'
+        '  "apertural_structure": str|null,\n'
+        '  "diagnostic_features": [str, ...],\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "evidence_text": str|null\n'
+        "}\n"
+    ),
 }
 
 SECTION_TYPE_BY_FIGURE: dict[str, str] = {
@@ -3423,6 +3490,123 @@ class M3Engine:
             "figure_id": parsed.get("figure_id"),
             "confidence": conf,
         }
+
+    # ------------------------------------------------------------------ audit 2026-08-02
+    def infer_morphology(
+        self,
+        species_name: str,
+        source_text: str,
+        *,
+        source: str = "body_text",
+        paper_id: str | None = None,
+        max_chars: int = 6000,
+    ) -> dict[str, Any]:
+        """Stage 6: per-species morphological-description extraction.
+
+        For a single species and a caption or body-text excerpt, ask
+        MiniMax-M3 to emit a structured morphological-description
+        record. This is the audit-2026-08-02 Stage-6 MVP: opt-in via
+        ``m3_stage_6=True``, never modifies existing species/panel
+        fields, and never raises (any failure → ``{}`` so the caller
+        can distinguish "M3 said no" from "M3 didn't run").
+
+        Parameters
+        ----------
+        species_name : str
+            The binomial or open-nomenclature name of the species
+            (``"Triassocampe sp."``, ``"Podocyrtis sinuosa"``). The
+            prompt does not gate on this — it's echoed back into the
+            user message so the model knows which species to scope the
+            extraction to.
+        source_text : str
+            Either the plate caption (when ``source="caption"``) or a
+            body-text excerpt from the Description / Diagnosis /
+            Remarks section (when ``source="body_text"``). Truncated
+            to ``max_chars`` characters.
+        source : str
+            Provenance label forwarded into the returned dict so
+            callers can round-trip the source kind without reading
+            ``evidence_text``. One of ``"caption"``, ``"body_text"``,
+            ``"m3_vision"``. Default ``"body_text"``.
+        paper_id : str, optional
+            For logging only — does not affect the prompt.
+        max_chars : int
+            Upper bound on the size of ``source_text`` included in the
+            prompt. Default 6000 (matches the locator's default).
+
+        Returns
+        -------
+        dict
+            The parsed morphology record with the schema declared in
+            ``PROMPT_REGISTRY["morphology_extract"]``. Any failure
+            (no backend, empty response, malformed JSON) yields
+            ``{}`` and emits a warning. Empty dict lets the caller
+            distinguish "M3 ran but extracted nothing" from "M3 did
+            not run".
+
+        Notes
+        -----
+        * Null vs false: the prompt explicitly forbids ``false`` for
+          unmentioned features. The caller is responsible for
+          round-tripping null / false correctly when it stores the
+          record.
+        * Per-paper dedup: callers must dedup on
+          ``(paper_id, normalized_species)`` BEFORE calling this
+          method (the locator + pipeline helper already do).
+        """
+        if self.backend is None:
+            return {}
+        if not species_name or not species_name.strip():
+            return {}
+        if not source_text or not source_text.strip():
+            return {}
+        # Trim source_text to keep the prompt within budget. We add an
+        # ellipsis to signal truncation to the model (it should not
+        # invent features that were cut off).
+        trimmed = source_text.strip()
+        if len(trimmed) > max_chars:
+            trimmed = trimmed[:max_chars] + "..."
+        system_prompt = PROMPT_REGISTRY["morphology_extract"]
+        user_prompt = (
+            f"Species: {species_name.strip()}\n"
+            f"Source ({source}):\n{trimmed}\n\n"
+            "Return strict JSON only, no markdown fences."
+        )
+        try:
+            res = self._infer_text(system_prompt, user_prompt)
+        except Exception:
+            logger.exception(
+                "infer_morphology: backend call failed (paper=%s, species=%s)",
+                paper_id,
+                species_name,
+            )
+            return {}
+        if res.get("fallback_used") or not (res.get("raw_text") or "").strip():
+            return {}
+        try:
+            parsed = _safe_json_loads(res.get("raw_text") or "")
+        except ValueError:
+            logger.warning(
+                "infer_morphology: failed to parse JSON (paper=%s, species=%s)",
+                paper_id,
+                species_name,
+            )
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        # Clamp confidence to [0.0, 1.0]. The prompt asks for 0-1 but a
+        # misbehaving model can emit 1.5 or -0.2 — round-trip safely.
+        try:
+            conf = float(parsed.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        conf = max(0.0, min(1.0, conf))
+        parsed["confidence"] = conf
+        # Stamp the source kind onto the returned dict so the caller
+        # doesn't have to remember which flavor of context produced
+        # the record. Provenance is then carried into MorphologyRecord.
+        parsed["_source"] = source
+        return parsed
 
     # ------------------------------------------------------------- phase 66 plan c.1
     def cross_figure_visual_inference(

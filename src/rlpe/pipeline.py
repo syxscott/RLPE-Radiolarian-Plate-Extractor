@@ -93,6 +93,19 @@ class RadiolarianPipeline:
         cancel_event: threading.Event | None = None,
     ) -> None:
         self.config = config
+        # Plan D: explicit --use-neural-matcher gate. Setting the flag
+        # without --matcher-checkpoint-path silently falls back to the
+        # heuristic matcher (the NeuralGraphMatcher class is real but
+        # inaccessible without a trained checkpoint). Warn loudly so
+        # operators don't think the neural path is engaged when it isn't.
+        if bool(self.config.extra.get("use_neural_matcher", False)) and not self.config.extra.get(
+            "matcher_checkpoint_path"
+        ):
+            logger.warning(
+                "--use-neural-matcher set but no --matcher-checkpoint-path provided; "
+                "falling back to heuristic matcher. Train one via "
+                "scripts/train_matcher.py to enable the neural path."
+            )
         # Optional progress callback: ``cb(current, total, message)``.
         # ``current`` and ``total`` are 0-indexed ints; the API uses
         # ``current/total`` to map a real pipeline position onto the 30-90%
@@ -182,6 +195,17 @@ class RadiolarianPipeline:
         # segmenter (SAM2) and gemma runtimes are NOT concurrent-safe, so
         # they retain per-pipeline locks.
         self._seg_lock = threading.Lock()
+        # Audit 2026-08-02: paper-level morphology records produced
+        # by Stage 6 enrichment. Keyed by paper_id so the run() loop
+        # can merge them into the canonical ``run_output.json`` after
+        # all per-paper processing completes. The accumulator is
+        # populated by ``_apply_morphology_enrichment`` (only fires
+        # when ``m3_stage_6=True`` and a M3 backend is available) and
+        # drained by ``run()`` when assembling ``run_output_dict``.
+        # Plain dict — single-threaded accumulation (per-paper work
+        # is serialised by the executor), drained in ``run()`` once
+        # the workers have all returned.
+        self._paper_morphologies: dict[str, list[dict[str, Any]]] = {}
         # Phase 59 (Bug 2.5): serialise progress-callback invocations.
         # Multiple worker threads can finish PDFs concurrently and
         # invoke ``_progress_cb`` simultaneously; without this lock,
@@ -220,9 +244,7 @@ class RadiolarianPipeline:
                     self._od_extractor = OpenDataLoaderExtractor(
                         use_ocr=bool(self.config.extra.get("od_use_ocr", False)),
                         ocr_lang=str(self.config.extra.get("od_ocr_lang", "en")),
-                        merge_gap_pt=float(
-                            self.config.extra.get("od_merge_gap_pt", 72.0)
-                        ),
+                        merge_gap_pt=float(self.config.extra.get("od_merge_gap_pt", 72.0)),
                         # Phase 28: forward the OD path page-distance
                         # limit. Default 5 on PipelineConfig; CLI
                         # overrides via ``--od-caption-window``.
@@ -241,12 +263,9 @@ class RadiolarianPipeline:
         #      produced zero LLM calls unless the user also passed
         #      --use-gemma4.
         minimax_backends = {"minimax", "minimax-m3", "minimax_api"}
-        backend_name = (
-            str(self.config.extra.get("llm_backend") or "").lower() or "transformers"
-        )
+        backend_name = str(self.config.extra.get("llm_backend") or "").lower() or "transformers"
         has_minimax_key = bool(
-            self.config.extra.get("MiniMax_api_key")
-            or os.environ.get("MINIMAX_API_KEY")
+            self.config.extra.get("MiniMax_api_key") or os.environ.get("MINIMAX_API_KEY")
         )
         # Round 16 audit: ANTHROPIC_API_KEY used to be a fallback
         # source. That silently routed Claude Code users to MiniMax
@@ -273,9 +292,7 @@ class RadiolarianPipeline:
             or self.config.extra.get("ollama_model")
             or self.config.extra.get("llama_model")
         )
-        use_minimax = backend_name in minimax_backends or (
-            has_minimax_key and not has_local_model
-        )
+        use_minimax = backend_name in minimax_backends or (has_minimax_key and not has_local_model)
         if not use_minimax and not self.config.extra.get("use_gemma4", False):
             return
         model_path = self.config.extra.get("gemma_model_path") or self.config.extra.get(
@@ -301,9 +318,7 @@ class RadiolarianPipeline:
             # called set_fallback_backend).
             fb_name = self.config.extra.get("fallback_llm_backend")
             if fb_name and hasattr(self.gemma_runtime, "backend"):
-                setter = getattr(
-                    self.gemma_runtime.backend, "set_fallback_backend", None
-                )
+                setter = getattr(self.gemma_runtime.backend, "set_fallback_backend", None)
                 if setter is not None:
                     try:
                         setter(fb_name)
@@ -320,9 +335,7 @@ class RadiolarianPipeline:
                 else:
                     from .llm_backends import FallbackHandler
 
-                    default_action = str(
-                        self.config.extra.get("MiniMax_fallback_default", "rules")
-                    )
+                    default_action = str(self.config.extra.get("MiniMax_fallback_default", "rules"))
                     handler = FallbackHandler(default_action=default_action)
                     if bool(self.config.extra.get("MiniMax_interactive", False)):
                         from .llm_backends import cli_fallback_prompt
@@ -349,9 +362,7 @@ class RadiolarianPipeline:
         if self.gemma_runtime is not None:
             want_m3 = self.config.extra.get("m3_enhanced_mode", False)
             if want_m3:
-                m3_cfg = {
-                    k: v for k, v in self.config.extra.items() if k.startswith("m3_")
-                }
+                m3_cfg = {k: v for k, v in self.config.extra.items() if k.startswith("m3_")}
                 # If user didn't set stage toggles, enable all 5 by default.
                 m3_cfg.setdefault("m3_stage_1", True)
                 m3_cfg.setdefault("m3_stage_2", True)
@@ -494,9 +505,7 @@ class RadiolarianPipeline:
                         pool.shutdown(wait=False, cancel_futures=True)
                         raise
                     except Exception:
-                        logger.exception(
-                            "PDF processing failed; continuing with remaining PDFs"
-                        )
+                        logger.exception("PDF processing failed; continuing with remaining PDFs")
                     else:
                         rows.extend(result_rows)
                     completed += 1
@@ -537,14 +546,23 @@ class RadiolarianPipeline:
                 match_results = [match_result_from_dict(d) for d in rows]
                 provenance_internal = build_provenance(self.config, pdf_files)
                 provenance_record = ProvenanceRecord(**provenance_internal.to_dict())
+                # Audit 2026-08-02: forward Stage-6 morphology records
+                # collected by ``_apply_morphology_enrichment`` into
+                # the canonical RunOutput. ``_paper_morphologies`` is
+                # keyed by paper_id; flatten into a single list. An
+                # empty list is the no-op path (Stage 6 off / no
+                # paper-level work fired).
+                paper_morphologies: list[dict[str, Any]] = []
+                for recs in self._paper_morphologies.values():
+                    paper_morphologies.extend(recs)
                 run_output_dict = run_output_from_provenance(
-                    provenance_record, match_results
+                    provenance_record,
+                    match_results,
+                    paper_morphologies=paper_morphologies,
                 )
                 write_json(manifest_path.parent / "run_output.json", run_output_dict)
             except Exception:
-                logger.exception(
-                    "Failed to write run_output.json; matches.jsonl is unaffected"
-                )
+                logger.exception("Failed to write run_output.json; matches.jsonl is unaffected")
             # Run-level LLM usage sidecar. Independent of RunOutput schema
             # so /system/llm-status and the audit trail can see the actual
             # MiniMax call / token / cost totals even before the per-row
@@ -555,9 +573,7 @@ class RadiolarianPipeline:
                 if summary:
                     write_json(manifest_path.parent / "llm_usage.json", summary)
             except Exception:
-                logger.exception(
-                    "Failed to write llm_usage.json; matches.jsonl is unaffected"
-                )
+                logger.exception("Failed to write llm_usage.json; matches.jsonl is unaffected")
         self._emit_progress(total, total, f"Done — {len(rows)} matches")
         return rows
 
@@ -625,9 +641,7 @@ class RadiolarianPipeline:
             md = r.get("metadata") or {}
             for loc in md.get("location_names") or []:
                 if loc:
-                    map_locs_by_paper.setdefault(pid, []).append(
-                        (loc, r.get("figure_id", ""))
-                    )
+                    map_locs_by_paper.setdefault(pid, []).append((loc, r.get("figure_id", "")))
         if not map_locs_by_paper:
             return results
 
@@ -690,11 +704,7 @@ class RadiolarianPipeline:
                     # is an acronym of the section's full name.
                     if len(sec_alpha) >= 2 and "-" in loc:
                         words = [
-                            w
-                            for w in loc.replace("Range", "")
-                            .replace("River", "")
-                            .split("-")
-                            if w
+                            w for w in loc.replace("Range", "").replace("River", "").split("-") if w
                         ]
                         if len(words) == len(sec_alpha):
                             if all(
@@ -751,9 +761,7 @@ class RadiolarianPipeline:
         # Gemma4 loader).
         # Phase 55 audit: config takes priority over env vars so users can
         # override ANTHROPIC_API_KEY (project-wide) with a per-run MiniMax_api_key.
-        api_key = self.config.extra.get("MiniMax_api_key") or os.environ.get(
-            "ANTHROPIC_API_KEY"
-        )
+        api_key = self.config.extra.get("MiniMax_api_key") or os.environ.get("ANTHROPIC_API_KEY")
         base_url = os.environ.get("ANTHROPIC_BASE_URL") or self.config.extra.get(
             "MiniMax_endpoint", "https://api.minimaxi.com/anthropic"
         )
@@ -1051,9 +1059,7 @@ class RadiolarianPipeline:
             },
         }
 
-    def _process_one_pdf_od(
-        self, paper_id: str, pdf_path: Path
-    ) -> list[dict[str, Any]]:
+    def _process_one_pdf_od(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         if not self._enter_od_grobid_guard(paper_id, "OD"):
             return [self._make_od_grobid_cycle_stub(paper_id, pdf_path, "od")]
         try:
@@ -1061,12 +1067,8 @@ class RadiolarianPipeline:
         finally:
             self._exit_od_grobid_guard()
 
-    def _process_one_pdf_od_inner(
-        self, paper_id: str, pdf_path: Path
-    ) -> list[dict[str, Any]]:
-        od_result = self.od_extractor.extract(
-            pdf_path, self.config.resolved_output_dir()
-        )
+    def _process_one_pdf_od_inner(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+        od_result = self.od_extractor.extract(pdf_path, self.config.resolved_output_dir())
 
         if not od_result.success:
             error = od_result.error or "unknown error"
@@ -1122,9 +1124,7 @@ class RadiolarianPipeline:
         # second call is virtually always stable.
         if not figures and od_result.json_data:
             try:
-                od_result = self.od_extractor.extract(
-                    pdf_path, self.config.resolved_output_dir()
-                )
+                od_result = self.od_extractor.extract(pdf_path, self.config.resolved_output_dir())
                 figures = od_result.figures
                 if figures:
                     logger.info(
@@ -1160,8 +1160,7 @@ class RadiolarianPipeline:
                         all_taxon_names.append(ent.text)
         species_seed = sorted(set(all_taxon_names))
         use_geology_llm = (
-            bool(self.config.extra.get("use_geology_llm", False))
-            and self.gemma_runtime is not None
+            bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
         )
         section_links: dict[str, list[dict[str, Any]]] = {}
         knowledge_graph: dict[str, Any] | None = None
@@ -1501,9 +1500,7 @@ class RadiolarianPipeline:
                         "panel_path": schematic_image_path,
                         "bbox": None,
                         "confidence": (
-                            float(schematic_data.get("confidence", 0.0))
-                            if schematic_data
-                            else 0.0
+                            float(schematic_data.get("confidence", 0.0)) if schematic_data else 0.0
                         ),
                         "label_text": None,
                         "caption_snippet": (pair.caption_text or "")[:240],
@@ -1583,9 +1580,7 @@ class RadiolarianPipeline:
             # instead of falling back to the PDF page number — that was a copy-paste
             # bug that made downstream code think every page-N figure was "figure N".
             figure_number = (
-                extract_figure_number(caption_text)
-                or pair.figure_id
-                or str(pair.page_number)
+                extract_figure_number(caption_text) or pair.figure_id or str(pair.page_number)
             )
             caption = CaptionRecord(
                 paper_id=paper_id,
@@ -1614,14 +1609,47 @@ class RadiolarianPipeline:
             for m in figure_matches:
                 meta = m.get("metadata", {})
                 meta["extraction_source"] = "opendataloader"
+                # audit 2026-08-05 (Fill Gaps): forward the
+                # ``classify_figure_type`` result onto every
+                # MatchResult produced by this figure so that the
+                # FigureRecord exporter
+                # (``src/rlpe/converters.py:figure_records_from_matches``)
+                # can populate ``figure_type``. Previously the
+                # variable ``fig_type`` was in scope but only the
+                # range_chart / geo_vision / schematic_vision
+                # branches stamped it; the regular plate path
+                # dropped it on the floor.
+                meta["figure_type"] = fig_type
+                # Plate-level image path: ``primary_path`` is the
+                # highest-resolution image OpenDataLoader surfaced
+                # for this figure. Forward both keys (the FigureRecord
+                # reader looks for ``image_path`` /
+                # ``figure_image_path`` and PanelRecord reads
+                # ``figure_image_path``).
+                if primary_path is not None:
+                    meta["image_path"] = primary_path
+                    meta["figure_image_path"] = primary_path
+                # Panel IDs known to this figure (used to populate
+                # FigureRecord.panel_ids). Computed once outside
+                # the loop below.
+                meta["panel_ids"] = [
+                    other.get("panel_id")
+                    for other in figure_matches
+                    if other.get("panel_id")
+                ]
+                # ``extraction_method`` defaults to the classical
+                # heuristic path's "heuristic" string. LLM-first
+                # MatchResults already stamp "llm_first" via their
+                # own construction sites, so we use ``or`` to keep
+                # the upstream value when present.
+                if not meta.get("extraction_method"):
+                    meta["extraction_method"] = "heuristic"
                 m["metadata"] = meta
                 results.append(m)
 
         # Fallback: if OD returned no results even with figures, try GROBID.
         if not results:
-            logger.info(
-                "OpenDataLoader produced no matches; falling back to GROBID+layout."
-            )
+            logger.info("OpenDataLoader produced no matches; falling back to GROBID+layout.")
             return self._process_one_pdf_grobid(paper_id, pdf_path)
         # Cross-figure panel reassignment: orphan figures (no species, no real
         # caption) sitting between two real plate figures on adjacent pages
@@ -1647,10 +1675,7 @@ class RadiolarianPipeline:
         # range, coordinates). Opt-in via ``use_geo_vision=True`` to
         # avoid silent cost on existing users. We append to existing
         # geology_links — no dedup (deferred to a future cleanup).
-        if (
-            self.config.extra.get("use_geo_vision", False)
-            and self.m3_engine is not None
-        ):
+        if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
             results = self._apply_geo_vision(results, paper_id)
         # Round-4 P2-5: Stage 3 bbox + crop enrichment. When M3 Stage 3
         # produced ``m3_panels`` with bbox+visible_label for this figure
@@ -1672,15 +1697,22 @@ class RadiolarianPipeline:
         # rows are merged into ``results`` ONLY if they fill a real gap
         # (caption_parser claimed N panels but the existing rows have
         # fewer than N panel_ids for this figure).
-        if (
-            self.config.extra.get("m3_multi_plate_enrich", False)
-            and self.m3_engine is not None
-        ):
+        if self.config.extra.get("m3_multi_plate_enrich", False) and self.m3_engine is not None:
             results = self._apply_multi_plate_enrichment(
                 results,
                 paper_id,
                 od_fulltext_sections=od_result.fulltext_sections,
                 od_figures=figures,
+            )
+        # Audit 2026-08-02: Stage 6 morphology enrichment. Opt-in via
+        # ``m3_stage_6=True``; populates
+        # ``self._paper_morphologies[paper_id]`` and stamps
+        # ``metadata.morphology_ids`` on rows so existing exporters
+        # that read per-row metadata keep working. The MorphologyRecord
+        # list is then merged into ``run_output.json`` by ``run()``.
+        if self.config.m3_stage_6:
+            results = self._apply_morphology_enrichment(
+                results, paper_id, od_result.fulltext_sections
             )
         # Round 11: dedup + drop stub rows + drop empty/invalid rows.
         # See ``_finalize_rows`` for the bug fixes this addresses.
@@ -1722,11 +1754,38 @@ class RadiolarianPipeline:
 
         # Index figures that have stage3 panels by figure_id.
         figure_to_panels: dict[str, list[dict[str, Any]]] = {}
+        figure_to_plate: dict[str, str] = {}
         for r in results:
             md = r.get("metadata") or {}
             stage3 = (md.get("m3_diagnostic") or {}).get("stage3_panels") or []
             if stage3:
                 figure_to_panels[r.get("figure_id")] = stage3
+            # Track the first plate image we find for each figure so
+            # the YOLO fallback below can re-use it.
+            fid = r.get("figure_id")
+            plate = (
+                r.get("panel_path")
+                or md.get("figure_image_path")
+                or md.get("primary_image")
+                or md.get("image_path")
+            )
+            if fid and plate and fid not in figure_to_plate:
+                figure_to_plate[fid] = plate
+
+        # Audit 2026-08-16 (Plan C): YOLO fallback. When M3 stage 3
+        # returned zero panels for a figure but YOLO is enabled, run
+        # YOLO on the plate image and synthesise stage3 panel records
+        # so the rest of this method (panel-id matching, crop write,
+        # panel_path stamp) still produces useful output. Without
+        # this fallback a paper that exhausts the M3 quota, or whose
+        # plates the vision model declines to segment, would silently
+        # lose the bbox crop pass — the existing rows keep their
+        # (possibly stale) panel_path and ``panel_id_source`` stays
+        # at "legacy".
+        if not figure_to_panels:
+            figure_to_panels = self._yolo_fallback_for_stage3(
+                figure_to_plate, paper_id, crops_dir
+            )
 
         if not figure_to_panels:
             return results
@@ -1814,10 +1873,113 @@ class RadiolarianPipeline:
             # this row was verified by Stage 3 vision (vs caption or
             # image OCR). The previous round left every row at
             # "legacy" because the diag info wasn't lifted.
-            md["panel_id_source"] = "m3_vision"
+            #
+            # Audit 2026-08-16 (Plan C): honour the synthesised
+            # ``source`` field so YOLO-fallback detections are
+            # tagged "yolo_fallback" instead of being mis-attributed
+            # to M3 vision.
+            stage3_source = matched.get("source") or "m3_vision"
+            md["panel_id_source"] = stage3_source
             md["stage3_confidence"] = matched.get("confidence")
             r["metadata"] = md
         return results
+
+    def _yolo_fallback_for_stage3(
+        self,
+        figure_to_plate: dict[str, str],
+        paper_id: str,
+        crops_dir: Path,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Synthesise Stage 3 panel records from YOLO when M3 vision returns [].
+
+        Audit 2026-08-16 (Plan C): previously, when M3 vision stage 3
+        returned zero panels for a figure (quota exhausted, model
+        refused, network failure, …), the bbox crop pass in
+        ``_apply_stage3_bbox_crops`` short-circuited and the rows
+        kept their existing panel_path / panel_id_source = "legacy".
+        This helper runs YOLO on the plate image and produces
+        stage3_panel-shaped dicts so the crop pass produces output.
+
+        Requirements:
+        - ``self.config.use_yolo_figures`` must be True
+        - ``self.config.yolo_model_path`` must point to a valid .pt
+
+        Returns
+        -------
+        dict[str, list[dict]]
+            Mapping ``figure_id -> [stage3_panel, ...]``. Empty dict
+            if YOLO is disabled / not configured / produced no
+            detections, so the caller can fall through to its
+            existing early-return path.
+
+        Each synthesised stage3_panel dict matches the M3 shape:
+            ``panel_id``      — synthetic id "P1", "P2", …
+            ``bbox``          — [x, y, w, h] in plate-image pixels
+            ``visible_label`` — None (YOLO doesn't emit labels)
+            ``morphology``    — None
+            ``confidence``    — float from YOLO detection
+            ``source``        — "yolo_fallback" (audit tag)
+        """
+        if not self.config.use_yolo_figures:
+            return {}
+        yolo_path = self.config.yolo_model_path
+        if not yolo_path:
+            return {}
+        try:
+            from .layout import detect_figure_regions_yolo
+            from .layout import PageRecord
+        except ImportError:
+            return {}
+        out: dict[str, list[dict[str, Any]]] = {}
+        for fig_id, plate_path in figure_to_plate.items():
+            plate_p = Path(plate_path)
+            if not plate_p.is_file():
+                continue
+            try:
+                # Re-use detect_figure_regions_yolo's PageRecord shim.
+                # It writes crops into ``plate_p.parent / "regions"``
+                # and returns FigureRegion objects with bbox + score.
+                page = PageRecord(
+                    page_index=0,
+                    image_path=str(plate_p),
+                    text="",
+                )
+                regions = detect_figure_regions_yolo(
+                    page,
+                    model_path=yolo_path,
+                    conf=self.config.yolo_conf_threshold,
+                    iou=self.config.yolo_iou_threshold,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "Stage 3 YOLO fallback failed for paper=%s fig=%s: %s",
+                    paper_id,
+                    fig_id,
+                    exc,
+                )
+                continue
+            if not regions:
+                continue
+            panels: list[dict[str, Any]] = []
+            for i, region in enumerate(regions, start=1):
+                panels.append(
+                    {
+                        "panel_id": f"P{i}",
+                        "bbox": list(region.bbox),
+                        "visible_label": None,
+                        "morphology": None,
+                        "confidence": float(region.score),
+                        "source": "yolo_fallback",
+                    }
+                )
+            out[fig_id] = panels
+            logger.info(
+                "Stage 3 YOLO fallback: paper=%s fig=%s detected %d panels",
+                paper_id,
+                fig_id,
+                len(panels),
+            )
+        return out
 
     def _apply_multi_plate_enrichment(
         self,
@@ -1889,9 +2051,7 @@ class RadiolarianPipeline:
                 if not od_fid:
                     continue
                 # Skip stubs / non-plate figures.
-                src = (getattr(od_fig, "metadata", {}) or {}).get(
-                    "extraction_source", ""
-                )
+                src = (getattr(od_fig, "metadata", {}) or {}).get("extraction_source", "")
                 od_caption = getattr(od_fig, "caption_text", "") or ""
                 if not od_caption:
                     # No caption → can't meaningfully enrich
@@ -1933,9 +2093,7 @@ class RadiolarianPipeline:
             # earlier stub filter). Re-check here for safety.
             sample_src = ""
             if fig_rows:
-                sample_src = (fig_rows[0].get("metadata") or {}).get(
-                    "extraction_source", ""
-                )
+                sample_src = (fig_rows[0].get("metadata") or {}).get("extraction_source", "")
             if sample_src in {"map", "range_chart", "geo_vision"}:
                 continue
             # Also skip by figure_id keyword: 'od_fig_' (non-plate) figures
@@ -2065,9 +2223,7 @@ class RadiolarianPipeline:
                             "extraction_source": "multi_plate_enrich",
                             "panel_id_source": "m3_vision",
                             "expected_plate_label": plate_label,
-                            "figure_number": (
-                                (plate_label or "").replace("Plate ", "") or None
-                            ),
+                            "figure_number": ((plate_label or "").replace("Plate ", "") or None),
                         },
                     }
                 )
@@ -2081,9 +2237,7 @@ class RadiolarianPipeline:
             )
         return results
 
-    def _link_range_chart_geology(
-        self, results: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _link_range_chart_geology(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Attach range-chart geology context to matching panel records.
 
         Iterates over all paper-level RangeChartResult objects produced
@@ -2165,9 +2319,7 @@ class RadiolarianPipeline:
                 if not isinstance(bz, dict):
                     continue
                 chart.biozones.append(
-                    BiozoneRecord(
-                        **{k: bz.get(k, "") for k in ("name", "age", "thickness_m")}
-                    )
+                    BiozoneRecord(**{k: bz.get(k, "") for k in ("name", "age", "thickness_m")})
                 )
             chart.other_fossils = list(rc_dict.get("other_fossils") or [])
             rc_by_paper.setdefault(chart.paper_id, []).append(chart)
@@ -2309,6 +2461,252 @@ class RadiolarianPipeline:
         return results
 
     # -----------------------------------------------------------------------
+    # Audit 2026-08-02 — Stage 6 morphology enrichment (opt-in)
+    # -----------------------------------------------------------------------
+    def _apply_morphology_enrichment(
+        self,
+        rows: list[dict[str, Any]],
+        paper_id: str,
+        fulltext_sections: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]]:
+        """Apply M3 morphology extraction to rows.
+
+        For each unique (paper_id, normalised_species) pair, picks a
+        source-text excerpt and asks ``M3Engine.infer_morphology`` to
+        produce a MorphologyRecord. The records are written to
+        ``self._paper_morphologies[paper_id]`` (NOT into ``rows``) so
+        downstream exporters can pull them via
+        ``converters.run_output_from_provenance(..., paper_morphologies=...)``.
+
+        Parameters
+        ----------
+        rows : list[dict[str, Any]]
+            Output rows from the per-figure loop. Used only to derive
+            the per-paper species list and to fall back to caption
+            text when the body-text locator finds nothing. NEVER
+            modified.
+        paper_id : str
+            Stable paper id; namespaces the morphology_id so two
+            papers with the same species don't collide.
+        fulltext_sections : list[dict] | None
+            Sections from GROBID or OpenDataLoader. Shape:
+            ``[{"section_id": str, "title": str, "section_type": str, "text": str}, ...]``.
+            ``None`` skips body morphology (caption-only path).
+
+        Returns
+        -------
+        rows unchanged. The morphology records are stored in
+        ``self._paper_morphologies[paper_id]``.
+
+        Notes
+        -----
+        * Fail-open: any error → log + skip, never modify existing
+          species / panel fields.
+        * Per-paper dedup: each unique (paper_id, normalised_species)
+          called at most once. The cap is
+          ``config.m3_morphology_max_species_per_paper`` (default 100).
+        * Privacy: if ``data_outbound_policy == "api_redacted"`` we
+          skip body morphology (only caption morphology fires). If
+          ``"local_only"`` we skip M3 morphology entirely (no API
+          calls reach the cloud).
+        """
+        # Gate: opt-in + backend present.
+        if not self.config.m3_stage_6:
+            return rows
+        if self.m3_engine is None:
+            logger.debug(
+                "_apply_morphology_enrichment: no M3 engine; skipping paper=%s",
+                paper_id,
+            )
+            return rows
+        policy = str(self.config.extra.get("data_outbound_policy", "api_full"))
+        if policy == "local_only":
+            logger.info(
+                "_apply_morphology_enrichment: data_outbound_policy=local_only; "
+                "skipping M3 morphology for paper=%s",
+                paper_id,
+            )
+            return rows
+        body_allowed = policy != "api_redacted"
+        if not body_allowed:
+            logger.info(
+                "_apply_morphology_enrichment: data_outbound_policy=api_redacted; "
+                "caption-only morphology for paper=%s",
+                paper_id,
+            )
+
+        # 1. Build per-species dedup set. Prefer the verbatim species
+        #    from the row; normalise via the same helper the exporters
+        #    use so dedup is stable across re-runs.
+        from .converters import _normalise_species_name, _stable_id
+
+        species_counts: dict[str, int] = {}
+        species_caption: dict[str, str] = {}
+        for r in rows:
+            sp = r.get("species")
+            norm = _normalise_species_name(sp)
+            if not norm:
+                continue
+            species_counts[norm] = species_counts.get(norm, 0) + 1
+            # Keep the first non-empty caption we see for fallback.
+            if norm not in species_caption:
+                cap = (
+                    r.get("caption_snippet")
+                    or (r.get("metadata") or {}).get("caption_text")
+                    or (r.get("metadata") or {}).get("caption")
+                    or ""
+                )
+                if cap:
+                    species_caption[norm] = cap
+
+        # 2. Cap at m3_morphology_max_species_per_paper.
+        cap = int(self.config.m3_morphology_max_species_per_paper)
+        ordered_species = sorted(
+            species_counts.keys(),
+            key=lambda s: (-species_counts[s], s),
+        )[:cap]
+
+        records: list[dict[str, Any]] = []
+        # Lazy import to keep the per-paper fast path cheap.
+        from .morphology_locator import locate_morphology_context
+        from .schema_models import MorphologyRecord
+
+        max_ctx = int(self.config.m3_morphology_max_context_chars)
+        min_caption = int(self.config.m3_morphology_min_caption_chars)
+
+        for species in ordered_species:
+            taxon_id = _stable_id("taxon", species)
+            morphology_id = _stable_id("morph", paper_id, species)
+            ctx_text: str | None = None
+            section_id: str | None = None
+            section_title: str | None = None
+            evidence: str | None = None
+            used_source: str = "body_text"
+            # Try body-text first (richer context).
+            if body_allowed and fulltext_sections:
+                try:
+                    located = locate_morphology_context(
+                        species,
+                        fulltext_sections,
+                        max_chars=max_ctx,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "morphology_locator failed for paper=%s species=%s: %s",
+                        paper_id,
+                        species,
+                        exc,
+                    )
+                    located = None
+                if located:
+                    ctx_text = located.get("source_text")
+                    section_id = located.get("section_id") or None
+                    section_title = located.get("section_title") or None
+                    evidence = located.get("evidence_span") or None
+                    used_source = "body_text"
+            # Fall back to caption if no body anchor.
+            if not ctx_text:
+                cap_text = species_caption.get(species, "") or ""
+                if len(cap_text) >= min_caption:
+                    ctx_text = cap_text[:max_ctx]
+                    used_source = "caption"
+            if not ctx_text:
+                # Nothing to send to M3 — skip silently. The pipeline
+                # would otherwise be paying for an empty prompt.
+                continue
+            # 3. Call M3 (fail-open: any backend error → skip).
+            try:
+                parsed = self.m3_engine.infer_morphology(
+                    species_name=species,
+                    source_text=ctx_text,
+                    source=used_source,
+                    paper_id=paper_id,
+                    max_chars=max_ctx,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "_apply_morphology_enrichment: M3 call failed for "
+                    "paper=%s species=%s: %s",
+                    paper_id,
+                    species,
+                    exc,
+                )
+                continue
+            if not parsed:
+                continue
+            # 4. Build the MorphologyRecord. Use the schema so an
+            #    unknown field is rejected (extra="forbid"); this
+            #    protects downstream consumers from typos in the
+            #    M3 output.
+            record_payload: dict[str, Any] = {
+                "morphology_id": morphology_id,
+                "taxon_id": taxon_id,
+                "paper_id": paper_id,
+                "source": used_source,
+                "section_id": section_id,
+                "section_title": section_title,
+                "evidence_text": evidence,
+                "confidence": float(parsed.get("confidence", 0.0) or 0.0),
+            }
+            for field_name in (
+                "test_shape",
+                "test_length_um_min",
+                "test_length_um_max",
+                "test_width_um_min",
+                "test_width_um_max",
+                "num_segments",
+                "cephalis_shape",
+                "thorax_shape",
+                "abdomen_shape",
+                "pore_pattern",
+                "pore_diameter_um_min",
+                "pore_diameter_um_max",
+                "spines_present",
+                "spine_count",
+                "apertural_structure",
+            ):
+                if field_name in parsed:
+                    record_payload[field_name] = parsed[field_name]
+            feats = parsed.get("diagnostic_features") or []
+            if isinstance(feats, list):
+                record_payload["diagnostic_features"] = [
+                    str(x) for x in feats if str(x).strip()
+                ]
+            try:
+                rec = MorphologyRecord.model_validate(record_payload)
+            except Exception as exc:
+                logger.warning(
+                    "_apply_morphology_enrichment: dropping malformed "
+                    "MorphologyRecord (paper=%s species=%s): %s",
+                    paper_id,
+                    species,
+                    exc,
+                )
+                continue
+            records.append(rec.model_dump())
+            # 5. Stamp morphology_ids on the row's metadata so the
+            #    per-row fallback in
+            #    ``converters.taxon_records_from_matches`` picks it up
+            #    even when ``run_output_from_provenance`` is called
+            #    without ``paper_morphologies``.
+            for r in rows:
+                if _normalise_species_name(r.get("species")) == species:
+                    md = r.setdefault("metadata", {})
+                    mid_list = list(md.get("morphology_ids") or [])
+                    if morphology_id not in mid_list:
+                        mid_list.append(morphology_id)
+                    md["morphology_ids"] = mid_list
+                    r["metadata"] = md
+        if records:
+            self._paper_morphologies[paper_id] = records
+            logger.info(
+                "_apply_morphology_enrichment: %d MorphologyRecord(s) for paper=%s",
+                len(records),
+                paper_id,
+            )
+        return rows
+
+    # -----------------------------------------------------------------------
     # Phase 65 Plan A.4 — cross-figure linker (plate → strat/litholog/map)
     # -----------------------------------------------------------------------
     def _apply_cross_figure_linker(
@@ -2393,9 +2791,7 @@ class RadiolarianPipeline:
                 {
                     "figure_id": row.get("figure_id") or md.get("figure_id") or "",
                     "paper_id": paper_id,
-                    "figure_type": str(
-                        md.get("figure_type") or row.get("figure_type") or ""
-                    ),
+                    "figure_type": str(md.get("figure_type") or row.get("figure_type") or ""),
                     "caption": md.get("caption_text") or md.get("caption") or "",
                     "formation": formation,
                     "age": age,
@@ -2514,9 +2910,7 @@ class RadiolarianPipeline:
                 pmd = prow.get("metadata") or {}
                 all_figure_views.append(
                     {
-                        "figure_id": prow.get("figure_id")
-                        or pmd.get("figure_id")
-                        or "",
+                        "figure_id": prow.get("figure_id") or pmd.get("figure_id") or "",
                         "paper_id": paper_id,
                         "figure_type": str(pmd.get("figure_type") or "plate"),
                         "caption": pmd.get("caption") or pmd.get("caption_text") or "",
@@ -2549,9 +2943,7 @@ class RadiolarianPipeline:
                 for row in plate_rows:
                     row_pid = row.get("panel_id") or row.get("canonical_panel_id") or ""
                     row_fid = (
-                        row.get("figure_id")
-                        or (row.get("metadata") or {}).get("figure_id")
-                        or ""
+                        row.get("figure_id") or (row.get("metadata") or {}).get("figure_id") or ""
                     )
                     if row_pid == pid and row_fid == fid:
                         md = row.setdefault("metadata", {})
@@ -2567,15 +2959,45 @@ class RadiolarianPipeline:
                 exc,
             )
 
+        # Audit 2026-08-16 (fill-gaps): stamp the raw parse_cross_refs
+        # result on every plate row's metadata so the
+        # export.flatten_for_csv path (which lifts metadata.cross_refs
+        # to a top-level column) sees the data. The linker chain above
+        # already CONSUMED the parse result via Strategy 4, but the
+        # raw list of CrossRefs is also useful as audit evidence and
+        # downstream tooling (e.g. CLI export, GUI triage).
+        try:
+            from .cross_refs import parse_cross_refs
+
+            for row in plate_rows:
+                md = row.setdefault("metadata", {})
+                if md.get("cross_refs"):
+                    continue  # already populated
+                cap = (
+                    md.get("caption")
+                    or md.get("caption_text")
+                    or row.get("caption_snippet")
+                    or ""
+                )
+                fig_id = row.get("figure_id") or md.get("figure_id") or ""
+                refs = parse_cross_refs(cap, current_fig_id=fig_id)
+                if refs:
+                    md["cross_refs"] = [r.to_dict() for r in refs]
+                    row["metadata"] = md
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(
+                "cross_refs stamping failed for paper=%s: %s",
+                paper_id,
+                exc,
+            )
+
         return rows
 
     # -----------------------------------------------------------------------
     # Original GROBID + layout path
     # -----------------------------------------------------------------------
 
-    def _process_one_pdf_grobid(
-        self, paper_id: str, pdf_path: Path
-    ) -> list[dict[str, Any]]:
+    def _process_one_pdf_grobid(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         # audit 2026-07-31: depth-guard the GROBID entry too. The
         # OD "success but zero results" branches re-enter this
         # method; without a bound here, GROBID-down + OD-empty
@@ -2587,9 +3009,7 @@ class RadiolarianPipeline:
         finally:
             self._exit_od_grobid_guard()
 
-    def _process_one_pdf_grobid_impl(
-        self, paper_id: str, pdf_path: Path
-    ) -> list[dict[str, Any]]:
+    def _process_one_pdf_grobid_impl(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         # Phase 43: fast-fail when GROBID is offline. The GrobidClient
         # retry loop burns ``max_retries * timeout`` seconds (up to
         # 900s by default) hammering a closed port. Probe first; if
@@ -2628,9 +3048,7 @@ class RadiolarianPipeline:
             with self._grobid_lock:
                 self._grobid_in_progress.discard(paper_id)
 
-    def _process_one_pdf_grobid_inner(
-        self, paper_id: str, pdf_path: Path
-    ) -> list[dict[str, Any]]:
+    def _process_one_pdf_grobid_inner(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         """Inner body of ``_process_one_pdf_grobid`` (Phase 29 split).
 
         Extracted so the cycle-guard setup / teardown at the
@@ -2638,9 +3056,7 @@ class RadiolarianPipeline:
         single ``try / finally`` block without rewriting 150 lines of
         indent.
         """
-        grobid_result = self.grobid.process_pdf(
-            pdf_path, self.config.resolved_output_dir()
-        )
+        grobid_result = self.grobid.process_pdf(pdf_path, self.config.resolved_output_dir())
 
         if not grobid_result.success:
             error = grobid_result.error or "GROBID returned no result"
@@ -2662,16 +3078,10 @@ class RadiolarianPipeline:
         section_links: dict[str, list[dict[str, Any]]] = {}
         knowledge_graph: dict[str, Any] | None = None
         use_geology_llm = (
-            bool(self.config.extra.get("use_geology_llm", False))
-            and self.gemma_runtime is not None
+            bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
         )
         species_seed = sorted(
-            {
-                ent.text
-                for cap in tei_captions
-                for ent in (cap.entities or [])
-                if ent and ent.text
-            }
+            {ent.text for cap in tei_captions for ent in (cap.entities or []) if ent and ent.text}
         )
         if grobid_result.fulltext_sections:
             section_links = link_species_to_geology(
@@ -2739,9 +3149,7 @@ class RadiolarianPipeline:
         # GROBID path re-detected per caption. YOLO on CPU is
         # seconds/inference, so redundant calls added minutes to a
         # 20-caption run.
-        yolo_path = (
-            self.config.yolo_model_path if self.config.use_yolo_figures else None
-        )
+        yolo_path = self.config.yolo_model_path if self.config.use_yolo_figures else None
         regions_cache: dict[int, list] = {}
 
         for idx, caption in enumerate(tei_captions, start=1):
@@ -2787,9 +3195,7 @@ class RadiolarianPipeline:
                 )
                 if _PLATE_KW_RE.search(caption.caption):
                     plate_pages = [
-                        p
-                        for p in find_plate_pages(pages)
-                        if p.page_index not in existing_indexes
+                        p for p in find_plate_pages(pages) if p.page_index not in existing_indexes
                     ]
                     candidate_pages.extend(plate_pages[:3])
 
@@ -2809,16 +3215,25 @@ class RadiolarianPipeline:
             if not chosen_regions:
                 continue
 
-            chosen_regions.sort(
-                key=lambda r: (-r.score, r.page_index, r.bbox[1], r.bbox[0])
-            )
+            chosen_regions.sort(key=lambda r: (-r.score, r.page_index, r.bbox[1], r.bbox[0]))
+            # Audit 2026-08-02 (Wave B cost control): cap regions to bound LLM
+            # cost on dense papers. Default 3 per caption.
+            if len(chosen_regions) > self.config.max_regions_per_caption:
+                dropped = len(chosen_regions) - self.config.max_regions_per_caption
+                logger.info(
+                    "max_regions_per_caption=%d cap dropped %d lower-scored regions for fig=%s",
+                    self.config.max_regions_per_caption,
+                    dropped,
+                    caption.figure_id,
+                )
+                chosen_regions = chosen_regions[: self.config.max_regions_per_caption]
             # Audit 2026-08-02 (multi-region fallback): this used to take
             # only the first (best-scoring) chosen region and
             # discard the rest. Multi-plate papers (Bandini 2011: 9 plates
             # / 215 panels) put each plate in its own region, so 8/9 plates
-            # were silently dropped. We now process EVERY chosen region and
-            # merge the rows, keeping the highest-scoring region's version
-            # of any panel that two regions both detect.
+            # were silently dropped. We now process every retained chosen
+            # region and merge the rows, keeping the highest-scoring region's
+            # version of any panel that two regions both detect.
             all_region_results: list[dict[str, Any]] = []
             seen_panels: set[tuple[Any, Any]] = set()
             for region in chosen_regions:
@@ -2847,8 +3262,39 @@ class RadiolarianPipeline:
                 # (stubs such as RANGE_CHART placeholders / ingestion
                 # warnings carry panel_id=None) are never deduped — they
                 # are not panels and collapsing them would lose data.
+                # audit 2026-08-05 (Fill Gaps): stamp ``figure_type``,
+                # ``figure_image_path`` / ``image_path``, ``panel_ids``,
+                # and ``extraction_method`` on every match produced
+                # by this GROBID region. The FigureRecord exporter
+                # (``src/rlpe/converters.py:figure_records_from_matches``)
+                # reads these keys from ``match.metadata``; without
+                # the stamps the GROBID path emitted FigureRecords
+                # with all four fields at defaults.
+                _grobid_fig_type = (
+                    getattr(caption, "figure_type", None)
+                    or classify_figure_type(getattr(caption, "text", "") or "", region.crop_path)
+                )
+                _grobid_panel_ids = [
+                    other.get("panel_id")
+                    for other in figure_matches
+                    if other.get("panel_id")
+                ]
+                _grobid_image_path = (
+                    region.crop_path or best_page.image_path
+                )
                 for match in figure_matches:
                     panel_id = match.get("panel_id")
+                    match_meta = match.get("metadata", {})
+                    match_meta["figure_type"] = _grobid_fig_type
+                    if _grobid_image_path is not None:
+                        match_meta["image_path"] = _grobid_image_path
+                        match_meta["figure_image_path"] = _grobid_image_path
+                    match_meta["panel_ids"] = _grobid_panel_ids
+                    if not match_meta.get("extraction_method"):
+                        match_meta["extraction_method"] = "grobid_heuristic"
+                    if not match_meta.get("extraction_source"):
+                        match_meta["extraction_source"] = "grobid"
+                    match["metadata"] = match_meta
                     if not panel_id:
                         all_region_results.append(match)
                         continue
@@ -2874,10 +3320,7 @@ class RadiolarianPipeline:
         # silently skipped all four enrichment steps.
         results = self._link_range_chart_geology(results)
         results = self._cross_link_map_and_range_chart(results)
-        if (
-            self.config.extra.get("use_geo_vision", False)
-            and self.m3_engine is not None
-        ):
+        if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
             results = self._apply_geo_vision(results, paper_id)
         if self.config.extra.get("m3_stage3", False) and self.m3_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
@@ -2911,8 +3354,7 @@ class RadiolarianPipeline:
                     "paper_metadata": None,
                     "metadata": {
                         "extraction_source": "grobid_failed",
-                        "ingestion_error": grobid_result.error
-                        or "GROBID returned no result",
+                        "ingestion_error": grobid_result.error or "GROBID returned no result",
                         "ingestion_warning": True,
                     },
                 }
@@ -2931,6 +3373,13 @@ class RadiolarianPipeline:
             for gl in md.get("geology_links") or []:
                 if isinstance(gl, dict):
                     enrich_geology_record(gl)
+        # Audit 2026-08-02: Stage 6 morphology enrichment (GROBID
+        # path). Same opt-in + dedup + privacy rules as the OD path
+        # — see ``_apply_morphology_enrichment`` for the full logic.
+        if self.config.m3_stage_6:
+            results = self._apply_morphology_enrichment(
+                results, paper_id, grobid_result.fulltext_sections
+            )
         return self._finalize_rows(results)
 
     # ----- Round 11 post-processing -------------------------------------------------
@@ -3019,9 +3468,7 @@ class RadiolarianPipeline:
                 return True
             return False
 
-        return [
-            m for m in matches if _label_in_caption2(getattr(m, "panel_id", None) or "")
-        ]
+        return [m for m in matches if _label_in_caption2(getattr(m, "panel_id", None) or "")]
 
     def _finalize_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Round 11 post-processing for one paper's emitted rows.
@@ -3164,11 +3611,7 @@ class RadiolarianPipeline:
             The canonical location is ``metadata.matcher_type`` but
             tests and some legacy callers pass it at the top level.
             """
-            return (
-                r.get("matcher_type")
-                or (r.get("metadata") or {}).get("matcher_type")
-                or ""
-            )
+            return r.get("matcher_type") or (r.get("metadata") or {}).get("matcher_type") or ""
 
         before_noise = len(deduped)
         deduped = [
@@ -3196,9 +3639,7 @@ class RadiolarianPipeline:
             pid = r.get("panel_id")
             # Phase 59: only drop rows whose panel_id is a malformed
             # STRING (not a None — None is now allowed through).
-            if pid is not None and (
-                not isinstance(pid, str) or not SHAPE.fullmatch(pid.strip())
-            ):
+            if pid is not None and (not isinstance(pid, str) or not SHAPE.fullmatch(pid.strip())):
                 logger.debug(
                     "Drop row with invalid panel_id=%r (fig=%s)",
                     pid,
@@ -3270,9 +3711,7 @@ class RadiolarianPipeline:
 
         return kept
 
-    def _apply_review_corrections(
-        self, rows: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _apply_review_corrections(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Overlay human review corrections on finalized rows.
 
         Reads ``<work_dir>/corrections/corrections.jsonl`` (one JSON
@@ -3413,9 +3852,7 @@ Rules:
                 with _PILImage.open(str(region_img)) as _im:
                     plate_pil = _im.convert("RGB")
         except Exception as exc:
-            logger.warning(
-                "LLM-first image load failed for %s/%s: %s", paper_id, figure_id, exc
-            )
+            logger.warning("LLM-first image load failed for %s/%s: %s", paper_id, figure_id, exc)
             return None
 
         # Phase 61 Plan 4 (Bug 4.1): token-aware caption truncation.
@@ -3491,9 +3928,7 @@ Rules:
 
                 parsed = _safe_json_loads(raw)
                 if isinstance(parsed, dict):
-                    panels_data = (
-                        parsed.get("panels") or parsed.get("answer") or [parsed]
-                    )
+                    panels_data = parsed.get("panels") or parsed.get("answer") or [parsed]
                 else:
                     panels_data = parsed
             except Exception:
@@ -3523,7 +3958,14 @@ Rules:
 
         # Convert to MatchResult dicts
         out: list[dict[str, Any]] = []
-        for p in panels_data:
+        # audit 2026-08-05 (Fill Gaps): use enumerate(..., start=1) so
+        # the 1-based ``pipeline_panel_index`` field on PanelRecord
+        # carries the LLM's panel position within this figure. Phase
+        # 55 had hard-coded ``panel_index=None`` here on the (then
+        # correct) ground that no PanelCandidate existed; with schema
+        # v1.1.0+ declaring the field as a recoverable integer, the
+        # natural position-in-panels_data is the right value to stamp.
+        for _panel_idx, p in enumerate(panels_data, start=1):
             label = str(p.get("label", "")).strip()
             species = p.get("species")
             conf = float(p.get("confidence", 0.0))
@@ -3550,14 +3992,17 @@ Rules:
                 ),
                 ocr_text=None,
                 paper_metadata=paper_metadata,
-                # Phase 55 audit CRITICAL-2 fix: explicitly pass panel_index=None
-                # for this LLM-first path (no PanelCandidate exists, so None is
-                # correct). The field must be present so
-                # converters.panel_record_from_match reads getattr(match,
-                # "panel_index", None) and gets the explicit None rather than
-                # relying on the MatchResult default — this makes the None
-                # explicit and traceable in the to_dict() output.
-                panel_index=None,
+                # Audit 2026-08-05 (Fill Gaps): stamp the 1-based
+                # panel position so PanelRecord.pipeline_panel_index
+                # reflects where in the LLM's panels_data list this
+                # row came from. Phase 55's CRITICAL-2 fix
+                # (commit ``6defce2``) had hard-coded None because
+                # the field was unused; with the v1.1.0+ schema
+                # declaring it as a 1-based integer, the natural
+                # list position is the right value. The
+                # converter (``panel_record_from_match``) reads it
+                # via ``getattr(match, 'panel_index', None)``.
+                panel_index=_panel_idx,
                 metadata={
                     "extraction_method": "llm_first",
                     "llm_backend": getattr(backend, "backend_name", "unknown"),
@@ -3682,9 +4127,7 @@ Rules:
                         caption_pairs = self._m3_call_with_fallback(
                             self.m3_engine.parse_caption,
                             caption.caption or "",
-                            lang=_resolve_m3_prompt_lang(
-                                self.config.extra.get("m3_prompt_lang")
-                            ),
+                            lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
                         )
                         for cp in caption_pairs:
                             for lbl in cp.labels or []:
@@ -3695,9 +4138,7 @@ Rules:
                 # Bound (pair_lookup <= 100) guards against runaway
                 # regex over-matching on degenerate captions (rare
                 # but seen on wever2006 1918-panel runs).
-                caption_has_more = bool(pair_lookup) and len(pair_lookup) > len(
-                    llm_results
-                )
+                caption_has_more = bool(pair_lookup) and len(pair_lookup) > len(llm_results)
                 if (
                     missing_species
                     or len(llm_results) < 2
@@ -3713,9 +4154,7 @@ Rules:
                         # "00" → "0" and keeps "1a" / "1A" as-is (no
                         # case folding), so we also lowercase.
                         existing_labels = {
-                            _normalize_panel_label(
-                                r.get("panel_id") or r.get("label_text") or ""
-                            )
+                            _normalize_panel_label(r.get("panel_id") or r.get("label_text") or "")
                             .strip()
                             .lower()
                             for r in llm_results
@@ -3744,9 +4183,9 @@ Rules:
 
                                     if not _is_valid_species(candidate_species):
                                         skipped_invalid += 1
-                                        r.setdefault("metadata", {})[
-                                            "hybrid_species_rejected"
-                                        ] = candidate_species
+                                        r.setdefault("metadata", {})["hybrid_species_rejected"] = (
+                                            candidate_species
+                                        )
                                         continue
                                 except Exception:
                                     # If the helper is unavailable for
@@ -3770,11 +4209,7 @@ Rules:
                         #    ~85% on beccaro.
                         added = 0
                         for lbl, species in pair_lookup.items():
-                            lbl_norm = (
-                                _normalize_panel_label(lbl).strip().lower()
-                                if lbl
-                                else ""
-                            )
+                            lbl_norm = _normalize_panel_label(lbl).strip().lower() if lbl else ""
                             if lbl_norm and lbl_norm in existing_labels:
                                 continue
                             # Phase 54 audit: M7 — use the *normalised*
@@ -3814,6 +4249,14 @@ Rules:
                             if not _new_row_species_is_valid:
                                 skipped_invalid += 1
                                 continue
+                            # audit 2026-08-05 (Fill Gaps): 1-based
+                            # ``pipeline_panel_index`` for this hybrid
+                            # caption-enrichment row. Uses the
+                            # post-append length so the value is the
+                            # final 1-based position within this
+                            # figure, matching the classical
+                            # OpenCV-segmenter indexing.
+                            _hybrid_panel_idx = pre_append_count + 1
                             llm_results.append(
                                 MatchResult(
                                     paper_id=paper_id,
@@ -3835,16 +4278,17 @@ Rules:
                                     # so the UI / exporters can
                                     # distinguish "no caption" from
                                     # "empty placeholder".
-                                    caption_snippet=(caption.caption or "").strip()[
-                                        :240
-                                    ]
-                                    or None,
+                                    caption_snippet=(caption.caption or "").strip()[:240] or None,
                                     ocr_text=None,
                                     paper_metadata=paper_metadata,
-                                    # Phase 55 audit CRITICAL-2 fix: same as above —
-                                    # hybrid caption-enrichment path has no
-                                    # PanelCandidate, so panel_index is None.
-                                    panel_index=None,
+                                    # audit 2026-08-05 (Fill Gaps):
+                                    # 1-based position-in-figure so
+                                    # PanelRecord.pipeline_panel_index
+                                    # is recoverable here too. Phase
+                                    # 55's CRITICAL-2 had hard-coded
+                                    # None for the same reason as the
+                                    # primary LLM-first site.
+                                    panel_index=_hybrid_panel_idx,
                                     metadata={
                                         "extraction_method": "llm_first",
                                         "llm_backend": getattr(
@@ -3922,9 +4366,7 @@ Rules:
                         # ``_hybrid_added`` or ``caption_parser_hybrid``)
                         # drop when an LLM-native row exists; LLM rows
                         # themselves always win.
-                        is_caption_added = (r.get("metadata") or {}).get(
-                            "species_source"
-                        ) in (
+                        is_caption_added = (r.get("metadata") or {}).get("species_source") in (
                             "caption_parser_hybrid",
                             "regex_caption_hybrid_added",
                         )
@@ -3977,9 +4419,7 @@ Rules:
 
                     pre_filter = len(llm_results)
                     llm_results = [
-                        r
-                        for r in llm_results
-                        if _label_in_caption(r.get("panel_id") or "")
+                        r for r in llm_results if _label_in_caption(r.get("panel_id") or "")
                     ]
                     dropped = pre_filter - len(llm_results)
                     if dropped:
@@ -4032,9 +4472,7 @@ Rules:
                     m3_caption_pairs = self._m3_call_with_fallback(
                         self.m3_engine.parse_caption,
                         caption.caption or "",
-                        lang=_resolve_m3_prompt_lang(
-                            self.config.extra.get("m3_prompt_lang")
-                        ),
+                        lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
                     )
                     m3_diag["stage1_pairs"] = len(m3_caption_pairs)
                 # Stage 2: plate classifier — early exit on non-radiolarian
@@ -4079,14 +4517,10 @@ Rules:
                         if m3_plate_cls and m3_plate_cls.panel_count_estimate
                         else None
                     )
-                    m3_panels = self.m3_engine.segment_panels(
-                        plate_pil, hint_count=hint
-                    )
+                    m3_panels = self.m3_engine.segment_panels(plate_pil, hint_count=hint)
                     m3_diag["stage3_panels"] = [p.to_dict() for p in m3_panels]
             except Exception as exc:
-                logger.exception(
-                    "M3 stage 1-3 failed; falling back to classical pipeline: %s", exc
-                )
+                logger.exception("M3 stage 1-3 failed; falling back to classical pipeline: %s", exc)
                 m3_caption_pairs = []
                 m3_panels = []
                 m3_plate_cls = None
@@ -4116,9 +4550,7 @@ Rules:
                 )
                 for mp in m3_panels
             ]
-            logger.info(
-                "M3 Stage 3: substituted %d panels for empty SAM2 result", len(panels)
-            )
+            logger.info("M3 Stage 3: substituted %d panels for empty SAM2 result", len(panels))
         # Augment classical panels with M3's visible_label / morphology hints
         elif m3_panels and panels:
             try:
@@ -4192,9 +4624,7 @@ Rules:
             if crop.size == 0:
                 continue
             panel_dir = ensure_dir(
-                self.config.panels_dir()
-                / paper_id
-                / (figure_id or f"fig_{figure_index}")
+                self.config.panels_dir() / paper_id / (figure_id or f"fig_{figure_index}")
             )
             panel_path = panel_dir / f"panel_{panel_index:02d}.png"
             # Round 15 audit: cv2.imwrite returns False on failure
@@ -4215,9 +4645,7 @@ Rules:
                 panel_tokens = self.ocr.recognize_panel(region_img, (x, y, w, h))
                 if panel_tokens:
                     panel.metadata = panel.metadata or {}
-                    panel.metadata["panel_ocr_text"] = " ".join(
-                        t.text for t in panel_tokens
-                    )
+                    panel.metadata["panel_ocr_text"] = " ".join(t.text for t in panel_tokens)
                     panel.metadata["panel_ocr_token_count"] = len(panel_tokens)
             except Exception:
                 pass
@@ -4246,9 +4674,7 @@ Rules:
                         panel.metadata["label_region_fallback"] = "full_panel"
                 if label_tokens:
                     panel.metadata = panel.metadata or {}
-                    panel.metadata["label_region_ocr"] = " ".join(
-                        t.text for t in label_tokens
-                    )
+                    panel.metadata["label_region_ocr"] = " ".join(t.text for t in label_tokens)
                     # Pick the best short label-like token
                     best = None
                     for tok in label_tokens:
@@ -4434,9 +4860,7 @@ Rules:
                 # ``geology_scope`` marker on the first panel tells
                 # the operator that the data is figure-level, not
                 # panel-specific.
-                key = (
-                    panel_keys[i] if i < len(panel_keys) else (m.panel_id or f"idx_{i}")
-                )
+                key = panel_keys[i] if i < len(panel_keys) else (m.panel_id or f"idx_{i}")
                 panel_local_geo = panel_geo.get(key, [])
                 if panel_local_geo and not _looks_like_placeholder_caption(
                     panel_captions.get(key, "")
@@ -4535,11 +4959,7 @@ Rules:
                 # Round 18 fix: only the FIRST panel in a figure
                 # inherits figure-level geology; others stay empty
                 # so we don't fabricate per-panel data.
-                key = (
-                    panel_keys[i]
-                    if i < len(panel_keys)
-                    else (row.get("panel_id") or f"idx_{i}")
-                )
+                key = panel_keys[i] if i < len(panel_keys) else (row.get("panel_id") or f"idx_{i}")
                 panel_local_geo = panel_geo.get(key, [])
                 if panel_local_geo and not _looks_like_placeholder_caption(
                     panel_captions.get(key, "")
@@ -4565,9 +4985,6 @@ Rules:
         transformers, whichever is configured) and points both the
         pipeline runtime and the M3 engine at the new backend.
         """
-        from .llm_backends import (
-            FallbackRecommendedError,
-        )  # noqa: F401 (re-export clarity)
 
         # audit 2026-08-01 (D2): the assignment pair below
         # (``self.gemma_runtime = ...`` + ``self.m3_engine.backend = ...``)
@@ -4589,9 +5006,7 @@ Rules:
             self.gemma_runtime = new_runtime
             if self.m3_engine is not None:
                 self.m3_engine.backend = new_runtime.backend
-            logger.info(
-                "Switched M3 backend to %s", getattr(new_runtime, "backend_name", "?")
-            )
+            logger.info("Switched M3 backend to %s", getattr(new_runtime, "backend_name", "?"))
             return True
 
     def _m3_call_with_fallback(self, fn, *args, **kwargs):
@@ -4644,9 +5059,7 @@ Rules:
         from PIL import Image as _PILImage
 
         # If caption parsing found nothing AND the user opted to skip, fall through
-        if not caption_pairs and self.m3_engine.config.get(
-            "m3_skip_match_on_empty_caption", True
-        ):
+        if not caption_pairs and self.m3_engine.config.get("m3_skip_match_on_empty_caption", True):
             return matches
         # Deduplicate matches by (panel_id, bbox-tuple) before calling
         # M3 stage 4. The pre-fix code called M3 once per match row,
@@ -4714,10 +5127,7 @@ Rules:
                     # (M3 has the visual signal that rules don't).
                     if m3_conf >= 0.40 and (
                         m3_conf > rule_conf
-                        or (
-                            m.species
-                            and panel_match.species.lower() != m.species.lower()
-                        )
+                        or (m.species and panel_match.species.lower() != m.species.lower())
                         or (not m.species)
                     ):
                         use_m3 = True
@@ -4757,9 +5167,7 @@ Rules:
                         )
                     else:
                         md["gemma_fallback"] = True
-                        md["gemma_reasoning"] = (
-                            panel_match.reasoning or "M3 below threshold"
-                        )
+                        md["gemma_reasoning"] = panel_match.reasoning or "M3 below threshold"
                 m.metadata = md
                 new_matches.append(m)
             except Exception as exc:
@@ -4929,13 +5337,9 @@ Rules:
             if self._fallback_gemma_runtime is None:
                 with self._gemma_lock:
                     if self._fallback_gemma_runtime is None:
-                        self._fallback_gemma_runtime = (
-                            self._build_local_gemma_fallback()
-                        )
+                        self._fallback_gemma_runtime = self._build_local_gemma_fallback()
             if self._fallback_gemma_runtime is None:
-                logger.warning(
-                    "Local Gemma4 fallback unavailable; keeping rule results."
-                )
+                logger.warning("Local Gemma4 fallback unavailable; keeping rule results.")
                 for m in result:
                     m.metadata["MiniMax_fallback_action"] = "rules_no_local_gemma"
                 return result
@@ -4945,9 +5349,7 @@ Rules:
             return retried
 
         if action == "retry":
-            logger.warning(
-                "[MiniMax] API error, retrying once for %s/%s", paper_id, figure_id
-            )
+            logger.warning("[MiniMax] API error, retrying once for %s/%s", paper_id, figure_id)
             retried = _call_once(self.gemma_runtime)
             for m in retried:
                 m.metadata["MiniMax_fallback_action"] = "retry"
@@ -5073,8 +5475,7 @@ Rules:
         # FallbackHandler popup surfaces to the user.
         first_err = next(
             (
-                m.metadata.get("gemma_error", "")
-                or m.metadata.get("gemma_reasoning", "")
+                m.metadata.get("gemma_error", "") or m.metadata.get("gemma_reasoning", "")
                 for m in matches
                 if m.metadata.get("gemma_error") or m.metadata.get("gemma_reasoning")
             ),
@@ -5082,11 +5483,9 @@ Rules:
         )
         first_type = next(
             (
-                m.metadata.get("gemma_error_type", "")
-                or m.metadata.get("gemma_fallback_type", "")
+                m.metadata.get("gemma_error_type", "") or m.metadata.get("gemma_fallback_type", "")
                 for m in matches
-                if m.metadata.get("gemma_error_type")
-                or m.metadata.get("gemma_fallback_type")
+                if m.metadata.get("gemma_error_type") or m.metadata.get("gemma_fallback_type")
             ),
             "",
         )
@@ -5099,8 +5498,7 @@ Rules:
             False,
         )
         return {
-            "error": first_err
-            or "MiniMax returned fallback_used=True (see stderr for traceback)",
+            "error": first_err or "MiniMax returned fallback_used=True (see stderr for traceback)",
             "error_type": first_type or ("MiniMaxAPIError" if first_fb else "Unknown"),
             "context": f"paper={paper_id} figure={figure_id} affected_panels="
             f"{sum(1 for m in matches if m.metadata.get('gemma_error') or m.metadata.get('gemma_fallback'))}",
@@ -5223,9 +5621,7 @@ Rules:
         results: list[dict[str, Any]] = []
         # Build geology links from OCR text across all pages.
         all_ocr_text = " ".join(page.text or "" for page in pages)
-        species_seed = sorted(
-            {t.text for t in self.taxon.predict(all_ocr_text) if t.text}
-        )
+        species_seed = sorted({t.text for t in self.taxon.predict(all_ocr_text) if t.text})
         section_links: dict[str, list[dict[str, Any]]] = {}
         if species_seed:
             section_links = link_species_to_geology(
@@ -5244,18 +5640,12 @@ Rules:
                     else None
                 ),
             )
-        knowledge_graph = (
-            build_knowledge_graph(section_links) if section_links else None
-        )
+        knowledge_graph = build_knowledge_graph(section_links) if section_links else None
 
         # Two-pass: enumerate total regions across all pages so the progress
         # callback can map (current, total) onto a smooth 30-90% band.
-        all_regions: list[tuple[Any, Any, int]] = (
-            []
-        )  # (page, region, region_idx_on_page)
-        yolo_path = (
-            self.config.yolo_model_path if self.config.use_yolo_figures else None
-        )
+        all_regions: list[tuple[Any, Any, int]] = []  # (page, region, region_idx_on_page)
+        yolo_path = self.config.yolo_model_path if self.config.use_yolo_figures else None
         for page in pages:
             for ridx, region in enumerate(
                 detect_figure_regions(
@@ -5272,9 +5662,7 @@ Rules:
 
         for page, region, ridx in all_regions:
             region_img = (
-                cv2.imread(region.crop_path)
-                if region.crop_path
-                else cv2.imread(page.image_path)
+                cv2.imread(region.crop_path) if region.crop_path else cv2.imread(page.image_path)
             )
             if region_img is None:
                 done += 1
@@ -5321,9 +5709,7 @@ Rules:
 
         return results
 
-    def _cross_figure_reassign(
-        self, results: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _cross_figure_reassign(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Reassign panels from orphan figures to the nearest real plate figure.
 
         Thin instance wrapper around the module-level helper so the
@@ -5523,9 +5909,7 @@ def _extract_taxon_entities_from_text(text: str) -> list[CaptionEntity]:
     # audit 2026-07-31: ≥3-letter tokens on both sides so English
     # phrase fragments ("An attempt", "Explanation of") can't match;
     # the stopword filter mirrors association._TAXON_STOP_WORDS.
-    pattern = re.compile(
-        r"\b([A-Z][a-zA-Z-]{2,}\s+(?:sp\.|spp\.|cf\.|aff\.|[a-z][a-zA-Z-]{2,}))\b"
-    )
+    pattern = re.compile(r"\b([A-Z][a-zA-Z-]{2,}\s+(?:sp\.|spp\.|cf\.|aff\.|[a-z][a-zA-Z-]{2,}))\b")
     out: list[CaptionEntity] = []
     seen: set[str] = set()
     for m in pattern.finditer(text):

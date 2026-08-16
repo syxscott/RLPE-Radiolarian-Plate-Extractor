@@ -6,6 +6,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# audit 2026-08-02 (Wave D): default to radiolarian-trained model
+DEFAULT_YOLO_MODEL_PATH = "models/radiolarian_yolo_v1.pt"  # radiolarian-tuned
+
 # Audit 2026-08-02 (Fix 1-B2): Ultralytics' stock COCO checkpoints. Picking
 # one of these means the detector was never trained on radiolarian plates.
 _COCO_YOLO_BASENAMES = {
@@ -82,6 +85,7 @@ _KNOWN_EXTRA_KEYS = {
     # GROBID failure, no OD retry).
     "grobid_max_retries",
     "grobid_timeout",
+    "max_regions_per_caption",
     "grobid_no_probe",  # Phase 43: skip is_available() probe
     "disable_od_fallback",
     # M3 5-stage semantic engine
@@ -100,6 +104,7 @@ _KNOWN_EXTRA_KEYS = {
     # Round 6 + Round 7 multi-modal vision toggles
     "use_m3_stage3",
     "m3_multi_plate_enrich",
+    "m3_stage_6",
     # LLM-first extraction (opt-in; default True when Gemma runtime is set)
     "use_llm_first",
     # Multi-modal geology vision (Commit 2 / Round 3)
@@ -147,6 +152,9 @@ class PipelineConfig:
     # body text. Default 2 (legacy). Operators can widen via
     # ``--caption-window N``.
     caption_window: int = 2
+    # Audit 2026-08-02 (Wave B cost control): cap per-caption regions
+    # to prevent LLM cost explosion on dense papers.
+    max_regions_per_caption: int = 3
     # Phase 28: OpenDataLoader path page-distance limit for caption↔image
     # pairing. Replaces four previously hard-coded limits in
     # ``opendataloader_extractor.py`` (the +2 plate forward window,
@@ -162,7 +170,7 @@ class PipelineConfig:
     # detections below this confidence; ``yolo_iou_threshold`` (default 0.45)
     # merges overlapping detections via Non-Maximum Suppression.
     use_yolo_figures: bool = False
-    yolo_model_path: str = ""
+    yolo_model_path: str = DEFAULT_YOLO_MODEL_PATH
     yolo_conf_threshold: float = 0.25
     yolo_iou_threshold: float = 0.45
     # audit 2026-07-27 M-YO-1: YOLO device independent of ``use_gpu``.
@@ -172,6 +180,18 @@ class PipelineConfig:
     num_workers: int = 4
     render_dpi: int = 200
     save_intermediate: bool = False
+    # Audit 2026-08-02: M3 morphology extraction (Stage 6). Opt-in.
+    # When True, the pipeline asks ``M3Engine.infer_morphology`` for
+    # one MorphologyRecord per unique (paper, species) pair that has
+    # an anchorable Description / Diagnosis section. Per-paper dedup
+    # caps the API cost at
+    # ``m3_morphology_max_species_per_paper`` species (default 100).
+    # When False (default), no morphology records are produced and
+    # no M3 call is made for morphology.
+    m3_stage_6: bool = False
+    m3_morphology_max_species_per_paper: int = 100
+    m3_morphology_max_context_chars: int = 6000
+    m3_morphology_min_caption_chars: int = 120
     # Round 14: default OFF. When True, _process_region dumps a
     # per-region ``auto_fig_pNNN_rNN.json`` to disk (34 MB each on
     # 200-page PDFs) and _process_one_pdf dumps the full
@@ -231,16 +251,14 @@ class PipelineConfig:
         if self.num_workers < 1:
             raise ValueError(f"num_workers must be >= 1, got {self.num_workers}")
         if not (50 <= self.render_dpi <= 600):
-            raise ValueError(
-                f"render_dpi must be in [50, 600], got {self.render_dpi}"
-            )
+            raise ValueError(f"render_dpi must be in [50, 600], got {self.render_dpi}")
         if not (0.0 <= self.min_panel_score <= 1.0):
-            raise ValueError(
-                f"min_panel_score must be in [0.0, 1.0], got {self.min_panel_score}"
-            )
+            raise ValueError(f"min_panel_score must be in [0.0, 1.0], got {self.min_panel_score}")
         if self.caption_window < 1 or self.caption_window > 50:
+            raise ValueError(f"caption_window must be in [1, 50], got {self.caption_window}")
+        if self.max_regions_per_caption < 1 or self.max_regions_per_caption > 50:
             raise ValueError(
-                f"caption_window must be in [1, 50], got {self.caption_window}"
+                f"max_regions_per_caption must be in [1, 50], got {self.max_regions_per_caption}"
             )
         # Align with gui/constants.RANGE_OD_CAPTION_WINDOW=(1,200), the
         # web JobOptions validator, and the CLI help text. Phase 28's
@@ -249,19 +267,13 @@ class PipelineConfig:
         # 50 crashed the pipeline for any GUI/web-submitted value in
         # 51..200 (B1, audit 2026-07-26).
         if self.od_caption_window < 1 or self.od_caption_window > 200:
-            raise ValueError(
-                f"od_caption_window must be in [1, 200], got {self.od_caption_window}"
-            )
+            raise ValueError(f"od_caption_window must be in [1, 200], got {self.od_caption_window}")
         if self.use_yolo_figures:
             if not self.yolo_model_path:
-                raise ValueError(
-                    "use_yolo_figures=True requires yolo_model_path to be set"
-                )
+                raise ValueError("use_yolo_figures=True requires yolo_model_path to be set")
             model_path = Path(self.yolo_model_path)
             if not model_path.is_file():
-                raise ValueError(
-                    f"yolo_model_path={model_path!r} does not exist or is not a file"
-                )
+                raise ValueError(f"yolo_model_path={model_path!r} does not exist or is not a file")
             # Audit 2026-08-02 (Fix 1-B2): warn when the user picks a known
             # COCO placeholder. Filename "yolo11*.pt" is the Ultralytics
             # generic COCO checkpoint — detecting radiolarian plates with it
@@ -287,6 +299,37 @@ class PipelineConfig:
                 f"yolo_iou_threshold must be in [0.01, 1.0], got {self.yolo_iou_threshold}"
             )
 
+        # Audit 2026-08-02: M3 morphology Stage-6 validation. Coerce
+        # incoming types (string from YAML/JSON) and clamp to safe
+        # ranges so a bad operator value doesn't crash the run.
+        try:
+            self.m3_stage_6 = bool(self.m3_stage_6)
+            self.m3_morphology_max_species_per_paper = int(self.m3_morphology_max_species_per_paper)
+            self.m3_morphology_max_context_chars = int(self.m3_morphology_max_context_chars)
+            self.m3_morphology_min_caption_chars = int(self.m3_morphology_min_caption_chars)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "m3_morphology_* fields must be ints/bools, got "
+                f"max={self.m3_morphology_max_species_per_paper!r}, "
+                f"context={self.m3_morphology_max_context_chars!r}, "
+                f"min_caption={self.m3_morphology_min_caption_chars!r} ({exc})"
+            ) from exc
+        if self.m3_morphology_max_species_per_paper < 1:
+            raise ValueError(
+                "m3_morphology_max_species_per_paper must be >= 1, "
+                f"got {self.m3_morphology_max_species_per_paper}"
+            )
+        if self.m3_morphology_max_context_chars < 200:
+            raise ValueError(
+                "m3_morphology_max_context_chars must be >= 200, "
+                f"got {self.m3_morphology_max_context_chars}"
+            )
+        if self.m3_morphology_min_caption_chars < 0:
+            raise ValueError(
+                "m3_morphology_min_caption_chars must be >= 0, "
+                f"got {self.m3_morphology_min_caption_chars}"
+            )
+
         # Phase 38: warn (don't raise) for unknown extra-config keys.
         # A typo like ``minimax_api_key`` (lowercase) silently produces
         # a config that ignores the value.
@@ -295,6 +338,7 @@ class PipelineConfig:
             # Phase 38: offer Levenshtein-style suggestions so users
             # can spot typos.
             from difflib import get_close_matches
+
             suggestions = []
             for u in sorted(unknown):
                 matches = get_close_matches(u, _KNOWN_EXTRA_KEYS, n=1, cutoff=0.6)

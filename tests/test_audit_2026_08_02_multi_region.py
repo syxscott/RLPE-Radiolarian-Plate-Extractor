@@ -40,7 +40,11 @@ def _make_pipeline(tmp_path: Path):
         mock.patch("rlpe.pipeline.TaxonRecognizer"),
         mock.patch("rlpe.pipeline.PanelSegmenter"),
     ):
-        cfg = PipelineConfig(pdf_dir=tmp_path, work_dir=tmp_path / "work")
+        cfg = PipelineConfig(
+            pdf_dir=tmp_path,
+            work_dir=tmp_path / "work",
+            max_regions_per_caption=50,
+        )
         cfg.extra["cross_figure_linker_enabled"] = False
         from rlpe.pipeline import RadiolarianPipeline
 
