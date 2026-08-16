@@ -141,7 +141,7 @@ chmod +x run_web_server.sh
 12. 正文地质信息抽取（Age / Formation / Locality）
 13. 比例尺信息抽取（caption/OCR/视觉线段估计）
 14. Species-Geology 关系链接与知识图谱输出
-15. API服务与任务队列骨架（FastAPI + Celery）
+15. API服务与异步任务执行（FastAPI + BackgroundTasks）
 
 ---
 
@@ -893,7 +893,7 @@ python scripts/run_pipeline.py \
 已提供：
 
 - FastAPI 上传与结果查询接口：[src/rlpe/api/app.py](src/rlpe/api/app.py)
-- Celery任务骨架：[src/rlpe/worker/tasks.py](src/rlpe/worker/tasks.py)
+- 异步任务执行：FastAPI BackgroundTasks（[src/rlpe/api/app.py](src/rlpe/api/app.py)）
 - Docker 镜像（多阶段构建）: [Dockerfile](Dockerfile)
 - GitHub Actions CI（pytest + ruff + mypy + eval smoke）: [.github/workflows/ci.yml](.github/workflows/ci.yml)
 - OpenAPI 快照（v1.1.0，17 paths / 8 schemas）: [docs/openapi-1.1.0.json](docs/openapi-1.1.0.json)。重新生成：`PYTHONPATH=src python scripts/gen_openapi.py`
