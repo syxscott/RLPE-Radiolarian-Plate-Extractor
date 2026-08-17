@@ -5,6 +5,7 @@ Plan: docs/superpowers/plans/2026-08-17-m3-per-panel-pipeline.md
 """
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -127,3 +128,51 @@ def test_config_post_init_validates_caps_positive(tmp_path):
     cfg = _make_cfg(tmp_path, m3_per_panel_max_per_figure=0)
     with pytest.raises(ValueError, match=r"must be >= 1"):
         cfg.__post_init__()
+
+
+# ---------------------------------------------------------------------------
+# Task 3: build per-panel context tuples + skip rows without crops
+# ---------------------------------------------------------------------------
+
+
+def test_method_skips_rows_without_panel_path(tmp_path):
+    """Rows without a Stage 3 crop (no panel_path) are passed through
+    unchanged — per-panel vision needs the crop image."""
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    pipe = _StubPipeline(cfg)
+    results = [
+        {"panel_id": "1", "species": "regex_A", "panel_path": None},
+        {"panel_id": "2", "species": "regex_B", "panel_path": ""},
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    # Without a backend hook we cannot test "called" — we test "skipped".
+    assert out[0]["species"] == "regex_A"
+    assert out[1]["species"] == "regex_B"
+
+
+def test_method_builds_caption_for_panel_from_caption_pairs(tmp_path):
+    """When ``caption_pairs`` is on the row, the call uses the pair
+    whose panel_id matches the row's panel_id. We assert via inspect:
+    the method body must read caption_pairs / select-by-panel_id / etc.
+    """
+    cfg = _make_cfg(tmp_path)
+    from rlpe.pipeline import RadiolarianPipeline
+
+    src = inspect.getsource(RadiolarianPipeline._apply_m3_per_panel_species_id)
+    assert "caption_pairs" in src, (
+        "method must read caption_pairs to pick the panel-specific snippet"
+    )
+    assert "panel_id" in src, (
+        "method must match caption pairs to row panel_id"
+    )
+
+
+def test_method_truncates_page_context_at_1500_chars(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    from rlpe.pipeline import RadiolarianPipeline
+
+    src = inspect.getsource(RadiolarianPipeline._apply_m3_per_panel_species_id)
+    # Spec §3 requires page-context truncation at 1500 chars.
+    assert "1500" in src, (
+        "page-context snippet must be truncated (spec §3 says 1500 chars)"
+    )

@@ -2080,9 +2080,39 @@ class RadiolarianPipeline:
             return results
         if not results:
             return results
-        # TODO (Task 3): build (row, crop, caption, context) tuples
+        # 1. Build (row, crop_path, caption_for_panel, page_context) tuples.
+        items: list[tuple[dict[str, Any], Path, str, str]] = []
+        skipped_no_crop = 0
+        for r in results:
+            crop_path = r.get("panel_path")
+            if not crop_path:
+                skipped_no_crop += 1
+                continue
+            crop = Path(crop_path)
+            if not crop.is_file():
+                skipped_no_crop += 1
+                continue
+            # Find the caption pair whose panel_id matches this row.
+            caption_for_panel = ""
+            for cp in (r.get("caption_pairs") or []):
+                # CaptionPair is dataclass-like: .panel_id / .text
+                # but rows may also pass plain dicts with the same names.
+                cp_pid = (
+                    getattr(cp, "panel_id", None)
+                    or (cp.get("panel_id") if isinstance(cp, dict) else None)
+                )
+                if cp_pid == r.get("panel_id"):
+                    caption_for_panel = (
+                        getattr(cp, "text", None)
+                        or (cp.get("text") if isinstance(cp, dict) else None)
+                        or ""
+                    )
+                    break
+            page_context = (r.get("page_context_snippet") or "")[:1500]
+            items.append((r, crop, caption_for_panel, page_context))
+        if not items:
+            return results
         # TODO (Task 4): fan out via semaphore + per-panel call
-        # TODO (Task 5): merge results + caps + metadata stamp
         return results
 
     def _apply_multi_plate_enrichment(
