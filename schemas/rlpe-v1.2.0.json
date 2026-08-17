@@ -867,6 +867,11 @@
           "default": null,
           "title": "Name"
         },
+        "paper_id": {
+          "default": "",
+          "title": "Paper Id",
+          "type": "string"
+        },
         "region": {
           "anyOf": [
             {
@@ -1316,6 +1321,11 @@
           ],
           "default": null,
           "title": "Paleo Longitude"
+        },
+        "paper_id": {
+          "default": "",
+          "title": "Paper Id",
+          "type": "string"
         },
         "plate_id": {
           "anyOf": [

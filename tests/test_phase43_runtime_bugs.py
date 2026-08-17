@@ -60,23 +60,36 @@ def test_progress_cell_delegate_calls_super_paint():
 # QThread destroyed: run_tab._on_thread_done
 # ============================================================
 def test_run_tab_on_thread_done_calls_quit_and_wait():
-    """Phase 43: _on_thread_done() must call worker.quit() + wait()
+    """Phase 43: _on_thread_done() must stop + wait on the QThread
     before dropping the reference, otherwise the QThread C++ object
-    is destroyed while still running."""
+    is destroyed while still running.
+
+    Audit 2026-08-18: Phase 56 replaced ``worker.quit()`` with
+    ``worker.requestInterruption()`` (which sets the interrupt flag
+    the pipeline polls between stages, then a 30s ``worker.wait()``
+    gives it time to flush subprocesses like the OpenDataLoader
+    JVM). Accept either pattern — the test ensures the worker is
+    gracefully drained, not the specific API."""
     import inspect
 
     from rlpe.gui.run_tab import RunTab
 
     src = inspect.getsource(RunTab._on_thread_done)
-    assert "worker.quit()" in src, (
-        "_on_thread_done must call worker.quit() to ask the thread's event loop to stop"
+    # Must call either ``worker.quit()`` (Phase 43-55 pattern) or
+    # ``worker.requestInterruption()`` (Phase 56 pattern).
+    assert ("worker.quit()" in src) or ("worker.requestInterruption()" in src), (
+        "_on_thread_done must call worker.quit() OR "
+        "worker.requestInterruption() to ask the thread to stop"
     )
     assert "worker.wait(" in src, (
         "_on_thread_done must call worker.wait() to block until the thread actually exits"
     )
-    # Also must guard with isRunning() to avoid quit() on a
-    # not-yet-started thread
-    assert "isRunning" in src, "_on_thread_done must check isRunning() before quit()/wait()"
+    # Also must guard with isRunning() to avoid draining a
+    # not-yet-started thread.
+    assert "isRunning" in src, (
+        "_on_thread_done must check isRunning() before quit()/wait()/"
+        "requestInterruption()"
+    )
 
 
 # ============================================================
@@ -87,12 +100,18 @@ def test_pipeline_grobid_path_calls_is_available_first():
     retry 3 times with 5s timeout per attempt = up to 15 seconds
     of HTTPConnectionPool retries per PDF. Fixed: probe
     is_available() with a 2s timeout FIRST; if False, skip retries
-    and go straight to OD fallback."""
+    and go straight to OD fallback.
+
+    Audit 2026-08-18: Phase 59 refactor moved the probe into
+    ``_process_one_pdf_grobid_impl``. Inspect both methods to
+    catch the probe wherever it lives now."""
     import inspect
 
     from rlpe.pipeline import RadiolarianPipeline
 
-    src = inspect.getsource(RadiolarianPipeline._process_one_pdf_grobid)
+    src = inspect.getsource(RadiolarianPipeline._process_one_pdf_grobid) + "\n" + inspect.getsource(
+        getattr(RadiolarianPipeline, "_process_one_pdf_grobid_impl", RadiolarianPipeline._process_one_pdf_grobid)
+    )
     assert "is_available" in src, (
         "_process_one_pdf_grobid must call is_available() before "
         "the retry loop so the user doesn't wait 15+ seconds per PDF "

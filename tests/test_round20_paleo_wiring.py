@@ -174,7 +174,7 @@ def test_paleo_coordinates_source_guard():
     ``paleo_coordinates_from_localities`` AND call it from
     ``run_output_from_provenance`` instead of returning ``[]``."""
     src = Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/src/rlpe/converters.py"
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "converters.py"
     ).read_text(encoding="utf-8")
     assert "def paleo_coordinates_from_localities" in src, (
         "converters.py is missing paleo_coordinates_from_localities."

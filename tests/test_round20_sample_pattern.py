@@ -106,7 +106,7 @@ def test_short_code_pattern_source_guard():
     """Source guard: converters.py must contain the Boughdiri short-code
     pattern with the locality prefixes (CH, MB, GA, ...)."""
     src = Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/src/rlpe/converters.py"
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "converters.py"
     ).read_text(encoding="utf-8")
     for needle in (
         "CH|MB|GA|RM|HK|JP",

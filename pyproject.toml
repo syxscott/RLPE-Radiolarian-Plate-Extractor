@@ -23,7 +23,10 @@ ocr = ["paddleocr", "easyocr"]
 taxon = ["taxonerd", "spacy"]
 sam = ["sam2"]
 gemma = ["transformers", "accelerate", "bitsandbytes", "pillow"]
-service = ["fastapi", "uvicorn", "pydantic"]
+# python-multipart: required by FastAPI/Starlette to parse multipart/form-data
+# (used by /upload and review endpoints). httpx: required by starlette.testclient
+# for FastAPI integration tests under TestClient.
+service = ["fastapi", "uvicorn", "pydantic", "python-multipart", "httpx"]
 # Phase 32+: PySide6 desktop GUI (Qt6 native widgets, ~400MB install).
 # Pin >=6.6 to ensure Qt6 ABI (Qt5 wheels are still common on Linux).
 desktop = ["PySide6>=6.6", "Pillow>=10.0"]
@@ -32,6 +35,19 @@ train = ["torch", "transformers", "datasets", "scikit-learn", "scipy"]
 opendataloader = ["opendataloader-pdf>=0.0.0"]
 schema = ["pydantic>=2.0", "jsonschema>=4.21"]
 dev = ["hypothesis>=6.0"]
+# Phase 32+ test extras: pull in everything the unit test suite touches.
+# anthropic: required by tests/test_cached_data_replay.py and a few
+# llm_backend tests that mock the SDK to verify retry / cost-aggregation
+# behaviour. yaml: required by tests/test_yolo_dataset_builder.py
+# (YOLO data.yaml parsing). jsonschema: used by tests/test_schema_models.py.
+test = [
+  "pytest>=8",
+  "pytest-cov",
+  "openpyxl",
+  "anthropic>=0.40,<0.50",
+  "pyyaml",
+  "jsonschema>=4.21",
+]
 
 [project.scripts]
 rlpe = "rlpe.cli:main"

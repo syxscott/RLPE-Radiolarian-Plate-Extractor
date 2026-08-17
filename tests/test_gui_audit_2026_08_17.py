@@ -258,8 +258,8 @@ class TestStringKeysPresent:
 
     def test_common_retry_keys_in_zh(self):
         text = _SRC_STRINGS_ZH.read_text(encoding="utf-8")
-        assert "'common.retry.title'" in text
-        assert "'common.retry.body'" in text
+        assert '"common.retry.title"' in text
+        assert '"common.retry.body"' in text
 
     def test_restab_live_done_in_en(self):
         text = _SRC_STRINGS_EN.read_text(encoding="utf-8")
@@ -268,8 +268,8 @@ class TestStringKeysPresent:
 
     def test_restab_live_done_in_zh(self):
         text = _SRC_STRINGS_ZH.read_text(encoding="utf-8")
-        assert "'restab.live'" in text
-        assert "'restab.done'" in text
+        assert '"restab.live"' in text
+        assert '"restab.done"' in text
 
     def test_geo_links_keys_in_en(self):
         text = _SRC_STRINGS_EN.read_text(encoding="utf-8")
@@ -278,8 +278,8 @@ class TestStringKeysPresent:
 
     def test_geo_links_keys_in_zh(self):
         text = _SRC_STRINGS_ZH.read_text(encoding="utf-8")
-        assert "'restab.detail.geo_links'" in text
-        assert "'restab.detail.geo_links_more'" in text
+        assert '"restab.detail.geo_links"' in text
+        assert '"restab.detail.geo_links_more"' in text
 
     def test_pbdb_taxonomy_keys_in_en(self):
         text = _SRC_STRINGS_EN.read_text(encoding="utf-8")
@@ -303,7 +303,7 @@ class TestStringKeysPresent:
             "restab.detail.genus",
             "restab.detail.source",
         ):
-            assert f"'{key}'" in text, f"missing {key} in strings_zh_CN.py"
+            assert f'"{key}"' in text, f"missing {key} in strings_zh_CN.py"
 
     def test_v110_keys_in_en(self):
         text = _SRC_STRINGS_EN.read_text(encoding="utf-8")
@@ -333,7 +333,7 @@ class TestStringKeysPresent:
             "restab.detail.verify_success",
             "restab.detail.verify_failed",
         ):
-            assert f"'{key}'" in text, f"missing {key} in strings_zh_CN.py"
+            assert f'"{key}"' in text, f"missing {key} in strings_zh_CN.py"
 
 
 # ---------------------------------------------------------------------

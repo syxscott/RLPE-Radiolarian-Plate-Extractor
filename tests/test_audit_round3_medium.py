@@ -210,8 +210,15 @@ class TestThinkingRetryLockScope:
         j = body.find(retry_marker)
         assert j > 0
         retry_block = body[j : j + 2000]
-        lock_open = retry_block.find("with self._thinking_retry_lock:")
-        assert lock_open >= 0
+        # Audit 2026-08-18: the lock guard is now combined with the
+        # thinking-gate writer (e.g. ``with self._thinking_retry_lock,
+        # self._thinking_gate.write():``) to avoid the two-lock release-
+        # order bug. Accept either form when locating the lock-open.
+        lock_open = retry_block.find("with self._thinking_retry_lock")
+        assert lock_open >= 0, (
+            "Round 9 fix: retry block must open "
+            "'with self._thinking_retry_lock' before infer_panel"
+        )
         # The infer_panel call MUST be inside the lock block. The
         # previous "lock released before infer_panel" pattern closed
         # the with-block before the call — verify we don't have that.
@@ -219,8 +226,8 @@ class TestThinkingRetryLockScope:
         assert infer_pos > lock_open, "infer_panel must appear AFTER the lock-open line"
         # And there must NOT be a closing of the with-block before
         # infer_panel. The simplest assertion: there is no second
-        # ``with self._thinking_retry_lock:`` before infer_panel.
-        second_lock = retry_block.find("with self._thinking_retry_lock:", lock_open + 1)
+        # ``with self._thinking_retry_lock`` before infer_panel.
+        second_lock = retry_block.find("with self._thinking_retry_lock", lock_open + 1)
         assert second_lock < 0 or second_lock > infer_pos, (
             "Round 9 fix: lock must be a single 'with' block wrapping "
             "save/flip/call/restore, not two separate blocks"

@@ -463,10 +463,12 @@ def test_stable_id_streaming_handles_large_files(tmp_path):
     f.write_bytes(os.urandom(5 * 1024 * 1024))
     new_id = stable_id(f)
     # Reference: same algorithm done by reading in one shot.
-    # Phase 54 audit m17: stable_id switched from SHA1 to SHA256,
-    # so the reference must match.
+    # Phase 54 audit m17 proposed SHA1→SHA256 but the change broke
+    # the committed 9-paper gold dataset (which uses SHA1-derived
+    # paper_ids). The implementation reverts to SHA1; the test
+    # reference must follow.
     data = f.read_bytes()
-    expected = hashlib.sha256(f"{len(data)}:".encode("ascii") + data).hexdigest()[:16]
+    expected = hashlib.sha1(f"{len(data)}:".encode("ascii") + data).hexdigest()[:16]
     assert new_id == expected
 
 

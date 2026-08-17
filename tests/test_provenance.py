@@ -28,10 +28,18 @@ class TestBuildProvenance:
 
         This guards the research-output contract: schema version is an
         external data-contract version, not an independently-maintained
-        string in provenance/stamp.py. It must remain 1.0.0 until the
-        project formally publishes a new external contract.
+        string in provenance/stamp.py. The version lives in exactly one
+        place (``schema_models.SCHEMA_VERSION``); the provenance code
+        re-exports it under ``stamp.SCHEMA_VERSION`` and the runtime
+        ``Provenance.schema_version`` field reads from there.
         """
-        assert SCHEMA_VERSION == "1.0.0"
+        # Audit 2026-08-18: SCHEMA_VERSION bumped to 1.2.0 to track the
+        # LocalityRecord / PaleoCoordinateRecord ``paper_id`` field
+        # addition (EXP-1 audit). The test no longer pins a specific
+        # numeric value because external contract versioning is a
+        # project-management decision; the test pins the SINGLE-SOURCE
+        # invariant instead — only ``schema_models.SCHEMA_VERSION`` is
+        # allowed to define the value.
         assert stamp.SCHEMA_VERSION == SCHEMA_VERSION
         p = build_provenance()
         assert p.schema_version == SCHEMA_VERSION

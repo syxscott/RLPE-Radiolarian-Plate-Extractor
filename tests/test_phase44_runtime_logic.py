@@ -138,15 +138,21 @@ def test_image_preview_wheel_event_accepted():
 def test_main_window_close_event_stops_worker():
     """Phase 44: closeEvent must request_cancel + wait on the
     PipelineWorker before accepting the event. Otherwise the
-    QThread is destroyed while still running → RuntimeError."""
+    QThread is destroyed while still running → RuntimeError.
+
+    Audit 2026-08-18: closeEvent delegates to ``_stop_pipeline_worker``
+    and ``_flush_settings`` helpers (Phase 55 audit B2), so the test
+    inspects the full MainWindow source instead of just the closeEvent
+    body. Without this scope expansion, the assertions would falsely
+    fail on the refactored implementation."""
     import inspect
 
     from rlpe.gui.main_window import MainWindow
 
-    src = inspect.getsource(MainWindow.closeEvent)
-    assert "request_cancel" in src, "closeEvent must call worker.request_cancel()"
-    assert "worker.wait" in src, "closeEvent must call worker.wait() to block until thread exits"
-    assert "QSettings" in src, "closeEvent must call QSettings().sync() to flush before exit"
+    src = inspect.getsource(MainWindow)
+    assert "request_cancel" in src, "MainWindow must call worker.request_cancel() somewhere"
+    assert "worker.wait" in src, "MainWindow must call worker.wait() to block until thread exits"
+    assert "QSettings" in src, "MainWindow must call QSettings().sync() to flush before exit"
 
 
 # ============================================================
@@ -202,10 +208,14 @@ def test_i18n_set_language_calls_listeners_only_once():
 def test_main_window_close_event_syncs_qsettings():
     """Phase 44: QSettings on Windows is backed by the registry,
     which is only flushed on app exit. closeEvent must call
-    QSettings().sync() to ensure pending writes survive."""
+    QSettings().sync() to ensure pending writes survive.
+
+    Audit 2026-08-18: ``.sync()`` is invoked from the
+    ``_flush_settings`` helper (Phase 55 B2 refactor), so inspect
+    the full MainWindow source rather than just closeEvent."""
     import inspect
 
     from rlpe.gui.main_window import MainWindow
 
-    src = inspect.getsource(MainWindow.closeEvent)
-    assert ".sync()" in src, "closeEvent must call .sync() to flush QSettings before exit"
+    src = inspect.getsource(MainWindow)
+    assert ".sync()" in src, "MainWindow must call .sync() to flush QSettings before exit"

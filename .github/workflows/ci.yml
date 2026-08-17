@@ -58,12 +58,11 @@ jobs:
 
       - name: Install test extras
         run: |
-          python -m pip install pytest pytest-cov openpyxl hypothesis
-          # Optional deps so tests that import PySide6/fastapi don't fail
-          # at collection time (they're still skipped if the modules
-          # aren't installed in the runner environment, but with these
-          # extras most GUI/API tests actually run).
-          python -m pip install -e ".[service,desktop]"
+          # Pull in everything the test suite touches: anthropic
+          # (mocked SDK for llm_backend tests), pyyaml (YOLO data.yaml
+          # parser tests), jsonschema (schema_validate tests), and the
+          # GUI/API optional deps so collection doesn't skip them.
+          python -m pip install -e ".[test,service,desktop]"
 
       - name: Run pytest with coverage
         env:

@@ -77,6 +77,9 @@ def file_size_human(path: Path | None) -> str:
     Phase 42: previous implementation rounded 999 B to "1.0 KB" because
     it divided BEFORE the comparison. Fixed: pick the unit based on
     the size FIRST, then format with at most 1 decimal place.
+    Phase 42 (audit 2026-08-18): use ``int(size)`` for the byte unit
+    so ``999`` displays as ``"999 B"`` instead of ``"999.0 B"``
+    (Python's float-to-str conversion pads with ``.0``).
     """
     if path is None or not path.exists():
         return "—"
@@ -87,7 +90,9 @@ def file_size_human(path: Path | None) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if size < 1024:
             # Integer B for byte units, 1-decimal for everything else.
-            return f"{size} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+            # ``int(size)`` strips the ``.0`` so 999 B is "999 B",
+            # not "999.0 B".
+            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} PB"
 

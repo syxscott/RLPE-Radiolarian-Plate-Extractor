@@ -342,7 +342,15 @@ class JobsTab(QWidget):
             # size > 0" when the flag is missing (legacy runs).
             complete_flag = root / "output" / "manifests" / "complete.flag"
             try:
-                job_status = STATUS_DONE if complete_flag.exists() else STATUS_FAILED
+                if complete_flag.exists():
+                    job_status = STATUS_DONE
+                elif matches_path.stat().st_size > 0:
+                    # Legacy run without complete.flag but with rows:
+                    # treat as done so old CLI runs don't all show as
+                    # red "failed" rows. New runs always write the flag.
+                    job_status = STATUS_DONE
+                else:
+                    job_status = STATUS_FAILED
             except OSError:
                 job_status = STATUS_FAILED
             job = JobRecord(

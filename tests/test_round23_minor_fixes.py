@@ -26,9 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def _read(rel: str) -> str:
-    return Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel).read_text(
-        encoding="utf-8"
-    )
+    return (Path(__file__).resolve().parents[1] / rel).read_text(encoding="utf-8")
 
 
 # --- F-4: geo_vision stub emission ---------------------------------------

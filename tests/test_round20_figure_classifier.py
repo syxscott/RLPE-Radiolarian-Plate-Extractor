@@ -114,7 +114,7 @@ def test_paleogeographic_takes_priority_over_map():
 def test_keyword_list_extensions():
     """Source guard: the keyword dicts must contain the Round 20 additions."""
     src = Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/src/rlpe/range_chart_extractor.py"
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "range_chart_extractor.py"
     ).read_text(encoding="utf-8")
 
     # The 6 new phrases that were missing before Round 20
@@ -137,7 +137,7 @@ def test_pipeline_routes_map_to_geo_vision():
     geo_vision figure_type set. Without it, plain map captions route
     to plate segmentation and produce no geology records."""
     src = Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/src/rlpe/pipeline.py"
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
     ).read_text(encoding="utf-8")
     # Look for the geo_vision routing tuple
     assert '"map"' in src, (

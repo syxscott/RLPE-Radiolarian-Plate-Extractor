@@ -185,6 +185,10 @@ class PipelineConfig:
     yolo_device: str = "auto"
     num_workers: int = 4
     render_dpi: int = 200
+    # Round 14 audit: default OFF. Flipping this to True dumps
+    # per-region / per-page JSON to disk; on a 200-page PDF this
+    # produced ~117 GB of smoke-output during a Round 14 replay.
+    # Keep the default off; only set True for short debugging runs.
     save_intermediate: bool = False
     # Audit 2026-08-02: M3 morphology extraction (Stage 6). Opt-in.
     # When True, the pipeline asks ``M3Engine.infer_morphology`` for
