@@ -62,12 +62,17 @@ class _StubPipeline:
     """Minimal stand-in: bind the unbound method and provide config."""
 
     def __init__(self, cfg: PipelineConfig):
+        from types import SimpleNamespace
+
         from rlpe.pipeline import RadiolarianPipeline
 
         self.config = cfg
-        # Provide the m3_engine attribute since the method's guard
-        # touches it after the enabled check. No backend is wired.
-        self.m3_engine = None
+        # Provide a stub m3_engine with a non-None backend so the method's
+        # second guard (m3_engine.backend) does NOT short-circuit and the
+        # actual Task 3 loop body gets exercised by skip-rows tests.
+        self.m3_engine = SimpleNamespace(
+            backend=SimpleNamespace(backend_name="stub")
+        )
         self._apply_m3_per_panel_species_id = (
             RadiolarianPipeline._apply_m3_per_panel_species_id.__get__(
                 self, RadiolarianPipeline
