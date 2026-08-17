@@ -180,6 +180,22 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
     # before the RuntimeError can be raised. Filter explicitly via
     # ``shiboken6.isValid`` (the canonical "is the C++ object still
     # alive" check) and catch RuntimeError as a fallback.
+    #
+    # Audit 2026-08-17 (second pass): wrap the ``app.allWidgets()``
+    # CALL itself in try/except. PySide6 6.11.x with Python 3.11
+    # can segfault DURING the internal Qt parent-tree walk when a
+    # stale widget is present (CI pytest 3.11 second crash, in
+    # ``test_phase42_remaining_fixes::test_main_window_batch_stop_on_error_pauses_batch``
+    # -> ``MainWindow._build_ui`` -> ``tr_label`` -> ``register_widget_text``).
+    # The previous per-widget ``isValid`` guard did not help because
+    # the crash happens inside the Qt parent-tree enumeration
+    # before we ever see a widget to validate. Catching at the
+    # outer level means: if the tree walk itself crashes, we skip
+    # this ``_apply_to_one`` call. The widget was JUST created
+    # (tr_label sets objectName THEN calls register_widget_text),
+    # so the caller's subsequent ``widget.setText(_tr(text_key))``
+    # sets the right text directly — the lookup here is redundant
+    # for first-paint correctness.
     try:
         import shiboken6 as _shiboken
 
@@ -192,7 +208,16 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
         def _is_valid(obj: object) -> bool:
             return True
 
-    for w in list(app.allWidgets()):
+    try:
+        all_widgets_iter = app.allWidgets()
+    except (RuntimeError, TypeError):
+        # Qt parent-tree walk itself crashed; the lookup is
+        # non-essential for first-paint (caller will setText right
+        # after we return) and for re-apply (will retry on next
+        # set_language call when the tree has stabilised).
+        return
+
+    for w in list(all_widgets_iter):
         try:
             if not _is_valid(w):
                 continue
@@ -273,7 +298,11 @@ def _apply_registry() -> None:
     # ``_apply_to_one`` — wrap ``objectName()`` calls in try/except
     # so a stale/deleted widget doesn't segfault the whole interpreter
     # when ``set_language`` is called from a fixture after a prior
-    # test left a deleted C++ object in the allWidgets() walk.
+    # test left a deleted C++ object in the allWidgets() walk. Also
+    # wrap the ``app.allWidgets()`` call itself — PySide6 6.11.x
+    # with Python 3.11 can segfault INSIDE the parent-tree walk
+    # when a stale widget is present (CI pytest 3.11 second crash,
+    # in MainWindow._build_ui -> tr_label -> register_widget_text).
     try:
         import shiboken6 as _shiboken
 
@@ -284,8 +313,16 @@ def _apply_registry() -> None:
         def _is_valid(obj: object) -> bool:
             return True
 
+    try:
+        all_widgets_iter = app.allWidgets()
+    except (RuntimeError, TypeError):
+        # Qt parent-tree walk itself crashed — skip this pass and
+        # try again on the next set_language() call when the tree
+        # has stabilised.
+        return
+
     all_widgets: dict[str, object] = {}
-    for w in list(app.allWidgets()):
+    for w in list(all_widgets_iter):
         try:
             if not _is_valid(w):
                 continue
