@@ -107,9 +107,7 @@ def test_hybrid_does_not_duplicate_label() -> None:
         seen[key] = r
         deduped.append(r)
 
-    assert len(deduped) == 1, (
-        f"Hybrid dedup must collapse to 1 row; got {len(deduped)}: {deduped}"
-    )
+    assert len(deduped) == 1, f"Hybrid dedup must collapse to 1 row; got {len(deduped)}: {deduped}"
     # LLM row wins (higher confidence).
     assert deduped[0]["confidence"] == 0.85, (
         f"LLM row should win (higher confidence); got {deduped[0]['confidence']}"
@@ -205,22 +203,16 @@ def test_hybrid_keeps_unique_caption_only_rows() -> None:
         seen[key] = r
         deduped.append(r)
 
-    assert len(deduped) == 3, (
-        f"Unique caption-only rows must survive; got {len(deduped)}"
-    )
+    assert len(deduped) == 3, f"Unique caption-only rows must survive; got {len(deduped)}"
     panel_ids = sorted(r["panel_id"] for r in deduped)
-    assert panel_ids == ["1", "2", "3"], (
-        f"Expected all 3 panel_ids; got {panel_ids}"
-    )
+    assert panel_ids == ["1", "2", "3"], f"Expected all 3 panel_ids; got {panel_ids}"
 
 
 def test_pipeline_source_has_post_hybrid_dedup() -> None:
     """Bug 2.6 source-guard: pipeline.py contains the post-hybrid dedup
     pass that drops caption-derived duplicates.
     """
-    src = (Path(__file__).resolve().parents[1] / "src/rlpe/pipeline.py").read_text(
-        encoding="utf-8"
-    )
+    src = (Path(__file__).resolve().parents[1] / "src/rlpe/pipeline.py").read_text(encoding="utf-8")
     assert "Post-hybrid dedup" in src, (
         "pipeline.py must contain the post-hybrid dedup pass (Bug 2.6 fix)."
     )

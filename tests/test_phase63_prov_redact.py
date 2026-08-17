@@ -71,9 +71,7 @@ def test_redact_api_keys_in_provenance_strips_known_fields():
     # Bottom line: the API key string is not present in the snapshot
     # under any name.
     flat = str(snap)
-    assert "sk-" not in flat, (
-        f"config_snapshot still contains an 'sk-' token: {flat!r}"
-    )
+    assert "sk-" not in flat, f"config_snapshot still contains an 'sk-' token: {flat!r}"
 
 
 def test_redact_api_keys_in_provenance_redacts_stray_tokens():
@@ -118,9 +116,7 @@ def test_redact_api_keys_pipeline_config_class():
     }
     prov = build_provenance(config=cfg)
     snap_str = str(prov.config_snapshot)
-    assert "sk-ant-api03-" not in snap_str, (
-        f"build_provenance leaked API key: {snap_str!r}"
-    )
+    assert "sk-ant-api03-" not in snap_str, f"build_provenance leaked API key: {snap_str!r}"
 
 
 if __name__ == "__main__":

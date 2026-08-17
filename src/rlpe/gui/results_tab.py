@@ -13,48 +13,39 @@ The Results tab is the GUI's main "data browser". It's intentionally
 dense (table + metadata + image + tags) — the goal is to let a
 scientist verify the extraction without leaving the app.
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from . import i18n
 from .constants import DEFAULT_API_URL, INPUT_WIDTH_LONG, RESULT_COLUMNS
 from .i18n_widgets import tr_button, tr_combobox, tr_label
-from .styles import SPACE_M, SPACE_S
-from . import i18n
 from .image_preview import ImagePreviewWidget
+from .styles import SPACE_M, SPACE_S
 from .utils import (
-    fmt_count,
-    fmt_coord,
-    fmt_percent,
     get_gui_logger,
     html_escape,
-    short_path,
-    truncate,
 )
-
 
 # Phase 56 audit: class-level constants for scope/OCR lookup — avoids
 # recreating these dicts on every _render_detail() call.
@@ -76,10 +67,10 @@ _SCOPE_CLASSES: dict[str, str] = {
 # need manual review at a glance.
 _LINK_SOURCE_PREFIX = "cross_figure_linker:"
 _LINK_SOURCE_CHIP_CLASSES: dict[str, str] = {
-    "sample_match": "badge-info",       # blue chip
-    "locality_match": "badge-info",     # blue chip
-    "m3_inference": "badge-warn",        # amber chip
-    "unlinked": "badge-muted",           # grey chip
+    "sample_match": "badge-info",  # blue chip
+    "locality_match": "badge-info",  # blue chip
+    "m3_inference": "badge-warn",  # amber chip
+    "unlinked": "badge-muted",  # grey chip
 }
 _LINK_SOURCE_LABEL_KEYS: dict[str, str] = {
     "sample_match": "restab.detail.link_source.sample_match",
@@ -117,7 +108,7 @@ def _emit_link_source_badge(html: list[str], coord_source: str) -> None:
     """
     if not coord_source or not coord_source.startswith(_LINK_SOURCE_PREFIX):
         return
-    raw = coord_source[len(_LINK_SOURCE_PREFIX):]
+    raw = coord_source[len(_LINK_SOURCE_PREFIX) :]
     cls = _LINK_SOURCE_CHIP_CLASSES.get(raw, "badge-muted")
     label_key = _LINK_SOURCE_LABEL_KEYS.get(raw)
     if label_key:
@@ -161,6 +152,8 @@ def _emit_link_summary_badge(html: list[str], source: str, confidence: float) ->
         f"{html_escape(label)}</span> "
         f"<span style='color:#888'>({conf_pct})</span></div>"
     )
+
+
 _OCR_KEYS: dict[str, str] = {
     "image_ocr": "restab.detail.ocr.image_ocr",
     "positional": "restab.detail.ocr.positional",
@@ -223,7 +216,6 @@ class ResultsTab(QWidget):
         # ---- Filter row ----
         # Filter combos store sentinel userData ("__ALL__", "__ANY__", etc.)
         # so filter logic compares against the sentinel, not translated text.
-        from .i18n_widgets import tr_combobox
         filter_row = QHBoxLayout()
         filter_row.setSpacing(SPACE_S)
 
@@ -372,7 +364,8 @@ class ResultsTab(QWidget):
         self._mark_verified_btn = tr_button("restab.detail.mark_verified")
         self._mark_verified_btn.setObjectName("restab.detail.mark_verified")
         self._mark_verified_btn.setProperty(
-            "class", "primary",
+            "class",
+            "primary",
         )
         self._mark_verified_btn.clicked.connect(
             lambda: self._flip_image_verified(True),
@@ -397,7 +390,9 @@ class ResultsTab(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def load_job(self, job_id: str, rows: list[dict[str, Any]], output_dir: str | None = None) -> None:
+    def load_job(
+        self, job_id: str, rows: list[dict[str, Any]], output_dir: str | None = None
+    ) -> None:
         """Replace the current results with a new job's rows."""
         # Phase 56 audit: reset search and filters so stale state doesn't leak
         self._search_edit.blockSignals(True)
@@ -435,7 +430,11 @@ class ResultsTab(QWidget):
         accumulating under a new job's ID.
         """
         if job_id is not None and job_id != self._current_job_id:
-            self._log.warning("append_rows called for different job_id %s (current %s), ignoring", job_id, self._current_job_id)
+            self._log.warning(
+                "append_rows called for different job_id %s (current %s), ignoring",
+                job_id,
+                self._current_job_id,
+            )
             return
         self._all_rows.extend(rows)
         # audit 2026-08-17 (GUI-A7): use the i18n key restab.live so
@@ -460,8 +459,8 @@ class ResultsTab(QWidget):
         # which would lose the per-species / per-family items.
         for combo, key, sentinel in (
             (self._species_filter, "restab.filter.all", "__ALL__"),
-            (self._family_filter,   "restab.filter.all", "__ALL__"),
-            (self._has_pbdb,        "restab.filter.any", "__ANY__"),
+            (self._family_filter, "restab.filter.all", "__ALL__"),
+            (self._has_pbdb, "restab.filter.any", "__ANY__"),
         ):
             for i in range(combo.count()):
                 ud = combo.itemData(i)
@@ -503,9 +502,7 @@ class ResultsTab(QWidget):
         self._detail_browser.clear()
         # Format with {shown=0, total=0} so the empty-state shows
         # "0 / 0 rows" / "0 / 0 行" in the right language.
-        self._count_label.setText(
-            i18n._tr("restab.count").format(shown=0, total=0)
-        )
+        self._count_label.setText(i18n._tr("restab.count").format(shown=0, total=0))
 
     # ------------------------------------------------------------------
     # Internal — filter + view refresh
@@ -513,11 +510,13 @@ class ResultsTab(QWidget):
     def _refresh_filter_options(self) -> None:
         # Rebuild species + family dropdowns from current rows
         species = sorted({r.get("species", "") for r in self._all_rows if r.get("species")})
-        families = sorted({
-            ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy", {}).get("family")
-            for r in self._all_rows
-            if ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy")
-        })
+        families = sorted(
+            {
+                ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy", {}).get("family")
+                for r in self._all_rows
+                if ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy")
+            }
+        )
         families = [f for f in families if f]
         self._species_filter.blockSignals(True)
         self._species_filter.clear()
@@ -552,19 +551,28 @@ class ResultsTab(QWidget):
         out: list[dict[str, Any]] = []
         for r in self._all_rows:
             if search:
-                blob = " ".join([
-                    str(r.get("species") or ""),
-                    str(r.get("panel_id") or ""),
-                    str(r.get("caption_snippet") or ""),
-                    str(r.get("label_text") or ""),
-                    ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy", {}).get("family") or "",
-                ]).lower()
+                blob = " ".join(
+                    [
+                        str(r.get("species") or ""),
+                        str(r.get("panel_id") or ""),
+                        str(r.get("caption_snippet") or ""),
+                        str(r.get("label_text") or ""),
+                        ((r.get("metadata") or {}).get("paleodb") or {})
+                        .get("taxonomy", {})
+                        .get("family")
+                        or "",
+                    ]
+                ).lower()
                 if search not in blob:
                     continue
             if species_filter and r.get("species") != species_filter:
                 continue
             if family_filter:
-                fam = ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy", {}).get("family")
+                fam = (
+                    ((r.get("metadata") or {}).get("paleodb") or {})
+                    .get("taxonomy", {})
+                    .get("family")
+                )
                 if fam != family_filter:
                     continue
             if has_pbdb != "__ANY__":
@@ -573,11 +581,7 @@ class ResultsTab(QWidget):
                 # the truthy dict from pbdb.get("taxonomy"). Without
                 # bool(), `True != {'family': 'F1'}` is True and the
                 # row is dropped even when it has PBDB data.
-                have = bool(
-                    pbdb is not None
-                    and pbdb.get("looked_up")
-                    and pbdb.get("taxonomy")
-                )
+                have = bool(pbdb is not None and pbdb.get("looked_up") and pbdb.get("taxonomy"))
                 if want != have:
                     continue
             out.append(r)
@@ -612,21 +616,23 @@ class ResultsTab(QWidget):
     def _extract_column(self, row: dict[str, Any], key: str) -> Any:
         """Pull a display value out of a result row dict."""
         if key == "family":
-            return ((row.get("metadata") or {}).get("paleodb") or {}).get("taxonomy", {}).get("family")
+            return (
+                ((row.get("metadata") or {}).get("paleodb") or {}).get("taxonomy", {}).get("family")
+            )
         if key == "country":
-            geo = ((row.get("metadata") or {}).get("geology_links") or [])
+            geo = (row.get("metadata") or {}).get("geology_links") or []
             for g in geo:
                 if g.get("country"):
                     return g["country"]
             return None
         if key == "biozone":
-            geo = ((row.get("metadata") or {}).get("geology_links") or [])
+            geo = (row.get("metadata") or {}).get("geology_links") or []
             for g in geo:
                 if g.get("biozone"):
                     return g["biozone"]
             return None
         if key == "coord":
-            geo = ((row.get("metadata") or {}).get("geology_links") or [])
+            geo = (row.get("metadata") or {}).get("geology_links") or []
             for g in geo:
                 if g.get("latitude") is not None and g.get("longitude") is not None:
                     # audit 2026-07-26 M10: lat/lon may arrive as strings
@@ -703,18 +709,20 @@ class ResultsTab(QWidget):
         tax = paleodb.get("taxonomy") or {}
         geo_links = md.get("geology_links") or []
         html = []
-        html.append("<html><head><style>"
+        html.append(
+            "<html><head><style>"
             ".badge-info{padding:1px 5px;border-radius:3px;font-size:11px;background:#d6e4ff;color:#1f77b4}"
             ".badge-warn{padding:1px 5px;border-radius:3px;font-size:11px;background:#ffe0a0;color:#c07800}"
             ".badge-muted{padding:1px 5px;border-radius:3px;font-size:11px;background:#eee;color:#888}"
-            "</style></head><body style='font-family:sans-serif;padding:0;margin:0'>")
+            "</style></head><body style='font-family:sans-serif;padding:0;margin:0'>"
+        )
 
         # ── Heading ──────────────────────────────────────────────
         html.append(
             f"<h2 style='color:#1f77b4;margin:8px 8px 2px'>"
             f"{html_escape(row.get('species') or '(no species)')}</h2>"
         )
-        panel_id = row.get('panel_id') or ''
+        panel_id = row.get("panel_id") or ""
         old_panel_id = md.get("old_panel_id")
         if old_panel_id and old_panel_id != panel_id:
             html.append(
@@ -819,25 +827,38 @@ class ResultsTab(QWidget):
                 if bits:
                     scale_bar_str = f"{' '.join(bits)}"
 
-        html.append("<table style='font-size:12px;border-collapse:collapse;width:100%;margin-bottom:8px'>")
+        html.append(
+            "<table style='font-size:12px;border-collapse:collapse;width:100%;margin-bottom:8px'>"
+        )
         meta_pairs = [
             (i18n._tr("restab.detail.paper_id"), html_escape(row.get("paper_id") or "—")),
             (i18n._tr("restab.detail.figure_id"), html_escape(row.get("figure_id") or "—")),
             (i18n._tr("restab.detail.panel_label"), html_escape(panel_id or "—")),
-            (i18n._tr("restab.detail.page"), md.get("page_index") if md.get("page_index") is not None else "—"),
-            (i18n._tr("restab.detail.source"), f"<span class='{ocr_cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(ocr_label)}</span>"),
+            (
+                i18n._tr("restab.detail.page"),
+                md.get("page_index") if md.get("page_index") is not None else "—",
+            ),
+            (
+                i18n._tr("restab.detail.source"),
+                f"<span class='{ocr_cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(ocr_label)}</span>",
+            ),
             (i18n._tr("restab.detail.confidence"), conf_str),
         ]
         # Confidence interval — append as a parenthetical next to
         # confidence if available, otherwise include it as its own
         # row. Either way, the operator sees the Wilson bounds.
         if ci_str is not None:
-            meta_pairs.append((
-                i18n._tr("restab.detail.ci"),
-                ci_str,
-            ))
+            meta_pairs.append(
+                (
+                    i18n._tr("restab.detail.ci"),
+                    ci_str,
+                )
+            )
         meta_pairs.append(
-            (i18n._tr("restab.detail.geo_scope"), f"<span class='{cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(scope_label)}</span>"),
+            (
+                i18n._tr("restab.detail.geo_scope"),
+                f"<span class='{cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(scope_label)}</span>",
+            ),
         )
         # audit 2026-08-17 (GUI-A3): surface image_verified + review
         # priority as their own meta rows.
@@ -847,8 +868,10 @@ class ResultsTab(QWidget):
             meta_pairs.append((i18n._tr("restab.detail.scale_bar"), scale_bar_str))
         # Phase 56 audit: guard against non-numeric bbox elements (None, str)
         bbox = row.get("bbox")
-        if isinstance(bbox, list) and len(bbox) == 4 and any(
-            v > 0 for v in bbox if isinstance(v, (int, float))
+        if (
+            isinstance(bbox, list)
+            and len(bbox) == 4
+            and any(v > 0 for v in bbox if isinstance(v, (int, float)))
         ):
             html.append(
                 f"<tr><td style='padding:2px 8px 2px 0;color:#888'>{i18n._tr('restab.detail.bbox')}</td>"
@@ -878,11 +901,14 @@ class ResultsTab(QWidget):
             if year:
                 parts.append(f"<span style='color:#666'>({html_escape(str(year))})</span>")
             html.append(
-                f"<div style='padding:4px 8px;border-top:1px solid #eee'>"
-                + " ".join(parts) + "</div>"
+                "<div style='padding:4px 8px;border-top:1px solid #eee'>"
+                + " ".join(parts)
+                + "</div>"
             )
             if doi:
-                html.append(f"<div style='padding:0 8px 4px;font-size:11px;color:#666'>DOI: <code>{html_escape(doi)}</code></div>")
+                html.append(
+                    f"<div style='padding:0 8px 4px;font-size:11px;color:#666'>DOI: <code>{html_escape(doi)}</code></div>"
+                )
             if review_reasons:
                 rw = "; ".join(str(r) for r in review_reasons)
                 html.append(
@@ -935,12 +961,12 @@ class ResultsTab(QWidget):
             # as fallbacks here and also in strings_en / strings_zh.
             tax_rows = [
                 ("restab.detail.kingdom", tax.get("kingdom")),
-                ("restab.detail.phylum",  tax.get("phylum")),
-                ("restab.detail.class",   tax.get("class_")),
-                ("restab.detail.order",   tax.get("order")),
-                ("restab.detail.family",  tax.get("family")),
-                ("restab.detail.genus",   tax.get("genus")),
-                ("restab.detail.source",  tax.get("source")),
+                ("restab.detail.phylum", tax.get("phylum")),
+                ("restab.detail.class", tax.get("class_")),
+                ("restab.detail.order", tax.get("order")),
+                ("restab.detail.family", tax.get("family")),
+                ("restab.detail.genus", tax.get("genus")),
+                ("restab.detail.source", tax.get("source")),
             ]
             for key, v in tax_rows:
                 if not v:
@@ -960,11 +986,7 @@ class ResultsTab(QWidget):
             html.append("</table></div>")
 
         # ── Sample IDs ─────────────────────────────────────────
-        sample_ids = list({
-            str(g.get("sample_id"))
-            for g in geo_links
-            if g.get("sample_id")
-        })
+        sample_ids = list({str(g.get("sample_id")) for g in geo_links if g.get("sample_id")})
         if sample_ids:
             html.append(
                 f"<div style='padding:4px 8px;border-top:1px solid #eee;font-size:12px'>"
@@ -1002,14 +1024,16 @@ class ResultsTab(QWidget):
                 ma_fmt = _fmt_float(ma_top, "{:.2f}")
                 base_fmt = _fmt_float(ma_base, "{:.2f}")
                 if ma_fmt is not None and base_fmt is not None:
-                    bits.append(
-                        f"<span style='color:#555'>{ma_fmt}–{base_fmt} Ma</span>"
-                    )
+                    bits.append(f"<span style='color:#555'>{ma_fmt}–{base_fmt} Ma</span>")
                 # Lithology / formation / member / group
                 for k in ("lithology", "formation", "member", "group"):
                     v = g.get(k)
                     if v:
-                        tag = f"<em>{html_escape(str(v))}</em>" if k == "formation" else html_escape(str(v))
+                        tag = (
+                            f"<em>{html_escape(str(v))}</em>"
+                            if k == "formation"
+                            else html_escape(str(v))
+                        )
                         bits.append(f"<span style='font-size:11px'>{tag}</span>")
                 # Biozone
                 bz = g.get("biozone")
@@ -1021,7 +1045,9 @@ class ResultsTab(QWidget):
                 if loc:
                     bits.append(f"<span style='font-size:11px'>{html_escape(loc)}</span>")
                 if ctry:
-                    bits.append(f"<span style='font-size:11px;color:#666'>{html_escape(ctry)}</span>")
+                    bits.append(
+                        f"<span style='font-size:11px;color:#666'>{html_escape(ctry)}</span>"
+                    )
                 # Modern coords
                 mlat = g.get("modern_latitude")
                 mlon = g.get("modern_longitude")
@@ -1040,35 +1066,29 @@ class ResultsTab(QWidget):
                 plat_fmt = _fmt_float(plat, "{:.3f}")
                 plon_fmt = _fmt_float(plon, "{:.3f}")
                 if plat_fmt is not None and plon_fmt is not None:
-                    paleo_bits = [
-                        f"<span style='color:#e67e22'>@ {plat_fmt}, {plon_fmt}</span>"
-                    ]
+                    paleo_bits = [f"<span style='color:#e67e22'>@ {plat_fmt}, {plon_fmt}</span>"]
                     if plate_id:
                         paleo_bits.append(f"<span style='color:#e67e22'>plate={plate_id}</span>")
                     recon_fmt = _fmt_float(recon_age, "{:.1f}")
                     if recon_fmt is not None:
-                        paleo_bits.append(
-                            f"<span style='color:#e67e22'>{recon_fmt} Ma</span>"
-                        )
+                        paleo_bits.append(f"<span style='color:#e67e22'>{recon_fmt} Ma</span>")
                     bits.append(" ".join(paleo_bits))
                 # Confidence
                 gc = g.get("geology_confidence") or g.get("confidence")
                 gc_fmt = _fmt_float(gc, "{:.0f}")
                 if gc_fmt is not None:
-                    bits.append(
-                        f"<span style='color:#888;font-size:10px'>({gc_fmt}%)</span>"
-                    )
+                    bits.append(f"<span style='color:#888;font-size:10px'>({gc_fmt}%)</span>")
                 if bits:
                     html.append(
-                        f"<div style='font-size:11px;background:#f7f9fc;padding:4px 6px;"
-                        f"border-radius:3px;margin-top:4px'>" + " · ".join(bits) + "</div>"
+                        "<div style='font-size:11px;background:#f7f9fc;padding:4px 6px;"
+                        "border-radius:3px;margin-top:4px'>" + " · ".join(bits) + "</div>"
                     )
             if len(geo_links) > 8:
                 # audit 2026-08-17 (GUI-A6): use the i18n key for the
                 # overflow badge ("… and N more" / "… 还有 N 条").
                 html.append(
                     f"<div style='color:#888;font-size:11px;margin-top:4px'>"
-                    f"{i18n._tr('restab.detail.geo_links_more', '{n}').format(n=len(geo_links)-8)}</div>"
+                    f"{i18n._tr('restab.detail.geo_links_more', '{n}').format(n=len(geo_links) - 8)}</div>"
                 )
             html.append("</div>")
 
@@ -1093,9 +1113,7 @@ class ResultsTab(QWidget):
                 f"<b style='font-size:12px'>"
                 f"{i18n._tr('restab.detail.visual_links')}</b>"
             )
-            html.append(
-                "<table style='font-size:12px;margin-top:4px;border-collapse:collapse'>"
-            )
+            html.append("<table style='font-size:12px;margin-top:4px;border-collapse:collapse'>")
             for vl in visual_links:
                 if not isinstance(vl, dict):
                     continue
@@ -1143,7 +1161,8 @@ class ResultsTab(QWidget):
                 html.append(row_html)
             html.append("</table></div>")
         elif isinstance(visual_links, list) and link_src not in (
-            "sample_match", None,
+            "sample_match",
+            None,
         ):
             # Empty visual_links on a panel whose Phase A didn't nail
             # it via Strategy 1 — operators want a one-liner confirming
@@ -1260,7 +1279,9 @@ class ResultsTab(QWidget):
                 i18n._tr("jobstab.export.no_rows"),
             )
             return
-        default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.xlsx")
+        default_path = str(
+            Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.xlsx"
+        )
         path, _ = QFileDialog.getSaveFileName(
             self,
             i18n._tr("restab.export.xlsx_title"),
@@ -1271,11 +1292,15 @@ class ResultsTab(QWidget):
             return
         try:
             from ..exporters.xlsx import write_xlsx
+
             run_output = self._build_run_output()
             write_xlsx(run_output, path)
-            self._set_status(i18n._tr("jobstab.export.saved").format(
-                count=len(self._filtered_rows), path=Path(path).name,
-            ))
+            self._set_status(
+                i18n._tr("jobstab.export.saved").format(
+                    count=len(self._filtered_rows),
+                    path=Path(path).name,
+                )
+            )
         except Exception as exc:
             QMessageBox.warning(
                 self,
@@ -1287,9 +1312,13 @@ class ResultsTab(QWidget):
 
     def _export_json(self) -> None:
         if not self._filtered_rows:
-            QMessageBox.information(self, i18n._tr("restab.export.json"), i18n._tr("jobstab.export.no_rows"))
+            QMessageBox.information(
+                self, i18n._tr("restab.export.json"), i18n._tr("jobstab.export.no_rows")
+            )
             return
-        default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.json")
+        default_path = str(
+            Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.json"
+        )
         path, _ = QFileDialog.getSaveFileName(
             self,
             i18n._tr("restab.export.json_title"),
@@ -1311,9 +1340,13 @@ class ResultsTab(QWidget):
 
     def _export_csv(self) -> None:
         if not self._filtered_rows:
-            QMessageBox.information(self, i18n._tr("restab.export.csv"), i18n._tr("jobstab.export.no_rows"))
+            QMessageBox.information(
+                self, i18n._tr("restab.export.csv"), i18n._tr("jobstab.export.no_rows")
+            )
             return
-        default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.csv")
+        default_path = str(
+            Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.csv"
+        )
         path, _ = QFileDialog.getSaveFileName(
             self,
             i18n._tr("restab.export.csv_title"),
@@ -1344,10 +1377,12 @@ class ResultsTab(QWidget):
             # file with a UTF-8 BOM. The displayed column ordering
             # (RESULT_COLUMNS) is preserved so what the user sees on
             # screen is what they get in the export.
-            from math import isnan, isinf
             import csv
-            from ..exporters.analysis import _sanitise_csv_cell
+            from math import isinf, isnan
+
             from ..export import _csv_cell
+            from ..exporters.analysis import _sanitise_csv_cell
+
             column_keys = [c.key for c in RESULT_COLUMNS]
             with open(path, "w", newline="", encoding="utf-8-sig") as fh:
                 w = csv.DictWriter(fh, fieldnames=column_keys)
@@ -1373,9 +1408,13 @@ class ResultsTab(QWidget):
 
     def _export_dwca(self) -> None:
         if not self._filtered_rows:
-            QMessageBox.information(self, i18n._tr("restab.export.dwca"), i18n._tr("jobstab.export.no_rows"))
+            QMessageBox.information(
+                self, i18n._tr("restab.export.dwca"), i18n._tr("jobstab.export.no_rows")
+            )
             return
-        default_path = str(Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.zip")
+        default_path = str(
+            Path(self._current_job_dir or ".") / f"{self._current_job_id or 'results'}.zip"
+        )
         path, _ = QFileDialog.getSaveFileName(
             self,
             i18n._tr("restab.export.dwca_title"),
@@ -1386,6 +1425,7 @@ class ResultsTab(QWidget):
             return
         try:
             from ..exporters.archive import write_dwca_zip
+
             run_output = self._build_run_output()
             write_dwca_zip(run_output, path)
             self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
@@ -1413,7 +1453,8 @@ class ResultsTab(QWidget):
             ],
             "localities": [
                 {"country": g.get("country"), "locality": g.get("locality")}
-                for r in panels for g in ((r.get("metadata") or {}).get("geology_links") or [])
+                for r in panels
+                for g in ((r.get("metadata") or {}).get("geology_links") or [])
                 if g.get("country") or g.get("locality")
             ],
             "paleo_coordinates": [],
@@ -1478,7 +1519,9 @@ class ResultsTab(QWidget):
         api_url = DEFAULT_API_URL
         try:
             from PySide6.QtCore import QSettings
+
             from .constants import APP_AUTHOR, APP_NAME, QS_KEY_API_URL
+
             settings = QSettings(APP_AUTHOR, APP_NAME)
             v = settings.value(QS_KEY_API_URL, DEFAULT_API_URL)
             if isinstance(v, str) and v.strip():
@@ -1504,13 +1547,16 @@ class ResultsTab(QWidget):
                 requests = None  # type: ignore
             if requests is not None:
                 resp = requests.post(
-                    endpoint, json=payload, timeout=10,
+                    endpoint,
+                    json=payload,
+                    timeout=10,
                 )
                 resp.raise_for_status()
             else:
                 import json as _json
                 import urllib.error
                 import urllib.request
+
                 req = urllib.request.Request(
                     endpoint,
                     data=_json.dumps(payload).encode("utf-8"),
@@ -1521,7 +1567,8 @@ class ResultsTab(QWidget):
                     fh.read()
         except Exception as exc:
             self._log.warning(
-                "image_verified flip failed: %s", exc,
+                "image_verified flip failed: %s",
+                exc,
             )
             QMessageBox.warning(
                 self,
@@ -1563,7 +1610,8 @@ class ResultsTab(QWidget):
         )
         self._set_status(
             i18n._tr("restab.detail.verify_success").format(
-                n=n, state=state_label,
+                n=n,
+                state=state_label,
             )
         )
 

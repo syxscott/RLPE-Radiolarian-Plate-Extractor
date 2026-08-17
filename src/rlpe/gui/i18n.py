@@ -21,12 +21,12 @@ Architecture
   to ``obj.attr``. After language changes, ``_apply_registry()``
   walks all registered widgets and updates the attribute.
 """
+
 from __future__ import annotations
 
-from PySide6.QtWidgets import QApplication, QWidget
+from collections.abc import Callable
 
-from typing import Callable, Optional
-
+from PySide6.QtWidgets import QApplication
 
 _CURRENT_LANG: str = "zh_CN"
 _LISTENERS: list[Callable[[str], None]] = []
@@ -67,6 +67,7 @@ def set_language(lang: str) -> None:
     # i18n_widgets.
     try:
         from .i18n_widgets import refresh_all_menu_actions
+
         refresh_all_menu_actions(lang)
     except Exception:
         pass
@@ -86,7 +87,7 @@ def remove_listener(fn: Callable[[str], None]) -> None:
         _LISTENERS.remove(fn)
 
 
-def _tr(key: str, default: Optional[str] = None) -> str:
+def _tr(key: str, default: str | None = None) -> str:
     """Return the translated string for ``key``.
 
     Lookup order:
@@ -206,8 +207,11 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
                 setattr(w, attr, text)
         except Exception as exc:
             import logging
+
             logger = logging.getLogger(__name__)
-            logger.debug("i18n _apply_to_one failed for %s.%s (%s): %s", object_name, attr, key, exc)
+            logger.debug(
+                "i18n _apply_to_one failed for %s.%s (%s): %s", object_name, attr, key, exc
+            )
 
 
 def _apply_registry() -> None:
@@ -263,6 +267,6 @@ except ImportError:
     _ZH_STRINGS = {}
 
 STRINGS: dict[str, dict[str, str]] = {
-    "en":    dict(_EN_STRINGS),
+    "en": dict(_EN_STRINGS),
     "zh_CN": dict(_ZH_STRINGS),
 }

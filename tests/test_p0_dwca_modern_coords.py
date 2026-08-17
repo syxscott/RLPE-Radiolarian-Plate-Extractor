@@ -16,7 +16,7 @@ import io
 import zipfile
 from pathlib import Path
 
-from rlpe.exporters.analysis import panels_to_rows, AnalysisOptions
+from rlpe.exporters.analysis import AnalysisOptions, panels_to_rows
 from rlpe.exporters.archive import write_dwca_zip
 from rlpe.provenance import build_provenance
 from rlpe.schema_models import (
@@ -132,7 +132,9 @@ def test_dwca_legacy_coords_still_work(tmp_path: Path) -> None:
         longitude=11.5,
         confidence=0.8,
     )
-    pm = PaperMetadataRecord(title="T", authors=["A"], year=2020, source="opendataloader", confidence=0.8)
+    pm = PaperMetadataRecord(
+        title="T", authors=["A"], year=2020, source="opendataloader", confidence=0.8
+    )
     meta = PanelMetadata(geology_links=[geo])
     panel = PanelRecord(
         paper_id="p1",
@@ -165,13 +167,15 @@ def test_dwca_modern_coords_take_precedence(tmp_path: Path) -> None:
         age="Late Jurassic",
         locality="Italy",
         country="Italy",
-        latitude=46.5,           # legacy
-        longitude=11.5,          # legacy
-        modern_latitude=36.5,    # newer (preferred)
-        modern_longitude=4.8,    # newer (preferred)
+        latitude=46.5,  # legacy
+        longitude=11.5,  # legacy
+        modern_latitude=36.5,  # newer (preferred)
+        modern_longitude=4.8,  # newer (preferred)
         confidence=0.8,
     )
-    pm = PaperMetadataRecord(title="T", authors=["A"], year=2020, source="opendataloader", confidence=0.8)
+    pm = PaperMetadataRecord(
+        title="T", authors=["A"], year=2020, source="opendataloader", confidence=0.8
+    )
     meta = PanelMetadata(geology_links=[geo])
     panel = PanelRecord(
         paper_id="p1",

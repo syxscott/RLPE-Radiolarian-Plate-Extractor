@@ -11,6 +11,7 @@ The dispatcher lives in a small pure-Python helper
 configured fallback name and returns the one to use on the next attempt.
 The retry-loop in ``_call_api`` consumes the same helper.
 """
+
 from __future__ import annotations
 
 import pytest

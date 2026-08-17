@@ -12,13 +12,13 @@ entry declared in ``pyproject.toml``. Handles:
   * Graceful shutdown — wait for the pipeline worker thread to
     finish (with a hard timeout) before exiting
 """
+
 from __future__ import annotations
 
 import sys
 import traceback
-from typing import Any
 
-from PySide6.QtCore import QCoreApplication, QSettings, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QSettings, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -106,6 +106,7 @@ def run_app(argv: list[str] | None = None) -> int:
     # focus, so users can still scroll the spinbox they explicitly
     # clicked.
     from .i18n_widgets import install_wheel_filter
+
     install_wheel_filter(app)
 
     # ---- Install exception hook ----

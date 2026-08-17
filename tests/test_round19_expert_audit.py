@@ -75,8 +75,7 @@ def test_formation_regex_does_not_match_across_sentence():
     )
     matches = [m.group(1) for m in _FORMATION_RE.finditer(text)]
     assert matches == ["Fonzaso Formation"], (
-        f"Formation regex still matches across sentence boundaries. "
-        f"Got: {matches!r}"
+        f"Formation regex still matches across sentence boundaries. Got: {matches!r}"
     )
 
 

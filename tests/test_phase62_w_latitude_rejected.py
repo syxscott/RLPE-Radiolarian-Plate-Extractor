@@ -21,6 +21,7 @@ This test asserts:
     pair can be parsed — i.e. the invalid latitude hemisphere
     doesn't cause a silent parse.
 """
+
 from __future__ import annotations
 
 from rlpe.geo_coords import (
@@ -68,7 +69,7 @@ def test_decimal_regex_rejects_e_latitude():
 
 def test_dms_regex_rejects_w_latitude():
     """DMS regex must also reject W on the latitude slot."""
-    m = _DMS_RE.search('45°00\'00"W 110°00\'00"E')
+    m = _DMS_RE.search("45°00'00\"W 110°00'00\"E")
     if m is not None:
         lat_h = m.group("lat_h")
         assert lat_h is None or lat_h.upper() != "W", (
@@ -79,7 +80,7 @@ def test_dms_regex_rejects_w_latitude():
 def test_dms_regex_accepts_n_s_latitude():
     """Regression: DMS regex still accepts N/S as latitude."""
     for h in ("N", "S"):
-        text = f'45°00\'00"{h} 110°00\'00"E'
+        text = f"45°00'00\"{h} 110°00'00\"E"
         m = _DMS_RE.search(text)
         assert m is not None, f"DMS should match for h={h!r}"
         assert m.group("lat_h").upper() == h.upper()

@@ -28,10 +28,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # B1 — primary button styling
 # ---------------------------------------------------------------------------
+
 
 def test_b1_stylesheet_matches_class_property() -> None:
     """Phase 54 changed setObjectName → setProperty("class", "primary").
@@ -39,19 +39,21 @@ def test_b1_stylesheet_matches_class_property() -> None:
     styles.py must keep BOTH selectors working so neither the
     legacy object-name code nor the new property code regresses.
     """
-    src = (Path(__file__).resolve().parents[1]
-           / "src" / "rlpe" / "gui" / "styles.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "styles.py").read_text(
+        encoding="utf-8"
+    )
     assert 'QPushButton[class="primary"]' in src, (
-        "styles.py is missing the [class=\"primary\"] selector — "
+        'styles.py is missing the [class="primary"] selector — '
         "Phase 54's setProperty buttons would lose their blue style."
     )
     # Object-name selector is still kept for back-compat.
-    assert 'QPushButton#primary' in src
+    assert "QPushButton#primary" in src
 
 
 # ---------------------------------------------------------------------------
 # M3 — duplicate-key guard in strings files
 # ---------------------------------------------------------------------------
+
 
 def test_m3_strings_zh_cn_no_duplicate_keys() -> None:
     """Phase 55 audit M3 — strings_zh_CN must not silently shadow
@@ -65,10 +67,13 @@ def test_m3_strings_zh_cn_no_duplicate_keys() -> None:
     for mod in ("rlpe.gui.strings_zh_CN", "rlpe.gui.strings_en"):
         if mod in sys.modules:
             del sys.modules[mod]
-    import rlpe.gui.strings_zh_CN as zh  # noqa: F401 — triggers guard
-    import rlpe.gui.strings_en as en    # noqa: F401
     # Counter check — no Python-level duplicates remain.
-    import collections, re as _re_test
+    import collections
+    import re as _re_test
+
+    import rlpe.gui.strings_en as en  # noqa: F401
+    import rlpe.gui.strings_zh_CN as zh  # noqa: F401 — triggers guard
+
     # The dict object itself always has unique keys (Python dedups
     # silently), so the only way to detect source-level duplicates
     # is to re-parse the .py file. The strings_zh_CN and strings_en
@@ -82,7 +87,9 @@ def test_m3_strings_zh_cn_no_duplicate_keys() -> None:
         # mentioned in the comment / regex.
         body = text.split("\n}\n", 1)[0]
         keys_in_source = _re_test.findall(
-            r"^\s*['\"]([a-zA-Z][\w.]*)['\"]\s*:", body, flags=_re_test.M,
+            r"^\s*['\"]([a-zA-Z][\w.]*)['\"]\s*:",
+            body,
+            flags=_re_test.M,
         )
         counts = collections.Counter(keys_in_source)
         dups = [k for k, n in counts.items() if n > 1]
@@ -95,6 +102,7 @@ def test_m3_strings_zh_cn_no_duplicate_keys() -> None:
 # M6 — QSettings int fallback
 # ---------------------------------------------------------------------------
 
+
 def test_m6_settings_tab_qint_helper(monkeypatch) -> None:
     """Phase 55 audit M6 — settings_tab._load() must fall back to the
     default when QSettings returns an unparseable integer. We
@@ -102,8 +110,10 @@ def test_m6_settings_tab_qint_helper(monkeypatch) -> None:
     spinning up a full QApplication.
     """
     import textwrap
-    src = (Path(__file__).resolve().parents[1]
-           / "src" / "rlpe" / "gui" / "settings_tab.py").read_text(encoding="utf-8")
+
+    src = (
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "settings_tab.py"
+    ).read_text(encoding="utf-8")
     # The helper is a nested ``def _qint(key, default)`` inside _load.
     assert "def _qint" in src, (
         "settings_tab.py is missing the _qint fallback helper — "
@@ -113,9 +123,8 @@ def test_m6_settings_tab_qint_helper(monkeypatch) -> None:
     # Every formerly-bare ``int(self._qsettings.value(...))`` call
     # site in _load should now go through the helper.
     import re
-    bare = re.findall(
-        r"int\(self\._qsettings\.value\(", src
-    )
+
+    bare = re.findall(r"int\(self\._qsettings\.value\(", src)
     # There may be one or two (e.g. a debug path), but the bulk of
     # the _load callsites should be using _qint now.
     assert len(bare) <= 2, (
@@ -129,14 +138,16 @@ def test_m6_settings_tab_qint_helper(monkeypatch) -> None:
 # M4 — cancel-as-cancelled exception path
 # ---------------------------------------------------------------------------
 
+
 def test_m4_pipeline_worker_cancel_emits_cancelled_not_failed() -> None:
     """Phase 55 audit M4 — when the cancel event is set during a
     pipeline exception, the worker must emit status_changed
     'cancelled' rather than 'failed' so the GUI doesn't pop a red
     QMessageBox.
     """
-    src = (Path(__file__).resolve().parents[1]
-           / "src" / "rlpe" / "gui" / "pipeline_worker.py").read_text(encoding="utf-8")
+    src = (
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "pipeline_worker.py"
+    ).read_text(encoding="utf-8")
     # The except block must check _cancel_event BEFORE emitting
     # status_changed("failed").
     assert "self._cancel_event.is_set()" in src
@@ -146,6 +157,7 @@ def test_m4_pipeline_worker_cancel_emits_cancelled_not_failed() -> None:
     # except block must short-circuit on cancel.
     # Find the except block.
     import re
+
     m = re.search(r"except Exception as exc:.*?return\s*$", src, re.S | re.M)
     assert m is not None, "Could not locate except block in pipeline_worker.run()"
     block = m.group(0)
@@ -160,20 +172,24 @@ def test_m4_pipeline_worker_cancel_emits_cancelled_not_failed() -> None:
 # M7 — _on_progress forwards text even after cancel
 # ---------------------------------------------------------------------------
 
+
 def test_m7_on_progress_does_not_drop_final_message() -> None:
     """Phase 55 audit M7 — _on_progress must keep emitting the
     textual message so the user sees the cancel/finish text. The
     previous implementation returned early on ``isInterruptionRequested``
     and dropped the final message.
     """
-    src = (Path(__file__).resolve().parents[1]
-           / "src" / "rlpe" / "gui" / "pipeline_worker.py").read_text(encoding="utf-8")
+    src = (
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "pipeline_worker.py"
+    ).read_text(encoding="utf-8")
     # The progress emit must not be guarded by an early ``return``.
     # Specifically, _on_progress should still call self.progress.emit.
     import re
+
     fn_match = re.search(
         r"def _on_progress\(self.*?(?=\n    def |\nclass |\Z)",
-        src, re.S,
+        src,
+        re.S,
     )
     assert fn_match is not None, "Could not locate _on_progress"
     body = fn_match.group(0)
@@ -182,30 +198,35 @@ def test_m7_on_progress_does_not_drop_final_message() -> None:
     # We allow a conditional ``return`` AFTER the emit so the final
     # tick is suppressed cleanly without losing all subsequent
     # messages.
-    assert "if self.isInterruptionRequested():" not in body or \
-           "self.progress.emit" in body.split("if self.isInterruptionRequested()")[0] or \
-           body.count("self.progress.emit") >= 1
+    assert (
+        "if self.isInterruptionRequested():" not in body
+        or "self.progress.emit" in body.split("if self.isInterruptionRequested()")[0]
+        or body.count("self.progress.emit") >= 1
+    )
 
 
 # ---------------------------------------------------------------------------
 # M1 — results_tab._render_detail reads metadata.page_index
 # ---------------------------------------------------------------------------
 
+
 def test_m1_results_tab_detail_reads_metadata_page_index() -> None:
     """Phase 55 audit M1 — _render_detail used to call
     ``row.get("page_index")`` (always None) instead of
     ``metadata.page_index``. Verify the fix landed.
     """
-    src = (Path(__file__).resolve().parents[1]
-           / "src" / "rlpe" / "gui" / "results_tab.py").read_text(encoding="utf-8")
+    src = (
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "results_tab.py"
+    ).read_text(encoding="utf-8")
     # The detail HTML rendering must reference md.get("page_index"), not
     # row.get("page_index"), so the page number comes from panel metadata.
     import re
+
     # Look for the page field in the detail metadata pairs block.
-    m = re.search(r'meta_pairs\s*=\s*\[(.*?)\]', src, re.S)
+    m = re.search(r"meta_pairs\s*=\s*\[(.*?)\]", src, re.S)
     assert m is not None, "Could not locate meta_pairs literal"
     block = m.group(1)
-    assert "md.get(\"page_index\")" in block, (
+    assert 'md.get("page_index")' in block, (
         "results_tab._render_detail still reads the top-level "
         "page_index key; should be metadata.page_index."
     )

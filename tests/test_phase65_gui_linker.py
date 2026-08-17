@@ -24,33 +24,30 @@ except ImportError:
 
 # Source-guard fallback so the contract is also pinned in envs without
 # PySide6 installed.
-_SRC_RESULTS_TAB = (
-    Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "results_tab.py"
-)
-_SRC_STRINGS_EN = (
-    Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "strings_en.py"
-)
-_SRC_STRINGS_ZH = (
-    Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "strings_zh_CN.py"
-)
+_SRC_RESULTS_TAB = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "results_tab.py"
+_SRC_STRINGS_EN = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "strings_en.py"
+_SRC_STRINGS_ZH = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "strings_zh_CN.py"
 
 
 @pytest.mark.skipif(not _HAS_PYSIDE6, reason="PySide6 not installed")
 class TestLinkSourceBadge:
     def test_sample_match_emits_chip(self):
         from rlpe.gui.results_tab import _emit_link_source_badge
+
         html: list[str] = []
         _emit_link_source_badge(html, "cross_figure_linker:sample_match")
         assert any("link: " in s and ("Sample ID match" in s or "样品号匹配" in s) for s in html)
 
     def test_locality_match_emits_chip(self):
         from rlpe.gui.results_tab import _emit_link_source_badge
+
         html: list[str] = []
         _emit_link_source_badge(html, "cross_figure_linker:locality_match")
         assert any("Locality match" in s or "产地匹配" in s for s in html)
 
     def test_m3_emits_amber_chip(self):
         from rlpe.gui.results_tab import _emit_link_source_badge
+
         html: list[str] = []
         _emit_link_source_badge(html, "cross_figure_linker:m3_inference")
         assert any("M3 inference" in s or "M3 推理" in s for s in html)
@@ -59,6 +56,7 @@ class TestLinkSourceBadge:
 
     def test_unlinked_emits_grey_chip(self):
         from rlpe.gui.results_tab import _emit_link_source_badge
+
         html: list[str] = []
         _emit_link_source_badge(html, "cross_figure_linker:unlinked")
         assert any("Unlinked" in s or "未关联" in s for s in html)
@@ -66,12 +64,14 @@ class TestLinkSourceBadge:
 
     def test_non_linker_no_chip(self):
         from rlpe.gui.results_tab import _emit_link_source_badge
+
         html: list[str] = []
         _emit_link_source_badge(html, "geo_vision")
         assert html == []
 
     def test_empty_no_chip(self):
         from rlpe.gui.results_tab import _emit_link_source_badge
+
         html: list[str] = []
         _emit_link_source_badge(html, "")
         assert html == []
@@ -81,18 +81,21 @@ class TestLinkSourceBadge:
 class TestLinkSummaryBadge:
     def test_sample_match_with_conf(self):
         from rlpe.gui.results_tab import _emit_link_summary_badge
+
         html: list[str] = []
         _emit_link_summary_badge(html, "sample_match", 1.0)
         assert any(("Sample ID match" in s or "样品号匹配" in s) and "100%" in s for s in html)
 
     def test_unlinked_zero_conf(self):
         from rlpe.gui.results_tab import _emit_link_summary_badge
+
         html: list[str] = []
         _emit_link_summary_badge(html, "unlinked", 0.0)
         assert any(("Unlinked" in s or "未关联" in s) and "0%" in s for s in html)
 
     def test_unknown_source_uses_raw_label(self):
         from rlpe.gui.results_tab import _emit_link_summary_badge
+
         html: list[str] = []
         _emit_link_summary_badge(html, "future_strategy", 0.5)
         assert any("future_strategy" in s for s in html)
@@ -149,6 +152,7 @@ class TestRenderDetailIntegration:
         # PySide6 6.11 ("base class __init__ not called"). Construct
         # for real (offscreen) and swap the browser.
         from PySide6.QtWidgets import QApplication
+
         _app = QApplication.instance() or QApplication([])
         rt = ResultsTab()
         rt._detail_browser = FakeBrowser()
@@ -157,8 +161,8 @@ class TestRenderDetailIntegration:
         # audit 2026-07-31: accept either language (the test env's
         # default language is zh_CN; the string table renders the
         # equivalent Chinese labels)
-        assert ("Sample ID match" in html or "样品号匹配" in html), html
-        assert ("Cross-figure link" in html or "跨图关联" in html), html
+        assert "Sample ID match" in html or "样品号匹配" in html, html
+        assert "Cross-figure link" in html or "跨图关联" in html, html
 
 
 @pytest.mark.skipif(_HAS_PYSIDE6, reason="source-guard only")

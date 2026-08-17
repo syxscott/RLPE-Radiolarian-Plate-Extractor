@@ -196,9 +196,7 @@ def main() -> int:
                 suffix = "_".join(parts[-2:])
                 for gfid in suffix_to_gold.get(suffix, []):
                     fid_rewrite[pfid] = gfid
-                    print(
-                        f"  suffix-match: pred fid={pfid} → gold fid={gfid}"
-                    )
+                    print(f"  suffix-match: pred fid={pfid} → gold fid={gfid}")
                     break
             # Rewrite matches figure_ids in-place
             if fid_rewrite:
@@ -207,8 +205,7 @@ def main() -> int:
                     if pfid in fid_rewrite:
                         m["figure_id"] = fid_rewrite[pfid]
                 gold_filtered = {
-                    gfid: pairs for gfid, pairs in gold.items()
-                    if gfid in fid_rewrite.values()
+                    gfid: pairs for gfid, pairs in gold.items() if gfid in fid_rewrite.values()
                 }
         if not gold_filtered:
             print(

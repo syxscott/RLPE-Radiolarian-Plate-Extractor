@@ -15,7 +15,6 @@ import argparse
 # keys (PATH, HTTP_PROXY, ...) the OS env remains authoritative.
 # ``RLPE_FORCE_ENV_OVERRIDE=1`` flips the behaviour to "always
 # override" as an escape hatch for unusual setups.
-import os as _os
 from pathlib import Path
 
 try:
@@ -471,21 +470,15 @@ def main() -> int:
         # audit 2026-07-26: forward YOLO flags (only override when set).
         use_yolo_figures=args.use_yolo_figures,
         yolo_model_path=(args.yolo_model_path or ""),
-        yolo_conf_threshold=(
-            args.yolo_conf if args.yolo_conf is not None else 0.25
-        ),
-        yolo_iou_threshold=(
-            args.yolo_iou if args.yolo_iou is not None else 0.45
-        ),
+        yolo_conf_threshold=(args.yolo_conf if args.yolo_conf is not None else 0.25),
+        yolo_iou_threshold=(args.yolo_iou if args.yolo_iou is not None else 0.45),
         # Phase 28: forward the two caption-window knobs. Both fields
         # have defaults on PipelineConfig (caption_window=2,
         # od_caption_window=5); we only override when the user passed
         # the CLI flag explicitly so non-interactive callers keep the
         # legacy behaviour.
         caption_window=args.caption_window if args.caption_window is not None else 2,
-        od_caption_window=(
-            args.od_caption_window if args.od_caption_window is not None else 5
-        ),
+        od_caption_window=(args.od_caption_window if args.od_caption_window is not None else 5),
         # Phase 2026-08-17 (Stage 4.5): per-panel M3 vision species ID.
         # Passed as real PipelineConfig fields (not ``extra``) because
         # ``_apply_m3_per_panel_species_id`` reads the typed attributes
@@ -512,9 +505,7 @@ def main() -> int:
             "grobid_max_retries": (
                 args.grobid_max_retries if args.grobid_max_retries is not None else 3
             ),
-            "grobid_timeout": (
-                args.grobid_timeout if args.grobid_timeout is not None else 300
-            ),
+            "grobid_timeout": (args.grobid_timeout if args.grobid_timeout is not None else 300),
             # Phase 29: opt-out for OD fallback. Default False means
             # fall back to OD on GROBID failure; ``--disable-od-fallback``
             # sets True to restore legacy visual-stub behaviour.
@@ -599,11 +590,7 @@ def main() -> int:
     # path implies the engine. Users who want to disable ``m3_enhanced_mode``
     # entirely can set ``--no-m3-enhanced-mode`` after their M3 flag and
     # the explicit value wins (later assignment below).
-    elif (
-        args.m3_per_panel
-        or args.use_m3_stage3
-        or args.m3_multi_plate_enrich
-    ):
+    elif args.m3_per_panel or args.use_m3_stage3 or args.m3_multi_plate_enrich:
         cfg.extra["m3_enhanced_mode"] = True
     for n in args.m3_disable_stage or []:
         cfg.extra[f"m3_stage_{n}"] = False
@@ -628,9 +615,7 @@ def main() -> int:
     if args.m3_stage_6 is not None:
         cfg.extra["m3_stage_6"] = bool(args.m3_stage_6)
     if args.m3_morphology_max_species_per_paper is not None:
-        cfg.m3_morphology_max_species_per_paper = int(
-            args.m3_morphology_max_species_per_paper
-        )
+        cfg.m3_morphology_max_species_per_paper = int(args.m3_morphology_max_species_per_paper)
     ensure_dir(cfg.work_dir)
     pipeline = RadiolarianPipeline(cfg)
     rows = pipeline.run()

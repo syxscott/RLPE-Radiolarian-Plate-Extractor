@@ -11,11 +11,12 @@ The fix extends _LIGATURE_MAP with:
   * ``ĥ → h``
 and verifies _normalize_caption_text translates them.
 """
+
 from __future__ import annotations
 
 import pytest
 
-from rlpe.m3_engine import _normalize_caption_text, _LIGATURE_MAP
+from rlpe.m3_engine import _LIGATURE_MAP, _normalize_caption_text
 
 
 def test_ligature_oe_ae_h():

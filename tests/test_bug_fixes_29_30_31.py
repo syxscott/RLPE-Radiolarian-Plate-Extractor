@@ -13,6 +13,7 @@ The audit at end-of-Phase-31 found several issues:
   data
 - M-3: ZH fig regex missing sub-figure letter group
 """
+
 from __future__ import annotations
 
 import sys
@@ -83,6 +84,7 @@ def test_app_joboptions_forwards_grobid_max_retries():
 def test_app_joboptions_validates_grobid_max_retries_range():
     """``grobid_max_retries=0`` or ``=100`` must raise ValidationError."""
     from pydantic import ValidationError
+
     from rlpe.api.app import JobOptions
 
     with pytest.raises(ValidationError):
@@ -94,6 +96,7 @@ def test_app_joboptions_validates_grobid_max_retries_range():
 def test_app_joboptions_validates_grobid_timeout_range():
     """``grobid_timeout=0`` or ``=99999`` must raise ValidationError."""
     from pydantic import ValidationError
+
     from rlpe.api.app import JobOptions
 
     with pytest.raises(ValidationError):
@@ -186,9 +189,7 @@ def test_traditional_tuban_routes_to_zh_not_ja():
         }
     ]
     caps = _find_plate_captions(kids)
-    assert len(caps) == 1, (
-        f"Traditional ZH caption should route via ZH dispatcher; got {caps!r}"
-    )
+    assert len(caps) == 1, f"Traditional ZH caption should route via ZH dispatcher; got {caps!r}"
     assert caps[0]["kind"] == "plate"
 
 
@@ -228,9 +229,7 @@ def test_pipeline_genus_fallback_skips_lookup_occurrences(monkeypatch):
     client.lookup_genus.return_value = genus_tax
 
     def must_not_call(*args, **kwargs):
-        raise AssertionError(
-            "lookup_occurrences must NOT be called on genus fallback"
-        )
+        raise AssertionError("lookup_occurrences must NOT be called on genus fallback")
 
     client.lookup_occurrences.side_effect = must_not_call
 
@@ -289,10 +288,8 @@ def test_pipeline_truncates_grobid_error_in_log():
     idx = src.find("GROBID produced no captions for %s")
     assert idx > 0
     # The next ~500 chars must contain a slice operation
-    snippet = src[idx:idx + 800]
-    assert "[:" in snippet, (
-        "Expected truncation like ``[:200]`` near the GROBID log call"
-    )
+    snippet = src[idx : idx + 800]
+    assert "[:" in snippet, "Expected truncation like ``[:200]`` near the GROBID log call"
 
 
 # ============================================================================

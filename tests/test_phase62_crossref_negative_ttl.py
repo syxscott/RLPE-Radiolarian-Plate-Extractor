@@ -19,6 +19,7 @@ The test asserts:
   * A cache entry stored as a real journal string (positive)
     expires after 1 hour.
 """
+
 from __future__ import annotations
 
 import time
@@ -63,6 +64,7 @@ def test_negative_cache_expires_after_60s():
     """A None cache entry must expire after 60 seconds — long enough
     to dedupe, short enough to recover from outages."""
     import sys
+
     fake_requests = type(sys)("fake_requests")
     fake_requests.get = lambda *a, **kw: _FakeResponse(
         200, {"message": {"container-title": ["Test Journal"]}}
@@ -70,10 +72,7 @@ def test_negative_cache_expires_after_60s():
     _CROSSREF_CACHE["10.1234/test-doi"] = (None, time.time() - 61)
     with patch.dict(sys.modules, {"requests": fake_requests}):
         out = _crossref_get_journal("10.1234/test-doi")
-    assert out == "Test Journal", (
-        f"negative cache did not expire after 60s; "
-        f"got out={out!r}"
-    )
+    assert out == "Test Journal", f"negative cache did not expire after 60s; got out={out!r}"
 
 
 def test_positive_cache_expires_after_1_hour():
@@ -84,14 +83,13 @@ def test_positive_cache_expires_after_1_hour():
     # within positive TTL window).
     _CROSSREF_CACHE[doi] = ("Real Journal", time.time() - 100)
     out = _crossref_get_journal(doi)
-    assert out == "Real Journal", (
-        f"positive cache hit lost too early; got {out!r}"
-    )
+    assert out == "Real Journal", f"positive cache hit lost too early; got {out!r}"
 
 
 def test_positive_cache_expires_after_1_hour_full():
     """A positive cache entry stored 3601s ago must miss the cache."""
     import sys
+
     fake_requests = type(sys)("fake_requests")
     fake_requests.get = lambda *a, **kw: _FakeResponse(
         200, {"message": {"container-title": ["Fresh Journal"]}}
@@ -100,6 +98,4 @@ def test_positive_cache_expires_after_1_hour_full():
     _CROSSREF_CACHE[doi] = ("Real Journal", time.time() - 3601)
     with patch.dict(sys.modules, {"requests": fake_requests}):
         out = _crossref_get_journal(doi)
-    assert out == "Fresh Journal", (
-        f"positive cache did not expire after 3601s; got {out!r}"
-    )
+    assert out == "Fresh Journal", f"positive cache did not expire after 3601s; got {out!r}"

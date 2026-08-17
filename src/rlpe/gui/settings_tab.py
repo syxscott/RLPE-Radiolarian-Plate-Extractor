@@ -10,6 +10,7 @@ Layout:
 * Middle: GROBID / OCR / LLM defaults
 * Bottom: Advanced (PBDB + diagnostics) + Reset
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -21,7 +22,6 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -33,22 +33,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import i18n
 from .constants import (
-    COMBO_MIN_WIDTH,
-    INPUT_WIDTH_LONG,
-    INPUT_WIDTH_MEDIUM,
-    INPUT_WIDTH_PATH,
     APP_AUTHOR,
-    APP_DOMAIN,
     APP_NAME,
     APP_VERSION,
+    COMBO_MIN_WIDTH,
     DEFAULT_GROBID_MAX_RETRIES,
     DEFAULT_GROBID_TIMEOUT,
     DEFAULT_GROBID_URL,
     DEFAULT_M3_BUDGET,
+    DEFAULT_M3_MAX_RETRIES,
     DEFAULT_M3_PROMPT_LANG,
     DEFAULT_M3_TIMEOUT,
-    DEFAULT_M3_MAX_RETRIES,
     DEFAULT_MINIMAX_MODEL,
     DEFAULT_OCR_LANG,
     DEFAULT_PALEO_MAX_OCC,
@@ -60,6 +57,7 @@ from .constants import (
     QS_KEY_LAST_DIR,
     QS_KEY_LAST_EXPORT_DIR,
     QS_KEY_THEME,
+    RANGE_CAPTION_WINDOW,
     RANGE_DPI,
     RANGE_GROBID_MAX_RETRIES,
     RANGE_GROBID_TIMEOUT,
@@ -67,7 +65,6 @@ from .constants import (
     RANGE_M3_MAX_RETRIES,
     RANGE_M3_OUTPUT_TOKENS,
     RANGE_M3_TIMEOUT,
-    RANGE_CAPTION_WINDOW,
     RANGE_OD_CAPTION_WINDOW,
     RANGE_PALEO_OCC,
     RANGE_YOLO_CONF,
@@ -76,9 +73,15 @@ from .constants import (
     THEME_LIGHT,
     THEME_SYSTEM,
 )
-from .i18n_widgets import (_ensure_size_hint, normalise_input_height, tr_button, tr_checkbox, tr_combobox, tr_form_row, tr_groupbox, tr_label, tr_lineedit, tr_spinbox)
+from .i18n_widgets import (
+    _ensure_size_hint,
+    tr_button,
+    tr_checkbox,
+    tr_combobox,
+    tr_groupbox,
+    tr_label,
+)
 from .styles import SPACE_L, SPACE_M, SPACE_S, apply_theme
-from . import i18n
 from .utils import get_gui_logger
 
 
@@ -120,6 +123,7 @@ class SettingsTab(QWidget):
         # viewport so groupboxes expand to fill the visible space
         # rather than getting squashed into half-width.
         from PySide6.QtWidgets import QSizePolicy
+
         body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         body.setMinimumWidth(700)  # matches main window min width - margins
         body_layout = QVBoxLayout(body)
@@ -149,12 +153,14 @@ class SettingsTab(QWidget):
 
         self._theme_combo = QComboBox()
         from PySide6.QtWidgets import QSizePolicy
+
         self._theme_combo.setMinimumHeight(32)
         self._theme_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         # Phase 55 audit M8 — use the i18n-aware helper so the
         # labels refresh on language switch.
         from .constants import theme_friendly_options
         from .i18n_widgets import populate_friendly_combo
+
         populate_friendly_combo(self._theme_combo, theme_friendly_options)
         # Phase 54 audit: M2 — ``currentIndexChanged`` emits the
         # *index* (int), not the userData. The previous direct
@@ -180,8 +186,10 @@ class SettingsTab(QWidget):
         # helper preserves currentData() across rebuilds so picking
         # English keeps English selected even after switching back.
         from .i18n_widgets import populate_friendly_combo
+
         populate_friendly_combo(
-            self._lang_combo, i18n.available_languages,
+            self._lang_combo,
+            i18n.available_languages,
             default_code=i18n.current_language(),
         )
         self._lang_combo.currentIndexChanged.connect(self._on_lang_change)
@@ -202,11 +210,15 @@ class SettingsTab(QWidget):
 
         self._pdf_dir_edit = QLineEdit()
         self._pdf_dir_edit.setReadOnly(True)
-        dlayout.addRow(tr_label("settab.dir.pdf"), self._build_file_row(self._pdf_dir_edit, "pdf_dir"))
+        dlayout.addRow(
+            tr_label("settab.dir.pdf"), self._build_file_row(self._pdf_dir_edit, "pdf_dir")
+        )
 
         self._out_dir_edit = QLineEdit()
         self._out_dir_edit.setReadOnly(True)
-        dlayout.addRow(tr_label("settab.dir.out"), self._build_file_row(self._out_dir_edit, "output_dir"))
+        dlayout.addRow(
+            tr_label("settab.dir.out"), self._build_file_row(self._out_dir_edit, "output_dir")
+        )
 
         body_layout.addWidget(dirs_group)
 
@@ -222,9 +234,9 @@ class SettingsTab(QWidget):
         # QRegularExpressionValidator (Qt6's regex engine). Wrap the
         # re.Pattern so we keep the same semantics; the wildcard `.`
         # matches any char (incl. newline-free URL chars) the same way.
-        import re as _re
         from PySide6.QtCore import QRegularExpression
         from PySide6.QtGui import QRegularExpressionValidator
+
         self._grobid_url.setValidator(
             QRegularExpressionValidator(
                 QRegularExpression(r"^https?://[^\s/$.?#].[^\s]*$"),
@@ -257,6 +269,7 @@ class SettingsTab(QWidget):
         # Phase 55 audit M8 — i18n-aware populate helper.
         from .constants import ocr_backend_friendly_options
         from .i18n_widgets import populate_friendly_combo
+
         populate_friendly_combo(self._ocr_backend, ocr_backend_friendly_options)
         olayout.addRow(tr_label("settab.ocr.backend"), self._ocr_backend)
 
@@ -266,8 +279,10 @@ class SettingsTab(QWidget):
         # being saved and passed to the OCR engine. Valid inputs look
         # like "en", "ch_sim", "en,ja" (comma-separated ISO codes).
         import re
+
         from PySide6.QtCore import QRegularExpression
         from PySide6.QtGui import QRegularExpressionValidator
+
         # Digits allowed for codes like en_GB_sim (future-proofing).
         ocr_lang_rx = re.compile(r"^[a-zA-Z0-9_]+(\s*,\s*[a-zA-Z0-9_]+)*$")
         validator = QRegularExpressionValidator(
@@ -299,6 +314,7 @@ class SettingsTab(QWidget):
         self._llm_backend.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         # Phase 55 audit M8 — i18n-aware populate helper.
         from .constants import llm_backend_friendly_options
+
         populate_friendly_combo(self._llm_backend, llm_backend_friendly_options)
         llayout.addRow(tr_label("settab.llm.backend"), self._llm_backend)
 
@@ -310,6 +326,7 @@ class SettingsTab(QWidget):
         self._m3_prompt_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         # Phase 55 audit M8 — i18n-aware populate helper.
         from .constants import m3_prompt_lang_friendly_options
+
         populate_friendly_combo(self._m3_prompt_lang, m3_prompt_lang_friendly_options)
         llayout.addRow(tr_label("settab.m3.lang"), self._m3_prompt_lang)
 
@@ -355,6 +372,7 @@ class SettingsTab(QWidget):
         # PySide6 ≥ 6.5: QRegExpValidator removed; use QRegularExpressionValidator.
         from PySide6.QtCore import QRegularExpression
         from PySide6.QtGui import QRegularExpressionValidator
+
         self._pbdb_endpoint.setValidator(
             QRegularExpressionValidator(
                 QRegularExpression(r"^$|^https?://[^\s/$.?#].[^\s]*$"),
@@ -475,6 +493,7 @@ class SettingsTab(QWidget):
         # which is a sensible default for "where do I want to point
         # the PDF folder" dialogs.
         from pathlib import Path
+
         initial = line_edit.text()
         # Validate the saved path still exists; fall back to home if not.
         if not initial or not Path(initial).is_dir():
@@ -490,6 +509,7 @@ class SettingsTab(QWidget):
     def _pick_file(self, line_edit: QLineEdit, file_kind: str, file_filter: str) -> None:
         """Open a file picker dialog for a specific file type."""
         from pathlib import Path
+
         initial = line_edit.text()
         if not initial or not Path(initial).is_file():
             initial = str(Path.home())
@@ -506,7 +526,9 @@ class SettingsTab(QWidget):
         import os
         import subprocess
         import sys
+
         from .utils import LOG_FILE_NAME
+
         log_path = os.path.expanduser(f"~/.cache/rlpe/gui/{LOG_FILE_NAME}")
         try:
             # subprocess.Popen is always available — no hasattr check.
@@ -584,7 +606,9 @@ class SettingsTab(QWidget):
                 val = max(valid_range[0], min(val, valid_range[1]))
             return val
 
-        def _qfloat(key: str, default: float, valid_range: tuple[float, float] | None = None) -> float:
+        def _qfloat(
+            key: str, default: float, valid_range: tuple[float, float] | None = None
+        ) -> float:
             raw = self._qsettings.value(key, default)
             try:
                 val = float(raw)
@@ -627,15 +651,21 @@ class SettingsTab(QWidget):
         # PBDB
         self._use_pbdb.setChecked(self._qsettings.value("use_paleodb", True, type=bool))
         self._pbdb_max_occ.setValue(_qint("paleodb_max_occurrences", DEFAULT_PALEO_MAX_OCC))
-        self._pbdb_endpoint.setText(self._qsettings.value("paleodb_endpoint", "https://paleobiodb.org/data1.2"))
+        self._pbdb_endpoint.setText(
+            self._qsettings.value("paleodb_endpoint", "https://paleobiodb.org/data1.2")
+        )
 
         # Diagnostics
         self._dpi.setValue(_qint("render_dpi", DEFAULT_RENDER_DPI))
-        self._save_intermediate.setChecked(self._qsettings.value("save_intermediate", False, type=bool))
+        self._save_intermediate.setChecked(
+            self._qsettings.value("save_intermediate", False, type=bool)
+        )
 
         # YOLO
         self._yolo_enable.setChecked(self._qsettings.value("use_yolo_figures", False, type=bool))
-        self._yolo_model_path.setText(self._qsettings.value("yolo_model_path", DEFAULT_YOLO_MODEL_PATH))
+        self._yolo_model_path.setText(
+            self._qsettings.value("yolo_model_path", DEFAULT_YOLO_MODEL_PATH)
+        )
         self._yolo_conf.setValue(_qfloat("yolo_conf_threshold", DEFAULT_YOLO_CONF))
         self._yolo_iou.setValue(_qfloat("yolo_iou_threshold", DEFAULT_YOLO_IOU))
         # Audit 2026-07-26 M4: sync child-widget enabled state to the
@@ -716,6 +746,7 @@ class SettingsTab(QWidget):
         self.apply_to_run_settings()
         # Apply theme live
         from PySide6.QtWidgets import QApplication
+
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, theme)
@@ -728,11 +759,14 @@ class SettingsTab(QWidget):
         )
 
     def _reset_defaults(self) -> None:
-        if QMessageBox.question(
-            self,
-            i18n._tr("settab.reset.confirm.title"),
-            i18n._tr("settab.reset.confirm.body"),
-        ) != QMessageBox.Yes:
+        if (
+            QMessageBox.question(
+                self,
+                i18n._tr("settab.reset.confirm.title"),
+                i18n._tr("settab.reset.confirm.body"),
+            )
+            != QMessageBox.Yes
+        ):
             return
         self._qsettings.clear()
         # Phase 37 audit fix: block theme/lang combos from firing
@@ -740,6 +774,7 @@ class SettingsTab(QWidget):
         # load defaults — otherwise the user sees a "Settings reset"
         # dialog on top of a momentarily-repainted window.
         from PySide6.QtCore import QSignalBlocker
+
         with QSignalBlocker(self._theme_combo), QSignalBlocker(self._lang_combo):
             self._load()
         # up the freshly-reset defaults immediately (was: only QSettings
@@ -747,6 +782,7 @@ class SettingsTab(QWidget):
         self.apply_to_run_settings()
         # Re-apply default theme now that signals are unblocked.
         from PySide6.QtWidgets import QApplication
+
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, DEFAULT_THEME)
@@ -791,6 +827,7 @@ class SettingsTab(QWidget):
                         pass
         # No-op theme refresh (keep current theme).
         from PySide6.QtWidgets import QApplication
+
         app = QApplication.instance()
         if app is not None and hasattr(self, "_theme_combo"):
             # name; apply_theme() needs "light" / "dark" / "system",
@@ -800,6 +837,7 @@ class SettingsTab(QWidget):
 
     def _on_theme_change(self, theme: str) -> None:
         from PySide6.QtWidgets import QApplication
+
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, theme)
@@ -866,34 +904,39 @@ class SettingsTab(QWidget):
         so a fresh Run tab would still read the values the user had
         at first launch even after Settings changed them.
         """
-        self._settings.update({
-            # (friendly name) so the Run tab receives the right value.
-            "theme": self._theme_combo.currentData() or self._theme_combo.currentText(),
-            "last_pdf_dir": self._pdf_dir_edit.text(),
-            "last_export_dir": self._out_dir_edit.text(),
-            "grobid_url": self._grobid_url.text(),
-            "grobid_max_retries": self._grobid_retries.value(),
-            "grobid_timeout": self._grobid_timeout.value(),
-            "ocr_backend": self._ocr_backend.currentData() or self._ocr_backend.currentText(),
-            # Phase 56 audit fix: use if-else instead of `or` to avoid
-            # TypeError if text() returns None (C++ integration edge case).
-            "ocr_lang": self._ocr_lang.text() if self._ocr_lang.text() else DEFAULT_OCR_LANG,
-            "caption_window": self._caption_window.value(),
-            "od_caption_window": self._od_caption_window.value(),
-            "llm_backend": self._llm_backend.currentData() or self._llm_backend.currentText(),
-            "m3_prompt_lang": self._m3_prompt_lang.currentData() or self._m3_prompt_lang.currentText(),
-            "m3_model": self._m3_model.text() if self._m3_model.text() else DEFAULT_MINIMAX_MODEL,
-            "MiniMax_thinking_budget": self._m3_budget.value(),
-            "MiniMax_max_output_tokens": self._m3_output.value(),
-            "MiniMax_timeout_sec": self._m3_timeout.value(),
-            "MiniMax_max_retries": self._m3_max_retries.value(),
-            "use_paleodb": self._use_pbdb.isChecked(),
-            "paleodb_max_occurrences": self._pbdb_max_occ.value(),
-            "paleodb_endpoint": self._pbdb_endpoint.text(),
-            "render_dpi": self._dpi.value(),
-            "save_intermediate": self._save_intermediate.isChecked(),
-            "use_yolo_figures": self._yolo_enable.isChecked(),
-            "yolo_model_path": self._yolo_model_path.text(),
-            "yolo_conf_threshold": self._yolo_conf.value(),
-            "yolo_iou_threshold": self._yolo_iou.value(),
-        })
+        self._settings.update(
+            {
+                # (friendly name) so the Run tab receives the right value.
+                "theme": self._theme_combo.currentData() or self._theme_combo.currentText(),
+                "last_pdf_dir": self._pdf_dir_edit.text(),
+                "last_export_dir": self._out_dir_edit.text(),
+                "grobid_url": self._grobid_url.text(),
+                "grobid_max_retries": self._grobid_retries.value(),
+                "grobid_timeout": self._grobid_timeout.value(),
+                "ocr_backend": self._ocr_backend.currentData() or self._ocr_backend.currentText(),
+                # Phase 56 audit fix: use if-else instead of `or` to avoid
+                # TypeError if text() returns None (C++ integration edge case).
+                "ocr_lang": self._ocr_lang.text() if self._ocr_lang.text() else DEFAULT_OCR_LANG,
+                "caption_window": self._caption_window.value(),
+                "od_caption_window": self._od_caption_window.value(),
+                "llm_backend": self._llm_backend.currentData() or self._llm_backend.currentText(),
+                "m3_prompt_lang": self._m3_prompt_lang.currentData()
+                or self._m3_prompt_lang.currentText(),
+                "m3_model": self._m3_model.text()
+                if self._m3_model.text()
+                else DEFAULT_MINIMAX_MODEL,
+                "MiniMax_thinking_budget": self._m3_budget.value(),
+                "MiniMax_max_output_tokens": self._m3_output.value(),
+                "MiniMax_timeout_sec": self._m3_timeout.value(),
+                "MiniMax_max_retries": self._m3_max_retries.value(),
+                "use_paleodb": self._use_pbdb.isChecked(),
+                "paleodb_max_occurrences": self._pbdb_max_occ.value(),
+                "paleodb_endpoint": self._pbdb_endpoint.text(),
+                "render_dpi": self._dpi.value(),
+                "save_intermediate": self._save_intermediate.isChecked(),
+                "use_yolo_figures": self._yolo_enable.isChecked(),
+                "yolo_model_path": self._yolo_model_path.text(),
+                "yolo_conf_threshold": self._yolo_conf.value(),
+                "yolo_iou_threshold": self._yolo_iou.value(),
+            }
+        )

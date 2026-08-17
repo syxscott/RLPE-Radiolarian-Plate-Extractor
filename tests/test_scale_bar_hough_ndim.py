@@ -13,6 +13,7 @@ The fix in ``scale_bar.py`` accepts both shapes. These tests verify
 the function returns a non-zero length for the synthetic happy path
 and ``None`` for the empty / malformed path.
 """
+
 from __future__ import annotations
 
 import sys
@@ -36,15 +37,14 @@ def _draw_horizontal_line(img: np.ndarray, length: int = 100) -> np.ndarray:
 
 
 def test_detect_scale_bar_length_px_returns_length_for_clear_line():
-    from rlpe.scale_bar import detect_scale_bar_length_px
     import cv2
+
+    from rlpe.scale_bar import detect_scale_bar_length_px
 
     img = np.ones((100, 200, 3), dtype=np.uint8) * 255
     img = _draw_horizontal_line(img, length=120)
     px_len = detect_scale_bar_length_px(img)
-    assert px_len is not None and px_len > 50, (
-        f"Expected a long horizontal line; got {px_len!r}"
-    )
+    assert px_len is not None and px_len > 50, f"Expected a long horizontal line; got {px_len!r}"
 
 
 def test_detect_scale_bar_length_px_handles_grayscale_input():
@@ -53,9 +53,7 @@ def test_detect_scale_bar_length_px_handles_grayscale_input():
     img_gray = np.ones((100, 200), dtype=np.uint8) * 255
     img_gray = _draw_horizontal_line(img_gray, length=80)
     px_len = detect_scale_bar_length_px(img_gray)
-    assert px_len is not None and px_len > 30, (
-        f"Grayscale input not handled; got {px_len!r}"
-    )
+    assert px_len is not None and px_len > 30, f"Grayscale input not handled; got {px_len!r}"
 
 
 def test_detect_scale_bar_length_px_returns_none_on_blank():

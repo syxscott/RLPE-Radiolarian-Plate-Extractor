@@ -45,7 +45,8 @@ class TestReviewCorrectionAcceptsImageVerified:
         from rlpe.api.app import ReviewCorrection
 
         body = ReviewCorrection(
-            paper_id="p", figure_id="f",
+            paper_id="p",
+            figure_id="f",
             panel_path="/tmp/panel_01.png",
             image_verified=True,
         )
@@ -53,11 +54,13 @@ class TestReviewCorrectionAcceptsImageVerified:
 
     def test_extra_forbid_rejects_unknown_keys(self):
         from pydantic import ValidationError
+
         from rlpe.api.app import ReviewCorrection
 
         with pytest.raises(ValidationError):
             ReviewCorrection(
-                paper_id="p", figure_id="f",
+                paper_id="p",
+                figure_id="f",
                 image_vertified=True,  # typo
             )
 
@@ -67,6 +70,7 @@ class TestFlipImageVerifiedInCache:
 
     def _populate_cache(self, monkeypatch, panels):
         from rlpe.api import app as _app
+
         _app.RESULT_CACHE.clear()
         _app.RESULT_CACHE["job1"] = {
             "result": {"panels": panels, "schema_version": "1.2.0"},
@@ -74,18 +78,24 @@ class TestFlipImageVerifiedInCache:
         return _app.RESULT_CACHE
 
     def test_flips_matching_panel(self, monkeypatch):
-        from rlpe.api.app import _flip_image_verified_in_cache, ReviewCorrection
         from rlpe.api import app as _app
+        from rlpe.api.app import ReviewCorrection, _flip_image_verified_in_cache
 
-        self._populate_cache(monkeypatch, [
-            {
-                "paper_id": "p1", "figure_id": "f1",
-                "panel_id": "1", "panel_path": "/work/panels/panel_01.png",
-                "metadata": {"image_verified": False},
-            },
-        ])
+        self._populate_cache(
+            monkeypatch,
+            [
+                {
+                    "paper_id": "p1",
+                    "figure_id": "f1",
+                    "panel_id": "1",
+                    "panel_path": "/work/panels/panel_01.png",
+                    "metadata": {"image_verified": False},
+                },
+            ],
+        )
         payload = ReviewCorrection(
-            paper_id="p1", figure_id="f1",
+            paper_id="p1",
+            figure_id="f1",
             panel_path="/work/panels/panel_01.png",
             image_verified=True,
         )
@@ -95,18 +105,24 @@ class TestFlipImageVerifiedInCache:
         assert panel["metadata"]["image_verified"] is True
 
     def test_flips_false_too(self, monkeypatch):
-        from rlpe.api.app import _flip_image_verified_in_cache, ReviewCorrection
         from rlpe.api import app as _app
+        from rlpe.api.app import ReviewCorrection, _flip_image_verified_in_cache
 
-        self._populate_cache(monkeypatch, [
-            {
-                "paper_id": "p1", "figure_id": "f1",
-                "panel_id": "1", "panel_path": "/work/panels/panel_01.png",
-                "metadata": {"image_verified": True},
-            },
-        ])
+        self._populate_cache(
+            monkeypatch,
+            [
+                {
+                    "paper_id": "p1",
+                    "figure_id": "f1",
+                    "panel_id": "1",
+                    "panel_path": "/work/panels/panel_01.png",
+                    "metadata": {"image_verified": True},
+                },
+            ],
+        )
         payload = ReviewCorrection(
-            paper_id="p1", figure_id="f1",
+            paper_id="p1",
+            figure_id="f1",
             panel_path="/work/panels/panel_01.png",
             image_verified=False,
         )
@@ -116,28 +132,38 @@ class TestFlipImageVerifiedInCache:
         assert panel["metadata"]["image_verified"] is False
 
     def test_does_not_flip_unrelated_rows(self, monkeypatch):
-        from rlpe.api.app import _flip_image_verified_in_cache, ReviewCorrection
         from rlpe.api import app as _app
+        from rlpe.api.app import ReviewCorrection, _flip_image_verified_in_cache
 
-        self._populate_cache(monkeypatch, [
-            {
-                "paper_id": "p1", "figure_id": "OTHER",
-                "panel_id": "1", "panel_path": "/work/panels/panel_01.png",
-                "metadata": {"image_verified": False},
-            },
-            {
-                "paper_id": "OTHER", "figure_id": "f1",
-                "panel_id": "1", "panel_path": "/work/panels/panel_01.png",
-                "metadata": {"image_verified": False},
-            },
-            {
-                "paper_id": "p1", "figure_id": "f1",
-                "panel_id": "OTHER", "panel_path": "/work/panels/OTHER.png",
-                "metadata": {"image_verified": False},
-            },
-        ])
+        self._populate_cache(
+            monkeypatch,
+            [
+                {
+                    "paper_id": "p1",
+                    "figure_id": "OTHER",
+                    "panel_id": "1",
+                    "panel_path": "/work/panels/panel_01.png",
+                    "metadata": {"image_verified": False},
+                },
+                {
+                    "paper_id": "OTHER",
+                    "figure_id": "f1",
+                    "panel_id": "1",
+                    "panel_path": "/work/panels/panel_01.png",
+                    "metadata": {"image_verified": False},
+                },
+                {
+                    "paper_id": "p1",
+                    "figure_id": "f1",
+                    "panel_id": "OTHER",
+                    "panel_path": "/work/panels/OTHER.png",
+                    "metadata": {"image_verified": False},
+                },
+            ],
+        )
         payload = ReviewCorrection(
-            paper_id="p1", figure_id="f1",
+            paper_id="p1",
+            figure_id="f1",
             panel_path="/work/panels/panel_01.png",
             image_verified=True,
         )
@@ -149,12 +175,13 @@ class TestFlipImageVerifiedInCache:
             assert p["metadata"]["image_verified"] is False
 
     def test_returns_zero_on_empty_cache(self, monkeypatch):
-        from rlpe.api.app import _flip_image_verified_in_cache, ReviewCorrection
         from rlpe.api import app as _app
+        from rlpe.api.app import ReviewCorrection, _flip_image_verified_in_cache
 
         _app.RESULT_CACHE.clear()
         payload = ReviewCorrection(
-            paper_id="p", figure_id="f",
+            paper_id="p",
+            figure_id="f",
             panel_path="/tmp/p.png",
             image_verified=True,
         )
@@ -172,4 +199,5 @@ class TestReviewCorrectionSourceGuard:
 
     def test_flip_helper_exists(self):
         from rlpe.api.app import _flip_image_verified_in_cache
+
         assert callable(_flip_image_verified_in_cache)

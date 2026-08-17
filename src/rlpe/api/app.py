@@ -986,7 +986,8 @@ def export_job_xlsx(
                 return False
             if search_term:
                 blob = " ".join(
-                    str(x or "").lower() for x in [
+                    str(x or "").lower()
+                    for x in [
                         p.get("paper_id"),
                         p.get("species"),
                         p.get("panel_id"),
@@ -1002,7 +1003,8 @@ def export_job_xlsx(
                 if isinstance(gl0, list):
                     gl0 = gl0[0] if gl0 else {}
                 blob += " " + " ".join(
-                    str(x or "").lower() for x in [
+                    str(x or "").lower()
+                    for x in [
                         gl0.get("formation"),
                         gl0.get("locality"),
                         gl0.get("country"),

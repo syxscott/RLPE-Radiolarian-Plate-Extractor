@@ -114,8 +114,7 @@ class TestSpeciesDisambiguation:
         assert len(links) >= 1
         matched = [l for l in links if l.get("species") == "A. rigida"]
         assert matched, (
-            f"exact match for A. rigida missing; got species: "
-            f"{[l.get('species') for l in links]}"
+            f"exact match for A. rigida missing; got species: {[l.get('species') for l in links]}"
         )
         assert matched[0]["confidence"] == 0.95
 
@@ -139,8 +138,7 @@ class TestStatusField:
 
         field_names = {f.name for f in fields(RangeChartResult)}
         assert "error_message" in field_names, (
-            f"RangeChartResult missing 'error_message' field; "
-            f"have {sorted(field_names)}"
+            f"RangeChartResult missing 'error_message' field; have {sorted(field_names)}"
         )
         instance = RangeChartResult()
         assert instance.error_message is None
@@ -175,9 +173,7 @@ class TestStatusField:
         fake_resp.status_code = 200
         fake_resp.__enter__.return_value = fake_resp
         fake_resp.__exit__.return_value = False
-        fake_resp.json.return_value = {
-            "content": [{"type": "text", "text": "Sorry, not JSON"}]
-        }
+        fake_resp.json.return_value = {"content": [{"type": "text", "text": "Sorry, not JSON"}]}
 
         from rlpe import range_chart_extractor as rce
 
@@ -200,15 +196,15 @@ class TestStatusField:
                 timeout_sec=10,
             )
 
-        assert (
-            result.status == "error"
-        ), f"expected status='error' on JSON-parse failure, got {result.status!r}"
-        assert (
-            result.error_message is not None
-        ), "error_message must be populated on JSON-parse failure"
-        assert (
-            "ValueError" in result.error_message
-        ), f"error_message should include exception class; got {result.error_message!r}"
+        assert result.status == "error", (
+            f"expected status='error' on JSON-parse failure, got {result.status!r}"
+        )
+        assert result.error_message is not None, (
+            "error_message must be populated on JSON-parse failure"
+        )
+        assert "ValueError" in result.error_message, (
+            f"error_message should include exception class; got {result.error_message!r}"
+        )
         assert "no JSON object found" in result.error_message
 
     def test_image_open_failure_returns_error_status(self, tmp_path):
@@ -230,13 +226,13 @@ class TestStatusField:
             timeout_sec=10,
         )
 
-        assert (
-            result.status == "error"
-        ), f"expected status='error' when image is missing, got {result.status!r}"
+        assert result.status == "error", (
+            f"expected status='error' when image is missing, got {result.status!r}"
+        )
         assert result.error_message is not None
-        assert (
-            "OSError" in result.error_message
-        ), f"error_message should include OSError class; got {result.error_message!r}"
+        assert "OSError" in result.error_message, (
+            f"error_message should include OSError class; got {result.error_message!r}"
+        )
         assert result.confidence == 0.0
         assert result.species_ranges == []
 

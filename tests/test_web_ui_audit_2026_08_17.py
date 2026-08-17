@@ -53,6 +53,7 @@ def xlsx_src() -> str:
 # Helpers
 # --------------------------------------------------------------------------
 
+
 def _function_body(text: str, fn_name: str) -> str:
     """Return the body of ``function <fn_name>(...) { ... }`` up to its
     matching closing brace. Naive but fine for our needs."""
@@ -91,8 +92,8 @@ def _strip_js_comments(text: str) -> str:
 # server route can be hit.
 # ==========================================================================
 
-class TestResolveAssetUrlAudit20260817:
 
+class TestResolveAssetUrlAudit20260817:
     def test_function_present(self, js: str) -> None:
         """resolveAssetUrl still exists."""
         assert "function resolveAssetUrl(" in js
@@ -136,8 +137,8 @@ class TestResolveAssetUrlAudit20260817:
 # real key.
 # ==========================================================================
 
-class TestPanelIdSourceAudit20260817:
 
+class TestPanelIdSourceAudit20260817:
     def test_no_dead_v18_prefix(self, js: str) -> None:
         """``metadata.v18_panel_id_source`` must NOT appear anywhere in
         the served JS — every row was wrongly tagged "位置回退"."""
@@ -179,8 +180,8 @@ class TestPanelIdSourceAudit20260817:
 # of job count.
 # ==========================================================================
 
-class TestPopulateResultFilterAudit20260817:
 
+class TestPopulateResultFilterAudit20260817:
     def test_no_early_return_on_single_job(self, js: str) -> None:
         """The ``if (jobIds.length <= 1) { ... return; }`` short-circuit
         was the bug; ensure it's gone. The defensive ``if (!filter)
@@ -192,8 +193,7 @@ class TestPopulateResultFilterAudit20260817:
         # explicit forbidden pattern: the old guard that compared job
         # count and skipped rebuilding the <select>.
         assert "jobIds.length <= 1" not in body, (
-            "Old early-return guard 'jobIds.length <= 1' reappeared — "
-            "WEB-B3 regression."
+            "Old early-return guard 'jobIds.length <= 1' reappeared — WEB-B3 regression."
         )
         # and no "return" sits between the function start and the
         # option-rebuild line (filter.innerHTML = ...).
@@ -222,8 +222,8 @@ class TestPopulateResultFilterAudit20260817:
 # render and the export click handler.
 # ==========================================================================
 
-class TestFilterRowsAudit20260817:
 
+class TestFilterRowsAudit20260817:
     def test_filter_rows_defined(self, js: str) -> None:
         """filterRows(rows, searchTerm, filterJob) is the shared helper."""
         assert "function filterRows(" in js, (
@@ -267,12 +267,12 @@ class TestFilterRowsAudit20260817:
 # .xlsx mirrors the UI filter; the JS must pass them.
 # ==========================================================================
 
-class TestExportFilterAudit20260817:
 
+class TestExportFilterAudit20260817:
     def test_endpoint_accepts_filter_params(self, api_src: str) -> None:
         """The endpoint signature gains paper_ids / panel_ids / species."""
         # Extract the function body via simple brace-matching.
-        marker = 'def export_job_xlsx('
+        marker = "def export_job_xlsx("
         i = api_src.find(marker)
         assert i >= 0, "export_job_xlsx not found"
         assert "paper_ids" in api_src[i : i + 1500], (
@@ -284,7 +284,7 @@ class TestExportFilterAudit20260817:
 
     def test_endpoint_passes_panel_filter(self, api_src: str) -> None:
         """The endpoint threads the filter through write_xlsx."""
-        marker = 'def export_job_xlsx('
+        marker = "def export_job_xlsx("
         i = api_src.find(marker)
         # Body is well within the next 4KB.
         body = api_src[i : i + 5000]
@@ -304,7 +304,7 @@ class TestExportFilterAudit20260817:
 
     def test_xlsx_applies_filter_to_panels_sheet(self, xlsx_src: str) -> None:
         """The panels sheet must filter before writing rows."""
-        marker = "panels_all = list(run_output.get(\"panels\", []) or [])"
+        marker = 'panels_all = list(run_output.get("panels", []) or [])'
         i = xlsx_src.find(marker)
         assert i >= 0, (
             "write_xlsx must extract 'panels_all' and apply panel_filter "
@@ -321,8 +321,7 @@ class TestExportFilterAudit20260817:
         # Read forward a few KB to cover the handler body.
         chunk = js[i : i + 6000]
         assert "URLSearchParams" in chunk, (
-            "Export handler must build a URLSearchParams and append it "
-            "to /jobs/{id}/export.xlsx"
+            "Export handler must build a URLSearchParams and append it to /jobs/{id}/export.xlsx"
         )
         assert "paper_ids" in chunk
         assert "species" in chunk
@@ -335,8 +334,8 @@ class TestExportFilterAudit20260817:
 # union of available <option> values, not the current default.
 # ==========================================================================
 
-class TestLlmBackendRestoreAudit20260817:
 
+class TestLlmBackendRestoreAudit20260817:
     def test_function_uses_options_union(self, js: str) -> None:
         """The restore branch must walk both <select>'s ``options``."""
         body = _function_body(js, "initLLMBackendSync")
@@ -356,6 +355,7 @@ class TestLlmBackendRestoreAudit20260817:
         reference the bug; what we forbid is an actual code path
         that compares ``saved`` to ``[basic.value, advanced.value]``."""
         import re
+
         # Strip out line and block comments so the audit-comment text
         # that references the bug doesn't trip the assertion.
         stripped = re.sub(r"//[^\n]*", "", js)
@@ -373,8 +373,8 @@ class TestLlmBackendRestoreAudit20260817:
 # submit handler posts it to /review/correction.
 # ==========================================================================
 
-class TestImageVerifiedToggleAudit20260817:
 
+class TestImageVerifiedToggleAudit20260817:
     def test_checkbox_in_html(self, html: str) -> None:
         """The HTML form must include the new checkbox input."""
         assert 'id="correction-image-verified"' in html

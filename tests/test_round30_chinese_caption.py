@@ -18,6 +18,7 @@ Phase 30 adds:
 The scaffolding pattern follows ``test_round27_japanese_extraction.py``
 and ``test_round28_caption_page_distance.py``.
 """
+
 from __future__ import annotations
 
 import sys
@@ -28,10 +29,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlpe.opendataloader_extractor import (  # noqa: E402
-    _find_plate_captions,
-    _is_caption_kind_marker,
     _ZH_FIG_CAPTION_RE,
     _ZH_PLATE_CAPTION_RE,
+    _find_plate_captions,
+    _is_caption_kind_marker,
 )
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -151,9 +152,7 @@ def test_dispatch_rejects_zh_body_text():
         }
     ]
     caps = _find_plate_captions(kids)
-    assert caps == [], (
-        f"Body text '图书馆里的书很多' must NOT match; got {caps!r}"
-    )
+    assert caps == [], f"Body text '图书馆里的书很多' must NOT match; got {caps!r}"
 
 
 def test_dispatch_rejects_short_zh_fig_caption():
@@ -232,8 +231,8 @@ def test_zh_patterns_anchored_in_source():
     assert "_ZH_PLATE_CAPTION_RE" in src
     assert "_ZH_FIG_CAPTION_RE" in src
     # And the predicate accepts the ZH fig markers
-    assert "low.startswith(\"图\")" in src
-    assert "low.startswith(\"圖\")" in src
+    assert 'low.startswith("图")' in src
+    assert 'low.startswith("圖")' in src
 
 
 def test_dispatcher_zh_branches_present():

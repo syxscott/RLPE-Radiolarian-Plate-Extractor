@@ -8,6 +8,7 @@ fixed in both). Now the inline regex is removed and the function calls
 ``parse_coordinate`` directly, with the same hemisphere/degree-symbol
 guard preserved.
 """
+
 from __future__ import annotations
 
 from rlpe.geo_coords import parse_coordinate
@@ -85,9 +86,7 @@ def test_empty_text_returns_none():
 
 def test_no_coordinate_returns_none():
     """No numeric pair at all → None tuple."""
-    assert _extract_first_coord("Random text without coordinates.") == (
-        None, None, None, None
-    )
+    assert _extract_first_coord("Random text without coordinates.") == (None, None, None, None)
 
 
 def test_offsets_match_source_text():

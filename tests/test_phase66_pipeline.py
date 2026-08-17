@@ -49,9 +49,7 @@ def _make_strat_row(
         "metadata": {
             "figure_type": "strat_column",
             "caption": caption,
-            "geology_links": [
-                {"formation": "Scaglia Fm", "age": "Late Triassic"}
-            ],
+            "geology_links": [{"formation": "Scaglia Fm", "age": "Late Triassic"}],
         },
     }
 
@@ -113,7 +111,8 @@ class TestVisualLinkerIntegration:
         """When Strategy 1 didn't fire and the paper has plate + strat,
         the visual linker's output lands in metadata.cross_figure_visual_links."""
         plate = _make_plate_row(
-            panel_id="p1", caption="Specimen from Italy",
+            panel_id="p1",
+            caption="Specimen from Italy",
             link_source="locality_match",
         )
         strat = _make_strat_row(figure_id="strat1", caption="Scaglia Fm")
@@ -134,7 +133,8 @@ class TestVisualLinkerIntegration:
     def test_visual_linker_skipped_for_sample_match(self, pipe):
         """Phase A Strategy 1 nailed it — Phase C should NOT add links."""
         plate = _make_plate_row(
-            panel_id="p1", caption="All from Sample S1",
+            panel_id="p1",
+            caption="All from Sample S1",
             link_source="sample_match",
         )
         strat = _make_strat_row(figure_id="strat1", caption="Sample S1, Scaglia Fm")
@@ -151,7 +151,8 @@ class TestVisualLinkerIntegration:
     def test_visual_linker_skipped_when_no_anchor_figure(self, pipe):
         """No strat column / map → Phase C silently skips."""
         plate = _make_plate_row(
-            panel_id="p1", caption="Italy",
+            panel_id="p1",
+            caption="Italy",
             link_source="locality_match",
         )
         rows = [plate]  # only a plate, no anchor figure
@@ -166,7 +167,8 @@ class TestVisualLinkerIntegration:
     def test_visual_linker_supports_paleogeographic_map(self, pipe):
         """Paleogeographic map counts as an anchor figure."""
         plate = _make_plate_row(
-            panel_id="p1", caption="Italy specimen",
+            panel_id="p1",
+            caption="Italy specimen",
             link_source="locality_match",
         )
         m3 = _FakeM3Visual()
@@ -181,7 +183,8 @@ class TestVisualLinkerIntegration:
     def test_visual_linker_empty_response(self, pipe):
         """When M3 returns empty plate_panels, panel gets empty list."""
         plate = _make_plate_row(
-            panel_id="p1", caption="Italy",
+            panel_id="p1",
+            caption="Italy",
             link_source="locality_match",
         )
         strat = _make_strat_row(figure_id="strat1", caption="Scaglia Fm")

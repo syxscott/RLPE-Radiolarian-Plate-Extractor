@@ -14,7 +14,6 @@ import pytest
 
 from rlpe.converters import panel_metadata_from_match
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -37,18 +36,20 @@ class TestConvertersForwardVisualLinks:
     def test_cross_figure_visual_links_round_trip(self):
         """panel_metadata_from_match must forward cross_figure_visual_links
         onto the exported PanelMetadata."""
-        match = _make_match({
-            "cross_figure_visual_links": [
-                {
-                    "target_figure_id": "strat1",
-                    "target_layer": 3,
-                    "target_age": "Late Triassic",
-                    "target_formation": "Scaglia Fm",
-                    "confidence": 0.9,
-                    "source": "m3_visual",
-                }
-            ]
-        })
+        match = _make_match(
+            {
+                "cross_figure_visual_links": [
+                    {
+                        "target_figure_id": "strat1",
+                        "target_layer": 3,
+                        "target_age": "Late Triassic",
+                        "target_formation": "Scaglia Fm",
+                        "confidence": 0.9,
+                        "source": "m3_visual",
+                    }
+                ]
+            }
+        )
         pm = panel_metadata_from_match(match)
         assert len(pm.cross_figure_visual_links) == 1
         entry = pm.cross_figure_visual_links[0]
@@ -61,16 +62,28 @@ class TestConvertersForwardVisualLinks:
         assert pm.cross_figure_visual_links == []
 
     def test_multiple_visual_links_round_trip(self):
-        match = _make_match({
-            "cross_figure_visual_links": [
-                {"target_figure_id": "strat1", "target_layer": 1,
-                 "target_age": "Late Cretaceous", "target_formation": "Scaglia",
-                 "confidence": 0.88, "source": "m3_visual"},
-                {"target_figure_id": "strat1", "target_layer": 2,
-                 "target_age": "Late Cretaceous", "target_formation": "Scaglia",
-                 "confidence": 0.81, "source": "m3_visual"},
-            ]
-        })
+        match = _make_match(
+            {
+                "cross_figure_visual_links": [
+                    {
+                        "target_figure_id": "strat1",
+                        "target_layer": 1,
+                        "target_age": "Late Cretaceous",
+                        "target_formation": "Scaglia",
+                        "confidence": 0.88,
+                        "source": "m3_visual",
+                    },
+                    {
+                        "target_figure_id": "strat1",
+                        "target_layer": 2,
+                        "target_age": "Late Cretaceous",
+                        "target_formation": "Scaglia",
+                        "confidence": 0.81,
+                        "source": "m3_visual",
+                    },
+                ]
+            }
+        )
         pm = panel_metadata_from_match(match)
         assert len(pm.cross_figure_visual_links) == 2
 
@@ -104,6 +117,7 @@ class TestArchiveDynamicPropertiesForVisualLinks:
         }
         # Build a fake metadata object with getattr support.
         from types import SimpleNamespace
+
         meta_obj = SimpleNamespace(**meta)
 
         blob = _merged_dynamic_properties(meta_obj)
@@ -118,8 +132,9 @@ class TestArchiveDynamicPropertiesForVisualLinks:
         assert parsed.get("cross_figure_link", {}).get("source") == "locality_match"
 
     def test_no_visual_links_returns_normal_payload(self):
-        from rlpe.exporters.archive import _merged_dynamic_properties
         from types import SimpleNamespace
+
+        from rlpe.exporters.archive import _merged_dynamic_properties
 
         meta_obj = SimpleNamespace(
             figure_schematic_data=None,
@@ -139,8 +154,9 @@ class TestArchiveDynamicPropertiesForVisualLinks:
     def test_visual_links_alone_with_no_linker(self):
         """Defensive: visual links present even if Phase A linker
         didn't fire (e.g. linker disabled). Still serialise them."""
-        from rlpe.exporters.archive import _merged_dynamic_properties
         from types import SimpleNamespace
+
+        from rlpe.exporters.archive import _merged_dynamic_properties
 
         meta_obj = SimpleNamespace(
             figure_schematic_data=None,
@@ -148,9 +164,14 @@ class TestArchiveDynamicPropertiesForVisualLinks:
             link_confidence=0.0,
             link_figure_id=None,
             cross_figure_visual_links=[
-                {"target_figure_id": "strat1", "target_layer": 5,
-                 "target_age": "Late Triassic", "target_formation": "Scaglia",
-                 "confidence": 0.92, "source": "m3_visual"}
+                {
+                    "target_figure_id": "strat1",
+                    "target_layer": 5,
+                    "target_age": "Late Triassic",
+                    "target_formation": "Scaglia",
+                    "confidence": 0.92,
+                    "source": "m3_visual",
+                }
             ],
         )
         blob = _merged_dynamic_properties(meta_obj)

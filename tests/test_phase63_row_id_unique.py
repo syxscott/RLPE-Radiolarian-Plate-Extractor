@@ -23,9 +23,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
-APP_SRC = (
-    Path(__file__).resolve().parents[1] / "src" / "rlpe" / "api" / "app.py"
-).read_text(encoding="utf-8")
+APP_SRC = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "api" / "app.py").read_text(
+    encoding="utf-8"
+)
 
 
 def test_row_id_uses_bbox_fallback():
@@ -51,6 +51,7 @@ def test_row_id_collision_with_no_panel_id_distinct_bbox():
     """Two rows with same paper/figure but no panel_id must produce
     distinct row_ids when their bboxes differ."""
     from rlpe.api.app import _row_id
+
     row_a = {
         "paper_id": "p1",
         "figure_id": "f1",
@@ -76,6 +77,7 @@ def test_row_id_no_panel_id_no_bbox_still_distinct():
     counter / row position / unique-enough hash so the cache can
     still distinguish rows."""
     from rlpe.api.app import _row_id
+
     rows = [
         {"paper_id": "p1", "figure_id": "f1", "panel_id": None, "bbox": None, "_seq": i}
         for i in range(3)

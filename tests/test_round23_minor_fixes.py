@@ -26,9 +26,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def _read(rel: str) -> str:
-    return Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel
-    ).read_text(encoding="utf-8")
+    return Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel).read_text(
+        encoding="utf-8"
+    )
 
 
 # --- F-4: geo_vision stub emission ---------------------------------------
@@ -90,8 +90,7 @@ def test_frontend_search_includes_geology_fields():
         "geology-field coverage from the search filter."
     )
     assert "gl0.formation" in src and "gl0.country" in src, (
-        "geoBlob must include formation and country from "
-        "geology_links[0]."
+        "geoBlob must include formation and country from geology_links[0]."
     )
     assert "caption.includes(searchTerm)" in src, (
         "Search filter no longer searches caption_snippet."
@@ -147,8 +146,7 @@ def test_placeholder_colspan_matches_column_count():
     # label_source + species + confidence + _geo_age + thumbnail +
     # actions = 10 columns.
     assert colspan == 10, (
-        f"placeholder colspan={colspan} but table has 10 columns. "
-        f"Audit-11 regression."
+        f"placeholder colspan={colspan} but table has 10 columns. Audit-11 regression."
     )
 
 
@@ -217,13 +215,13 @@ def test_pipeline_panel_index_uses_safe_attribute_access():
     ``getattr(match, 'panel_index', None)`` so a future pipeline
     site that sets the attribute is picked up automatically."""
     src = _read("src/rlpe/converters.py")
-    assert "getattr(match, \"panel_index\", None)" in src, (
+    assert 'getattr(match, "panel_index", None)' in src, (
         "converters.py pipeline_panel_index read must use "
         "``getattr(match, 'panel_index', None)`` for safe "
         "attribute access. Round 23 fix."
     )
     # And the old dead-code fallback to meta.get is gone.
-    assert "meta.get(\"panel_index\")" not in src, (
+    assert 'meta.get("panel_index")' not in src, (
         "converters.py still has the dead `meta.get('panel_index')` "
         "fallback. Round 23 fix removed it."
     )
@@ -247,27 +245,25 @@ def test_warning_record_helper_exists():
 def test_paper_records_emits_warning_on_cleanup_failure():
     """``paper_records_from_matches`` returns ``(records, warnings)``
     and emits a WarningRecord when the cleanup helper raises."""
-    from rlpe.converters import paper_records_from_matches
     import inspect
+
+    from rlpe.converters import paper_records_from_matches
 
     sig = inspect.signature(paper_records_from_matches)
     # The return annotation should be a tuple of (list, list)
-    assert sig.return_annotation == tuple[list, list] or "tuple" in str(
-        sig.return_annotation
-    ), (
-        f"paper_records_from_matches must return tuple[list, list]; "
-        f"got {sig.return_annotation}"
+    assert sig.return_annotation == tuple[list, list] or "tuple" in str(sig.return_annotation), (
+        f"paper_records_from_matches must return tuple[list, list]; got {sig.return_annotation}"
     )
 
 
 def test_paleo_coordinates_returns_records_and_warnings():
     """``paleo_coordinates_from_localities`` must return
     ``(records, warnings)`` so backend failures are surfaced."""
-    from rlpe.converters import paleo_coordinates_from_localities
     import inspect
+
+    from rlpe.converters import paleo_coordinates_from_localities
 
     sig = inspect.signature(paleo_coordinates_from_localities)
     assert "tuple" in str(sig.return_annotation), (
-        f"paleo_coordinates_from_localities must return tuple; "
-        f"got {sig.return_annotation}"
+        f"paleo_coordinates_from_localities must return tuple; got {sig.return_annotation}"
     )

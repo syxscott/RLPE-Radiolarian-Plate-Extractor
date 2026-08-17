@@ -14,6 +14,7 @@ The batch dialog is launched from the main window's File menu.
 It reuses the existing ``PipelineWorker`` (one job at a time) plus
 the Jobs / Results tabs.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,33 +23,24 @@ from typing import Any
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
-    QHeaderView,
-    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QProgressBar,
-    QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from . import i18n
 from .constants import BATCH_DIALOG_DEFAULT_SIZE
 from .i18n_widgets import tr_button, tr_checkbox, tr_groupbox, tr_label
 from .outdir_probe import probe_output_dir_writable
 from .styles import SPACE_M, SPACE_S
-from .utils import file_size_human, get_gui_logger, short_path
-from . import i18n
+from .utils import file_size_human, get_gui_logger
 
 
 class BatchDialog(QDialog):
@@ -61,7 +53,7 @@ class BatchDialog(QDialog):
         super().__init__(parent)
         self._log = get_gui_logger()
         self._settings = settings
-        self._pdfs: list[Path] = []        # ordered list for UI display
+        self._pdfs: list[Path] = []  # ordered list for UI display
         self._pdfs_set: set[Path] = set()  # Phase 56 audit: O(1) duplicate-check + remove
         self._build_ui()
 
@@ -118,8 +110,8 @@ class BatchDialog(QDialog):
         self._file_list.viewport().setAcceptDrops(True)
         self._file_list.setDragDropMode(QAbstractItemView.DropOnly)
         self._file_list.dragEnterEvent = self._drag_enter  # type: ignore[assignment]
-        self._file_list.dragMoveEvent = self._drag_enter   # type: ignore[assignment]
-        self._file_list.dropEvent = self._drop_files     # type: ignore[assignment]
+        self._file_list.dragMoveEvent = self._drag_enter  # type: ignore[assignment]
+        self._file_list.dropEvent = self._drop_files  # type: ignore[assignment]
 
         outer.addWidget(files_group, 1)
 
@@ -132,7 +124,9 @@ class BatchDialog(QDialog):
         og.setHorizontalSpacing(SPACE_M)
         og.setVerticalSpacing(SPACE_S)
 
-        self._out_dir_edit = QLineEdit(self._settings.get("last_export_dir", str(Path.home() / "rlpe_batch_out")))
+        self._out_dir_edit = QLineEdit(
+            self._settings.get("last_export_dir", str(Path.home() / "rlpe_batch_out"))
+        )
         og.addRow(tr_label("batch.outdir"), self._out_dir_edit)
 
         out_row = QHBoxLayout()
@@ -331,7 +325,8 @@ class BatchDialog(QDialog):
                 self,
                 i18n._tr("batch.no_outdir.title"),
                 i18n._tr("batch.outdir.not_writable").format(
-                    path=out_dir, error=probe_err,
+                    path=out_dir,
+                    error=probe_err,
                 ),
             )
             return

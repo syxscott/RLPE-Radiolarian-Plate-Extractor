@@ -230,7 +230,7 @@ def test_dwca_meta_xml_uses_real_tab(tmp_path: Path) -> None:
     # Real tab attribute: the XML form is "&#9;" (numeric character
     # reference, what quoteattr emits). The literal two-char string
     # ``\\t`` is forbidden.
-    assert '\\t' not in meta_xml, (
+    assert "\\t" not in meta_xml, (
         f"meta.xml contains literal '\\t'; expected real-tab escape like '&#9;':\n{meta_xml}"
     )
     assert 'fieldsTerminatedBy="&#9;"' in meta_xml, (
@@ -238,7 +238,7 @@ def test_dwca_meta_xml_uses_real_tab(tmp_path: Path) -> None:
     )
     # Same for linesTerminatedBy: real newline must be serialised as
     # '&#10;' (the quoteattr form). The literal '\\n' is forbidden.
-    assert '\\n' not in meta_xml, (
+    assert "\\n" not in meta_xml, (
         f"meta.xml contains literal '\\n'; expected real-newline escape '&#10;':\n{meta_xml}"
     )
     assert 'linesTerminatedBy="&#10;"' in meta_xml
@@ -410,9 +410,7 @@ def test_flatten_for_csv_idempotent() -> None:
     twice_keys = set(twice.keys())
     # Second call must not introduce any new keys.
     new_keys = twice_keys - once_keys
-    assert new_keys == set(), (
-        f"flatten_for_csv is not idempotent; second call added {new_keys!r}"
-    )
+    assert new_keys == set(), f"flatten_for_csv is not idempotent; second call added {new_keys!r}"
     # And the value of chronostratigraphy_rank is still the primitive
     # (string "epoch"), not a JSON-encoded blob.
     assert twice["chronostratigraphy_rank"] == "epoch"

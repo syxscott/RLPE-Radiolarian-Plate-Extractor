@@ -8,7 +8,7 @@ import threading
 import time
 import xml
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import requests
@@ -133,7 +133,7 @@ class GrobidClient:
         timeout: int = 300,
         max_retries: int = 3,
         retry_backoff: float = 1.0,
-        cancel_event: "threading.Event | None" = None,
+        cancel_event: threading.Event | None = None,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
@@ -156,8 +156,9 @@ class GrobidClient:
         when GROBID is offline, rather than spending ``max_retries *
         timeout`` seconds (up to 900s by default) on a dead server.
         """
-        import urllib.request
         import urllib.error
+        import urllib.request
+
         try:
             req = urllib.request.Request(
                 f"{self.server_url}/api/isalive",
@@ -190,7 +191,7 @@ class GrobidClient:
             # generic OSError wrapped by requests.
             if isinstance(cause, OSError) and getattr(cause, "errno", None) in {
                 111,  # ECONNREFUSED
-                -2,   # Name or service not known (some glibc)
+                -2,  # Name or service not known (some glibc)
             }:
                 return "connection_refused"
             return "connection_refused"
@@ -233,9 +234,7 @@ class GrobidClient:
                     "GROBID cancel_event set; aborting retry loop for %s",
                     pdf_path.name,
                 )
-                raise PipelineCancelledError(
-                    f"GROBID retry loop cancelled for {pdf_path.name}"
-                )
+                raise PipelineCancelledError(f"GROBID retry loop cancelled for {pdf_path.name}")
             try:
                 with pdf_path.open("rb") as f:
                     resp = requests.post(
@@ -383,14 +382,43 @@ def extract_figure_caption(fig: ET.Element, ns: dict[str, str]) -> str:
 # already maintains a similar stoplist; mirror it here.
 _TAXON_LIKE_NONTAXON_FIRST_WORDS: frozenset[str] = frozenset(
     {
-        "Cambrian", "Ordovician", "Silurian", "Devonian", "Carboniferous",
-        "Permian", "Triassic", "Jurassic", "Cretaceous", "Paleogene",
-        "Neogene", "Paleocene", "Eocene", "Oligocene", "Miocene",
-        "Pliocene", "Pleistocene", "Holocene",
-        "Atlantic", "Pacific", "Indian", "Arctic", "Southern",
-        "Northern", "Western", "Eastern", "Central",
-        "Tethys", "Gondwana", "Laurasia", "Pangaea", "Panthalassa",
-        "Upper", "Lower", "Middle", "Late", "Early",
+        "Cambrian",
+        "Ordovician",
+        "Silurian",
+        "Devonian",
+        "Carboniferous",
+        "Permian",
+        "Triassic",
+        "Jurassic",
+        "Cretaceous",
+        "Paleogene",
+        "Neogene",
+        "Paleocene",
+        "Eocene",
+        "Oligocene",
+        "Miocene",
+        "Pliocene",
+        "Pleistocene",
+        "Holocene",
+        "Atlantic",
+        "Pacific",
+        "Indian",
+        "Arctic",
+        "Southern",
+        "Northern",
+        "Western",
+        "Eastern",
+        "Central",
+        "Tethys",
+        "Gondwana",
+        "Laurasia",
+        "Pangaea",
+        "Panthalassa",
+        "Upper",
+        "Lower",
+        "Middle",
+        "Late",
+        "Early",
     }
 )
 

@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.taxon import TaxonRecognizer, _NON_TAXON_SECOND_WORDS  # noqa: E402
+from rlpe.taxon import _NON_TAXON_SECOND_WORDS, TaxonRecognizer  # noqa: E402
 
 
 def _reco() -> TaxonRecognizer:

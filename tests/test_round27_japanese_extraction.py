@@ -18,6 +18,7 @@ break JA extraction. They follow the same scaffolding pattern as
 conftest-managed PYTHONPATH), and a small ``_read`` helper for
 source-guard assertions.
 """
+
 from __future__ import annotations
 
 import sys
@@ -27,21 +28,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.opendataloader_extractor import (  # noqa: E402
-    _find_plate_captions,
-    _is_caption_kind_marker,
-    _JA_FIG_CAPTION_RE,
-    _JA_PLATE_CAPTION_RE,
-    _normalise_ocr_lang,
-)
-from rlpe.ocr import OCRBackend  # noqa: E402
 from rlpe.m3_engine import (  # noqa: E402
-    _detect_caption_lang,
     _PARSE_CAPTION_SYSTEM,
     _PARSE_CAPTION_SYSTEM_JA,
+    _detect_caption_lang,
+)
+from rlpe.ocr import OCRBackend  # noqa: E402
+from rlpe.opendataloader_extractor import (  # noqa: E402
+    _JA_FIG_CAPTION_RE,
+    _JA_PLATE_CAPTION_RE,
+    _find_plate_captions,
+    _is_caption_kind_marker,
+    _normalise_ocr_lang,
 )
 from rlpe.pipeline import _resolve_m3_prompt_lang  # noqa: E402
-
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -425,5 +425,5 @@ def test_phase27_anchored_in_ocr():
     """The lang parameter must be a first-class init arg on OCRBackend."""
     src = _read("src/rlpe/ocr.py")
     assert "def __init__" in src
-    assert "lang: str | list[str] = \"en\"" in src
+    assert 'lang: str | list[str] = "en"' in src
     assert "_PADDLE_LANG_MAP" in src

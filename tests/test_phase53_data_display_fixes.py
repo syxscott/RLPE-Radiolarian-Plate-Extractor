@@ -47,6 +47,7 @@ Tests:
   7. MAJOR-2: column headers are in zh_CN on first paint (init)
   8. MAJOR-2: column headers are in en on first paint
 """
+
 from __future__ import annotations
 
 import os
@@ -57,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QTableWidgetItem  # noqa: E402
 
@@ -69,6 +71,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_language():
     from rlpe.gui import i18n
+
     i18n.set_language("zh_CN")
     yield
     i18n.set_language("zh_CN")
@@ -140,6 +143,7 @@ def test_pbdb_any_keeps_all_rows(sample_rows):
     and rows WITH PBDB data were dropped when the user wanted "(any)".
     """
     from rlpe.gui.results_tab import ResultsTab
+
     rt = ResultsTab()
     rt._all_rows = sample_rows
     # Default selection on the has_pbdb combo is "__ANY__"
@@ -155,6 +159,7 @@ def test_pbdb_yes_keeps_only_rows_with_pbdb(sample_rows):
     """Phase 53: 'yes' filter keeps only rows where paleodb was
     successfully looked up AND has taxonomy data."""
     from rlpe.gui.results_tab import ResultsTab
+
     rt = ResultsTab()
     rt._all_rows = sample_rows
     # Find the "yes" item (userData "yes")
@@ -171,6 +176,7 @@ def test_pbdb_yes_keeps_only_rows_with_pbdb(sample_rows):
 def test_pbdb_no_keeps_only_rows_without_pbdb(sample_rows):
     """Phase 53: 'no' filter keeps only rows without PBDB data."""
     from rlpe.gui.results_tab import ResultsTab
+
     rt = ResultsTab()
     rt._all_rows = sample_rows
     for i in range(rt._has_pbdb.count()):
@@ -196,6 +202,7 @@ def test_extract_column_page_index_reads_from_metadata(sample_rows):
     ``metadata.page_index``. The Page column always showed "—".
     """
     from rlpe.gui.results_tab import ResultsTab
+
     rt = ResultsTab()
     # Row 0 has page_index=5 in metadata
     assert rt._extract_column(sample_rows[0], "page_index") == 5, (
@@ -208,6 +215,7 @@ def test_extract_column_page_index_reads_from_metadata(sample_rows):
 def test_extract_column_page_index_handles_missing_metadata():
     """Phase 53: if metadata is missing entirely, page_index returns None."""
     from rlpe.gui.results_tab import ResultsTab
+
     rt = ResultsTab()
     row = {"species": "X"}  # no metadata at all
     assert rt._extract_column(row, "page_index") is None
@@ -222,6 +230,7 @@ def test_run_tab_apply_settings_restores_llm_backend_by_iso_code():
     the fix, findText("minimax-m3") failed to match the friendly
     label "MiniMax-M3 (备用接入点)"."""
     from rlpe.gui.run_tab import RunTab
+
     rt = RunTab({})
     rt.apply_settings({"llm_backend": "minimax-m3"})
     settings = rt.collect_settings()
@@ -234,6 +243,7 @@ def test_run_tab_apply_settings_restores_llm_backend_by_iso_code():
 def test_run_tab_apply_settings_restores_m3_prompt_lang_by_iso_code():
     """Phase 53: same fix for M3 prompt language."""
     from rlpe.gui.run_tab import RunTab
+
     rt = RunTab({})
     rt.apply_settings({"m3_prompt_lang": "ja"})
     settings = rt.collect_settings()
@@ -248,15 +258,16 @@ def test_run_tab_apply_settings_falls_back_to_findtext_for_legacy():
     in settings (e.g. migrated from an older GUI version), apply_settings
     should still work via findText fallback."""
     from rlpe.gui.run_tab import RunTab
+
     rt = RunTab({})
     # Try with the friendly zh_CN label (would only match zh_CN lang)
     from rlpe.gui import i18n
+
     i18n.set_language("zh_CN")
     # friendly label for "rules" in zh_CN
     from rlpe.gui.constants import llm_backend_friendly_options
-    rules_label = next(
-        label for code, label in llm_backend_friendly_options() if code == "rules"
-    )
+
+    rules_label = next(label for code, label in llm_backend_friendly_options() if code == "rules")
     rt.apply_settings({"llm_backend": rules_label})
     settings = rt.collect_settings()
     assert settings["llm_backend"] == "rules", (
@@ -279,17 +290,14 @@ def test_results_tab_column_headers_translated_on_init_zh():
     """
     from rlpe.gui import i18n
     from rlpe.gui.results_tab import ResultsTab
+
     i18n.set_language("zh_CN")
     rt = ResultsTab()
-    headers = [
-        rt._table.horizontalHeaderItem(i).text()
-        for i in range(rt._table.columnCount())
-    ]
+    headers = [rt._table.horizontalHeaderItem(i).text() for i in range(rt._table.columnCount())]
     # Headers should contain Chinese characters (zh_CN translation)
     joined = " ".join(headers)
-    assert any('一' <= c <= '鿿' for c in joined), (
-        f"Phase 53 MAJOR-2: zh_CN column headers should contain Chinese "
-        f"characters, got {headers!r}"
+    assert any("一" <= c <= "鿿" for c in joined), (
+        f"Phase 53 MAJOR-2: zh_CN column headers should contain Chinese characters, got {headers!r}"
     )
 
 
@@ -297,12 +305,10 @@ def test_results_tab_column_headers_translated_on_init_en():
     """Phase 53: EN headers also translate on init."""
     from rlpe.gui import i18n
     from rlpe.gui.results_tab import ResultsTab
+
     i18n.set_language("en")
     rt = ResultsTab()
-    headers = [
-        rt._table.horizontalHeaderItem(i).text()
-        for i in range(rt._table.columnCount())
-    ]
+    headers = [rt._table.horizontalHeaderItem(i).text() for i in range(rt._table.columnCount())]
     joined = " ".join(headers).lower()
     # English headers should mention species/panel/caption
     assert "species" in joined or "panel" in joined, (
@@ -314,20 +320,22 @@ def test_results_tab_headers_use_i18n_key_not_hardcoded_label():
     """Phase 53 source guard: ensure setHorizontalHeaderLabels on init
     uses i18n._tr(...) and NOT the hardcoded c.label."""
     import inspect
+
     from rlpe.gui.results_tab import ResultsTab
+
     # The fix lives in _build_ui (called from __init__), not __init__
     # directly. Check both.
     src_init = inspect.getsource(ResultsTab.__init__)
     src_build = inspect.getsource(ResultsTab._build_ui)
     combined = src_init + src_build
     # The fix uses f"restab.col.{c.key}" inside i18n._tr(...)
-    assert 'restab.col.{c.key}' in combined, (
-        "ResultsTab._build_ui should use i18n._tr(f\"restab.col.{c.key}\") "
+    assert "restab.col.{c.key}" in combined, (
+        'ResultsTab._build_ui should use i18n._tr(f"restab.col.{c.key}") '
         "for column headers, not the hardcoded c.label (MAJOR-2 bug)."
     )
     # And the bad pattern (c.label directly) should not appear in
     # the setHorizontalHeaderLabels call
-    assert '[c.label for c in RESULT_COLUMNS]' not in combined, (
+    assert "[c.label for c in RESULT_COLUMNS]" not in combined, (
         "ResultsTab still uses [c.label for c in RESULT_COLUMNS] — "
         "should use [i18n._tr(f'restab.col.{c.key}') for c in RESULT_COLUMNS]"
     )

@@ -80,18 +80,14 @@ def test_cancel_during_run_returns_within_6s() -> None:
         rows = pipe.run()
         elapsed = time.monotonic() - start
         assert rows == [], "Cancel should produce zero rows when all PDFs are mid-flight"
-        assert elapsed < 6.0, (
-            f"Cancel must short-circuit within 6s; took {elapsed:.2f}s"
-        )
+        assert elapsed < 6.0, f"Cancel must short-circuit within 6s; took {elapsed:.2f}s"
 
 
 def test_pool_uses_cancel_futures_on_cancel_branch() -> None:
     """Bug 2.3 source-guard: pool.shutdown() must use wait=False and
     cancel_futures=True when cancellation is requested (Python 3.9+).
     """
-    src = (Path(__file__).resolve().parents[1] / "src/rlpe/pipeline.py").read_text(
-        encoding="utf-8"
-    )
+    src = (Path(__file__).resolve().parents[1] / "src/rlpe/pipeline.py").read_text(encoding="utf-8")
     assert "shutdown(wait=False, cancel_futures=True)" in src, (
         "Cancel branch must call pool.shutdown(wait=False, cancel_futures=True)"
     )
@@ -101,8 +97,7 @@ def test_pool_uses_cancel_futures_on_cancel_branch() -> None:
     import re
 
     code_with_pattern = [
-        line for line in src.splitlines()
-        if re.match(r"^\s+with ThreadPoolExecutor\(", line)
+        line for line in src.splitlines() if re.match(r"^\s+with ThreadPoolExecutor\(", line)
     ]
     assert not code_with_pattern, (
         "Phase 59 Bug 2.3: pool lifecycle must be manual (try/finally) "
@@ -115,13 +110,9 @@ def test_pool_is_released_in_finally() -> None:
     """Bug 2.3 source-guard: the pool is released in a ``finally`` block
     so the executor is always shut down even on exceptions.
     """
-    src = (Path(__file__).resolve().parents[1] / "src/rlpe/pipeline.py").read_text(
-        encoding="utf-8"
-    )
+    src = (Path(__file__).resolve().parents[1] / "src/rlpe/pipeline.py").read_text(encoding="utf-8")
     # Verify try/finally around the executor lifecycle.
     assert "pool = ThreadPoolExecutor(" in src, (
         "Pool must be assigned to a variable (not context-managed)"
     )
-    assert "finally:" in src, (
-        "Pool must be shut down in a finally block"
-    )
+    assert "finally:" in src, "Pool must be shut down in a finally block"

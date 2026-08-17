@@ -11,41 +11,35 @@ We keep the job state in-process (no QSettings persistence yet
 — that's a Phase 32+ candidate). Restarting the GUI clears the
 list, which matches the Web UI's behaviour (jobs are in-memory).
 """
+
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
-    QLabel,
     QMenu,
     QMessageBox,
-    QProgressBar,
     QStyle,
-    QPushButton,
     QStyledItemDelegate,
     QStyleOptionProgressBar,
-    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
-    QToolButton,
     QVBoxLayout,
     QWidget,
-    QApplication,
 )
 
+from . import i18n
 from .constants import (
     MAX_RECENT_JOBS_IN_LIST,
     STATUS_CANCELLED,
@@ -54,11 +48,9 @@ from .constants import (
     STATUS_QUEUED,
     STATUS_RUNNING,
 )
-from .styles import SPACE_M, SPACE_S
-from . import i18n
 from .i18n_widgets import tr_button, tr_label
+from .styles import SPACE_M, SPACE_S
 from .utils import (
-    file_size_human,
     fmt_count,
     fmt_duration,
     get_gui_logger,
@@ -127,7 +119,9 @@ class _ProgressCellDelegate(QStyledItemDelegate):
             progress_bar_option.minimum = 0
             progress_bar_option.maximum = max(1, index.data(Qt.UserRole) or 0)
             progress_bar_option.progress = index.data(Qt.UserRole + 1) or 0
-            progress_bar_option.text = f"{progress_bar_option.progress} / {progress_bar_option.maximum}"
+            progress_bar_option.text = (
+                f"{progress_bar_option.progress} / {progress_bar_option.maximum}"
+            )
             progress_bar_option.textVisible = True
             # CE_ProgressBar (value 10) is the correct ControlElement for
             # QStyle.drawControl — not PrimitiveElement which doesn't exist.
@@ -197,15 +191,17 @@ class JobsTab(QWidget):
         # ---- Table ----
         self._table = QTableWidget(0, 7)
         # Column headers use i18n keys so they translate on language switch.
-        self._table.setHorizontalHeaderLabels([
-            i18n._tr("jobstab.col.id"),
-            i18n._tr("jobstab.col.pdf"),
-            i18n._tr("jobstab.col.status"),
-            i18n._tr("jobstab.col.progress"),
-            i18n._tr("jobstab.col.rows"),
-            i18n._tr("jobstab.col.elapsed"),
-            i18n._tr("jobstab.col.out"),
-        ])
+        self._table.setHorizontalHeaderLabels(
+            [
+                i18n._tr("jobstab.col.id"),
+                i18n._tr("jobstab.col.pdf"),
+                i18n._tr("jobstab.col.status"),
+                i18n._tr("jobstab.col.progress"),
+                i18n._tr("jobstab.col.rows"),
+                i18n._tr("jobstab.col.elapsed"),
+                i18n._tr("jobstab.col.out"),
+            ]
+        )
         # Configure selection / behaviour
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -261,6 +257,7 @@ class JobsTab(QWidget):
         Returns the number of jobs loaded.
         """
         from .constants import PROJECT_ROOT
+
         loaded = 0
 
         # Candidate roots: <root>/service_work/<job_id>/output/manifests/matches.jsonl
@@ -275,9 +272,8 @@ class JobsTab(QWidget):
         cli_work = PROJECT_ROOT / "work"
         if cli_work.exists() and cli_work.resolve() != service_work.resolve():
             import hashlib
-            jid = "cli_" + hashlib.md5(
-                str(cli_work.resolve()).encode()
-            ).hexdigest()[:12]
+
+            jid = "cli_" + hashlib.md5(str(cli_work.resolve()).encode()).hexdigest()[:12]
             roots.append((cli_work, jid))
 
         for root, jid in roots:
@@ -346,10 +342,7 @@ class JobsTab(QWidget):
             # size > 0" when the flag is missing (legacy runs).
             complete_flag = root / "output" / "manifests" / "complete.flag"
             try:
-                job_status = (
-                    STATUS_DONE if complete_flag.exists()
-                    else STATUS_FAILED
-                )
+                job_status = STATUS_DONE if complete_flag.exists() else STATUS_FAILED
             except OSError:
                 job_status = STATUS_FAILED
             job = JobRecord(
@@ -494,7 +487,7 @@ class JobsTab(QWidget):
 
         # Column 3: Progress (via custom delegate)
         progress_item = QTableWidgetItem()
-        progress_item.setData(Qt.UserRole, job.progress_total)   # max
+        progress_item.setData(Qt.UserRole, job.progress_total)  # max
         progress_item.setData(Qt.UserRole + 1, job.progress_current)  # value
         progress_item.setToolTip(job.progress_msg)
         self._table.setItem(row, 3, progress_item)
@@ -542,12 +535,18 @@ class JobsTab(QWidget):
         failed = sum(1 for j in self._jobs.values() if j.status == STATUS_FAILED)
         self._count_label.setText(
             i18n._tr("jobstab.summary.count_label").format(
-                total=total, running=running, done=done, failed=failed,
+                total=total,
+                running=running,
+                done=done,
+                failed=failed,
             )
         )
         self._summary.setText(
             i18n._tr("jobstab.summary.count").format(
-                total=total, running=running, done=done, failed=failed,
+                total=total,
+                running=running,
+                done=done,
+                failed=failed,
             )
         )
 
@@ -587,7 +586,9 @@ class JobsTab(QWidget):
         act_open_results.triggered.connect(lambda: self.open_results_requested.emit(job.job_id))
 
         act_open_out = _add_action("jobstab.menu.open_out")
-        act_open_out.triggered.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(job.output_dir)))
+        act_open_out.triggered.connect(
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(job.output_dir))
+        )
 
         menu.addSeparator()
 
@@ -636,10 +637,12 @@ class JobsTab(QWidget):
         # surface the message.
         try:
             from ..cli_export import export_run_output_to_xlsx
+
             export_run_output_to_xlsx(run_output, path)
         except ImportError:
             try:
                 from ..exporters.xlsx import write_xlsx
+
                 write_xlsx(run_output, path)
             except Exception as exc:
                 QMessageBox.warning(
@@ -665,7 +668,8 @@ class JobsTab(QWidget):
             self,
             i18n._tr("jobstab.menu.export_xlsx"),
             i18n._tr("jobstab.export.saved").format(
-                count=len(job.rows), path=path,
+                count=len(job.rows),
+                path=path,
             ),
         )
 
@@ -688,12 +692,15 @@ class JobsTab(QWidget):
             return
         try:
             with open(path, "w", encoding="utf-8") as fh:
-                json.dump(self._build_run_output(job), fh, indent=2, ensure_ascii=False, default=str)
+                json.dump(
+                    self._build_run_output(job), fh, indent=2, ensure_ascii=False, default=str
+                )
             QMessageBox.information(
                 self,
                 i18n._tr("jobstab.menu.export_json"),
                 i18n._tr("jobstab.export.saved").format(
-                    count=len(job.rows), path=path,
+                    count=len(job.rows),
+                    path=path,
                 ),
             )
         except Exception as exc:
@@ -719,7 +726,9 @@ class JobsTab(QWidget):
                 key = (occ.get("country"), occ.get("locality"))
                 if key not in seen_loc:
                     seen_loc.add(key)
-                    localities.append({"country": occ.get("country"), "locality": occ.get("locality")})
+                    localities.append(
+                        {"country": occ.get("country"), "locality": occ.get("locality")}
+                    )
         return {
             "schema_version": "1.0.0",
             "provenance": {"job_id": job.job_id, "source": "rlpe-gui"},
@@ -787,7 +796,10 @@ class JobsTab(QWidget):
                 # after setHorizontalHeaderLabels(). Use the header view
                 # model directly to refresh header text safely.
                 self._table.horizontalHeader().model().setHeaderData(
-                    i, Qt.Horizontal, h, Qt.DisplayRole,
+                    i,
+                    Qt.Horizontal,
+                    h,
+                    Qt.DisplayRole,
                 )
         # Translate any active context menu actions (QAction isn't
         # a QWidget so the i18n registry's allWidgets() loop misses

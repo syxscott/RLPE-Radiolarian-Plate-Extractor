@@ -102,9 +102,7 @@ def _build_record(
             schematic_data = None
     stored_schematic: dict | None = None
     if schematic_data:
-        stored_schematic = {
-            k: v for k, v in schematic_data.items() if not k.startswith("_")
-        }
+        stored_schematic = {k: v for k, v in schematic_data.items() if not k.startswith("_")}
     return {
         "paper_id": paper_id,
         "figure_id": figure_id,
@@ -112,9 +110,7 @@ def _build_record(
         "species": None,
         "panel_path": None,
         "bbox": None,
-        "confidence": (
-            float(schematic_data.get("confidence", 0.0)) if schematic_data else 0.0
-        ),
+        "confidence": (float(schematic_data.get("confidence", 0.0)) if schematic_data else 0.0),
         "label_text": None,
         "caption_snippet": (caption or "")[:240],
         "ocr_text": None,

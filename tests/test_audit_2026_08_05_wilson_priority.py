@@ -129,11 +129,18 @@ class TestPanelRecordCiAndPriority:
         }
         meta.update(overrides.pop("meta", {}))
         defaults = dict(
-            paper_id="p", figure_id="f", panel_id="1",
-            species="Genus species", panel_path="/tmp/panel.png",
-            bbox=[10, 20, 100, 200], confidence=0.7,
-            label_text="1", caption_snippet="Plate 1, figs 1-2",
-            ocr_text=None, metadata=meta, paper_metadata=None,
+            paper_id="p",
+            figure_id="f",
+            panel_id="1",
+            species="Genus species",
+            panel_path="/tmp/panel.png",
+            bbox=[10, 20, 100, 200],
+            confidence=0.7,
+            label_text="1",
+            caption_snippet="Plate 1, figs 1-2",
+            ocr_text=None,
+            metadata=meta,
+            paper_metadata=None,
         )
         defaults.update(overrides)
         return MatchResult(**defaults)
@@ -155,11 +162,13 @@ class TestPanelRecordCiAndPriority:
     def test_explicit_meta_wins_over_heuristic(self):
         from rlpe.converters import panel_record_from_match
 
-        m = self._make_match(meta={
-            "confidence_interval_low": 0.42,
-            "confidence_interval_high": 0.99,
-            "review_priority": 1,  # explicit even though heuristic would say 0
-        })
+        m = self._make_match(
+            meta={
+                "confidence_interval_low": 0.42,
+                "confidence_interval_high": 0.99,
+                "review_priority": 1,  # explicit even though heuristic would say 0
+            }
+        )
         rec = panel_record_from_match(m)
         assert rec.confidence_interval_low == 0.42
         assert rec.confidence_interval_high == 0.99

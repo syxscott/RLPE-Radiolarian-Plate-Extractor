@@ -1658,9 +1658,7 @@ class RadiolarianPipeline:
                 # FigureRecord.panel_ids). Computed once outside
                 # the loop below.
                 meta["panel_ids"] = [
-                    other.get("panel_id")
-                    for other in figure_matches
-                    if other.get("panel_id")
+                    other.get("panel_id") for other in figure_matches if other.get("panel_id")
                 ]
                 # ``extraction_method`` defaults to the classical
                 # heuristic path's "heuristic" string. LLM-first
@@ -1730,10 +1728,7 @@ class RadiolarianPipeline:
         # ``config.extra.get(...)`` and the CLI only set the typed
         # attribute -- so 0/N rows ever reached Stage 4.5 even with
         # ``--m3-per-panel``.
-        if (
-            self.config.m3_per_panel_enabled
-            and self.m3_engine is not None
-        ):
+        if self.config.m3_per_panel_enabled and self.m3_engine is not None:
             results = self._apply_m3_per_panel_species_id(results, paper_id)
         # Round 7 multi-plate enrichment: when the OpenDataLoader
         # caption-image pairing missed a plate (e.g. Bandini 2011 Plate
@@ -2004,8 +1999,7 @@ class RadiolarianPipeline:
         if not yolo_path:
             return {}
         try:
-            from .layout import detect_figure_regions_yolo
-            from .layout import PageRecord
+            from .layout import PageRecord, detect_figure_regions_yolo
         except ImportError:
             return {}
         out: dict[str, list[dict[str, Any]]] = {}
@@ -2044,9 +2038,7 @@ class RadiolarianPipeline:
             # matcher in ``_apply_stage3_bbox_crops`` finds a hit.
             # YOLO regions are already in detection-confidence order;
             # we sort by ``(bbox.y, bbox.x)`` to mimic reading order.
-            sorted_regions = sorted(
-                regions, key=lambda r: (int(r.bbox[1]), int(r.bbox[0]))
-            )
+            sorted_regions = sorted(regions, key=lambda r: (int(r.bbox[1]), int(r.bbox[0])))
             figure_rows = (figure_id_to_rows or {}).get(fig_id, [])
             # Rows may have panel_ids in any order — sort them by
             # the same reading order heuristic (no bbox on rows, so
@@ -2070,9 +2062,7 @@ class RadiolarianPipeline:
                     matched_row = sorted_rows[i]
                     row_pid = str(matched_row.get("panel_id") or "")
                     row_visible = (
-                        (matched_row.get("metadata") or {}).get("label_text")
-                        or row_pid
-                        or None
+                        (matched_row.get("metadata") or {}).get("label_text") or row_pid or None
                     )
                 else:
                     # More YOLO detections than rows → synthesise a
@@ -3114,8 +3104,7 @@ class RadiolarianPipeline:
                 )
             except Exception as exc:
                 logger.warning(
-                    "_apply_morphology_enrichment: M3 call failed for "
-                    "paper=%s species=%s: %s",
+                    "_apply_morphology_enrichment: M3 call failed for paper=%s species=%s: %s",
                     paper_id,
                     species,
                     exc,
@@ -3158,9 +3147,7 @@ class RadiolarianPipeline:
                     record_payload[field_name] = parsed[field_name]
             feats = parsed.get("diagnostic_features") or []
             if isinstance(feats, list):
-                record_payload["diagnostic_features"] = [
-                    str(x) for x in feats if str(x).strip()
-                ]
+                record_payload["diagnostic_features"] = [str(x) for x in feats if str(x).strip()]
             try:
                 rec = MorphologyRecord.model_validate(record_payload)
             except Exception as exc:
@@ -3294,8 +3281,7 @@ class RadiolarianPipeline:
                     # "3" — string equality fails and Strategy 4
                     # never fires on production papers.
                     "figure_number": (
-                        str(md.get("figure_number") or row.get("figure_number") or "")
-                        .strip()
+                        str(md.get("figure_number") or row.get("figure_number") or "").strip()
                     ),
                 }
             )
@@ -3475,10 +3461,7 @@ class RadiolarianPipeline:
                 if md.get("cross_refs"):
                     continue  # already populated
                 cap = (
-                    md.get("caption")
-                    or md.get("caption_text")
-                    or row.get("caption_snippet")
-                    or ""
+                    md.get("caption") or md.get("caption_text") or row.get("caption_snippet") or ""
                 )
                 fig_id = row.get("figure_id") or md.get("figure_id") or ""
                 refs = parse_cross_refs(cap, current_fig_id=fig_id)
@@ -3771,18 +3754,13 @@ class RadiolarianPipeline:
                 # reads these keys from ``match.metadata``; without
                 # the stamps the GROBID path emitted FigureRecords
                 # with all four fields at defaults.
-                _grobid_fig_type = (
-                    getattr(caption, "figure_type", None)
-                    or classify_figure_type(getattr(caption, "text", "") or "", region.crop_path)
+                _grobid_fig_type = getattr(caption, "figure_type", None) or classify_figure_type(
+                    getattr(caption, "text", "") or "", region.crop_path
                 )
                 _grobid_panel_ids = [
-                    other.get("panel_id")
-                    for other in figure_matches
-                    if other.get("panel_id")
+                    other.get("panel_id") for other in figure_matches if other.get("panel_id")
                 ]
-                _grobid_image_path = (
-                    region.crop_path or best_page.image_path
-                )
+                _grobid_image_path = region.crop_path or best_page.image_path
                 for match in figure_matches:
                     panel_id = match.get("panel_id")
                     match_meta = match.get("metadata", {})

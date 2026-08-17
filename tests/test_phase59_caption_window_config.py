@@ -49,8 +49,8 @@ def test_no_hardcoded_minus_2_neighbour_in_grobid_branch() -> None:
     pattern = re.compile(r"best_page\.page_index\s*-\s*2\b")
     matches = pattern.findall(src)
     assert not matches, (
-        f"Bug 2.8: hardcoded neighbour offset 'best_page.page_index - 2' "
-        f"still in pipeline.py — must use self.config.od_caption_window."
+        "Bug 2.8: hardcoded neighbour offset 'best_page.page_index - 2' "
+        "still in pipeline.py — must use self.config.od_caption_window."
     )
 
     pattern2 = re.compile(r"best_page\.page_index\s*\+\s*1\b")
@@ -74,10 +74,8 @@ def test_pipeline_uses_od_caption_window_for_neighbour_expansion() -> None:
     anchor = "candidate_pages = [best_page]"
     fn_start = src.find(anchor)
     assert fn_start >= 0, "candidate_pages expansion not found"
-    fn_body = src[fn_start:fn_start + 2000]
-    assert (
-        "od_caption_window" in fn_body or "caption_window" in fn_body
-    ), (
+    fn_body = src[fn_start : fn_start + 2000]
+    assert "od_caption_window" in fn_body or "caption_window" in fn_body, (
         "Bug 2.8: candidate-pages expansion must reference "
         "config.od_caption_window or config.caption_window."
     )
@@ -85,9 +83,9 @@ def test_pipeline_uses_od_caption_window_for_neighbour_expansion() -> None:
 
 def test_pipelineconfig_has_od_caption_window() -> None:
     """Sanity-check: PipelineConfig.od_caption_window exists and is an int."""
-    from rlpe.config import PipelineConfig
-
     import inspect
+
+    from rlpe.config import PipelineConfig
 
     sig = inspect.signature(PipelineConfig)
     assert "od_caption_window" in sig.parameters

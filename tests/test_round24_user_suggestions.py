@@ -29,9 +29,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def _read(rel: str) -> str:
-    return Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel
-    ).read_text(encoding="utf-8")
+    return Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel).read_text(
+        encoding="utf-8"
+    )
 
 
 # --- WS-R24-A: Excel multi-sheet export --------------------------------
@@ -42,9 +42,7 @@ def test_xlsx_exporter_module_exists():
     multi-sheet Excel export. The module must exist and define
     the 5 expected sheet columns."""
     src = _read("src/rlpe/exporters/xlsx.py")
-    assert "def write_xlsx(" in src, (
-        "xlsx.py must define write_xlsx() — Round 24 export endpoint."
-    )
+    assert "def write_xlsx(" in src, "xlsx.py must define write_xlsx() — Round 24 export endpoint."
     # The 4 NON-default sheets must use ``wb.create_sheet``.
     # The first sheet ("panels") is the default active sheet
     # (``wb.active``), so we check for the title assignment
@@ -55,11 +53,9 @@ def test_xlsx_exporter_module_exists():
         "for the first panel sheet."
     )
     # The 4 remaining sheets must use ``wb.create_sheet``
-    for sheet in ("geology_contexts", "localities",
-                 "paleo_coordinates", "legend"):
+    for sheet in ("geology_contexts", "localities", "paleo_coordinates", "legend"):
         assert f'wb.create_sheet("{sheet}")' in src, (
-            f"xlsx.py missing create_sheet(\"{sheet}\") — Round 24 "
-            "export must include this sheet."
+            f'xlsx.py missing create_sheet("{sheet}") — Round 24 export must include this sheet.'
         )
 
 
@@ -68,14 +64,12 @@ def test_xlsx_endpoint_exists():
     the API app and return the right media type."""
     src = _read("src/rlpe/api/app.py")
     assert "/export.xlsx" in src, (
-        "api/app.py missing /export.xlsx endpoint — Round 24 added "
-        "this for the Excel download."
+        "api/app.py missing /export.xlsx endpoint — Round 24 added this for the Excel download."
     )
     # The endpoint must set the right media type so browsers save
     # as .xlsx
     assert "vnd.openxmlformats-officedocument.spreadsheetml.sheet" in src, (
-        "Excel endpoint missing correct media type — browsers may "
-        "save as .zip instead of .xlsx."
+        "Excel endpoint missing correct media type — browsers may save as .zip instead of .xlsx."
     )
 
 
@@ -84,9 +78,7 @@ def test_xlsx_includes_legend():
     (古环境 / 氧化还原 / 地球化学 / 沉积相)."""
     src = _read("src/rlpe/exporters/xlsx.py")
     for needle in ("paleoenvironment", "redox", "chemostrat", "facies"):
-        assert needle in src, (
-            f"xlsx.py missing the {needle} column descriptor in legend."
-        )
+        assert needle in src, f"xlsx.py missing the {needle} column descriptor in legend."
 
 
 def test_frontend_export_button_uses_excel():
@@ -94,8 +86,7 @@ def test_frontend_export_button_uses_excel():
     the old CSV)."""
     src = _read("web/index.html")
     assert "导出 Excel" in src, (
-        "index.html still has the old '导出 CSV' button — Round 24 "
-        "renamed it to '导出 Excel'."
+        "index.html still has the old '导出 CSV' button — Round 24 renamed it to '导出 Excel'."
     )
     assert "导出当前筛选结果为 CSV" not in src, (
         "index.html still has the old CSV label — Round 24 replaces "
@@ -114,9 +105,7 @@ def test_geology_link_record_has_4_new_fields():
 
     fields = set(GeologyLinkRecord.model_fields.keys())
     for name in ("paleoenvironment", "redox", "chemostrat", "facies"):
-        assert name in fields, (
-            f"GeologyLinkRecord missing {name} — Round 24 audit fix."
-        )
+        assert name in fields, f"GeologyLinkRecord missing {name} — Round 24 audit fix."
 
 
 def test_environment_dictionaries_defined():
@@ -124,9 +113,7 @@ def test_environment_dictionaries_defined():
     so the regexes have something to match against."""
     src = _read("src/rlpe/geology_extraction.py")
     for name in ("_PALEOENV_VOCAB", "_REDOX_VOCAB", "_CHEMOSTRAT_VOCAB", "_FACIES_VOCAB"):
-        assert f"{name} = (" in src, (
-            f"geology_extraction.py missing {name} — Round 24 vocab."
-        )
+        assert f"{name} = (" in src, f"geology_extraction.py missing {name} — Round 24 vocab."
 
 
 def test_environment_patterns_defined():
@@ -162,8 +149,7 @@ def test_environment_extraction_end_to_end():
     r = records[0]
     # Round 24: at least one of the 4 proxies should be populated
     populated = sum(
-        1 for k in ("paleoenvironment", "redox", "chemostrat", "facies")
-        if getattr(r, k)
+        1 for k in ("paleoenvironment", "redox", "chemostrat", "facies") if getattr(r, k)
     )
     assert populated >= 2, (
         f"Expected at least 2 of 4 proxies populated, got {populated}: "
@@ -171,9 +157,7 @@ def test_environment_extraction_end_to_end():
         f"chemostrat={r.chemostrat!r} facies={r.facies!r}"
     )
     # chemostrat should definitely match (text has 'CIE' and 'Siberian Traps')
-    assert r.chemostrat, (
-        f"chemostrat should be 'CIE' or 'Siberian Traps', got {r.chemostrat!r}"
-    )
+    assert r.chemostrat, f"chemostrat should be 'CIE' or 'Siberian Traps', got {r.chemostrat!r}"
 
 
 def test_environment_in_converter():
@@ -181,9 +165,7 @@ def test_environment_in_converter():
     4 new fields to the Pydantic GeologyLinkRecord."""
     src = _read("src/rlpe/converters.py")
     for name in ("paleoenvironment", "redox", "chemostrat", "facies"):
-        assert f"{name}=g.get(" in src, (
-            f"converters.py doesn't forward {name} from geology_links."
-        )
+        assert f"{name}=g.get(" in src, f"converters.py doesn't forward {name} from geology_links."
 
 
 # --- WS-R24-C: warning pollution -----------------------------------------

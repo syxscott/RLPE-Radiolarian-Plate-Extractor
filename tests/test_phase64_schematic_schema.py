@@ -49,7 +49,6 @@ import pytest
 
 from rlpe.schema_models import PanelMetadata
 
-
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCHEMA_PATH = _REPO_ROOT / "schemas" / "rlpe-v1.0.0.json"
 

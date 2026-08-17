@@ -256,8 +256,9 @@ class TestM7TotalCallsReplayOnV18Cached:
         backend.fallback_4xx_hints = 0
         backend.max_concurrent = 8
         backend.data_outbound_policy = "api_full"
-        import anthropic
         from unittest.mock import MagicMock
+
+        import anthropic
 
         backend._anthropic = anthropic
         backend._client = MagicMock()
@@ -274,9 +275,10 @@ class TestM7TotalCallsReplayOnV18Cached:
         # and the test still passed). Drive the REAL ``_call_api``
         # retry loop instead: 3 retryable 500s then a success, and
         # assert the production counter.
+        from unittest.mock import MagicMock, patch
+
         import anthropic
         import httpx
-        from unittest.mock import MagicMock, patch
 
         attempts = {"n": 0}
 
@@ -289,10 +291,12 @@ class TestM7TotalCallsReplayOnV18Cached:
                     f"simulated 500 #{attempts['n']}", response=resp, body=None
                 )
             ok_resp = MagicMock()
-            ok_resp.content = [MagicMock(
-                type="text",
-                text='{"label": "1", "species": "Test species", "confidence": 0.9}',
-            )]
+            ok_resp.content = [
+                MagicMock(
+                    type="text",
+                    text='{"label": "1", "species": "Test species", "confidence": 0.9}',
+                )
+            ]
             ok_resp.id = "test-id"
             ok_resp.model = "MiniMax-M3-fake"
             ok_resp.usage = None
@@ -310,8 +314,7 @@ class TestM7TotalCallsReplayOnV18Cached:
         with backend._lock:
             calls = backend.total_calls
         assert calls == 3, (
-            f"After 2 failed + 1 success attempts, production "
-            f"total_calls should be 3; got {calls}."
+            f"After 2 failed + 1 success attempts, production total_calls should be 3; got {calls}."
         )
 
     def test_source_has_total_calls_at_entry_of_try(self):

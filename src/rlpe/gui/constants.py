@@ -5,12 +5,12 @@ Centralised so:
 * Future i18n work can replace this file with a translator.
 * Tests don't need to scrape string literals from widgets.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
-
 
 # Project root (parent of src/). Used by Phase 49/50 to scan
 # ``service_work/`` and ``work/`` for completed jobs to repopulate
@@ -45,6 +45,7 @@ TAB_JOBS: Final[int] = 1
 TAB_RESULTS: Final[int] = 2
 TAB_SETTINGS: Final[int] = 3
 
+
 # Result columns shown in the results table
 @dataclass(frozen=True)
 class ResultColumn:
@@ -55,20 +56,20 @@ class ResultColumn:
 
 
 RESULT_COLUMNS: Final[tuple[ResultColumn, ...]] = (
-    ResultColumn("species",        "Species (Latin)",        260, "Latin binomial extracted from caption"),
-    ResultColumn("panel_id",       "Panel ID",              180, "Stable panel identifier (paper/figure/panel)"),
-    ResultColumn("confidence",    "Confidence",              80, "Pipeline confidence (0..1)"),
+    ResultColumn("species", "Species (Latin)", 260, "Latin binomial extracted from caption"),
+    ResultColumn("panel_id", "Panel ID", 180, "Stable panel identifier (paper/figure/panel)"),
+    ResultColumn("confidence", "Confidence", 80, "Pipeline confidence (0..1)"),
     # Phase 54 audit: M1 — column key used to be ``caption_snip`` but
     # the pipeline writes ``caption_snippet``. The mismatch silently
     # produced an empty "Caption snippet" column (row.get("caption_snip")
     # → None → "—") for every job. Align the column key with the
     # pipeline's field name.
-    ResultColumn("caption_snippet", "Caption snippet",        360, "First 200 chars of figure caption"),
-    ResultColumn("page_index",     "Page",                    60, "PDF page index (1-based)"),
-    ResultColumn("family",         "PBDB Family",            180, "PaleoDB family (or genus fallback)"),
-    ResultColumn("country",        "Country",                140, "Country / locality name (fallback)"),
-    ResultColumn("biozone",        "Biozone",                160, "PaleoDB biozone / age interval"),
-    ResultColumn("coord",          "Lat / Lon",              140, "Centroid coordinates (lat, lon)"),
+    ResultColumn("caption_snippet", "Caption snippet", 360, "First 200 chars of figure caption"),
+    ResultColumn("page_index", "Page", 60, "PDF page index (1-based)"),
+    ResultColumn("family", "PBDB Family", 180, "PaleoDB family (or genus fallback)"),
+    ResultColumn("country", "Country", 140, "Country / locality name (fallback)"),
+    ResultColumn("biozone", "Biozone", 160, "PaleoDB biozone / age interval"),
+    ResultColumn("coord", "Lat / Lon", 140, "Centroid coordinates (lat, lon)"),
 )
 
 # Job statuses (must match the API/web UI vocabulary)
@@ -143,11 +144,11 @@ RANGE_YOLO_IOU: Final[tuple[float, float]] = (0.01, 1.0)
 
 # Status colour mapping (used by QSS / QPalette)
 STATUS_COLORS: Final[dict[str, str]] = {
-    STATUS_QUEUED:   "#7f7f7f",  # grey
-    STATUS_RUNNING:  "#1f77b4",  # blue
-    STATUS_DONE:     "#2ca02c",  # green
-    STATUS_FAILED:   "#d62728",  # red
-    STATUS_CANCELLED:"#ff7f0e",  # orange
+    STATUS_QUEUED: "#7f7f7f",  # grey
+    STATUS_RUNNING: "#1f77b4",  # blue
+    STATUS_DONE: "#2ca02c",  # green
+    STATUS_FAILED: "#d62728",  # red
+    STATUS_CANCELLED: "#ff7f0e",  # orange
 }
 
 # QSettings keys
@@ -176,17 +177,17 @@ DEFAULT_API_URL: Final[str] = "http://127.0.0.1:8000"
 #     was hard-coded at 360px which clipped the Chinese placeholder)
 
 # Editable text fields
-INPUT_WIDTH_SHORT: Final[int] = 100      # SpinBox for small ints (0-99)
-INPUT_WIDTH_MEDIUM: Final[int] = 180     # Single-line text (URLs, paths)
-INPUT_WIDTH_LONG: Final[int] = 320      # Long URLs, search boxes
-INPUT_WIDTH_PATH: Final[int] = 420      # File paths (PDF, output dir)
-INPUT_WIDTH_OCR_LANG: Final[int] = 160   # OCR language code lists
-INPUT_WIDTH_FULL: Final[int] = 600      # Long-form comments / descriptors
+INPUT_WIDTH_SHORT: Final[int] = 100  # SpinBox for small ints (0-99)
+INPUT_WIDTH_MEDIUM: Final[int] = 180  # Single-line text (URLs, paths)
+INPUT_WIDTH_LONG: Final[int] = 320  # Long URLs, search boxes
+INPUT_WIDTH_PATH: Final[int] = 420  # File paths (PDF, output dir)
+INPUT_WIDTH_OCR_LANG: Final[int] = 160  # OCR language code lists
+INPUT_WIDTH_FULL: Final[int] = 600  # Long-form comments / descriptors
 
 # Buttons
 BUTTON_MIN_WIDTH: Final[int] = 90
-BUTTON_MIN_HEIGHT: Final[int] = 32     # Phase 36: bumped 30 → 32 for parity with input rows
-BUTTON_PRIMARY_HEIGHT: Final[int] = 34     # Main action button (e.g. Start)
+BUTTON_MIN_HEIGHT: Final[int] = 32  # Phase 36: bumped 30 → 32 for parity with input rows
+BUTTON_PRIMARY_HEIGHT: Final[int] = 34  # Main action button (e.g. Start)
 
 # QComboBox
 COMBO_MIN_WIDTH: Final[int] = 130
@@ -200,27 +201,18 @@ COMBO_MIN_WIDTH: Final[int] = 130
 # (e.g. swapping (1, 10) to (10, 1)) fails loudly here instead of
 # producing a silent zero-row run later.
 def _validate_ranges() -> None:
-    import sys as _sys
     for _name, _val in list(globals().items()):
         if not _name.startswith("RANGE_"):
             continue
         if not isinstance(_val, tuple) or len(_val) != 2:
-            raise ValueError(
-                f"constants.{_name} must be a 2-tuple, got {_val!r}"
-            )
+            raise ValueError(f"constants.{_name} must be a 2-tuple, got {_val!r}")
         _lo, _hi = _val
         if not isinstance(_lo, (int, float)) or not isinstance(_hi, (int, float)):
-            raise ValueError(
-                f"constants.{_name} bounds must be numeric, got {_val!r}"
-            )
+            raise ValueError(f"constants.{_name} bounds must be numeric, got {_val!r}")
         if type(_lo) is not type(_hi):
-            raise ValueError(
-                f"constants.{_name} bounds must be same type, got {_val!r}"
-            )
+            raise ValueError(f"constants.{_name} bounds must be same type, got {_val!r}")
         if _lo >= _hi:
-            raise ValueError(
-                f"constants.{_name} must satisfy min < max, got {_val!r}"
-            )
+            raise ValueError(f"constants.{_name} must satisfy min < max, got {_val!r}")
 
 
 _validate_ranges()
@@ -231,8 +223,13 @@ _validate_ranges()
 # check at import time that the constant is one of the known
 # backends, not that pipeline_worker actually uses it.
 _KNOWN_LLM_BACKENDS: Final[tuple[str, ...]] = (
-    "minimax", "minimax-m3", "minimax_api", "rules",
-    "transformers", "ollama", "llamacpp",
+    "minimax",
+    "minimax-m3",
+    "minimax_api",
+    "rules",
+    "transformers",
+    "ollama",
+    "llamacpp",
 )
 if DEFAULT_LLM_BACKEND not in _KNOWN_LLM_BACKENDS:
     raise ValueError(
@@ -268,6 +265,7 @@ def ocr_lang_to_friendly_name(iso_code: str) -> str:
         if code == iso_code:
             # Use the current language to pick the right name.
             from . import i18n as _i18n
+
             lang = _i18n.current_language()
             return zh_name if lang == "zh_CN" else en_name
     return iso_code
@@ -280,6 +278,7 @@ def ocr_lang_friendly_options() -> list[tuple[str, str]]:
     of ``"en"`` / ``"ch_sim"``.
     """
     from . import i18n as _i18n
+
     lang = _i18n.current_language()
     return [
         (code, zh_name if lang == "zh_CN" else en_name)
@@ -305,6 +304,7 @@ OCR_BACKEND_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
 def ocr_backend_friendly_options() -> list[tuple[str, str]]:
     """``[(code, friendly_name), ...]`` in the current language."""
     from . import i18n as _i18n
+
     lang = _i18n.current_language()
     return [
         (code, zh_name if lang == "zh_CN" else en_name)
@@ -327,6 +327,7 @@ LLM_BACKEND_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
 def llm_backend_friendly_options() -> list[tuple[str, str]]:
     """``[(code, friendly_name), ...]`` in the current language."""
     from . import i18n as _i18n
+
     lang = _i18n.current_language()
     return [
         (code, zh_name if lang == "zh_CN" else en_name)
@@ -346,6 +347,7 @@ M3_PROMPT_LANG_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
 def m3_prompt_lang_friendly_options() -> list[tuple[str, str]]:
     """``[(code, friendly_name), ...]`` in the current language."""
     from . import i18n as _i18n
+
     lang = _i18n.current_language()
     return [
         (code, zh_name if lang == "zh_CN" else en_name)
@@ -364,10 +366,10 @@ THEME_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
 def theme_friendly_options() -> list[tuple[str, str]]:
     """``[(code, friendly_name), ...]`` in the current language."""
     from . import i18n as _i18n
+
     lang = _i18n.current_language()
     return [
-        (code, zh_name if lang == "zh_CN" else en_name)
-        for code, en_name, zh_name in THEME_OPTIONS
+        (code, zh_name if lang == "zh_CN" else en_name) for code, en_name, zh_name in THEME_OPTIONS
     ]
 
 
@@ -380,5 +382,6 @@ def friendly_name_for(code: str, options) -> str:
             raw, en_name, zh_name = entry
             if raw == code:
                 from . import i18n as _i18n
+
                 return zh_name if _i18n.current_language() == "zh_CN" else en_name
     return code

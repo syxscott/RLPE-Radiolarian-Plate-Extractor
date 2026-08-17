@@ -7,6 +7,7 @@ the 4-corner list-of-lists shape. PaddleOCR 3.x returns:
   * 8-element flat:    ``[x1, y1, x2, y2, x3, y3, x4, y4]`` (xy order)
 A regression test for each shape prevents future drift.
 """
+
 from __future__ import annotations
 
 import pytest

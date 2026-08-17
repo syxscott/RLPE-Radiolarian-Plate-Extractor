@@ -41,8 +41,7 @@ class TestBraginPaperIdAlias:
             "the Bragin hash->slug alias must be present."
         )
         assert _PAPER_ID_ALIASES.get("2e85364a3c605326") == "bragin2025", (
-            "Expected the Bragin OD hash '2e85364a3c605326' to alias "
-            "to the gold slug 'bragin2025'."
+            "Expected the Bragin OD hash '2e85364a3c605326' to alias to the gold slug 'bragin2025'."
         )
 
     def test_normalize_paper_id_function(self):
@@ -56,19 +55,13 @@ class TestBraginPaperIdAlias:
         from rlpe.evaluation.metrics import normalize_paper_id_for_eval
 
         # The canonical mismatch that motivated this fix.
-        assert normalize_paper_id_for_eval(
-            "2e85364a3c605326", "bragin2025"
-        ) is True
+        assert normalize_paper_id_for_eval("2e85364a3c605326", "bragin2025") is True
         # Symmetry: a caller may pass either side first.
-        assert normalize_paper_id_for_eval(
-            "bragin2025", "2e85364a3c605326"
-        ) is True
+        assert normalize_paper_id_for_eval("bragin2025", "2e85364a3c605326") is True
         # Identical ids always match (no alias needed).
         assert normalize_paper_id_for_eval("bragin2025", "bragin2025") is True
         # Unrelated papers never match through the alias map.
-        assert normalize_paper_id_for_eval(
-            "5d5264c7bf0b0a43", "bragin2025"
-        ) is False
+        assert normalize_paper_id_for_eval("5d5264c7bf0b0a43", "bragin2025") is False
         # Empty / None inputs are non-matches (defensive — the eval
         # loop already filters these, but the helper should be safe
         # to call from arbitrary contexts).
@@ -104,8 +97,7 @@ class TestBraginPaperIdAlias:
         # what the gold side expects on a couple of those panels so
         # we can also see ``species_tp > 0``.
         gold = [
-            GoldPanel(PAPER, GOLD_FIGURE, str(i), "Pantanellium moscowiense")
-            for i in range(1, 12)
+            GoldPanel(PAPER, GOLD_FIGURE, str(i), "Pantanellium moscowiense") for i in range(1, 12)
         ]
         preds = [
             {
@@ -119,8 +111,7 @@ class TestBraginPaperIdAlias:
         ]
         report = evaluate(preds, gold)
         assert PAPER in report.papers, (
-            "Expected Bragin to appear in the per-paper report "
-            "after the paper_id alias fix."
+            "Expected Bragin to appear in the per-paper report after the paper_id alias fix."
         )
         metrics = report.papers[PAPER]
         assert metrics.n_gold == 11

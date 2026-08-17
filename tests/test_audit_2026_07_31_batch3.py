@@ -122,9 +122,7 @@ class TestPhraseFalsePositives:
             "Sicilian area at the Late Triassic time."
         )
         assert ents == []
-        ents = _extract_taxon_entities_from_text(
-            "Explanation of Plate 1. Unuma echinatus Kocher"
-        )
+        ents = _extract_taxon_entities_from_text("Explanation of Plate 1. Unuma echinatus Kocher")
         assert any(e.text == "Unuma echinatus" for e in ents)
 
 

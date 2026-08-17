@@ -12,11 +12,12 @@ defaulting to "other" (backward-compatible), and:
   - ``extract_species_tokens()`` (new helper) recognises taxa-shaped
     strings and stamps ``token_type="species"`` on those.
 """
+
 from __future__ import annotations
 
 import pytest
 
-from rlpe.ocr import OCRToken, OCRBackend, extract_species_tokens
+from rlpe.ocr import OCRBackend, OCRToken, extract_species_tokens
 
 
 def test_ocr_token_has_type_field():
@@ -33,12 +34,15 @@ def test_recognize_panel_label_stamps_label_type():
     # We don't want to spin up PaddleOCR / EasyOCR — patch the
     # internal _ocr_array to return one synthetic token per corner band.
     backend = OCRBackend(backend="easyocr")
+
     # Stub the internal helper so we don't need a real OCR engine.
     def _fake_ocr_array(img):
         return [OCRToken(text="3", confidence=0.9, bbox=(0, 0, 4, 4))]
+
     backend._ocr_array = _fake_ocr_array  # type: ignore[assignment]
     # Recognise on a small synthetic image, panel bbox anywhere.
     import numpy as np
+
     img = np.full((100, 100, 3), 255, dtype=np.uint8)
     tokens = backend.recognize_panel_label(img, bbox=(0, 0, 100, 100), label_corner="tl")
     assert tokens, "recognize_panel_label returned no tokens"

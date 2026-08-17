@@ -30,8 +30,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.exporters.archive import _occurrence_row  # noqa: E402
 from rlpe.exporters import AnalysisOptions  # noqa: E402
+from rlpe.exporters.archive import _occurrence_row  # noqa: E402
 from rlpe.schema_models import (  # noqa: E402
     PanelMetadata,
     PanelRecord,
@@ -78,7 +78,9 @@ def _panel(species: str) -> PanelRecord:
         ("Genus species cf. S. excelsa", "Genus", "species"),
     ],
 )
-def test_occurrence_row_uses_taxon_parts(species: str, expected_genus: str, expected_specific_epithet: str):
+def test_occurrence_row_uses_taxon_parts(
+    species: str, expected_genus: str, expected_specific_epithet: str
+):
     """Archive output for diverse species shapes uses ``_taxon_parts``."""
     row = _occurrence_row(_panel(species))
     assert row["genus"] == expected_genus, (

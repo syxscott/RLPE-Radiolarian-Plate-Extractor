@@ -53,7 +53,7 @@ def test_results_tab_csv_uses_analysis_sanitiser():
     assert fn_idx > 0
     # Slice forward until the next def or end-of-file
     end = src.find("\n    def ", fn_idx + 1)
-    fn_block = src[fn_idx:end if end > 0 else len(src)]
+    fn_block = src[fn_idx : end if end > 0 else len(src)]
     assert "_sanitise_csv_cell" in fn_block, (
         "results_tab._export_csv is writing cells without "
         "_sanitise_csv_cell — Excel formula injection is possible. "
@@ -68,7 +68,7 @@ def test_results_tab_csv_uses_utf8_sig_bom():
     src = _read_results_tab_csv_writer()
     fn_idx = src.find("def _export_csv")
     end = src.find("\n    def ", fn_idx + 1)
-    fn_block = src[fn_idx:end if end > 0 else len(src)]
+    fn_block = src[fn_idx : end if end > 0 else len(src)]
     assert "utf-8-sig" in fn_block, (
         "results_tab._export_csv is not writing a UTF-8 BOM — Excel "
         "on Windows will mangle Greek / CJK. Phase 63 Plan 6.10 fix "
@@ -82,7 +82,7 @@ def test_results_tab_csv_handles_nan_inf():
     src = _read_results_tab_csv_writer()
     fn_idx = src.find("def _export_csv")
     end = src.find("\n    def ", fn_idx + 1)
-    fn_block = src[fn_idx:end if end > 0 else len(src)]
+    fn_block = src[fn_idx : end if end > 0 else len(src)]
     # Either the analysis sanitiser is called (which handles NaN/Inf)
     # or the GUI performs an inline replacement. The csv module
     # doesn't natively handle NaN/Inf — pandas writes "nan"/"inf"

@@ -38,9 +38,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def _read(rel: str) -> str:
-    return Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel
-    ).read_text(encoding="utf-8")
+    return Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel).read_text(
+        encoding="utf-8"
+    )
 
 
 # --- 1) Age whitelist -------------------------------------------------------
@@ -126,9 +126,7 @@ def test_locality_upper_cretaceous_rejected():
     ]
     records = extract_geology_from_sections(sections)
     localities = [r.locality for r in records if r.locality]
-    assert "Upper Cretaceous" not in localities, (
-        f"Period used as locality: {localities}"
-    )
+    assert "Upper Cretaceous" not in localities, f"Period used as locality: {localities}"
 
 
 def test_locality_karnezeika_kept():
@@ -178,19 +176,15 @@ def test_formation_with_digits_rejected():
     records = extract_geology_from_sections(sections)
     formations = [r.formation for r in records if r.formation]
     # The digit-containing match should be filtered out
-    assert not any("19" in f for f in formations), (
-        f"Formation with digit leaked: {formations}"
-    )
+    assert not any("19" in f for f in formations), f"Formation with digit leaked: {formations}"
     # The real formation should still be present
-    assert any("Fonzaso" in f for f in formations), (
-        f"Real formation lost: {formations}"
-    )
+    assert any("Fonzaso" in f for f in formations), f"Real formation lost: {formations}"
 
 
 def test_formation_filter_helper_exists():
     """Source guard: _formation_name_ok must exist and reject digits."""
-    from rlpe.geology_extraction import extract_geology_from_sections
     import rlpe.geology_extraction as ge
+    from rlpe.geology_extraction import extract_geology_from_sections
 
     # The function name may be local; check by source inspection
     src = _read("src/rlpe/geology_extraction.py")
@@ -230,12 +224,8 @@ def test_references_section_skipped():
     localities = [r.locality for r in records if r.locality]
     countries = [r.country for r in records if r.country]
     # The references-section leaks must be gone
-    assert "Fonzaso Formation" not in formations, (
-        f"Reference leaked into formation: {formations}"
-    )
-    assert "Japan" not in countries, (
-        f"Reference country leaked: {countries}"
-    )
+    assert "Fonzaso Formation" not in formations, f"Reference leaked into formation: {formations}"
+    assert "Japan" not in countries, f"Reference country leaked: {countries}"
 
 
 def test_grobid_recognises_references_section():
@@ -306,9 +296,7 @@ def test_systematic_palaeontology_does_not_leak_into_panel_fallback():
     assert "Fonzaso Formation" not in formations, (
         f"Systematic Palaeontology leaked Fonzaso: {formations}"
     )
-    assert "Japan" not in countries, (
-        f"Systematic Palaeontology leaked Japan: {countries}"
-    )
+    assert "Japan" not in countries, f"Systematic Palaeontology leaked Japan: {countries}"
 
 
 def test_systematic_palaeontology_filter_source_guard():

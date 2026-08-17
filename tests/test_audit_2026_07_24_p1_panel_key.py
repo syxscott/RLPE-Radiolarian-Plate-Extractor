@@ -32,20 +32,30 @@ def test_by_panel_id_uses_composite_key() -> None:
 
 def test_linkresult_isolation_across_plates() -> None:
     """Simulate two plates each with panel "5"; ensure correct linking."""
-    from src.rlpe.cross_figure_linker import LinkResult, LINK_SOURCE_SAMPLE
+    from src.rlpe.cross_figure_linker import LINK_SOURCE_SAMPLE, LinkResult
 
     # Two LinkResults for the same panel_id but different figures
     lr_plate07 = LinkResult(
-        panel_id="5", species=None, figure_id="pl07",
-        formation="Scaglia Rossa", age="Late Cretaceous",
-        locality="Sicily", confidence=1.0,
-        source=LINK_SOURCE_SAMPLE, evidence="",
+        panel_id="5",
+        species=None,
+        figure_id="pl07",
+        formation="Scaglia Rossa",
+        age="Late Cretaceous",
+        locality="Sicily",
+        confidence=1.0,
+        source=LINK_SOURCE_SAMPLE,
+        evidence="",
     )
     lr_plate09 = LinkResult(
-        panel_id="5", species=None, figure_id="pl09",
-        formation="Rosso Ammonitico", age="Late Cretaceous",
-        locality="Western Sicily", confidence=1.0,
-        source=LINK_SOURCE_SAMPLE, evidence="",
+        panel_id="5",
+        species=None,
+        figure_id="pl09",
+        formation="Rosso Ammonitico",
+        age="Late Cretaceous",
+        locality="Western Sicily",
+        confidence=1.0,
+        source=LINK_SOURCE_SAMPLE,
+        evidence="",
     )
     # Build a synthetic by_panel_id with the composite key
     by_panel_id = {

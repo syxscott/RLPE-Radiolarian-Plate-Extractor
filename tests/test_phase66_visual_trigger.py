@@ -28,7 +28,6 @@ from rlpe.cross_figure_linker import (
     link_visual_coordinates,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -109,10 +108,12 @@ class _FakeM3Engine:
         plate_caption: str,
         strat_caption: str,
     ) -> dict[str, Any]:
-        self.calls.append({
-            "plate_caption": plate_caption,
-            "strat_caption": strat_caption,
-        })
+        self.calls.append(
+            {
+                "plate_caption": plate_caption,
+                "strat_caption": strat_caption,
+            }
+        )
         return self.response
 
 
@@ -322,10 +323,8 @@ class TestOutputShape:
         """Output is a list-of-lists — outer indexed by panel, inner
         is the list of visual links for that panel."""
         panels = [
-            _plate_panel(panel_id="p1", link_source=LINK_SOURCE_LOCALITY,
-                         link_confidence=0.7),
-            _plate_panel(panel_id="p2", link_source=LINK_SOURCE_LOCALITY,
-                         link_confidence=0.7),
+            _plate_panel(panel_id="p1", link_source=LINK_SOURCE_LOCALITY, link_confidence=0.7),
+            _plate_panel(panel_id="p2", link_source=LINK_SOURCE_LOCALITY, link_confidence=0.7),
         ]
         figures = [
             _paper_figure(figure_id="fig1", figure_type="plate"),

@@ -10,6 +10,7 @@ The fix stamps ``cost_summary["failed_with_thinking"] = True`` and
 exposes a counter ``failed_with_thinking`` on the backend so the
 ``/system/llm-status`` route can surface the rate.
 """
+
 from __future__ import annotations
 
 import pytest

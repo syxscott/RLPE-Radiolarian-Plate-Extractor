@@ -19,6 +19,7 @@ covers the heavy lifting in test_phase61_scale_bar_10x.py — we
 just want one extra lock-down that survives future refactors of
 ScaleInfo's warning field.
 """
+
 from __future__ import annotations
 
 from rlpe.scale_bar import ScaleInfo, merge_scale_info

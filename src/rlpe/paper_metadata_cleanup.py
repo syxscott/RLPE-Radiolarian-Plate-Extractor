@@ -225,11 +225,7 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
         # Phase 62 Plan 5 (Bug 5.14): negative entries (None) use
         # the much shorter 60s TTL so a transient outage recovers
         # within a minute rather than an hour.
-        ttl = (
-            _CROSSREF_NEGATIVE_TTL_SEC
-            if cached_value is None
-            else _CROSSREF_POSITIVE_TTL_SEC
-        )
+        ttl = _CROSSREF_NEGATIVE_TTL_SEC if cached_value is None else _CROSSREF_POSITIVE_TTL_SEC
         if (time.time() - cached_at) < ttl:
             return cached_value
     try:
@@ -264,9 +260,7 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
     except Exception as exc:
         # Round 23 audit: network / JSON / TLS errors should be
         # visible to operators (not silent debug-level).
-        logger.warning(
-            "Crossref lookup failed for DOI=%s: %s", doi, exc
-        )
+        logger.warning("Crossref lookup failed for DOI=%s: %s", doi, exc)
         # Phase 54 audit m19 — TTL the network failure too. Without
         # the cache entry the next call would hit the network again
         # and the operator would see the same warning in a tight

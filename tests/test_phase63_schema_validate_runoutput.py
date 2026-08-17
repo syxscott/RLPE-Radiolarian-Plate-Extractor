@@ -49,7 +49,6 @@ from rlpe.schema_models import (  # noqa: E402
     ScaleBarRecord,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = REPO_ROOT / "schemas" / f"rlpe-v{SCHEMA_VERSION}.json"
 
@@ -91,7 +90,11 @@ def _rich_run_output() -> RunOutput:
         biozone="N. optima Zone",
     )
     sb = ScaleBarRecord(
-        value=100.0, unit="um", source="caption", um_per_px=0.1, confidence=0.9,
+        value=100.0,
+        unit="um",
+        source="caption",
+        um_per_px=0.1,
+        confidence=0.9,
     )
     meta = PanelMetadata(
         panel_score=0.7,
@@ -143,8 +146,7 @@ def test_run_output_validates_against_published_schema():
     payload = run.model_dump()
     errors = list(validator.iter_errors(payload))
     assert errors == [], (
-        f"RunOutput fails published schema validation: "
-        f"{[e.message for e in errors]}"
+        f"RunOutput fails published schema validation: {[e.message for e in errors]}"
     )
 
 
@@ -180,26 +182,36 @@ def test_run_output_from_provenance_validates():
             "panel_score": 0.7,
             "extraction_method": "hybrid",
             "scale_bar": {
-                "value": 100.0, "unit": "um", "source": "caption",
-                "um_per_px": 0.1, "confidence": 0.9,
+                "value": 100.0,
+                "unit": "um",
+                "source": "caption",
+                "um_per_px": 0.1,
+                "confidence": 0.9,
             },
-            "geology_links": [{
-                "age": "Late Jurassic", "locality": "Italy",
-                "country": "Italy",
-                "latitude": 46.5, "longitude": 11.5,
-                "modern_latitude": 46.5, "modern_longitude": 11.5,
-                "ma_top": 152.1, "ma_base": 157.3, "ma_mid": 154.7,
-                "confidence": 0.8,
-            }],
+            "geology_links": [
+                {
+                    "age": "Late Jurassic",
+                    "locality": "Italy",
+                    "country": "Italy",
+                    "latitude": 46.5,
+                    "longitude": 11.5,
+                    "modern_latitude": 46.5,
+                    "modern_longitude": 11.5,
+                    "ma_top": 152.1,
+                    "ma_base": 157.3,
+                    "ma_mid": 154.7,
+                    "confidence": 0.8,
+                }
+            ],
         },
     )
     out = run_output_from_provenance(
-        build_provenance().to_dict(), [m],
+        build_provenance().to_dict(),
+        [m],
     )
     errors = list(validator.iter_errors(out))
     assert errors == [], (
-        f"run_output_from_provenance output fails published schema: "
-        f"{[e.message for e in errors]}"
+        f"run_output_from_provenance output fails published schema: {[e.message for e in errors]}"
     )
 
 

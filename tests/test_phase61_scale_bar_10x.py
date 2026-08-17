@@ -14,6 +14,7 @@ The fix:
     visibility.
   * When the ratio is < 2x: keep the higher-confidence value unchanged.
 """
+
 from __future__ import annotations
 
 import pytest

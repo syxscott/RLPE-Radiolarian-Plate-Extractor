@@ -42,9 +42,7 @@ def _make_strat_row(
 ) -> dict[str, Any]:
     md: dict[str, Any] = {"figure_type": "strat_column", "caption": caption}
     if formation or age or locality:
-        md["geology_links"] = [
-            {"formation": formation, "age": age, "locality": locality}
-        ]
+        md["geology_links"] = [{"formation": formation, "age": age, "locality": locality}]
     return {
         "paper_id": paper_id,
         "figure_id": figure_id,
@@ -76,10 +74,7 @@ class TestSampleIDLinkThroughPipeline:
         assert plate_out["metadata"]["link_confidence"] == 1.0
         # geology_links should have a new entry tagged with the linker source
         gl = plate_out["metadata"]["geology_links"]
-        assert any(
-            g.get("coord_source") == "cross_figure_linker:sample_match"
-            for g in gl
-        )
+        assert any(g.get("coord_source") == "cross_figure_linker:sample_match" for g in gl)
 
     def test_unlinked_when_no_match(self, pipe):
         plate = _make_plate_row(panel_id="p1", caption="no useful info")
@@ -113,12 +108,17 @@ class TestM3LinkThroughPipeline:
         p = RadiolarianPipeline(cfg)
         # Fake M3 engine with canned response. Use a low confidence
         # (0.3) so the pipeline's low-confidence review flag fires.
-        backend = FakeM3Backend(canned_responses=[
-            {"raw_text": '{"species": "G. s", "formation": "Scaglia", '
-                          '"age": "Late Cretaceous", "figure_id": "strat1", '
-                          '"confidence": 0.3}'}
-        ])
+        backend = FakeM3Backend(
+            canned_responses=[
+                {
+                    "raw_text": '{"species": "G. s", "formation": "Scaglia", '
+                    '"age": "Late Cretaceous", "figure_id": "strat1", '
+                    '"confidence": 0.3}'
+                }
+            ]
+        )
         from rlpe.m3_engine import M3Engine
+
         p.m3_engine = M3Engine(backend=backend, config={})
 
         plate = _make_plate_row(panel_id="p1", caption="Generic plate caption")
@@ -149,6 +149,7 @@ class TestNoPlatesNoOp:
 class TestDisabledFlag:
     def test_disabled_via_extra(self, tmp_path):
         from rlpe.pipeline import RadiolarianPipeline
+
         cfg = PipelineConfig(pdf_dir=tmp_path, work_dir=tmp_path / "work")
         cfg.extra["cross_figure_linker_enabled"] = False
         p = RadiolarianPipeline(cfg)

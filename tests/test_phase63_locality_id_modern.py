@@ -72,7 +72,7 @@ def test_locality_id_modern_takes_precedence():
     """When BOTH modern and legacy are set, modern wins (Round 25+)."""
     geo_modern_first = {
         "locality": "Italy",
-        "latitude": None,         # legacy missing
+        "latitude": None,  # legacy missing
         "longitude": None,
         "modern_latitude": 36.5,  # modern present
         "modern_longitude": 4.8,

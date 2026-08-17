@@ -141,11 +141,7 @@ def _normalize_panel_id(s: str) -> str:
     here, so a single token always flows through this function as-is.
     """
     stripped = s.strip()
-    ascii_folded = (
-        unicodedata.normalize("NFKD", stripped)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
+    ascii_folded = unicodedata.normalize("NFKD", stripped).encode("ascii", "ignore").decode("ascii")
     return ascii_folded.lower()
 
 

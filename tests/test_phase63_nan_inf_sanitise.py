@@ -18,15 +18,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.exporters import write_csv, AnalysisOptions  # noqa: E402
+from rlpe.exporters import AnalysisOptions, write_csv  # noqa: E402
 from rlpe.exporters.analysis import _sanitise_csv_cell  # noqa: E402
 
 # xlsx source-guard: read the file directly to extract the helper so
 # the test works in envs without openpyxl installed. The runtime
 # behaviour is pinned in the conda env that ships openpyxl.
-XLSX_SRC = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "exporters" / "xlsx.py").read_text(
-    encoding="utf-8"
-)
+XLSX_SRC = (
+    Path(__file__).resolve().parents[1] / "src" / "rlpe" / "exporters" / "xlsx.py"
+).read_text(encoding="utf-8")
 from rlpe.provenance import build_provenance  # noqa: E402
 from rlpe.schema_models import (  # noqa: E402
     GeologyLinkRecord,
@@ -89,7 +89,10 @@ def _panel_with_nan_coords() -> PanelRecord:
         confidence=0.8,
     )
     sb = ScaleBarRecord(
-        value=100.0, unit="um", source="caption", um_per_px=0.1,
+        value=100.0,
+        unit="um",
+        source="caption",
+        um_per_px=0.1,
         confidence=0.8,
     )
     meta = PanelMetadata(geology_links=[geo], scale_bar=sb)
@@ -167,8 +170,7 @@ def test_analysis_csv_drops_nan_inf(tmp_path: Path):
 def test_xlsx_sanitiser_handles_nan_inf():
     """``xlsx._sanitise`` must replace NaN/Inf with the empty string."""
     assert "math.isnan" in XLSX_SRC and "math.isinf" in XLSX_SRC, (
-        "xlsx._sanitise does not check math.isnan/isinf — Phase 63 "
-        "Plan 6.8 fix regressed?"
+        "xlsx._sanitise does not check math.isnan/isinf — Phase 63 Plan 6.8 fix regressed?"
     )
 
 

@@ -128,13 +128,10 @@ def test_sample_parenthesized_form():
     """'Sample (12)' style must produce S_Sample_(12)."""
     from rlpe.converters import sample_records_from_matches
 
-    matches = [
-        _build_match("p1", "Section 1. Sample (12), Locality X")]
+    matches = [_build_match("p1", "Section 1. Sample (12), Locality X")]
     samples = sample_records_from_matches(matches)
     sids = {s["sample_id"] for s in samples}
-    assert any("Sample (12)" in s for s in sids), (
-        f"Sample (12) missing: {sids}"
-    )
+    assert any("Sample (12)" in s for s in sids), f"Sample (12) missing: {sids}"
 
 
 # --- 5) Regression: existing Round 20 patterns still work --------------
@@ -208,6 +205,5 @@ def test_pattern_list_has_round21_additions():
     )
     # And the trailing digit block must also be present.
     assert r"\d{1,2}" in src_compact, (
-        "converters.py missing the \\d{1,2} digit block — the pl. N "
-        "pattern's digit run is missing."
+        "converters.py missing the \\d{1,2} digit block — the pl. N pattern's digit run is missing."
     )

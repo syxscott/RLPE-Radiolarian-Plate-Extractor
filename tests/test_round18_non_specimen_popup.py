@@ -58,9 +58,7 @@ def test_non_specimen_helper_recognises_known_phrases():
         "统计图 - 非标本",
     ]
     for r in refusals:
-        assert helper(r, ""), (
-            f"_looks_like_non_specimen_error should match: {r!r}"
-        )
+        assert helper(r, ""), f"_looks_like_non_specimen_error should match: {r!r}"
 
 
 def test_non_specimen_helper_does_not_flag_real_errors():
@@ -164,8 +162,7 @@ def test_frontend_popup_checks_non_specimen_first():
         "from the server's error_info."
     )
     assert "looksLikeNonSpecimenRefusal" in window, (
-        "showMiniMaxFallbackModal doesn't run looksLikeNonSpecimenRefusal "
-        "as a defensive fallback."
+        "showMiniMaxFallbackModal doesn't run looksLikeNonSpecimenRefusal as a defensive fallback."
     )
     # Both checks must run BEFORE the modal DOM is created.
     server_flag_pos = window.find("is_non_specimen_figure")

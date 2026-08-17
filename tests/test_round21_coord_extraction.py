@@ -25,9 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def _read(rel: str) -> str:
-    return Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel
-    ).read_text(encoding="utf-8")
+    return Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel).read_text(
+        encoding="utf-8"
+    )
 
 
 # --- 1) Centroid fallback fires when only country is mentioned ----------
@@ -50,9 +50,7 @@ def test_country_only_centroid_fallback():
     ]
     records = extract_geology_from_sections(sections)
     # Must have at least one record with non-None lat/lon
-    centroid_records = [
-        r for r in records if r.latitude is not None and r.longitude is not None
-    ]
+    centroid_records = [r for r in records if r.latitude is not None and r.longitude is not None]
     assert centroid_records, (
         f"No centroid-derived record produced. Got: "
         f"{[(r.latitude, r.longitude, r.country, r.coord_source) for r in records]}"
@@ -81,17 +79,14 @@ def test_explicit_coords_win_over_centroid():
         }
     ]
     records = extract_geology_from_sections(sections)
-    coord_records = [
-        r for r in records if r.latitude is not None and r.longitude is not None
-    ]
+    coord_records = [r for r in records if r.latitude is not None and r.longitude is not None]
     assert coord_records
     rec = coord_records[0]
     # Explicit coords: 36.5, 10.5 (with hemisphere N → +36.5; E → +10.5)
     assert abs(rec.latitude - 36.5) < 0.5, f"Bad lat: {rec.latitude}"
     assert abs(rec.longitude - 10.5) < 0.5, f"Bad lon: {rec.longitude}"
     assert rec.coord_source == "", (
-        f"Explicit coord path should leave coord_source empty, got "
-        f"{rec.coord_source!r}"
+        f"Explicit coord path should leave coord_source empty, got {rec.coord_source!r}"
     )
 
 
@@ -109,9 +104,7 @@ def test_unknown_country_no_centroid():
     ]
     records = extract_geology_from_sections(sections)
     # "Atlantis" won't match any country regex; lat/lon stay None.
-    coord_records = [
-        r for r in records if r.latitude is not None and r.longitude is not None
-    ]
+    coord_records = [r for r in records if r.latitude is not None and r.longitude is not None]
     assert not coord_records, (
         f"Centroid fabricated for unknown country. Got: "
         f"{[(r.country, r.coord_source, r.latitude) for r in records]}"
@@ -172,9 +165,7 @@ def test_beccaro_explicit_coords_unchanged():
         }
     ]
     records = extract_geology_from_sections(sections)
-    coord_records = [
-        r for r in records if r.latitude is not None and r.longitude is not None
-    ]
+    coord_records = [r for r in records if r.latitude is not None and r.longitude is not None]
     assert coord_records
     rec = coord_records[0]
     # Italy centroid is (41.5, 12.5) — but explicit coords win.

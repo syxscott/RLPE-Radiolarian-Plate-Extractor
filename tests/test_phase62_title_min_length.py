@@ -25,6 +25,7 @@ while passing real titles:
   - ``"GIS-based analysis"`` (GIS is 3 consecutive letters)
   - ``"A 2-D map of Italy"`` (multiple consecutive letters)
 """
+
 from __future__ import annotations
 
 from rlpe.paper_metadata_cleanup import (

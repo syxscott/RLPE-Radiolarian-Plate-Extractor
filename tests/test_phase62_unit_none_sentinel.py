@@ -21,6 +21,7 @@ the lowercased input as a string).
 A new ``UNKNOWN_UNIT`` constant is exported so callers can check
 without hard-coding the string.
 """
+
 from __future__ import annotations
 
 from rlpe.scale_bar import UNKNOWN_UNIT, normalize_unit

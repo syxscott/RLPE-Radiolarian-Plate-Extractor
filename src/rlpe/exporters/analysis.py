@@ -96,11 +96,13 @@ def _to_analysis_row(panel: PanelRecord) -> dict[str, Any]:
     # Phase 58 Plan 1.2 (Bug 1.2): prefer modern_latitude/longitude when
     # present, fall back to legacy latitude/longitude (Round 25+ convention).
     lat = (
-        geo.modern_latitude if geo and geo.modern_latitude is not None
+        geo.modern_latitude
+        if geo and geo.modern_latitude is not None
         else (geo.latitude if geo and geo.latitude is not None else None)
     )
     lon = (
-        geo.modern_longitude if geo and geo.modern_longitude is not None
+        geo.modern_longitude
+        if geo and geo.modern_longitude is not None
         else (geo.longitude if geo and geo.longitude is not None else None)
     )
 

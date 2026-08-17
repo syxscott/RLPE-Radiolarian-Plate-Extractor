@@ -25,7 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.converters import _taxon_parts, _resolve_modern_coord  # noqa: E402
+from rlpe.converters import _resolve_modern_coord, _taxon_parts  # noqa: E402
+from rlpe.provenance import build_provenance  # noqa: E402
 from rlpe.schema_models import (  # noqa: E402
     GeologyLinkRecord,
     LocalityRecord,
@@ -38,8 +39,6 @@ from rlpe.schema_models import (  # noqa: E402
     TaxonRecord,
 )
 from rlpe.types import MatchResult  # noqa: E402
-from rlpe.provenance import build_provenance  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Field declarations (pydantic models)
@@ -50,8 +49,7 @@ def test_taxon_record_has_nomenclatural_code():
     """``TaxonRecord.nomenclatural_code`` is the ICZN marker."""
     fields = TaxonRecord.model_fields
     assert "nomenclatural_code" in fields, (
-        "TaxonRecord is missing 'nomenclatural_code' — Phase 63 Plan "
-        "6.16 (Bug 6.16) fix regressed?"
+        "TaxonRecord is missing 'nomenclatural_code' — Phase 63 Plan 6.16 (Bug 6.16) fix regressed?"
     )
 
 
@@ -114,8 +112,7 @@ def test_nomenclatural_code_default_is_iczn():
         specific_epithet="species",
     )
     assert rec.nomenclatural_code == "ICZN", (
-        f"TaxonRecord.nomenclatural_code default is "
-        f"{rec.nomenclatural_code!r}, expected 'ICZN'."
+        f"TaxonRecord.nomenclatural_code default is {rec.nomenclatural_code!r}, expected 'ICZN'."
     )
 
 
@@ -128,9 +125,7 @@ def test_taxonomic_authority_default_string():
         genus="Genus",
         specific_epithet="species",
     )
-    assert rec.scientific_name_authorship is None or isinstance(
-        rec.scientific_name_authorship, str
-    )
+    assert rec.scientific_name_authorship is None or isinstance(rec.scientific_name_authorship, str)
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +137,7 @@ def test_taxon_record_has_generic_name():
     """``TaxonRecord.generic_name`` carries the subgenus (DwC genericName)."""
     fields = TaxonRecord.model_fields
     assert "generic_name" in fields, (
-        "TaxonRecord is missing 'generic_name' — Phase 63 Plan 6.18 "
-        "(Bug 6.18) fix regressed?"
+        "TaxonRecord is missing 'generic_name' — Phase 63 Plan 6.18 (Bug 6.18) fix regressed?"
     )
 
 
@@ -151,14 +145,14 @@ def test_taxon_record_has_taxon_remarks():
     """``TaxonRecord.taxon_remarks`` carries extraction provenance."""
     fields = TaxonRecord.model_fields
     assert "taxon_remarks" in fields, (
-        "TaxonRecord is missing 'taxon_remarks' — Phase 63 Plan 6.19 "
-        "(Bug 6.19) fix regressed?"
+        "TaxonRecord is missing 'taxon_remarks' — Phase 63 Plan 6.19 (Bug 6.19) fix regressed?"
     )
 
 
 def test_paleocoord_record_has_coordinate_uncertainty():
     """``PaleoCoordinateRecord.coordinate_uncertainty_in_meters`` is added."""
     from rlpe.schema_models import PaleoCoordinateRecord
+
     fields = PaleoCoordinateRecord.model_fields
     assert "coordinate_uncertainty_in_meters" in fields, (
         "PaleoCoordinateRecord is missing "
@@ -171,11 +165,16 @@ def test_taxon_converter_populates_authorship():
     """The converter extracts ``(Smith, 1900)`` from a parenthesised
     species string and populates ``scientific_name_authorship``."""
     from rlpe.converters import taxon_records_from_matches
+
     m = MatchResult(
-        paper_id="p1", figure_id="f1", panel_id="1",
+        paper_id="p1",
+        figure_id="f1",
+        panel_id="1",
         species="Genus species (Smith, 1900)",
-        panel_path="/tmp/p.png", bbox=[0, 0, 100, 100],
-        confidence=0.9, metadata={
+        panel_path="/tmp/p.png",
+        bbox=[0, 0, 100, 100],
+        confidence=0.9,
+        metadata={
             "extraction_method": "regex",
         },
     )
@@ -191,11 +190,16 @@ def test_taxon_converter_populates_authorship():
 def test_taxon_converter_populates_subgenus():
     """``Podocyrtis (Podocyrtites) species`` populates ``generic_name``."""
     from rlpe.converters import taxon_records_from_matches
+
     m = MatchResult(
-        paper_id="p1", figure_id="f1", panel_id="1",
+        paper_id="p1",
+        figure_id="f1",
+        panel_id="1",
         species="Podocyrtis (Podocyrtites) species Haeckel, 1887",
-        panel_path="/tmp/p.png", bbox=[0, 0, 100, 100],
-        confidence=0.9, metadata={"extraction_method": "regex"},
+        panel_path="/tmp/p.png",
+        bbox=[0, 0, 100, 100],
+        confidence=0.9,
+        metadata={"extraction_method": "regex"},
     )
     rows = taxon_records_from_matches([m])
     r = rows[0]
@@ -209,11 +213,16 @@ def test_taxon_converter_populates_subgenus():
 def test_taxon_converter_populates_taxon_remarks():
     """The extractor method propagates to ``taxon_remarks``."""
     from rlpe.converters import taxon_records_from_matches
+
     m = MatchResult(
-        paper_id="p1", figure_id="f1", panel_id="1",
+        paper_id="p1",
+        figure_id="f1",
+        panel_id="1",
         species="Genus species",
-        panel_path="/tmp/p.png", bbox=[0, 0, 100, 100],
-        confidence=0.9, metadata={"extraction_method": "llm_first"},
+        panel_path="/tmp/p.png",
+        bbox=[0, 0, 100, 100],
+        confidence=0.9,
+        metadata={"extraction_method": "llm_first"},
     )
     rows = taxon_records_from_matches([m])
     r = rows[0]
@@ -226,6 +235,7 @@ def test_taxon_converter_populates_taxon_remarks():
 def test_coordinate_uncertainty_for_known_sources():
     """``_coordinate_uncertainty_for`` returns sensible values per source."""
     from rlpe.converters import _coordinate_uncertainty_for
+
     assert _coordinate_uncertainty_for("regex") == 1000.0
     assert _coordinate_uncertainty_for("paleodb") == 5000.0
     assert _coordinate_uncertainty_for("country_centroid") == 25000.0

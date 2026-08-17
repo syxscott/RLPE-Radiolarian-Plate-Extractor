@@ -46,9 +46,7 @@ _FIG_PAGE_RE = re.compile(r"^(?:od_plate_|od_fig_)([^_]+)_p(\d{3})")
 # page containing that plate (``..._2e85364a3c605326_p006_pl01``).  For this
 # paper the stable identity is the printed plate discriminator, not the
 # source-specific hash/page pair.
-_BRAGIN_PLATE_RE = re.compile(
-    r"^od_plate_(?:bragin2025|2e85364a3c605326)_p\d{3}_pl(\d+)$"
-)
+_BRAGIN_PLATE_RE = re.compile(r"^od_plate_(?:bragin2025|2e85364a3c605326)_p\d{3}_pl(\d+)$")
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +93,11 @@ def normalize_paper_id_for_eval(pred_id: str | None, gold_id: str | None) -> boo
     loop already filters those rows but the helper stays safe to
     call from arbitrary contexts.
     """
-    return bool(pred_id) and bool(gold_id) and _normalize_paper_id(pred_id) == _normalize_paper_id(gold_id)
+    return (
+        bool(pred_id)
+        and bool(gold_id)
+        and _normalize_paper_id(pred_id) == _normalize_paper_id(gold_id)
+    )
 
 
 def _figure_id_logical_key(figure_id: str) -> str:
@@ -314,11 +316,7 @@ def _norm_species(s: str | None) -> str:
         if bare in _TRINOMIAL_STOP or _has_trailing_uncertainty(p):
             trinomial_safe = False
             break
-    if (
-        len(parts) >= 3
-        and trinomial_safe
-        and all(p and p[0].islower() for p in parts[1:])
-    ):
+    if len(parts) >= 3 and trinomial_safe and all(p and p[0].islower() for p in parts[1:]):
         # audit 2026-07-31: only the AUTONYM trinomial (third word
         # equals the second — "Lamptonium fabaeforme fabaeforme") is
         # the same species under ICZN Art. 46.1 and folds to the
@@ -402,9 +400,7 @@ def _is_real_prediction(p: dict[str, Any]) -> bool:
     return True
 
 
-def evaluate(
-    predictions: list[dict[str, Any]], gold: list[GoldPanel]
-) -> EvaluationReport:
+def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> EvaluationReport:
     """Score predictions against a gold set.
 
     Predictions are dicts with keys: paper_id, panel_id, species.
@@ -520,9 +516,7 @@ def evaluate(
                 else:
                     # Prefer the candidate that matches the gold species
                     cand_sp = _norm_species(normalize_species(cand.get("species")))
-                    cur_sp = _norm_species(
-                        normalize_species(matched_pred.get("species"))
-                    )
+                    cur_sp = _norm_species(normalize_species(matched_pred.get("species")))
                     if (
                         cand_sp.lower() == gold_species.lower()
                         and cur_sp.lower() != gold_species.lower()
@@ -530,9 +524,7 @@ def evaluate(
                         matched_pred = cand
                         matched_key = (pid, fid, plabel)
         matched_pred_species = (
-            _norm_species(normalize_species(matched_pred.get("species")))
-            if matched_pred
-            else None
+            _norm_species(normalize_species(matched_pred.get("species"))) if matched_pred else None
         )
         if matched_pred is not None:
             m.panel_match += 1
@@ -815,20 +807,14 @@ def wilson_score_interval(
     p_hat = min(max(float(p_hat), 0.0), 1.0)
     denom = 1.0 + z * z / n
     center = (p_hat + z * z / (2.0 * n)) / denom
-    spread = (
-        z
-        * math.sqrt(
-            p_hat * (1.0 - p_hat) / n + z * z / (4.0 * n * n)
-        )
-        / denom
-    )
+    spread = z * math.sqrt(p_hat * (1.0 - p_hat) / n + z * z / (4.0 * n * n)) / denom
     low = max(0.0, center - spread)
     high = min(1.0, center + spread)
     return (low, high)
 
 
 def bootstrap_confidence_interval(
-    paper_metrics: list["PaperMetrics"],
+    paper_metrics: list[PaperMetrics],
     n_bootstrap: int = 1000,
     confidence: float = 0.95,
     seed: int = 42,

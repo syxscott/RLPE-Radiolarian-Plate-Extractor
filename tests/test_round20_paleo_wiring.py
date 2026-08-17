@@ -130,8 +130,7 @@ def test_paleo_coordinates_empty_for_locality_without_coords():
     ]
     out = run_output_from_provenance(provenance, matches)
     assert out["paleo_coordinates"] == [], (
-        "Fake paleo record emitted for locality without coords: "
-        f"{out['paleo_coordinates']}"
+        f"Fake paleo record emitted for locality without coords: {out['paleo_coordinates']}"
     )
 
 
@@ -140,9 +139,7 @@ def test_paleo_coordinates_skips_when_no_locality():
     from rlpe.converters import run_output_from_provenance
 
     provenance = _build_provenance()
-    matches = [
-        _build_match("test_paper_3", "Plate 1. No geology info.", species="Foo bar")
-    ]
+    matches = [_build_match("test_paper_3", "Plate 1. No geology info.", species="Foo bar")]
     out = run_output_from_provenance(provenance, matches)
     assert out["paleo_coordinates"] == []
 

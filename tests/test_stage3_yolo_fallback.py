@@ -16,6 +16,7 @@ These tests guard:
   - The crop pass promotes ``panel_id_source`` from the
     synthesised source (no regression on the M3 path)
 """
+
 from __future__ import annotations
 
 import os
@@ -54,8 +55,8 @@ class _StubPipeline:
         from rlpe.pipeline import RadiolarianPipeline
 
         # Bind the unbound method so the call site resolves cleanly.
-        self._yolo_fallback_for_stage3 = (
-            RadiolarianPipeline._yolo_fallback_for_stage3.__get__(self, RadiolarianPipeline)
+        self._yolo_fallback_for_stage3 = RadiolarianPipeline._yolo_fallback_for_stage3.__get__(
+            self, RadiolarianPipeline
         )
         self.config = cfg
 
@@ -363,8 +364,7 @@ def test_plate_path_priority_audit_c1(tmp_path):
     # ``figure_to_plate`` source-grep part of the audit lives in a
     # separate unit test on _apply_stage3_bbox_crops.
     assert seen_plates == [str(plate_level)], (
-        f"YOLO should have been called with the plate-level image, "
-        f"got: {seen_plates}"
+        f"YOLO should have been called with the plate-level image, got: {seen_plates}"
     )
 
 
@@ -377,7 +377,11 @@ def test_panel_id_source_promoted_from_matched(monkeypatch):
 
     from rlpe import pipeline as pipeline_mod
 
-    src = inspect.getsource(pipeline_mod.RadiololarianPipeline if hasattr(pipeline_mod, "RadiololarianPipeline") else pipeline_mod.RadiolarianPipeline)
+    src = inspect.getsource(
+        pipeline_mod.RadiololarianPipeline
+        if hasattr(pipeline_mod, "RadiololarianPipeline")
+        else pipeline_mod.RadiolarianPipeline
+    )
     assert 'matched.get("source") or "m3_vision"' in src, (
         "Plan C: stage3 crop pass must read source from the matched dict "
         "so YOLO fallback panels get tagged 'yolo_fallback' instead of "

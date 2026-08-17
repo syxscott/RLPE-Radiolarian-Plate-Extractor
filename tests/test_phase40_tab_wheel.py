@@ -11,6 +11,7 @@ User reported two issues:
 
 These tests pin both fixes.
 """
+
 from __future__ import annotations
 
 import os
@@ -21,15 +22,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
-from PySide6.QtCore import Qt, QEvent, QPoint  # noqa: E402
 import pytest
+from PySide6.QtCore import QEvent, QPoint, Qt  # noqa: E402
+
 pytest.importorskip("PySide6")
+import pytest
 from PySide6.QtGui import QWheelEvent  # noqa: E402
-import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import (  # noqa: E402
-    QApplication, QDoubleSpinBox, QSpinBox, QComboBox, QLineEdit,
+    QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QLineEdit,
+    QSpinBox,
 )
 
 _app = QApplication.instance() or QApplication([])
@@ -41,6 +49,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_language():
     from rlpe.gui import i18n
+
     i18n.set_language("zh_CN")
     yield
     i18n.set_language("zh_CN")
@@ -53,6 +62,7 @@ def test_tab_labels_translate_to_chinese_by_default():
     """Phase 40: tab labels are now in Chinese by default (zh_CN
     is the default language)."""
     from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     labels = [w._tabs.tabText(i) for i in range(w._tabs.count())]
     assert any("运行" in t for t in labels), (
@@ -71,8 +81,9 @@ def test_tab_labels_translate_to_chinese_by_default():
 
 def test_tab_labels_translate_to_english_on_switch():
     """Phase 40: switching to English translates tab labels."""
-    from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     i18n.set_language("en")
     labels = [w._tabs.tabText(i) for i in range(w._tabs.count())]
@@ -85,8 +96,9 @@ def test_tab_labels_translate_to_english_on_switch():
 
 
 def test_tab_labels_translate_back_to_chinese():
-    from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     i18n.set_language("en")
     en_labels = [w._tabs.tabText(i) for i in range(w._tabs.count())]
@@ -104,9 +116,10 @@ def test_tab_labels_translate_back_to_chinese():
 def test_window_title_uses_app_version_constant():
     """Phase 40: window title was concatenating ``i18n._tr('app.title')``
     twice in a buggy f-string. Fixed: use APP_VERSION directly."""
-    from rlpe.gui.main_window import MainWindow
-    from rlpe.gui.constants import APP_VERSION
     from rlpe.gui import i18n
+    from rlpe.gui.constants import APP_VERSION
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     title = w.windowTitle()
     # Should contain the version, not duplicate the app title
@@ -121,12 +134,8 @@ def test_window_title_uses_app_version_constant():
     zh_title = w.windowTitle()
     # Both should be different but neither should have the title
     # repeated.
-    assert en_title.count("RLPE") == 1, (
-        f"EN title should not repeat 'RLPE': {en_title!r}"
-    )
-    assert zh_title.count("RLPE") == 1, (
-        f"ZH title should not repeat 'RLPE': {zh_title!r}"
-    )
+    assert en_title.count("RLPE") == 1, f"EN title should not repeat 'RLPE': {en_title!r}"
+    assert zh_title.count("RLPE") == 1, f"ZH title should not repeat 'RLPE': {zh_title!r}"
 
 
 # ============================================================
@@ -135,6 +144,7 @@ def test_window_title_uses_app_version_constant():
 def test_install_wheel_filter_is_idempotent():
     """Phase 40: install_wheel_filter() must be safe to call twice."""
     from rlpe.gui.i18n_widgets import install_wheel_filter
+
     install_wheel_filter(_app)
     install_wheel_filter(_app)  # second call is a no-op
     assert getattr(_app, "_phase40_wheel_filter", False) is True
@@ -144,6 +154,7 @@ def test_wheel_filter_blocks_wheel_on_unfocused_spinbox():
     """Phase 40: wheel event on an unfocused QSpinBox is consumed
     (no value change) by the global filter."""
     from rlpe.gui.i18n_widgets import install_wheel_filter
+
     install_wheel_filter(_app)
     sb = QSpinBox()
     sb.setRange(0, 100)
@@ -153,6 +164,7 @@ def test_wheel_filter_blocks_wheel_on_unfocused_spinbox():
     # Manually dispatch a wheel event (Qt6 requires explicit
     # construction with a QPoint and global position).
     from PySide6.QtCore import QPointF
+
     event = QWheelEvent(
         QPointF(0, 0),
         QPointF(0, 0),
@@ -166,14 +178,13 @@ def test_wheel_filter_blocks_wheel_on_unfocused_spinbox():
     _app.sendEvent(sb, event)
     _app.processEvents()
     # Without focus, the wheel event MUST NOT change the value
-    assert sb.value() == 50, (
-        f"Wheel on unfocused QSpinBox must NOT change value, got {sb.value()}"
-    )
+    assert sb.value() == 50, f"Wheel on unfocused QSpinBox must NOT change value, got {sb.value()}"
 
 
 def test_wheel_filter_blocks_wheel_on_unfocused_combobox():
     """Phase 40: wheel on unfocused QComboBox doesn't change selection."""
     from rlpe.gui.i18n_widgets import install_wheel_filter
+
     install_wheel_filter(_app)
     cb = QComboBox()
     cb.addItems(["A", "B", "C"])
@@ -181,11 +192,16 @@ def test_wheel_filter_blocks_wheel_on_unfocused_combobox():
     cb.show()
     _app.processEvents()
     from PySide6.QtCore import QPointF
+
     event = QWheelEvent(
-        QPointF(0, 0), QPointF(0, 0),
-        QPoint(0, 0), QPoint(0, 1),
-        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
-        Qt.ScrollPhase.NoScrollPhase, False,
+        QPointF(0, 0),
+        QPointF(0, 0),
+        QPoint(0, 0),
+        QPoint(0, 1),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
     )
     _app.sendEvent(cb, event)
     _app.processEvents()
@@ -197,16 +213,22 @@ def test_wheel_filter_blocks_wheel_on_unfocused_combobox():
 def test_wheel_filter_blocks_wheel_on_unfocused_lineedit():
     """Phase 40: wheel on unfocused QLineEdit doesn't change text."""
     from rlpe.gui.i18n_widgets import install_wheel_filter
+
     install_wheel_filter(_app)
     le = QLineEdit("hello")
     le.show()
     _app.processEvents()
     from PySide6.QtCore import QPointF
+
     event = QWheelEvent(
-        QPointF(0, 0), QPointF(0, 0),
-        QPoint(0, 0), QPoint(0, 1),
-        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
-        Qt.ScrollPhase.NoScrollPhase, False,
+        QPointF(0, 0),
+        QPointF(0, 0),
+        QPoint(0, 0),
+        QPoint(0, 1),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
     )
     _app.sendEvent(le, event)
     _app.processEvents()
@@ -221,6 +243,7 @@ def test_wheel_filter_does_not_block_focused_spinbox():
     """Phase 40: when the widget HAS focus, the wheel event
     passes through and the value changes."""
     from rlpe.gui.i18n_widgets import install_wheel_filter
+
     install_wheel_filter(_app)
     sb = QSpinBox()
     sb.setRange(0, 100)
@@ -229,11 +252,16 @@ def test_wheel_filter_does_not_block_focused_spinbox():
     sb.setFocus()
     _app.processEvents()
     from PySide6.QtCore import QPointF
+
     event = QWheelEvent(
-        QPointF(0, 0), QPointF(0, 0),
-        QPoint(0, 0), QPoint(0, 1),
-        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
-        Qt.ScrollPhase.NoScrollPhase, False,
+        QPointF(0, 0),
+        QPointF(0, 0),
+        QPoint(0, 0),
+        QPoint(0, 1),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
     )
     _app.sendEvent(sb, event)
     _app.processEvents()
@@ -252,17 +280,24 @@ def test_wheel_filter_does_not_block_non_input_widgets():
     QComboBox / QLineEdit. Other widgets (QPushButton, QLabel,
     QScrollArea) get normal wheel handling."""
     from rlpe.gui.i18n_widgets import install_wheel_filter
+
     install_wheel_filter(_app)
     from PySide6.QtWidgets import QPushButton
+
     btn = QPushButton("test")
     btn.show()
     _app.processEvents()
     from PySide6.QtCore import QPointF
+
     event = QWheelEvent(
-        QPointF(0, 0), QPointF(0, 0),
-        QPoint(0, 0), QPoint(0, 1),
-        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
-        Qt.ScrollPhase.NoScrollPhase, False,
+        QPointF(0, 0),
+        QPointF(0, 0),
+        QPoint(0, 0),
+        QPoint(0, 1),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
     )
     # Should NOT raise; should NOT consume
     _app.sendEvent(btn, event)

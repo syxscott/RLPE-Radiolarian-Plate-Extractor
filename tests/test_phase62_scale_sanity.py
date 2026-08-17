@@ -1,4 +1,4 @@
-"""Phase 62 Plan 5 (Bug 5.2): scale-bar sanity check on extracted values.
+r"""Phase 62 Plan 5 (Bug 5.2): scale-bar sanity check on extracted values.
 
 Previously ``SCALE_PATTERN`` accepted any ``\d+(?:\.\d+)?`` for the
 scale value, with no range check. OCR misreading a single digit
@@ -25,24 +25,25 @@ The test asserts:
   * A "0.05 µm" (below the floor) is rejected.
   * A "50000 µm" (above the ceiling) is rejected.
 """
+
 from __future__ import annotations
 
 from rlpe.scale_bar import extract_scale_from_caption, extract_scale_from_ocr_text
-
 
 # Lower / upper bounds for the scale-bar value PER UNIT (after the
 # unit conversion to µm). The bounds are deliberately generous so
 # unusual but legitimate scales (e.g. "5 mm" for a microfossil
 # overview) pass; the gate is to catch the catastrophic 10x and
 # 100x OCR errors, not to enforce "normal" values.
-_VALID_VALUE_MIN_UM = 0.1       # 0.1 µm = 100 nm; smaller is below pixel scale
-_VALID_VALUE_MAX_UM = 10000.0   # 10 mm; larger is map scale not figure scale
+_VALID_VALUE_MIN_UM = 0.1  # 0.1 µm = 100 nm; smaller is below pixel scale
+_VALID_VALUE_MAX_UM = 10000.0  # 10 mm; larger is map scale not figure scale
 
 
 def _assert_sanity(val, unit):
     if val is None:
         return True
     from rlpe.scale_bar import to_um
+
     um = to_um(val, unit)
     if um is None:
         # Unknown unit — be permissive and let downstream decide.

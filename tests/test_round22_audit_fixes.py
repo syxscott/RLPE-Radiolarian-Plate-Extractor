@@ -44,9 +44,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def _read(rel: str) -> str:
-    return Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel
-    ).read_text(encoding="utf-8")
+    return Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel).read_text(
+        encoding="utf-8"
+    )
 
 
 # --- CRITICAL-1: shared geology_context_id helper -----------------------
@@ -81,16 +81,20 @@ def test_panel_geology_context_id_matches_geo_contexts_list():
     # 2. The same geology dict, when emitted via the panel path AND
     #    the geo_contexts path, must produce the SAME id.
     match = MatchResult(
-        paper_id="p1", figure_id="f1", panel_id="1",
-        species="Genus sp.", panel_path=None, bbox=None,
-        confidence=0.9, caption_snippet="Sample A from Fonzaso Fm, Italy.",
+        paper_id="p1",
+        figure_id="f1",
+        panel_id="1",
+        species="Genus sp.",
+        panel_path=None,
+        bbox=None,
+        confidence=0.9,
+        caption_snippet="Sample A from Fonzaso Fm, Italy.",
         metadata={"geology_links": [geo]},
     )
     panel = panel_record_from_match(match)
     contexts = geology_contexts_from_matches([match])
     assert panel.geology_context_id == expected_id, (
-        f"panel.geology_context_id ({panel.geology_context_id}) != "
-        f"helper output ({expected_id})"
+        f"panel.geology_context_id ({panel.geology_context_id}) != helper output ({expected_id})"
     )
     assert contexts[0]["geology_context_id"] == expected_id, (
         f"contexts[0].geology_context_id ({contexts[0]['geology_context_id']}) != "
@@ -110,8 +114,8 @@ def test_geology_context_id_helper_exists():
     src = _read("src/rlpe/converters.py")
     assert "def _geology_context_id(" in src
     # Both call sites must use the helper, not the inline form.
-    assert src.count("_stable_id(\n                \"geo\"") == 0, (
-        "converters.py still has the inline `_stable_id(\"geo\", ...)` "
+    assert src.count('_stable_id(\n                "geo"') == 0, (
+        'converters.py still has the inline `_stable_id("geo", ...)` '
         "call that broke the join. Use the shared helper."
     )
 
@@ -217,8 +221,7 @@ def test_paper_record_has_review_reasons():
         "flags (e.g. title_extraction_failed) are silently dropped."
     )
     assert "needs_review" in fields, (
-        "PaperRecord missing needs_review — operator cannot see "
-        "whether the paper has parse issues."
+        "PaperRecord missing needs_review — operator cannot see whether the paper has parse issues."
     )
 
 
@@ -228,7 +231,7 @@ def test_paper_records_from_matches_uses_setattr():
     dict, which bypassed extra=forbid)."""
     src = _read("src/rlpe/converters.py")
     # The silent injection code path is gone.
-    assert "dumped[\"review_reasons\"] = review_reasons" not in src, (
+    assert 'dumped["review_reasons"] = review_reasons' not in src, (
         "converters.py still has the silent `dumped[...] = ...` "
         "injection that bypassed Pydantic extra=forbid."
     )
@@ -238,8 +241,7 @@ def test_paper_records_from_matches_uses_setattr():
         "wiring. Cleanup flags would silently fail to reach frontend."
     )
     assert "rec.needs_review = True" in src, (
-        "converters.py missing the needs_review setattr. "
-        "Round 20 cleanup wouldn't surface."
+        "converters.py missing the needs_review setattr. Round 20 cleanup wouldn't surface."
     )
 
 
@@ -256,7 +258,7 @@ def test_locality_coordinate_source_reads_coord_source():
         "Round 21 centroid fallback provenance is lost."
     )
     # And the read-from-coord_source path is present.
-    assert "g.get(\"coord_source\")" in src, (
+    assert 'g.get("coord_source")' in src, (
         "converters.py doesn't read g.get('coord_source'). "
         "Locality records always claim 'caption' regardless of source."
     )
@@ -274,18 +276,10 @@ def test_frontend_modal_shows_paper_metadata():
         "web/js app.js doesn't access record.paper_metadata in the "
         "modal — paper title / authors / journal are invisible."
     )
-    assert "paperMeta.title" in src, (
-        "Modal doesn't render paper title (paperMeta.title)."
-    )
-    assert "paperMeta.authors" in src, (
-        "Modal doesn't render paper authors (paperMeta.authors)."
-    )
-    assert "paperMeta.journal" in src, (
-        "Modal doesn't render paper journal (paperMeta.journal)."
-    )
-    assert "paperReviewReasons" in src, (
-        "Modal doesn't render paper review_reasons (cleanup flags)."
-    )
+    assert "paperMeta.title" in src, "Modal doesn't render paper title (paperMeta.title)."
+    assert "paperMeta.authors" in src, "Modal doesn't render paper authors (paperMeta.authors)."
+    assert "paperMeta.journal" in src, "Modal doesn't render paper journal (paperMeta.journal)."
+    assert "paperReviewReasons" in src, "Modal doesn't render paper review_reasons (cleanup flags)."
 
 
 def test_frontend_modal_shows_geology_scope():
@@ -315,9 +309,7 @@ def test_frontend_modal_shows_sample_ids():
         "geology_links — Round 21 prefixes (S_, B_, R_, N_, L_, P_) "
         "are invisible in the UI."
     )
-    assert "Sample IDs:" in src, (
-        "Modal doesn't render the Sample IDs row."
-    )
+    assert "Sample IDs:" in src, "Modal doesn't render the Sample IDs row."
 
 
 def test_frontend_shows_coord_source_badge():
@@ -330,14 +322,11 @@ def test_frontend_shows_coord_source_badge():
     )
     css = _read("web/css/style.css")
     assert ".modal-geo-source" in css, (
-        "web/css/style.css missing .modal-geo-source for the "
-        "centroid badge style."
+        "web/css/style.css missing .modal-geo-source for the centroid badge style."
     )
 
 
 def test_paper_meta_block_css():
     """CSS for the paper metadata block in the modal must exist."""
     css = _read("web/css/style.css")
-    assert ".modal-paper-meta" in css, (
-        "web/css/style.css missing .modal-paper-meta styles."
-    )
+    assert ".modal-paper-meta" in css, "web/css/style.css missing .modal-paper-meta styles."

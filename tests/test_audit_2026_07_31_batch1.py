@@ -72,7 +72,7 @@ class TestUAZCalibration:
                 # overlap but each zone must be younger than the one
                 # below (higher top).
                 assert top <= prev_top + 0.1, (
-                    f"UAZ {i} top {top} not consistent with UAZ {i-1} top {prev_top}"
+                    f"UAZ {i} top {top} not consistent with UAZ {i - 1} top {prev_top}"
                 )
             prev_top = top
 
@@ -199,7 +199,14 @@ class TestPbdbIntervalMapping:
         from rlpe import stratigraphy
 
         fake = [
-            {"oid": 3, "nam": "Guadalupian", "rnk": "epoch", "par": None, "eag": 273.01, "lag": 259.51},
+            {
+                "oid": 3,
+                "nam": "Guadalupian",
+                "rnk": "epoch",
+                "par": None,
+                "eag": 273.01,
+                "lag": 259.51,
+            },
         ]
         monkeypatch.setattr(stratigraphy, "fetch_pbdb_intervals", lambda: fake)
         row = stratigraphy._pbdb_lookup("Guadalupian")
@@ -253,8 +260,13 @@ class TestEpochNotDowngraded:
         from rlpe.geology_extraction import extract_geology_from_sections
 
         recs = extract_geology_from_sections(
-            [{"title": "geological setting", "text": "Miocene radiolarians from Cyprus.",
-              "section_type": "geological_setting"}]
+            [
+                {
+                    "title": "geological setting",
+                    "text": "Miocene radiolarians from Cyprus.",
+                    "section_type": "geological_setting",
+                }
+            ]
         )
         assert recs
         r = recs[0]

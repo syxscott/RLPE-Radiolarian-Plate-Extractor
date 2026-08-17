@@ -14,6 +14,7 @@ all the text". These tests pin those bugs:
 
 We also test the main window's status / progress / tab labels.
 """
+
 from __future__ import annotations
 
 import os
@@ -24,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
@@ -36,6 +38,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_language():
     from rlpe.gui import i18n
+
     i18n.set_language("en")
     yield
     i18n.set_language("en")
@@ -51,6 +54,7 @@ def _texts(labels) -> list[str]:
 def test_settings_tab_all_labels_translate():
     from rlpe.gui import i18n
     from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
     labels = st.findChildren(QLabel)
     en = _texts(labels)
@@ -61,15 +65,16 @@ def test_settings_tab_all_labels_translate():
     # Allow at most 2 unchanged (the title which is special-cased
     # and the sectionTitle class which appears twice)
     assert len(unchanged) <= 2, (
-        f"Settings tab: {len(unchanged)} labels did NOT translate to zh_CN: "
-        f"{unchanged[:5]}"
+        f"Settings tab: {len(unchanged)} labels did NOT translate to zh_CN: {unchanged[:5]}"
     )
 
 
 def test_settings_tab_all_buttons_translate():
     from PySide6.QtWidgets import QPushButton
+
     from rlpe.gui import i18n
     from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
     buttons = st.findChildren(QPushButton)
     en = [b.text() for b in buttons]
@@ -77,14 +82,14 @@ def test_settings_tab_all_buttons_translate():
     zh = [b.text() for b in buttons]
     unchanged = [(i, t) for i, (t, z) in enumerate(zip(en, zh)) if t and t == z]
     assert len(unchanged) == 0, (
-        f"Settings tab: {len(unchanged)} buttons did NOT translate: "
-        f"{unchanged}"
+        f"Settings tab: {len(unchanged)} buttons did NOT translate: {unchanged}"
     )
 
 
 def test_settings_tab_title_translates():
     from rlpe.gui import i18n
     from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
     # Title widget is created but its objectName is "settab.title"
     # so we look it up by objectName (not by class=sectionTitle which
@@ -110,6 +115,7 @@ def test_settings_tab_title_translates():
 # ============================================================
 def test_settings_tab_spinboxes_have_min_height_28():
     from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
     for sb in st.findChildren(__import__("PySide6.QtWidgets", fromlist=["QSpinBox"]).QSpinBox):
         assert sb.minimumHeight() >= 28, (
@@ -120,18 +126,21 @@ def test_settings_tab_spinboxes_have_min_height_28():
 
 def test_settings_tab_comboboxes_have_min_height_28():
     from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
     for cb in st.findChildren(__import__("PySide6.QtWidgets", fromlist=["QComboBox"]).QComboBox):
         assert cb.minimumHeight() >= 28, (
-            f"QComboBox for {cb.objectName()!r} has minHeight={cb.minimumHeight()}, "
-            "needs >= 28"
+            f"QComboBox for {cb.objectName()!r} has minHeight={cb.minimumHeight()}, needs >= 28"
         )
 
 
 def test_settings_tab_dspinboxes_have_min_height_28():
     from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
-    for sb in st.findChildren(__import__("PySide6.QtWidgets", fromlist=["QDoubleSpinBox"]).QDoubleSpinBox):
+    for sb in st.findChildren(
+        __import__("PySide6.QtWidgets", fromlist=["QDoubleSpinBox"]).QDoubleSpinBox
+    ):
         assert sb.minimumHeight() >= 28, (
             f"QDoubleSpinBox for {sb.objectName()!r} has minHeight={sb.minimumHeight()}, "
             "needs >= 28"
@@ -140,11 +149,11 @@ def test_settings_tab_dspinboxes_have_min_height_28():
 
 def test_settings_tab_lineedits_have_min_height_28():
     from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
     for le in st.findChildren(__import__("PySide6.QtWidgets", fromlist=["QLineEdit"]).QLineEdit):
         assert le.minimumHeight() >= 28, (
-            f"QLineEdit for {le.objectName()!r} has minHeight={le.minimumHeight()}, "
-            "needs >= 28"
+            f"QLineEdit for {le.objectName()!r} has minHeight={le.minimumHeight()}, needs >= 28"
         )
 
 
@@ -154,6 +163,7 @@ def test_settings_tab_lineedits_have_min_height_28():
 def test_main_window_tab_labels_translate():
     from rlpe.gui import i18n
     from rlpe.gui.main_window import MainWindow
+
     # Phase 36: zh_CN is now the default. Capture ZH first, then
     # switch to EN, capture EN, then switch back to ZH to confirm
     # the round-trip works.
@@ -181,6 +191,7 @@ def test_main_window_tab_labels_translate():
 def test_main_window_title_translates():
     from rlpe.gui import i18n
     from rlpe.gui.main_window import MainWindow
+
     i18n.set_language("zh_CN")
     w = MainWindow()
     i18n.set_language("en")
@@ -207,13 +218,15 @@ def test_tr_label_widget_factory_uses_i18n():
     this test flags it. (We allow bare labels inside the visual
     preview widget since that's dynamically-rendered text.)"""
     from PySide6.QtWidgets import QLabel
+
     from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
     # Every QLabel with a non-empty text must have either a
     # translation-related objectName (settab.* / app.* / runtab.* etc.)
     # or a known dynamic-text exception.
     KNOWN_DYNAMIC = {
-        "sectionTitle",         # the title label (handled separately)
+        "sectionTitle",  # the title label (handled separately)
     }
     for lbl in st.findChildren(QLabel):
         if not lbl.text():
@@ -233,6 +246,7 @@ def test_tr_label_with_format_template():
     """register_widget_text supports ``fmt`` keyword args for
     templates like ``"⚙️ {app}  ·  v{version}"``."""
     from PySide6.QtWidgets import QLabel
+
     from rlpe.gui import i18n
 
     lbl = QLabel()
@@ -240,7 +254,9 @@ def test_tr_label_with_format_template():
     i18n.STRINGS["en"]["phase34.test.label"] = "Hello {name}!"
     i18n.STRINGS["zh_CN"]["phase34.test.label"] = "你好 {name}!"
     i18n.register_widget_text(
-        "phase34.test.label", "text", "phase34.test.label",
+        "phase34.test.label",
+        "text",
+        "phase34.test.label",
         name="World",
     )
     i18n.set_language("en")

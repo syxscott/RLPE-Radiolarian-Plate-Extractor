@@ -17,6 +17,7 @@ radiolarian biostratigraphy:
 
 The fix: extend ``_BIOZONE_RE`` with these patterns.
 """
+
 from __future__ import annotations
 
 from rlpe.geology_extraction import _BIOZONE_RE

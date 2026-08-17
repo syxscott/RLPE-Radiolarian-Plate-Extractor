@@ -11,6 +11,7 @@ This test module follows the ``tests/test_round25_pbdb_integration.py``
 pattern (synthetic PBDB JSON, ``sys.path.insert`` + ``_read`` source
 guard).
 """
+
 from __future__ import annotations
 
 import sys
@@ -182,12 +183,8 @@ def test_lookup_genus_distinct_cache_from_species():
     genus_method_start = src.find("def lookup_genus")
     species_method_start = src.find("def lookup_species")
     # Each method has its own cache key prefix
-    assert 'f"genus|{clean.lower()}"' in src, (
-        "lookup_genus must use a distinct cache prefix"
-    )
-    assert 'f"taxa|{clean.lower()}"' in src, (
-        "lookup_species must keep its existing taxa| prefix"
-    )
+    assert 'f"genus|{clean.lower()}"' in src, "lookup_genus must use a distinct cache prefix"
+    assert 'f"taxa|{clean.lower()}"' in src, "lookup_species must keep its existing taxa| prefix"
 
 
 # ============================================================================
@@ -203,7 +200,7 @@ def test_pipeline_genus_fallback_only_when_species_misses():
     # Find the fallback block
     fallback_idx = src.find("lookup_genus")
     # The condition immediately preceding must check tax is None
-    pre = src[max(0, fallback_idx - 500):fallback_idx]
+    pre = src[max(0, fallback_idx - 500) : fallback_idx]
     assert "tax is None" in pre, (
         "Genus fallback must be conditional on tax is None (no species match)"
     )
@@ -214,9 +211,7 @@ def test_pipeline_genus_fallback_skips_genus_only_input():
     because there's no genus to extract."""
     src = _read("src/rlpe/pipeline.py")
     # The fallback must check for a space
-    assert '" " in name' in src, (
-        "Genus fallback must check for a space (binomial format)"
-    )
+    assert '" " in name' in src, "Genus fallback must check for a space (binomial format)"
 
 
 def test_pipeline_genus_fallback_does_not_call_lookup_occurrences():
@@ -254,8 +249,7 @@ def test_pipeline_genus_fallback_does_not_call_lookup_occurrences():
         )
     )
     assert has_comment, (
-        f"Genus fallback block must explain why occurrences aren't "
-        f"looked up. Block:\n{block[:800]}"
+        f"Genus fallback block must explain why occurrences aren't looked up. Block:\n{block[:800]}"
     )
 
 

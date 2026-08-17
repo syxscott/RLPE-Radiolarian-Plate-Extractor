@@ -3,6 +3,7 @@
 Audit 2026-08-17 spec: docs/superpowers/specs/2026-08-17-m3-per-panel-pipeline-design.md
 Plan: docs/superpowers/plans/2026-08-17-m3-per-panel-pipeline.md
 """
+
 from __future__ import annotations
 
 import inspect
@@ -30,10 +31,10 @@ def _make_cfg(tmp_path: Path, **overrides) -> PipelineConfig:
 
 def test_config_has_m3_per_panel_fields_with_safe_defaults(tmp_path):
     """All 4 new fields exist with safe defaults:
-      - m3_per_panel_enabled: False (off by default)
-      - m3_per_panel_min_conf: 0.55
-      - m3_per_panel_max_per_figure: 20
-      - m3_per_panel_max_per_paper: 200
+    - m3_per_panel_enabled: False (off by default)
+    - m3_per_panel_min_conf: 0.55
+    - m3_per_panel_max_per_figure: 20
+    - m3_per_panel_max_per_paper: 200
     """
     cfg = _make_cfg(tmp_path)
     assert hasattr(cfg, "m3_per_panel_enabled")
@@ -74,13 +75,9 @@ class _StubPipeline:
         # Provide a stub m3_engine with a non-None backend so the method's
         # second guard (m3_engine.backend) does NOT short-circuit and the
         # actual Task 3 loop body gets exercised by skip-rows tests.
-        self.m3_engine = SimpleNamespace(
-            backend=SimpleNamespace(backend_name="stub")
-        )
+        self.m3_engine = SimpleNamespace(backend=SimpleNamespace(backend_name="stub"))
         self._apply_m3_per_panel_species_id = (
-            RadiolarianPipeline._apply_m3_per_panel_species_id.__get__(
-                self, RadiolarianPipeline
-            )
+            RadiolarianPipeline._apply_m3_per_panel_species_id.__get__(self, RadiolarianPipeline)
         )
 
 
@@ -171,9 +168,7 @@ def test_method_builds_caption_for_panel_from_caption_pairs(tmp_path):
     assert "caption_pairs" in src, (
         "method must read caption_pairs to pick the panel-specific snippet"
     )
-    assert "panel_id" in src, (
-        "method must match caption pairs to row panel_id"
-    )
+    assert "panel_id" in src, "method must match caption pairs to row panel_id"
 
 
 def test_method_truncates_page_context_at_1500_chars(tmp_path):
@@ -182,9 +177,7 @@ def test_method_truncates_page_context_at_1500_chars(tmp_path):
 
     src = inspect.getsource(RadiolarianPipeline._apply_m3_per_panel_species_id)
     # Spec §3 requires page-context truncation at 1500 chars.
-    assert "1500" in src, (
-        "page-context snippet must be truncated (spec §3 says 1500 chars)"
-    )
+    assert "1500" in src, "page-context snippet must be truncated (spec §3 says 1500 chars)"
 
 
 # ---------------------------------------------------------------------------
@@ -370,8 +363,14 @@ def test_method_handles_backend_fallback_used(tmp_path):
     crop = tmp_path / "panel1.png"
     _write_valid_png(crop)
     results = [
-        {"panel_id": "1", "species": "regex_species", "panel_path": str(crop),
-         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+        {
+            "panel_id": "1",
+            "species": "regex_species",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
     ]
     out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
     assert out[0]["species"] == "regex_species"
@@ -390,8 +389,14 @@ def test_method_handles_backend_exception(tmp_path):
     crop = tmp_path / "panel1.png"
     _write_valid_png(crop)
     results = [
-        {"panel_id": "1", "species": "regex_species", "panel_path": str(crop),
-         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+        {
+            "panel_id": "1",
+            "species": "regex_species",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
     ]
     out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
     assert out[0]["species"] == "regex_species"
@@ -404,17 +409,26 @@ def test_method_handles_garbage_json(tmp_path):
     cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
     backend = MagicMock()
     backend.backend_name = "test_backend"
-    backend.infer_panel.return_value = {"species": None, "label": None,
-                                         "confidence": 0.0,
-                                         "reasoning": "no parse"}
+    backend.infer_panel.return_value = {
+        "species": None,
+        "label": None,
+        "confidence": 0.0,
+        "reasoning": "no parse",
+    }
     pipe = _StubPipeline(cfg)
     pipe.m3_engine = MagicMock()
     pipe.m3_engine.backend = backend
     crop = tmp_path / "panel1.png"
     _write_valid_png(crop)
     results = [
-        {"panel_id": "1", "species": "regex_species", "panel_path": str(crop),
-         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+        {
+            "panel_id": "1",
+            "species": "regex_species",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
     ]
     out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
     # Confidence 0.0 < 0.55 → no overwrite, but metadata IS stamped
@@ -433,8 +447,11 @@ def test_method_caps_per_figure(tmp_path):
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
-        "species": "Emiluvia orea", "label": "X", "confidence": 0.9,
-        "reasoning": "r", "alternative": None,
+        "species": "Emiluvia orea",
+        "label": "X",
+        "confidence": 0.9,
+        "reasoning": "r",
+        "alternative": None,
     }
     pipe = _StubPipeline(cfg)
     pipe.m3_engine = MagicMock()
@@ -443,16 +460,18 @@ def test_method_caps_per_figure(tmp_path):
     _write_valid_png(crop)
     rows = []
     for i in range(5):
-        rows.append({
-            "panel_id": str(i),
-            "species": f"regex_{i}",
-            "label": str(i),
-            "figure_id": "fig_1",
-            "panel_path": str(crop),
-            "caption_pairs": [],
-            "page_context_snippet": "",
-            "metadata": {},
-        })
+        rows.append(
+            {
+                "panel_id": str(i),
+                "species": f"regex_{i}",
+                "label": str(i),
+                "figure_id": "fig_1",
+                "panel_path": str(crop),
+                "caption_pairs": [],
+                "page_context_snippet": "",
+                "metadata": {},
+            }
+        )
     out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
     # Only the first 2 should have m3_per_panel stamped; rest untouched.
     stamped = [r for r in out if "m3_per_panel" in r["metadata"]]
@@ -472,8 +491,11 @@ def test_method_caps_per_paper(tmp_path):
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
-        "species": "X", "label": "X", "confidence": 0.9,
-        "reasoning": "r", "alternative": None,
+        "species": "X",
+        "label": "X",
+        "confidence": 0.9,
+        "reasoning": "r",
+        "alternative": None,
     }
     pipe = _StubPipeline(cfg)
     pipe.m3_engine = MagicMock()
@@ -482,16 +504,18 @@ def test_method_caps_per_paper(tmp_path):
     _write_valid_png(crop)
     rows = []
     for i in range(10):
-        rows.append({
-            "panel_id": str(i),
-            "species": f"regex_{i}",
-            "label": str(i),
-            "figure_id": f"fig_{i}",  # each in own figure → bypasses per-fig cap
-            "panel_path": str(crop),
-            "caption_pairs": [],
-            "page_context_snippet": "",
-            "metadata": {},
-        })
+        rows.append(
+            {
+                "panel_id": str(i),
+                "species": f"regex_{i}",
+                "label": str(i),
+                "figure_id": f"fig_{i}",  # each in own figure → bypasses per-fig cap
+                "panel_path": str(crop),
+                "caption_pairs": [],
+                "page_context_snippet": "",
+                "metadata": {},
+            }
+        )
     out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
     stamped = [r for r in out if "m3_per_panel" in r["metadata"]]
     assert len(stamped) == 3
@@ -504,7 +528,9 @@ def test_method_normalises_species_list_extras(tmp_path):
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
-        "species": "Emiluvia orea", "label": "1", "confidence": 0.9,
+        "species": "Emiluvia orea",
+        "label": "1",
+        "confidence": 0.9,
         "reasoning": "r",
         "species_list": [
             {"species": "Emiluvia orea", "confidence": 0.92},
@@ -517,8 +543,14 @@ def test_method_normalises_species_list_extras(tmp_path):
     crop = tmp_path / "panel.png"
     _write_valid_png(crop)
     results = [
-        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
-         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+        {
+            "panel_id": "1",
+            "species": "regex",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
     ]
     out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
     # metadata.m3_per_panel is the normalised dict; species_list is NOT
@@ -532,7 +564,9 @@ def test_method_clamps_confidence_to_unit_interval(tmp_path):
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
-        "species": "X", "label": "X", "confidence": 1.7,  # out of range
+        "species": "X",
+        "label": "X",
+        "confidence": 1.7,  # out of range
         "reasoning": "r",
     }
     pipe = _StubPipeline(cfg)
@@ -541,8 +575,14 @@ def test_method_clamps_confidence_to_unit_interval(tmp_path):
     crop = tmp_path / "panel.png"
     _write_valid_png(crop)
     results = [
-        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
-         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+        {
+            "panel_id": "1",
+            "species": "regex",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
     ]
     out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
     # Confidence 1.7 → clamped to 1.0 → above 0.55 → overwrite happens.
@@ -555,7 +595,9 @@ def test_method_records_latency(tmp_path):
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
-        "species": "X", "label": "X", "confidence": 0.9,
+        "species": "X",
+        "label": "X",
+        "confidence": 0.9,
         "reasoning": "r",
     }
     pipe = _StubPipeline(cfg)
@@ -564,8 +606,14 @@ def test_method_records_latency(tmp_path):
     crop = tmp_path / "panel.png"
     _write_valid_png(crop)
     results = [
-        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
-         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+        {
+            "panel_id": "1",
+            "species": "regex",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
     ]
     out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
     md = out[0]["metadata"]["m3_per_panel"]
@@ -579,7 +627,9 @@ def test_method_records_image_sha(tmp_path):
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
-        "species": "X", "label": "X", "confidence": 0.9,
+        "species": "X",
+        "label": "X",
+        "confidence": 0.9,
         "reasoning": "r",
     }
     pipe = _StubPipeline(cfg)
@@ -588,8 +638,14 @@ def test_method_records_image_sha(tmp_path):
     crop = tmp_path / "panel.png"
     _write_valid_png(crop)
     results = [
-        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
-         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+        {
+            "panel_id": "1",
+            "species": "regex",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
     ]
     out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
     md = out[0]["metadata"]["m3_per_panel"]
@@ -804,7 +860,10 @@ def test_stage4_5_gate_short_circuits_when_typed_attr_false(tmp_path):
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
-        "species": "X", "label": "X", "confidence": 0.9, "reasoning": "r",
+        "species": "X",
+        "label": "X",
+        "confidence": 0.9,
+        "reasoning": "r",
     }
     pipe.m3_engine = MagicMock()
     pipe.m3_engine.backend = backend
@@ -812,8 +871,14 @@ def test_stage4_5_gate_short_circuits_when_typed_attr_false(tmp_path):
     crop = tmp_path / "panel.png"
     _write_valid_png(crop)
     rows = [
-        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
-         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+        {
+            "panel_id": "1",
+            "species": "regex",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
     ]
     out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
     assert out == rows, "gate must short-circuit when typed attr is False"
@@ -1067,8 +1132,9 @@ def test_attach_stage4_5_context_attaches_caption_pairs_and_page_text(tmp_path):
     ]
     # Bind the helper method onto the stub.
     from rlpe.pipeline import RadiolarianPipeline
-    pipe._attach_stage4_5_context = (
-        RadiolarianPipeline._attach_stage4_5_context.__get__(pipe, RadiolarianPipeline)
+
+    pipe._attach_stage4_5_context = RadiolarianPipeline._attach_stage4_5_context.__get__(
+        pipe, RadiolarianPipeline
     )
     pipe._attach_stage4_5_context(
         rows,
@@ -1098,8 +1164,8 @@ def test_attach_stage4_5_context_handles_noop_inputs(tmp_path):
 
     cfg = _make_cfg(tmp_path)
     pipe = _StubPipeline(cfg)
-    pipe._attach_stage4_5_context = (
-        RadiolarianPipeline._attach_stage4_5_context.__get__(pipe, RadiolarianPipeline)
+    pipe._attach_stage4_5_context = RadiolarianPipeline._attach_stage4_5_context.__get__(
+        pipe, RadiolarianPipeline
     )
     # No rows at all.
     pipe._attach_stage4_5_context(

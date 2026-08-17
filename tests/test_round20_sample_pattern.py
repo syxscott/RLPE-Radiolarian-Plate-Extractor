@@ -68,9 +68,7 @@ def test_legacy_sample_format_still_works():
     ]
     samples = sample_records_from_matches(matches)
     sids = {s["sample_id"] for s in samples}
-    assert any(s.startswith("S_") for s in sids), (
-        f"Legacy 'Sample N' pattern not firing: {sids}"
-    )
+    assert any(s.startswith("S_") for s in sids), f"Legacy 'Sample N' pattern not firing: {sids}"
 
 
 def test_short_codes_deduped_per_paper():
@@ -95,16 +93,13 @@ def test_short_codes_not_over_matching():
     matches = [
         _build_match(
             "p1",
-            "Plate 1. Found in situ at the Karnezeika section. "
-            "Length about 200 µm.",
+            "Plate 1. Found in situ at the Karnezeika section. Length about 200 µm.",
         )
     ]
     samples = sample_records_from_matches(matches)
     sids = {s["sample_id"] for s in samples}
     # No B_ codes (no paper-specific prefix like CH/MB)
-    assert not any(s.startswith("B_") for s in sids), (
-        f"Short-code detector over-matched: {sids}"
-    )
+    assert not any(s.startswith("B_") for s in sids), f"Short-code detector over-matched: {sids}"
 
 
 def test_short_code_pattern_source_guard():

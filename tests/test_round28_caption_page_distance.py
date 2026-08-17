@@ -10,6 +10,7 @@ such appendix-style pair. This test module pins the new configurable
 The scaffolding pattern follows ``tests/test_round27_japanese_extraction.py``
 (sys.path injection + ``_read`` helper for source-guard assertions).
 """
+
 from __future__ import annotations
 
 import sys
@@ -80,8 +81,8 @@ def test_app_joboptions_has_caption_window():
 def test_app_joboptions_validators_present():
     """Both new fields have field_validator constraints (1..50 / 1..200)."""
     app = _read("src/rlpe/api/app.py")
-    assert '_validate_caption_window' in app
-    assert '_validate_od_caption_window' in app
+    assert "_validate_caption_window" in app
+    assert "_validate_od_caption_window" in app
 
 
 def test_pipeline_threads_od_caption_window_to_extractor():
@@ -118,9 +119,7 @@ def test_hardcoded_plus_two_replaced():
         stripped = line.split("#", 1)[0]
         code_lines.append(stripped)
     code_only = "\n".join(code_lines)
-    assert "page_lo + 2" not in code_only, (
-        "Live code still contains the old `page_lo + 2` literal"
-    )
+    assert "page_lo + 2" not in code_only, "Live code still contains the old `page_lo + 2` literal"
     assert "page_lo + int(caption_window)" in code_only
 
 
@@ -292,6 +291,7 @@ def test_rescue_thirty_page_gap_with_window_eight_parametrized():
 def test_app_joboptions_rejects_zero_od_caption_window():
     """od_caption_window=0 must raise ValidationError (Pydantic HTTP 422)."""
     from pydantic import ValidationError
+
     from rlpe.api.app import JobOptions
 
     with pytest.raises(ValidationError):
@@ -301,6 +301,7 @@ def test_app_joboptions_rejects_zero_od_caption_window():
 def test_app_joboptions_rejects_oversized_od_caption_window():
     """od_caption_window=999 must raise ValidationError (max 200)."""
     from pydantic import ValidationError
+
     from rlpe.api.app import JobOptions
 
     with pytest.raises(ValidationError):

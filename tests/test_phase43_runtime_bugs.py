@@ -13,6 +13,7 @@ User reported three runtime errors after launching the GUI:
 
 These tests pin the fixes.
 """
+
 from __future__ import annotations
 
 import os
@@ -25,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QStyleOptionProgressBar  # noqa: E402
 
@@ -43,7 +45,9 @@ def test_progress_cell_delegate_calls_super_paint():
     leaves the painter in an active state, causing
     "QBackingStore::endPaint() called with active painter"."""
     import inspect
+
     from rlpe.gui.jobs_tab import _ProgressCellDelegate
+
     src = inspect.getsource(_ProgressCellDelegate.paint)
     assert "super().paint" in src, (
         "_ProgressCellDelegate.paint must call super().paint() for "
@@ -60,21 +64,19 @@ def test_run_tab_on_thread_done_calls_quit_and_wait():
     before dropping the reference, otherwise the QThread C++ object
     is destroyed while still running."""
     import inspect
+
     from rlpe.gui.run_tab import RunTab
+
     src = inspect.getsource(RunTab._on_thread_done)
     assert "worker.quit()" in src, (
-        "_on_thread_done must call worker.quit() to ask the thread's "
-        "event loop to stop"
+        "_on_thread_done must call worker.quit() to ask the thread's event loop to stop"
     )
     assert "worker.wait(" in src, (
-        "_on_thread_done must call worker.wait() to block until the "
-        "thread actually exits"
+        "_on_thread_done must call worker.wait() to block until the thread actually exits"
     )
     # Also must guard with isRunning() to avoid quit() on a
     # not-yet-started thread
-    assert "isRunning" in src, (
-        "_on_thread_done must check isRunning() before quit()/wait()"
-    )
+    assert "isRunning" in src, "_on_thread_done must check isRunning() before quit()/wait()"
 
 
 # ============================================================
@@ -87,7 +89,9 @@ def test_pipeline_grobid_path_calls_is_available_first():
     is_available() with a 2s timeout FIRST; if False, skip retries
     and go straight to OD fallback."""
     import inspect
+
     from rlpe.pipeline import RadiolarianPipeline
+
     src = inspect.getsource(RadiolarianPipeline._process_one_pdf_grobid)
     assert "is_available" in src, (
         "_process_one_pdf_grobid must call is_available() before "
@@ -96,8 +100,7 @@ def test_pipeline_grobid_path_calls_is_available_first():
     )
     # Must skip the retry when is_available returns False
     assert "_process_one_pdf_od" in src, (
-        "_process_one_pdf_grobid must fall back to _process_one_pdf_od "
-        "when the GROBID probe fails"
+        "_process_one_pdf_grobid must fall back to _process_one_pdf_od when the GROBID probe fails"
     )
 
 
@@ -105,6 +108,7 @@ def test_grobid_no_probe_config_key_registered():
     """Phase 43: 'grobid_no_probe' must be a known extra-config key
     so users can disable the probe (for tests / special deployments)."""
     from rlpe import config
+
     assert "grobid_no_probe" in config._KNOWN_EXTRA_KEYS, (
         "config._KNOWN_EXTRA_KEYS must include 'grobid_no_probe'"
     )
@@ -116,8 +120,10 @@ def test_grobid_no_probe_config_key_registered():
 def test_pipeline_worker_has_request_cancel():
     """Phase 43: PipelineWorker.request_cancel() must set
     _cancel_event AND call QThread.requestInterruption."""
-    from rlpe.gui.pipeline_worker import PipelineWorker
     import tempfile
+
+    from rlpe.gui.pipeline_worker import PipelineWorker
+
     with tempfile.TemporaryDirectory() as tmp:
         w = PipelineWorker({}, Path(tmp) / "fake.pdf", Path(tmp) / "work")
         # Both attributes and methods must exist

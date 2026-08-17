@@ -21,7 +21,6 @@ import pytest
 # environment. The flag MUST be set before importing any Qt module.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QComboBox  # noqa: E402
 
@@ -40,6 +39,7 @@ def qapp():
 # ---------------------------------------------------------------------------
 # M8 — friendly combo refresh on language switch
 # ---------------------------------------------------------------------------
+
 
 def test_m8_combo_refreshes_labels_on_language_switch(qapp) -> None:
     """After ``i18n.set_language('en')`` the combo items must show
@@ -65,8 +65,7 @@ def test_m8_combo_refreshes_labels_on_language_switch(qapp) -> None:
     i18n.set_language("en")
     en_labels = [cb.itemText(i) for i in range(cb.count())]
     assert en_labels != zh_labels, (
-        "Friendly-name combo did NOT refresh on language switch — "
-        "Phase 55 M8 regression."
+        "Friendly-name combo did NOT refresh on language switch — Phase 55 M8 regression."
     )
     # userData is preserved.
     assert cb.currentData() == "paddleocr", (

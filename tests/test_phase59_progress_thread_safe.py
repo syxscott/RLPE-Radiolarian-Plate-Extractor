@@ -36,12 +36,9 @@ def _make_pipeline_with_callback(cb):
 
 def test_emit_progress_uses_lock() -> None:
     """Bug 2.5 source-guard: _emit_progress wraps the callback in a lock."""
-    src = (Path(__file__).resolve().parents[1] / "src/rlpe/pipeline.py").read_text(
-        encoding="utf-8"
-    )
+    src = (Path(__file__).resolve().parents[1] / "src/rlpe/pipeline.py").read_text(encoding="utf-8")
     assert "self._progress_lock" in src, (
-        "Pipeline must expose _progress_lock (threading.Lock) for serialised "
-        "progress callbacks."
+        "Pipeline must expose _progress_lock (threading.Lock) for serialised progress callbacks."
     )
 
 
@@ -82,8 +79,7 @@ def test_emit_progress_serializes_callbacks_across_threads() -> None:
         t.join()
 
     assert max_concurrent == 1, (
-        f"Callback must never run concurrently under the lock; got "
-        f"max_concurrent={max_concurrent}"
+        f"Callback must never run concurrently under the lock; got max_concurrent={max_concurrent}"
     )
 
 
@@ -120,6 +116,4 @@ def test_emit_progress_no_lock_max_concurrent_can_exceed_1() -> None:
     # With GIL release during sleep, max_concurrent SHOULD exceed 1
     # in the unlocked version. This is the bug; we assert it for
     # documentation.
-    assert max_concurrent >= 1, (
-        f"Unlocked callback should be observable; got {max_concurrent}"
-    )
+    assert max_concurrent >= 1, f"Unlocked callback should be observable; got {max_concurrent}"

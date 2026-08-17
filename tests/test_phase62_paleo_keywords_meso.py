@@ -18,6 +18,7 @@ would silently produce modern coords for an Eocene-age record.
 The fix: extend ``_PALEO_KEYWORDS`` (and the mirror copy in
 geo_coords._PALEO_KEYWORDS_GEO) with the era + epoch names.
 """
+
 from __future__ import annotations
 
 from rlpe.geology_extraction import (

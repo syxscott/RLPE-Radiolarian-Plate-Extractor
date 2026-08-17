@@ -408,6 +408,7 @@ def test_paleogeographic_map_localities_creates_per_point_records():
     the global geo entry.
     """
     from PIL import Image
+
     backend = FakeM3Backend(
         canned_responses=[
             {
@@ -481,6 +482,7 @@ def test_paleogeographic_map_skips_localities_without_species():
     (they carry no useful species-to-geology link).
     """
     from PIL import Image
+
     backend = FakeM3Backend(
         canned_responses=[
             {
@@ -533,6 +535,7 @@ def test_strat_column_layers_creates_per_layer_records():
     geo entry.
     """
     from PIL import Image
+
     backend = FakeM3Backend(
         canned_responses=[
             {
@@ -601,6 +604,7 @@ def test_litholog_column_layers_creates_per_layer_records():
     with link_source='geo_vision_layer'.
     """
     from PIL import Image
+
     backend = FakeM3Backend(
         canned_responses=[
             {
@@ -657,6 +661,7 @@ def test_paleogeographic_map_without_localities_still_works():
     one geo entry and not crash.
     """
     from PIL import Image
+
     backend = FakeM3Backend(
         canned_responses=[
             {
@@ -693,6 +698,7 @@ def test_strat_column_without_layers_still_works():
     one geo entry and not crash.
     """
     from PIL import Image
+
     backend = FakeM3Backend(
         canned_responses=[
             {
@@ -722,4 +728,3 @@ def test_strat_column_without_layers_still_works():
     assert len(result) == 1
     assert result[0]["formation"] == "Nahr Ibrah Formation"
     assert result[0]["section_type"] == "stratigraphic_column"
-

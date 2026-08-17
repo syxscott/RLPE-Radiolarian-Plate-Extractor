@@ -13,6 +13,7 @@ will still drop the resulting ScaleInfo, but the conversion itself
 is now well-defined and the operator can see the unit was
 recognised.
 """
+
 from __future__ import annotations
 
 from rlpe.scale_bar import to_um

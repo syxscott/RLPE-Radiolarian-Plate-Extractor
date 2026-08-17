@@ -68,6 +68,7 @@ def main() -> int:
         # dataclass doesn't know; filter to known fields to avoid
         # TypeError on GoldPanel(**g).
         import dataclasses as _dc
+
         _gold_fields = {f.name for f in _dc.fields(GoldPanel)}
         gold = [
             GoldPanel(**{k: v for k, v in g.items() if k in _gold_fields})

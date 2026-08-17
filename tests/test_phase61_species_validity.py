@@ -8,6 +8,7 @@ passes ``_taxon_parts`` shape but the genus name is a known author
 surname (e.g. "Foreman 1995"). The new ``_is_valid_species`` guard
 rejects those before they pollute downstream eval.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -20,7 +21,7 @@ def test_valid_species_passes():
 
 
 def test_author_surname_genus_rejected():
-    """"Foreman" is a known author surname → must be rejected as genus."""
+    """ "Foreman" is a known author surname → must be rejected as genus."""
     assert _is_valid_species("Foreman species") is False
 
 

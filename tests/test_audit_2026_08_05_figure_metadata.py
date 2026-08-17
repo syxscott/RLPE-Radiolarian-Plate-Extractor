@@ -133,10 +133,15 @@ class TestExtractionMethodOnPanelRecord:
         from rlpe.types import MatchResult
 
         m = MatchResult(
-            paper_id="p", figure_id="f", panel_id="1",
-            species="Genus species", panel_path="/tmp/1.png",
-            bbox=[10, 20, 100, 200], confidence=0.6,
-            label_text="1", caption_snippet="Plate 1",
+            paper_id="p",
+            figure_id="f",
+            panel_id="1",
+            species="Genus species",
+            panel_path="/tmp/1.png",
+            bbox=[10, 20, 100, 200],
+            confidence=0.6,
+            label_text="1",
+            caption_snippet="Plate 1",
             ocr_text=None,
             metadata={"extraction_method": "heuristic"},
             paper_metadata=None,
@@ -149,10 +154,15 @@ class TestExtractionMethodOnPanelRecord:
         from rlpe.types import MatchResult
 
         m = MatchResult(
-            paper_id="p", figure_id="f", panel_id="1",
-            species="Genus species", panel_path="/tmp/1.png",
-            bbox=[10, 20, 100, 200], confidence=0.6,
-            label_text="1", caption_snippet="Plate 1",
+            paper_id="p",
+            figure_id="f",
+            panel_id="1",
+            species="Genus species",
+            panel_path="/tmp/1.png",
+            bbox=[10, 20, 100, 200],
+            confidence=0.6,
+            label_text="1",
+            caption_snippet="Plate 1",
             ocr_text=None,
             metadata={"extraction_method": "llm_first"},
             paper_metadata=None,
@@ -165,10 +175,15 @@ class TestExtractionMethodOnPanelRecord:
         from rlpe.types import MatchResult
 
         m = MatchResult(
-            paper_id="p", figure_id="f", panel_id="1",
-            species="Genus species", panel_path="/tmp/1.png",
-            bbox=[10, 20, 100, 200], confidence=0.6,
-            label_text="1", caption_snippet="Plate 1",
+            paper_id="p",
+            figure_id="f",
+            panel_id="1",
+            species="Genus species",
+            panel_path="/tmp/1.png",
+            bbox=[10, 20, 100, 200],
+            confidence=0.6,
+            label_text="1",
+            caption_snippet="Plate 1",
             ocr_text=None,
             metadata={},  # no extraction_method
             paper_metadata=None,

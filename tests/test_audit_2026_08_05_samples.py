@@ -55,7 +55,8 @@ class TestSampleRecordsFromMatchesExtractSampleIds:
         from rlpe.converters import sample_records_from_matches
 
         m = self._make_match(
-            "p1", "f1",
+            "p1",
+            "f1",
             "Plate 1. Sample CH-4. figs 1-2. Genus species",
         )
         recs = sample_records_from_matches([m])
@@ -80,7 +81,8 @@ class TestSampleRecordsFromMatchesExtractSampleIds:
         # Beccaro Plate 1: no Sample / Loc / ID tokens — the function
         # should NOT emit spurious records.
         m = self._make_match(
-            "p1", "f1",
+            "p1",
+            "f1",
             "Plate 1\n\nScanning electron micrographs of the most "
             "important radiolarians used for the biostratigraphy",
         )
@@ -93,10 +95,14 @@ class TestSampleRecordsFromMatchesExtractSampleIds:
         # Two matches with the same sample-id text should produce
         # ONE SampleRecord (keyed by (paper_id, sample_id)).
         m1 = self._make_match(
-            "p1", "f1", "Plate 1. Sample CH-4. figs 1-2.",
+            "p1",
+            "f1",
+            "Plate 1. Sample CH-4. figs 1-2.",
         )
         m2 = self._make_match(
-            "p1", "f1", "Plate 1. Sample CH-4. figs 1-2.",
+            "p1",
+            "f1",
+            "Plate 1. Sample CH-4. figs 1-2.",
         )
         recs = sample_records_from_matches([m1, m2])
         # At most one record per (paper_id, sample_id) pair.
@@ -107,7 +113,9 @@ class TestSampleRecordsFromMatchesExtractSampleIds:
         from rlpe.converters import sample_records_from_matches
 
         m = self._make_match(
-            "p_paper", "f_fig", "Plate 1. Sample CH-4.",
+            "p_paper",
+            "f_fig",
+            "Plate 1. Sample CH-4.",
         )
         recs = sample_records_from_matches([m])
         assert recs, "expected at least one SampleRecord"

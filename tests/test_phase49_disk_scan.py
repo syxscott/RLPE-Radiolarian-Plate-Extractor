@@ -24,6 +24,7 @@ Tests pin:
   6. ``MainWindow.__init__`` calls the scan automatically.
   7. Double-clicking a loaded job opens results in ResultsTab.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -59,6 +61,7 @@ def tmp_work_dirs(tmp_path, monkeypatch):
     real project tree.
     """
     import rlpe.gui.constants as consts
+
     monkeypatch.setattr(consts, "PROJECT_ROOT", tmp_path)
     # service_work/<job-a>/output/manifests/matches.jsonl
     job_a = tmp_path / "service_work" / "job-a" / "output" / "manifests"
@@ -100,6 +103,7 @@ def test_load_recent_jobs_returns_count(tmp_work_dirs):
     """Phase 49: load_recent_jobs_from_disk() returns the number of
     jobs loaded (service_work + work CLI = 3 in this fixture)."""
     from rlpe.gui.jobs_tab import JobsTab
+
     jt = JobsTab()
     n = jt.load_recent_jobs_from_disk()
     assert n == 3, f"expected 3 jobs loaded, got {n}"
@@ -109,21 +113,19 @@ def test_load_recent_jobs_returns_count(tmp_work_dirs):
 # 2. Synthetic matches.jsonl produces a populated JobRecord
 # ============================================================
 def test_loaded_job_has_correct_status_and_rows(tmp_work_dirs):
-    from rlpe.gui.jobs_tab import JobsTab
     from rlpe.gui.constants import STATUS_DONE
+    from rlpe.gui.jobs_tab import JobsTab
+
     jt = JobsTab()
     jt.load_recent_jobs_from_disk()
     # job-a: 2 rows
     job = jt._jobs.get("job-a")
     assert job is not None, "job-a should be loaded"
-    assert job.status == STATUS_DONE, (
-        f"loaded job should be STATUS_DONE, got {job.status!r}"
-    )
+    assert job.status == STATUS_DONE, f"loaded job should be STATUS_DONE, got {job.status!r}"
     assert len(job.rows) == 2, f"job-a should have 2 rows, got {len(job.rows)}"
     assert job.rows[0]["species"] == "Species A1"
     assert job.output_dir.endswith("service_work/job-a/output"), (
-        f"output_dir should end with service_work/job-a/output, got "
-        f"{job.output_dir!r}"
+        f"output_dir should end with service_work/job-a/output, got {job.output_dir!r}"
     )
 
 
@@ -133,11 +135,13 @@ def test_loaded_job_has_correct_status_and_rows(tmp_work_dirs):
 def test_load_recent_jobs_handles_missing_dirs(tmp_path, monkeypatch):
     """Phase 49: if neither service_work nor work/ exists, return 0
     without raising."""
-    from rlpe.gui.constants import PROJECT_ROOT as _orig  # noqa: F401
     import rlpe.gui.constants as consts
+    from rlpe.gui.constants import PROJECT_ROOT as _orig  # noqa: F401
+
     monkeypatch.setattr(consts, "PROJECT_ROOT", tmp_path)
     # No service_work/ or work/ created
     from rlpe.gui.jobs_tab import JobsTab
+
     jt = JobsTab()
     n = jt.load_recent_jobs_from_disk()
     assert n == 0, f"expected 0 jobs (no dirs), got {n}"
@@ -147,12 +151,14 @@ def test_load_recent_jobs_skips_empty_manifest(tmp_path, monkeypatch):
     """Phase 49: a service_work/<jid>/output/manifests/matches.jsonl
     that exists but is empty should be skipped (no rows = no point)."""
     import rlpe.gui.constants as consts
+
     monkeypatch.setattr(consts, "PROJECT_ROOT", tmp_path)
     # Create empty manifest
     job_dir = tmp_path / "service_work" / "ghost" / "output" / "manifests"
     job_dir.mkdir(parents=True)
     (job_dir / "matches.jsonl").write_text("", encoding="utf-8")
     from rlpe.gui.jobs_tab import JobsTab
+
     jt = JobsTab()
     n = jt.load_recent_jobs_from_disk()
     assert n == 0, f"expected 0 jobs (empty manifest), got {n}"
@@ -166,6 +172,7 @@ def test_load_recent_jobs_skips_corrupt_manifest(tmp_path, monkeypatch):
     """Phase 49: a matches.jsonl with malformed JSON should be
     skipped silently (log warning) without crashing the GUI."""
     import rlpe.gui.constants as consts
+
     monkeypatch.setattr(consts, "PROJECT_ROOT", tmp_path)
     job_dir = tmp_path / "service_work" / "bad" / "output" / "manifests"
     job_dir.mkdir(parents=True)
@@ -174,6 +181,7 @@ def test_load_recent_jobs_skips_corrupt_manifest(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     from rlpe.gui.jobs_tab import JobsTab
+
     jt = JobsTab()
     # Must not raise
     n = jt.load_recent_jobs_from_disk()
@@ -188,6 +196,7 @@ def test_cli_work_gets_stable_hash_id(tmp_work_dirs):
     with id 'cli_<12 hex>' — same hash each run (stable across GUI
     restarts)."""
     from rlpe.gui.jobs_tab import JobsTab
+
     jt1 = JobsTab()
     jt1.load_recent_jobs_from_disk()
     jt2 = JobsTab()
@@ -195,9 +204,7 @@ def test_cli_work_gets_stable_hash_id(tmp_work_dirs):
     cli_ids_1 = [jid for jid in jt1._jobs if jid.startswith("cli_")]
     cli_ids_2 = [jid for jid in jt2._jobs if jid.startswith("cli_")]
     assert cli_ids_1, "should have a cli_ job_id"
-    assert cli_ids_1 == cli_ids_2, (
-        f"cli_ job_id should be stable: {cli_ids_1} vs {cli_ids_2}"
-    )
+    assert cli_ids_1 == cli_ids_2, f"cli_ job_id should be stable: {cli_ids_1} vs {cli_ids_2}"
     # Hash is 12 hex chars after cli_
     jid = cli_ids_1[0]
     assert len(jid) == 4 + 12, f"unexpected cli_ job_id format: {jid!r}"
@@ -205,6 +212,7 @@ def test_cli_work_gets_stable_hash_id(tmp_work_dirs):
 
 def test_cli_work_loaded_with_cli_rows(tmp_work_dirs):
     from rlpe.gui.jobs_tab import JobsTab
+
     jt = JobsTab()
     jt.load_recent_jobs_from_disk()
     cli_jobs = [j for j in jt._jobs.values() if j.job_id.startswith("cli_")]
@@ -219,13 +227,12 @@ def test_main_window_calls_load_recent_jobs_on_init(tmp_work_dirs, monkeypatch):
     """Phase 49: MainWindow constructor must invoke the disk scan so
     the JobsTab is populated before the user opens it."""
     from rlpe.gui.main_window import MainWindow
+
     mw = MainWindow()
     try:
         # The scan must have populated _jobs_tab._jobs with our 3 jobs
         job_ids = list(mw._jobs_tab._jobs.keys())
-        assert "job-a" in job_ids, (
-            f"job-a should be loaded after MainWindow init, got {job_ids}"
-        )
+        assert "job-a" in job_ids, f"job-a should be loaded after MainWindow init, got {job_ids}"
         assert "job-b" in job_ids
         # The CLI run uses cli_<hash>
         cli_jobs = [j for j in job_ids if j.startswith("cli_")]
@@ -237,13 +244,17 @@ def test_main_window_calls_load_recent_jobs_on_init(tmp_work_dirs, monkeypatch):
 def test_main_window_disk_scan_survives_scan_failure(monkeypatch):
     """Phase 49: even if the scan raises, the GUI must still start."""
     from rlpe.gui.jobs_tab import JobsTab
+
     # Force load_recent_jobs_from_disk to raise
     orig = JobsTab.load_recent_jobs_from_disk
+
     def boom(self):
         raise RuntimeError("simulated disk failure")
+
     monkeypatch.setattr(JobsTab, "load_recent_jobs_from_disk", boom)
     # MainWindow should swallow the exception (Phase 49 contract).
     from rlpe.gui.main_window import MainWindow
+
     mw = MainWindow()
     try:
         # GUI still starts; _jobs_tab exists but is empty
@@ -262,6 +273,7 @@ def test_loaded_job_can_be_opened_in_results_tab(tmp_work_dirs):
     """Phase 49: end-to-end — after the scan, calling MainWindow's
     _open_results on a loaded job should populate ResultsTab."""
     from rlpe.gui.main_window import MainWindow
+
     mw = MainWindow()
     try:
         # Sanity: job-a is loaded
@@ -281,6 +293,7 @@ def test_loaded_job_can_be_opened_in_results_tab(tmp_work_dirs):
 # ============================================================
 def test_main_recent_loaded_i18n_key_exists():
     from rlpe.gui import strings_en, strings_zh_CN
+
     assert "main.recent_loaded" in strings_en.STRINGS
     assert "main.recent_loaded" in strings_zh_CN.STRINGS
     # Both have the {n} placeholder
@@ -292,8 +305,10 @@ def test_main_recent_loaded_i18n_key_exists():
 # 9. PROJECT_ROOT points to a Path AND to the actual project root
 # ============================================================
 def test_project_root_is_path():
-    from rlpe.gui.constants import PROJECT_ROOT
     from pathlib import Path as _Path
+
+    from rlpe.gui.constants import PROJECT_ROOT
+
     assert isinstance(PROJECT_ROOT, _Path), (
         f"PROJECT_ROOT must be a Path, got {type(PROJECT_ROOT).__name__}"
     )
@@ -309,8 +324,10 @@ def test_project_root_is_actual_project_root():
     nonexistent path. The disk scan returned 0 jobs and the user
     saw an empty Jobs tab even though web showed many.
     """
-    from rlpe.gui.constants import PROJECT_ROOT
     from pathlib import Path as _Path
+
+    from rlpe.gui.constants import PROJECT_ROOT
+
     # PROJECT_ROOT must be the directory containing ``src/`` (i.e.
     # the project root, not the src/ subdirectory).
     assert (PROJECT_ROOT / "src").is_dir(), (
@@ -319,9 +336,7 @@ def test_project_root_is_actual_project_root():
         f"This was the Phase 50 bug: parents[2] points to src/, not the "
         f"project root."
     )
-    assert (PROJECT_ROOT / "service_work").exists() or (
-        PROJECT_ROOT / "work"
-    ).exists(), (
+    assert (PROJECT_ROOT / "service_work").exists() or (PROJECT_ROOT / "work").exists(), (
         f"PROJECT_ROOT={PROJECT_ROOT} should be the project root where "
         f"the pipeline writes service_work/ or work/ (Phase 49/50)."
     )
@@ -331,8 +346,9 @@ def test_project_root_matches_web_api_app_py():
     """Phase 50: the GUI's PROJECT_ROOT must resolve to the SAME
     directory as the Web API's APP_ROOT, otherwise the GUI scan
     won't find what the Web scan already loaded."""
-    from rlpe.gui.constants import PROJECT_ROOT
     from rlpe.api.app import APP_ROOT
+    from rlpe.gui.constants import PROJECT_ROOT
+
     assert PROJECT_ROOT.resolve() == APP_ROOT.resolve(), (
         f"GUI PROJECT_ROOT={PROJECT_ROOT} != Web APP_ROOT={APP_ROOT}. "
         f"GUI disk scan would look at a different directory than Web."
@@ -351,8 +367,9 @@ def test_main_window_auto_opens_results_tab_when_jobs_loaded(tmp_work_dirs):
     a row → Results. Most users opening the GUI want to see the data
     they already extracted, not run a new job.
     """
+    from rlpe.gui.constants import STATUS_DONE, TAB_RESULTS
     from rlpe.gui.main_window import MainWindow
-    from rlpe.gui.constants import TAB_RESULTS, STATUS_DONE
+
     mw = MainWindow()
     try:
         # The scan must have loaded jobs
@@ -379,9 +396,10 @@ def test_main_window_no_auto_switch_when_no_jobs(tmp_path, monkeypatch):
     """Phase 51: if no jobs are loaded (fresh install), the GUI
     must stay on the default Run tab — not switch to an empty
     Results tab."""
-    from rlpe.gui.main_window import MainWindow
-    from rlpe.gui.constants import TAB_RUN
     import rlpe.gui.constants as consts
+    from rlpe.gui.constants import TAB_RUN
+    from rlpe.gui.main_window import MainWindow
+
     monkeypatch.setattr(consts, "PROJECT_ROOT", tmp_path)
     mw = MainWindow()
     try:
@@ -399,6 +417,7 @@ def test_main_window_auto_open_picks_most_recent(tmp_work_dirs):
     pick the one with the latest finished_at, not just the first
     one returned by sorted() (alphabetical)."""
     from rlpe.gui.main_window import MainWindow
+
     mw = MainWindow()
     try:
         jobs = mw._jobs_tab._jobs

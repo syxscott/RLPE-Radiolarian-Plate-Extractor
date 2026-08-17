@@ -47,8 +47,7 @@ def test_xlsx_reads_panel_id_source_correctly() -> None:
     # The fix must reference 'panel_id_source' (without 'v18_' prefix).
     # Allow the buggy v18_ prefix to be absent; require the correct key.
     assert "panel_id_source" in src, (
-        "xlsx.py no longer references 'panel_id_source' at all. The "
-        "Panel来源 column will be empty."
+        "xlsx.py no longer references 'panel_id_source' at all. The Panel来源 column will be empty."
     )
 
 
@@ -61,10 +60,10 @@ def test_xlsx_panel_source_column_reads_metadata_first() -> None:
     # We accept either md.get('panel_id_source') or p.get('panel_id_source')
     # but NOT the buggy md.get('v18_panel_id_source').
     assert (
-        "md.get(\"panel_id_source\")" in src
+        'md.get("panel_id_source")' in src
         or "md.get('panel_id_source')" in src
         or "p.get('panel_id_source')" in src
-        or "p.get(\"panel_id_source\")" in src
+        or 'p.get("panel_id_source")' in src
     ), (
         "xlsx.py does not read panel_id_source from the correct location. "
         "Expected either md.get('panel_id_source') or p.get('panel_id_source')."

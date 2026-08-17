@@ -15,6 +15,7 @@ These tests guard:
   - When no paper figure matches, Strategy 4 falls through to M3/unlinked.
   - Strategy 4 stamps ``metadata.cross_refs`` on the panel via pipeline.
 """
+
 from __future__ import annotations
 
 from rlpe.cross_figure_linker import (
@@ -159,9 +160,7 @@ def test_linker_chain_strategy4_before_strategy3():
         return {"figure_id": "strat_3", "confidence": 0.5}
 
     strat = _strat_row("strat_3", num="3")
-    results = link_species_to_geology(
-        [panel], [strat], m3_inference_callable=fake_m3
-    )
+    results = link_species_to_geology([panel], [strat], m3_inference_callable=fake_m3)
     assert results[0].source == LINK_SOURCE_CROSS_REF
     assert results[0].confidence == 0.85
 
@@ -203,16 +202,22 @@ def test_self_reference_filter_handles_production_id():
     from rlpe.cross_refs import parse_cross_refs
 
     # Pl. 3 is a self-ref → must be filtered
-    refs = parse_cross_refs("See Pl. 3 for the lithology.", current_fig_id="od_plate_bandini2011_pl03")
+    refs = parse_cross_refs(
+        "See Pl. 3 for the lithology.", current_fig_id="od_plate_bandini2011_pl03"
+    )
     assert refs == []
 
     # Fig. 3 is NOT a self-ref (different kind) → must be kept
-    refs = parse_cross_refs("See Fig. 3 for the section.", current_fig_id="od_plate_bandini2011_pl03")
+    refs = parse_cross_refs(
+        "See Fig. 3 for the section.", current_fig_id="od_plate_bandini2011_pl03"
+    )
     assert len(refs) == 1
     assert refs[0].target_figure == "Fig. 3"
 
     # Id with explicit Fig suffix (e.g. od_fig_X_pNNN_NN)
-    refs = parse_cross_refs("See Fig. 5 in Fig. 5 caption.", current_fig_id="od_fig_bandini2011_p005_05")
+    refs = parse_cross_refs(
+        "See Fig. 5 in Fig. 5 caption.", current_fig_id="od_fig_bandini2011_p005_05"
+    )
     # The trailing _05 isn't matched by our Fig-only branch (looks for
     # _fig5 or _plate5), so the synthetic-style fallback at the end of
     # cross_refs.py handles it.
@@ -227,9 +232,7 @@ def test_strategy4_kind_filter_pl_mention_does_not_link():
     matched purely on figure_num and wrongly linked plate-to-plate
     mentions to the strat column at conf 0.85.
     """
-    panel = _plate_row(
-        "A", "fig_2", caption="See Pl. 3 for comparison."
-    )
+    panel = _plate_row("A", "fig_2", caption="See Pl. 3 for comparison.")
     fig_index = _build_figure_index(
         [_strat_row("strat_3", num="3"), _strat_row("strat_2", num="2")]
     )

@@ -96,11 +96,13 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
     # converters populate modern_* (used by GBIF/PBDB), while legacy
     # fields exist for backwards compat with older extraction runs.
     lat = (
-        geo.modern_latitude if geo and geo.modern_latitude is not None
+        geo.modern_latitude
+        if geo and geo.modern_latitude is not None
         else (geo.latitude if geo and geo.latitude is not None else None)
     )
     lon = (
-        geo.modern_longitude if geo and geo.modern_longitude is not None
+        geo.modern_longitude
+        if geo and geo.modern_longitude is not None
         else (geo.longitude if geo and geo.longitude is not None else None)
     )
     # Phase 63 Plan 6.7 (Bug 6.7): use ``_taxon_parts`` (centralised in
@@ -151,9 +153,7 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         "decimalLatitude": (str(lat) if lat is not None else ""),
         "decimalLongitude": (str(lon) if lon is not None else ""),
         "geologicalContextID": (
-            _geo_ctx_id
-            if _geo_ctx_id
-            else (geo.age if geo and geo.age else "")
+            _geo_ctx_id if _geo_ctx_id else (geo.age if geo and geo.age else "")
         ),
         "formation": (geo.formation if geo and geo.formation else ""),
         "identifiedBy": ("; ".join(pm.authors) if pm and pm.authors else ""),
@@ -173,9 +173,7 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         # ``"cross_figure_link"`` so existing schematic
         # consumers (which only know the figure_type /
         # text_elements keys) keep working unchanged.
-        "dynamicProperties": _merged_dynamic_properties(
-            panel.metadata
-        ),
+        "dynamicProperties": _merged_dynamic_properties(panel.metadata),
     }
 
 
@@ -337,7 +335,7 @@ def _build_meta_xml(opts: DwCAOptions) -> str:
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<archive xmlns="http://rs.tdwg.org/dwc/text/" metadata="eml.xml">\n'
         f'  <core encoding="UTF-8" fieldsTerminatedBy={ftb} '
-        f'linesTerminatedBy={ltb} fieldsEnclosedBy={feb} '
+        f"linesTerminatedBy={ltb} fieldsEnclosedBy={feb} "
         'ignoreHeaderLines="1"'
         ' rowType="http://rs.tdwg.org/dwc/terms/Occurrence">\n'
         "    <files><location>occurrence.txt</location></files>\n"
@@ -513,7 +511,11 @@ def _coerce_run_output_from_dict(run: dict) -> RunOutput:
     # the fake values ("unknown", "1970-01-01") and the consumer could
     # not tell it apart from a fully-provenanced export. Warn loudly
     # and stamp the incompleteness on the payload.
-    _stubbed = [k for k in ("git_commit", "timestamp_utc", "pipeline_version") if prov.get(k) in ("unknown", "1970-01-01T00:00:00Z")]
+    _stubbed = [
+        k
+        for k in ("git_commit", "timestamp_utc", "pipeline_version")
+        if prov.get(k) in ("unknown", "1970-01-01T00:00:00Z")
+    ]
     if _stubbed:
         import logging as _logging
 

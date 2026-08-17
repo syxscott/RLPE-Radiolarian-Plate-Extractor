@@ -16,9 +16,7 @@ def test_samples_plural_keyword() -> None:
     """'Samples S1-S3' must extract (was: missed)."""
     out = extract_sample_ids("Samples S1-S3 from Tunisia, Late Cretaceous.")
     samples = [s.value for s in out if s.kind == "sample"]
-    assert samples, (
-        f"Expected at least one sample extracted from 'Samples S1-S3 ...': {out}"
-    )
+    assert samples, f"Expected at least one sample extracted from 'Samples S1-S3 ...': {out}"
 
 
 def test_samples_plural_with_letter_id() -> None:

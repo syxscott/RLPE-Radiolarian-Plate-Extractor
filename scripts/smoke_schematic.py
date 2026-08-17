@@ -21,7 +21,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -42,10 +41,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str((_REPO_ROOT / "src").resolve()))
 sys.path.insert(0, str(_REPO_ROOT.resolve()))
 
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
 from PIL import Image  # noqa: E402
-from rlpe.m3_engine import M3Engine  # noqa: E402
 
+from rlpe.m3_engine import M3Engine  # noqa: E402
+from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
 
 # Pre-canned M3 responses. Each paper gets one canned response per
 # figure_type it might trigger so the test exercises all four new
@@ -229,8 +228,10 @@ def main() -> int:
     if ok_count != len(_PAPER_PLANS):
         print(f"{len(_PAPER_PLANS) - ok_count} of {len(_PAPER_PLANS)} papers FAILED.")
         return 1
-    print(f"All {ok_count} papers passed: extract_schematic produces "
-          "non-empty figure_schematic_data on every canned scenario.")
+    print(
+        f"All {ok_count} papers passed: extract_schematic produces "
+        "non-empty figure_schematic_data on every canned scenario."
+    )
     return 0
 
 

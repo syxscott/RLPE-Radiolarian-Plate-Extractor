@@ -17,6 +17,7 @@ fallback. Phase 29 fixes this by:
 The scaffolding pattern follows ``test_round27_japanese_extraction.py``
 and ``test_round28_caption_page_distance.py``.
 """
+
 from __future__ import annotations
 
 import sys
@@ -96,8 +97,8 @@ def test_pipeline_forwards_retry_and_timeout_to_grobid_client():
     """pipeline.py must forward ``grobid_max_retries`` + ``grobid_timeout``
     from config.extra into the GrobidClient constructor."""
     src = _read("src/rlpe/pipeline.py")
-    assert "max_retries=int(self.config.extra.get(\"grobid_max_retries\"" in src
-    assert "timeout=int(self.config.extra.get(\"grobid_timeout\"" in src
+    assert 'max_retries=int(self.config.extra.get("grobid_max_retries"' in src
+    assert 'timeout=int(self.config.extra.get("grobid_timeout"' in src
 
 
 def test_pipeline_od_fallback_block_present():
@@ -246,8 +247,9 @@ def test_grobid_process_pdf_returns_retry_count_after_failure(monkeypatch):
 def test_grobid_process_pdf_succeeds_on_third_attempt(monkeypatch):
     """``retry_count=2`` when first two attempts fail and the third
     succeeds."""
-    import requests
     from unittest.mock import MagicMock
+
+    import requests
 
     call_count = {"n": 0}
 
@@ -257,7 +259,9 @@ def test_grobid_process_pdf_succeeds_on_third_attempt(monkeypatch):
             raise requests.ConnectionError("transient")
         # third attempt: return a fake 200 with empty TEI
         resp = MagicMock()
-        resp.text = "<TEI xmlns=\"http://www.tei-c.org/ns/1.0\"><teiHeader/><text><body/></text></TEI>"
+        resp.text = (
+            '<TEI xmlns="http://www.tei-c.org/ns/1.0"><teiHeader/><text><body/></text></TEI>'
+        )
         resp.raise_for_status = lambda: None
         return resp
 

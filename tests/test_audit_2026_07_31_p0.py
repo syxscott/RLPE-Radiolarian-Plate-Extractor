@@ -151,17 +151,8 @@ class TestGuiSourceGuards:
         ``import threading`` — NameError on every GUI run start."""
         src = (_GUI / "pipeline_worker.py").read_text(encoding="utf-8")
         tree = ast.parse(src)
-        imports = {
-            a.name
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Import)
-            for a in n.names
-        }
-        imports |= {
-            n.module
-            for n in ast.walk(tree)
-            if isinstance(n, ast.ImportFrom) and n.module
-        }
+        imports = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+        imports |= {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
         assert "threading" in imports, "pipeline_worker.py must import threading"
         assert "threading.Event()" in src
 
@@ -201,8 +192,9 @@ class TestGuiSourceGuards:
 class TestOdGrobidCycleGuard:
     @pytest.fixture
     def pipe(self, tmp_path):
-        from rlpe.config import PipelineConfig
         from unittest.mock import patch
+
+        from rlpe.config import PipelineConfig
 
         with (
             patch("rlpe.pipeline.GrobidClient"),

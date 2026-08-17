@@ -1,4 +1,5 @@
 """Utility helpers for the RLPE GUI."""
+
 from __future__ import annotations
 
 import hashlib
@@ -11,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from .constants import LOG_FILE_NAME
-
 
 # ============================================================
 # Logging
@@ -103,8 +103,8 @@ def short_path(path: Path | None, max_chars: int = 60) -> str:
     parts = path.parts
     if len(parts) >= 2:
         tail = str(Path(*parts[-2:]))
-        return "…" + tail if len(tail) < max_chars else "…" + s[-max_chars + 1:]
-    return "…" + s[-max_chars + 1:]
+        return "…" + tail if len(tail) < max_chars else "…" + s[-max_chars + 1 :]
+    return "…" + s[-max_chars + 1 :]
 
 
 def truncate(text: str, max_chars: int = 120, ellipsis: str = "…") -> str:
@@ -237,6 +237,7 @@ def to_jsonable(obj: Any) -> Any:
     import base64
     import datetime
     import decimal
+
     if is_dataclass(obj):
         return to_jsonable(asdict(obj))
     if obj is None or isinstance(obj, (str, int, float, bool)):
@@ -257,15 +258,13 @@ def to_jsonable(obj: Any) -> Any:
         return {str(k): to_jsonable(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [to_jsonable(v) for v in obj]
-    raise TypeError(
-        f"to_jsonable: cannot serialize {type(obj).__name__} "
-        f"(value={obj!r:.100})"
-    )
+    raise TypeError(f"to_jsonable: cannot serialize {type(obj).__name__} (value={obj!r:.100})")
 
 
 # ============================================================
 # Single-instance enforcement (avoid double-launch)
 # ============================================================
+
 
 def single_instance_lock(name: str = "rlpe-gui") -> bool:
     """Try to acquire a named lock file under ``~/.cache/rlpe/gui/``.
@@ -279,7 +278,6 @@ def single_instance_lock(name: str = "rlpe-gui") -> bool:
     ImportError. Fixed: try ``msvcrt.locking`` on Windows, fall
     back to a TCP port lock as a cross-platform last resort.
     """
-    import socket
 
     lock_dir = Path.home() / ".cache" / "rlpe" / "gui"
     lock_dir.mkdir(parents=True, exist_ok=True)
@@ -298,7 +296,7 @@ def single_instance_lock(name: str = "rlpe-gui") -> bool:
             fp.write("0")
             fp.flush()
             msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
-        except (OSError, IOError):
+        except OSError:
             fp.close()
             return False
         fp.flush()
@@ -333,6 +331,7 @@ def _tcp_port_lock(name: str) -> bool:
     cleanup on crash) but works on every OS.
     """
     import socket
+
     # Phase 54 audit m10: built-in ``hash`` is randomised across
     # Python processes (PYTHONHASHSEED). Two GUI launches could
     # pick different ports for the same lock name and both bind

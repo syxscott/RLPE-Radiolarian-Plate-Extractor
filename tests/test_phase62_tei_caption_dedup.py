@@ -21,6 +21,7 @@ previously-seen one. Whitespace-only differences are normalised
 so ``"Caption text"`` and ``"  caption text  "`` are treated as
 the same.
 """
+
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET

@@ -97,15 +97,11 @@ class TestSchematicClassifier:
         paleogeographic-reconstruction captions — those go to the
         existing paleogeographic_map vision path."""
         assert (
-            classify_figure_type(
-                "Paleogeographic reconstruction of Pangea at 250 Ma."
-            )
+            classify_figure_type("Paleogeographic reconstruction of Pangea at 250 Ma.")
             == "paleogeographic_map"
         )
         assert (
-            classify_figure_type(
-                "Palaeogeographic reconstruction of the Tethyan margin."
-            )
+            classify_figure_type("Palaeogeographic reconstruction of the Tethyan margin.")
             == "paleogeographic_map"
         )
 
@@ -118,12 +114,10 @@ class TestSchematicClassifier:
         assert result in {"schematic", "diagram"}
 
     def test_phylogenetic_beats_diagram_when_both_match(self) -> None:
-        """"A phylogenetic cladogram" must classify as phylogenetic,
+        """ "A phylogenetic cladogram" must classify as phylogenetic,
         not diagram — phylogenetic is the more specific keyword."""
         assert (
-            classify_figure_type(
-                "Figure 7. Phylogenetic cladogram of Mesozoic nassellarians."
-            )
+            classify_figure_type("Figure 7. Phylogenetic cladogram of Mesozoic nassellarians.")
             == "phylogenetic"
         )
 
@@ -132,22 +126,14 @@ class TestSchematicClassifier:
         legacy 7 types. Lock the existing behavior so a future
         edit to the new keyword lists doesn't accidentally
         re-order the existing routing."""
-        assert (
-            classify_figure_type(
-                "Plate 1. figs 1-5. Actinomma leptodermum"
-            )
-            == "plate"
-        )
+        assert classify_figure_type("Plate 1. figs 1-5. Actinomma leptodermum") == "plate"
         assert (
             classify_figure_type(
                 "Stratigraphic distribution of radiolarians from the Late Permian of South China."
             )
             == "range_chart"
         )
-        assert (
-            classify_figure_type("Location map of studied sections in Tunisia.")
-            == "map"
-        )
+        assert classify_figure_type("Location map of studied sections in Tunisia.") == "map"
 
     def test_captionless_returns_other(self) -> None:
         """A None / empty caption still falls back to ``other``."""

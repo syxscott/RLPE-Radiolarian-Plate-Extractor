@@ -17,9 +17,9 @@ worker — the Qt main loop + cv2/torch + ProcessPoolExecutor can
 deadlock on fork-after-thread. The pipeline's own internal
 ``ThreadPoolExecutor`` (for OCR) is cv2-safe.
 """
+
 from __future__ import annotations
 
-import logging
 import threading
 import traceback
 from pathlib import Path
@@ -30,8 +30,8 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from ..config import PipelineConfig
 from ..pipeline import RadiolarianPipeline
 from ..utils import stable_id
-from .utils import get_gui_logger
 from .constants import DEFAULT_LLM_BACKEND, DEFAULT_MINIMAX_MODEL
+from .utils import get_gui_logger
 
 
 class PipelineWorker(QThread):
@@ -141,13 +141,9 @@ class PipelineWorker(QThread):
             # status message. If the cancel event is set, treat the
             # run as cancelled (not failed).
             if self._cancel_event.is_set():
-                self._emit_log(
-                    f"Pipeline cancelled; {len(results)} row(s) collected"
-                )
+                self._emit_log(f"Pipeline cancelled; {len(results)} row(s) collected")
                 self.status_changed.emit("cancelled")
-                self.failed.emit(
-                    f"cancelled ({len(results)} rows collected so far)"
-                )
+                self.failed.emit(f"cancelled ({len(results)} rows collected so far)")
                 return
 
             # Convert each result row to a plain dict (QVariant friendly).
@@ -168,9 +164,7 @@ class PipelineWorker(QThread):
             if self._cancel_event.is_set():
                 self._emit_log("Pipeline cancelled (exception path)")
                 self.status_changed.emit("cancelled")
-                self.failed.emit(
-                    f"cancelled ({type(exc).__name__}: {exc})"
-                )
+                self.failed.emit(f"cancelled ({type(exc).__name__}: {exc})")
                 return
             self.status_changed.emit("failed")
             # audit 2026-07-31: a full traceback (tens of KB) in the

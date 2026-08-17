@@ -51,7 +51,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str((_REPO_ROOT / "src").resolve()))
 sys.path.insert(0, str(_REPO_ROOT.resolve()))
 
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
 from rlpe.cross_figure_linker import (  # noqa: E402
     LINK_SOURCE_LOCALITY,
     LINK_SOURCE_M3,
@@ -60,15 +59,17 @@ from rlpe.cross_figure_linker import (  # noqa: E402
     link_species_to_geology,
 )
 from rlpe.m3_engine import M3Engine  # noqa: E402
-
+from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Gold data loading
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PaperScenario:
     """One paper's linker scenario: panels + paper figures + expected."""
+
     paper_id: str
     description: str
     panels: list[dict]
@@ -85,14 +86,16 @@ def _load_gold(path: Path, paper_id: str) -> list[dict]:
             if not line:
                 continue
             rec = json.loads(line)
-            panels.append({
-                "paper_id": paper_id,
-                "figure_id": rec.get("figure_id") or "",
-                "panel_id": rec.get("panel_id"),
-                "species": rec.get("species"),
-                # No caption in gold data; we attach one per-paper.
-                "caption_snippet": "",
-            })
+            panels.append(
+                {
+                    "paper_id": paper_id,
+                    "figure_id": rec.get("figure_id") or "",
+                    "panel_id": rec.get("panel_id"),
+                    "species": rec.get("species"),
+                    # No caption in gold data; we attach one per-paper.
+                    "caption_snippet": "",
+                }
+            )
     return panels
 
 
@@ -109,6 +112,7 @@ def _attach_caption(panels: list[dict], caption: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Scenarios
 # ---------------------------------------------------------------------------
+
 
 def _scenario_beccaro() -> PaperScenario:
     """Beccaro 2006 — Jurassic radiolarian biostratigraphy (Tunisia).
@@ -521,6 +525,7 @@ def _scenario_range_chart() -> PaperScenario:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
     scenarios: list[PaperScenario] = [
         # 9 real papers (data/gold)
@@ -557,20 +562,24 @@ def main() -> int:
     # sensible cross_figure_inference output.
     m3_responses: list[dict] = [
         {
-            "raw_text": json.dumps({
-                "species": "Genus species",
-                "age": "Late Cretaceous",
-                "formation": "Scaglia",
-                "locality": "Italy",
-                "figure_id": "strat1",
-                "confidence": 0.5,
-            }),
+            "raw_text": json.dumps(
+                {
+                    "species": "Genus species",
+                    "age": "Late Cretaceous",
+                    "formation": "Scaglia",
+                    "locality": "Italy",
+                    "figure_id": "strat1",
+                    "confidence": 0.5,
+                }
+            ),
         }
     ]
     backend = FakeM3Backend(canned_responses=m3_responses)
     m3_engine = M3Engine(backend=backend, config={})
 
-    print(f"{'paper_id':<25} {'panels':>8} {'linked':>8} {'recall':>8} {'sample':>8} {'locality':>9} {'m3':>6} {'unlinked':>9}")
+    print(
+        f"{'paper_id':<25} {'panels':>8} {'linked':>8} {'recall':>8} {'sample':>8} {'locality':>9} {'m3':>6} {'unlinked':>9}"
+    )
     print("-" * 100)
 
     total_panels = 0
@@ -594,30 +603,27 @@ def main() -> int:
         total_linked += n_linked
         print(
             f"{sc.paper_id:<25} {n_panels:>8} {n_linked:>8} "
-            f"{recall*100:>7.1f}% {n_sample:>8} {n_locality:>9} {n_m3:>6} {n_unlinked:>9}"
+            f"{recall * 100:>7.1f}% {n_sample:>8} {n_locality:>9} {n_m3:>6} {n_unlinked:>9}"
         )
         if sc.expected_min_recall > 0 and recall < sc.expected_min_recall:
             failed_papers.append((sc.paper_id, recall, sc.expected_min_recall))
 
     print("-" * 100)
     aggregate = total_linked / total_panels if total_panels else 0.0
-    print(
-        f"{'TOTAL':<25} {total_panels:>8} {total_linked:>8} "
-        f"{aggregate*100:>7.1f}%"
-    )
+    print(f"{'TOTAL':<25} {total_panels:>8} {total_linked:>8} {aggregate * 100:>7.1f}%")
 
     print()
     if failed_papers:
-        print(f"FAILED papers (recall below expected):")
+        print("FAILED papers (recall below expected):")
         for pid, got, want in failed_papers:
-            print(f"  {pid}: got {got*100:.1f}% < expected {want*100:.1f}%")
+            print(f"  {pid}: got {got * 100:.1f}% < expected {want * 100:.1f}%")
         return 2
 
     if aggregate < 0.90:
-        print(f"AGGREGATE recall {aggregate*100:.1f}% < 90% target")
+        print(f"AGGREGATE recall {aggregate * 100:.1f}% < 90% target")
         return 3
 
-    print(f"Recall target met: {aggregate*100:.1f}% >= 90%")
+    print(f"Recall target met: {aggregate * 100:.1f}% >= 90%")
     return 0
 
 

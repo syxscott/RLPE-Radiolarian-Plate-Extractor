@@ -27,13 +27,13 @@ unchanged but stamp confidence < 0.3 so the consumer can tell
 "plate didn't move enough to reconstruct reliably" from "plate
 moved a lot and we have a high-confidence paleo position".
 """
+
 from __future__ import annotations
 
 from rlpe.paleo_reconstruction import (
     EULER_POLES,
     reconstruct_paleo_position,
 )
-
 
 # Plates whose Euler pole table is short and whose rotations are
 # small — these are the "stable" plates the fix targets.
@@ -65,10 +65,10 @@ def test_stable_plate_low_conf_for_old_ages():
             # from (0, 120) should be small (< 5°) — that's the
             # definition of stable. So this is acceptable.
             import math
+
             delta = abs(paleo_lat - 0.0) + abs(paleo_lon - 120.0)
             assert delta < 5.0, (
-                f"stable plate {plate!r} reconstructed with "
-                f"unexpected delta={delta}"
+                f"stable plate {plate!r} reconstructed with unexpected delta={delta}"
             )
 
 
@@ -90,6 +90,7 @@ def test_stable_plate_returns_none_for_old_ages():
         if paleo_lat is not None:
             # Legacy path: ensure small delta.
             import math
+
             assert abs(paleo_lat) < 5.0
             assert abs(paleo_lon - 120.0) < 5.0
 
@@ -98,7 +99,7 @@ def test_unstable_plate_reconstructs_normally():
     """Unstable plates (Adria, Iberia) should still produce a
     different coord from modern at age=200 Ma — regression."""
     paleo_lat, paleo_lon = reconstruct_paleo_position(
-        modern_lat=41.0,    # Italy
+        modern_lat=41.0,  # Italy
         modern_lon=14.0,
         age_ma=200.0,
         plate_id="Adria",

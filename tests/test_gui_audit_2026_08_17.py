@@ -16,6 +16,7 @@ runtime requires PySide6; when PySide6 is available we also drive
 ``_row_to_dict`` directly with a fixture to assert the v1.1.0
 fields survive the conversion.
 """
+
 from __future__ import annotations
 
 import sys
@@ -88,7 +89,7 @@ class TestRowToDictV110Fields:
         """If the pipeline emits a Pydantic PanelRecord, model_dump
         must surface the v1.1.0 fields too."""
         from rlpe.gui.pipeline_worker import PipelineWorker
-        from rlpe.schema_models import PanelRecord, PanelMetadata
+        from rlpe.schema_models import PanelMetadata, PanelRecord
 
         panel = PanelRecord(
             paper_id="p2",
@@ -129,6 +130,7 @@ class TestSourceGuards:
         # Word-boundary the prefix so we don't false-match
         # ``resultstab.detail.foo`` inside a docstring.
         import re
+
         pattern = re.compile(r"i18n\._tr\(\s*['\"]resultstab\.")
         matches = pattern.findall(text)
         assert not matches, (
@@ -147,7 +149,7 @@ class TestSourceGuards:
         # assert no obvious legacy v1.0 logic like
         # ``row.get("panel_id_source") and row["panel_id"]`` patterns.
         # Pin that the file is forward-compatible.
-        assert 'panel_id_source' in text or True  # informational guard
+        assert "panel_id_source" in text or True  # informational guard
 
     def test_pdt_labels_use_i18n_keys(self):
         """GUI-A1: PBDB taxonomy labels must use i18n._tr keys, not
@@ -155,53 +157,52 @@ class TestSourceGuards:
         text = _SRC_RESULTS_TAB.read_text(encoding="utf-8")
         # Must contain at least one usage of restab.detail.kingdom
         # (the audit's canonical key).
-        assert 'restab.detail.kingdom' in text, (
+        assert "restab.detail.kingdom" in text, (
             "results_tab.py must use 'restab.detail.kingdom' i18n key "
             "for the Kingdom label (GUI-A1)."
         )
-        assert 'restab.detail.phylum' in text, (
-            "results_tab.py must use 'restab.detail.phylum' i18n key "
-            "for the Phylum label."
+        assert "restab.detail.phylum" in text, (
+            "results_tab.py must use 'restab.detail.phylum' i18n key for the Phylum label."
         )
-        assert 'restab.detail.class' in text, (
-            "results_tab.py must use 'restab.detail.class' i18n key "
-            "for the Class label."
+        assert "restab.detail.class" in text, (
+            "results_tab.py must use 'restab.detail.class' i18n key for the Class label."
         )
-        assert 'restab.detail.order' in text, (
-            "results_tab.py must use 'restab.detail.order' i18n key "
-            "for the Order label."
+        assert "restab.detail.order" in text, (
+            "results_tab.py must use 'restab.detail.order' i18n key for the Order label."
         )
         # And the literal English "Kingdom" / "Phylum" should not
         # appear in the tax_rows literal list (they used to be
         # hard-coded). Use word-boundary so we don't false-positive
         # on docstring / comment mentions.
         import re
+
         # Match Kingdom/Phylum/Class/Order inside a tax_rows literal
         # (the bug pattern). These must now be i18n keys.
         tax_rows_block = re.search(
-            r"tax_rows\s*=\s*\[(.*?)\]", text, re.DOTALL,
+            r"tax_rows\s*=\s*\[(.*?)\]",
+            text,
+            re.DOTALL,
         )
         if tax_rows_block is not None:
             block = tax_rows_block.group(1)
             for lit in ("Kingdom", "Phylum"):
                 assert f'"{lit}"' not in block and f"'{lit}'" not in block, (
-                    f"tax_rows block contains literal '{lit}' instead of "
-                    f"an i18n key."
+                    f"tax_rows block contains literal '{lit}' instead of an i18n key."
                 )
 
     def test_geo_links_keys_used(self):
         """GUI-A6: ``restab.detail.geo_links`` and ``..._more`` keys
         must be used (not just defined)."""
         text = _SRC_RESULTS_TAB.read_text(encoding="utf-8")
-        assert 'restab.detail.geo_links' in text
-        assert 'restab.detail.geo_links_more' in text
+        assert "restab.detail.geo_links" in text
+        assert "restab.detail.geo_links_more" in text
 
     def test_restab_live_and_done_used(self):
         """GUI-A7: ``restab.live`` and ``restab.done`` keys must be
         used (not just defined)."""
         text = _SRC_RESULTS_TAB.read_text(encoding="utf-8")
-        assert 'restab.live' in text
-        assert 'restab.done' in text
+        assert "restab.live" in text
+        assert "restab.done" in text
 
     def test_qfiledialog_titles_use_i18n(self):
         """GUI-D1: QFileDialog.getOpenFileName / getExistingDirectory
@@ -209,10 +210,11 @@ class TestSourceGuards:
         literals (comments don't count)."""
         text = _SRC_MAIN_WINDOW.read_text(encoding="utf-8")
         import re
+
         # Strip docstrings + comments so we don't false-positive on
         # the module-level "0: Run — pick PDF + start extraction"
         # description that mentions "Open PDF" as a verb phrase.
-        stripped = re.sub(r'"""[\s\S]*?"""', '', text)
+        stripped = re.sub(r'"""[\s\S]*?"""', "", text)
         stripped_lines = []
         for line in stripped.splitlines():
             stripped_lines.append(re.sub(r"#.*$", "", line))
@@ -221,8 +223,7 @@ class TestSourceGuards:
         # string literals: "Open PDF" and "Open output directory".
         # Both must now use i18n._tr keys.
         assert '"Open PDF"' not in stripped, (
-            "main_window.py must not pass hardcoded 'Open PDF' "
-            "string to QFileDialog (GUI-D1)."
+            "main_window.py must not pass hardcoded 'Open PDF' string to QFileDialog (GUI-D1)."
         )
         assert '"Open output directory"' not in stripped, (
             "main_window.py must not pass hardcoded 'Open output "
@@ -230,8 +231,8 @@ class TestSourceGuards:
         )
         # The QFileDialog.getOpenFileName / getExistingDirectory calls
         # should reference the i18n keys instead.
-        assert 'menu.file.open' in stripped
-        assert 'menu.file.outdir' in stripped
+        assert "menu.file.open" in stripped
+        assert "menu.file.outdir" in stripped
 
     def test_main_retry_key_replaced(self):
         """GUI-D2: ``main.retry`` was an undefined key that fell
@@ -348,8 +349,7 @@ class TestJobsTabDiskScanHonesty:
     def test_jobs_tab_checks_complete_flag(self):
         text = _SRC_JOBS_TAB.read_text(encoding="utf-8")
         assert "complete.flag" in text, (
-            "jobs_tab.py must consult complete.flag before "
-            "marking a disk-loaded job STATUS_DONE."
+            "jobs_tab.py must consult complete.flag before marking a disk-loaded job STATUS_DONE."
         )
         # The STATUS_FAILED branch is the audit's fix for partial
         # disk-loaded jobs.
@@ -366,6 +366,7 @@ class TestReviewCorrectionContract:
 
     def test_review_correction_accepts_image_verified(self):
         from rlpe.api.app import ReviewCorrection
+
         payload = ReviewCorrection(
             paper_id="p1",
             figure_id="f1",
@@ -379,6 +380,7 @@ class TestReviewCorrectionContract:
 
     def test_review_correction_optional_fields(self):
         from rlpe.api.app import ReviewCorrection
+
         # None of the optional fields are required.
         payload = ReviewCorrection(
             paper_id="p1",

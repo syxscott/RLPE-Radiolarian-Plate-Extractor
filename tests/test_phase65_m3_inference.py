@@ -35,17 +35,26 @@ class TestPromptRegistered:
 
 class TestInferenceHappyPath:
     def test_basic_inference(self):
-        engine = _make_engine([
-            {
-                "raw_text": '{"species": "Triassocampe sp.", "age": "Late Triassic", '
-                            '"formation": "Scaglia", "locality": "Italy", '
-                            '"figure_id": "fig2", "confidence": 0.55}',
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": '{"species": "Triassocampe sp.", "age": "Late Triassic", '
+                    '"formation": "Scaglia", "locality": "Italy", '
+                    '"figure_id": "fig2", "confidence": 0.55}',
+                }
+            ]
+        )
         result = engine.infer_species_age_formation(
             "All specimens from Plate 1",
-            paper_context={"figures": [{"figure_id": "fig2", "figure_type": "strat_column",
-                                         "caption": "Late Triassic, Italy"}]},
+            paper_context={
+                "figures": [
+                    {
+                        "figure_id": "fig2",
+                        "figure_type": "strat_column",
+                        "caption": "Late Triassic, Italy",
+                    }
+                ]
+            },
         )
         assert result["species"] == "Triassocampe sp."
         assert result["age"] == "Late Triassic"
@@ -56,20 +65,24 @@ class TestInferenceHappyPath:
         assert 0.3 <= result["confidence"] <= 0.6
 
     def test_confidence_clamped_high(self):
-        engine = _make_engine([
-            {
-                "raw_text": '{"species": "X", "confidence": 0.95}',
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": '{"species": "X", "confidence": 0.95}',
+                }
+            ]
+        )
         result = engine.infer_species_age_formation("Plate 1", {})
         assert result["confidence"] <= 0.6
 
     def test_confidence_clamped_low(self):
-        engine = _make_engine([
-            {
-                "raw_text": '{"species": "X", "confidence": 0.1}',
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": '{"species": "X", "confidence": 0.1}',
+                }
+            ]
+        )
         result = engine.infer_species_age_formation("Plate 1", {})
         assert result["confidence"] >= 0.3
 
@@ -102,36 +115,39 @@ class TestInferenceFallback:
 
 class TestInferencePromptShape:
     def test_prompt_truncates_long_captions(self):
-        engine = _make_engine([
-            {
-                "raw_text": '{"species": "X", "confidence": 0.5}',
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": '{"species": "X", "confidence": 0.5}',
+                }
+            ]
+        )
         long_caption = "A" * 1000
         long_fig_cap = "B" * 500
         result = engine.infer_species_age_formation(
             long_caption,
             paper_context={
-                "figures": [{
-                    "figure_id": "f1", "figure_type": "strat_column",
-                    "caption": long_fig_cap, "formation": "F", "age": "A",
-                }]
+                "figures": [
+                    {
+                        "figure_id": "f1",
+                        "figure_type": "strat_column",
+                        "caption": long_fig_cap,
+                        "formation": "F",
+                        "age": "A",
+                    }
+                ]
             },
         )
         # Should still parse — prompt assembly must not crash on long input.
         assert "species" in result
 
     def test_empty_context(self):
-        engine = _make_engine([
-            {"raw_text": '{"species": "X", "confidence": 0.5}'}
-        ])
+        engine = _make_engine([{"raw_text": '{"species": "X", "confidence": 0.5}'}])
         result = engine.infer_species_age_formation("Plate 1", {})
         assert "species" in result
 
     def test_no_context(self):
-        engine = _make_engine([
-            {"raw_text": '{"species": "X", "confidence": 0.5}'}
-        ])
+        engine = _make_engine([{"raw_text": '{"species": "X", "confidence": 0.5}'}])
         result = engine.infer_species_age_formation("Plate 1")
         assert "species" in result
 

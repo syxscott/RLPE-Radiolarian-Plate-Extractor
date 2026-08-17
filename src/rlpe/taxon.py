@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import re
 import threading
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -209,9 +208,9 @@ def _is_valid_species(species: str | None) -> bool:
         "n. sp.",
         "new genus",
         "new species",
-        "gen.",           # open nomenclature (without "n." prefix)
-        "sp.",            # open nomenclature (without "n." prefix)
-        "spp.",           # plural open nomenclature
+        "gen.",  # open nomenclature (without "n." prefix)
+        "sp.",  # open nomenclature (without "n." prefix)
+        "spp.",  # plural open nomenclature
     }
     first = s.split(maxsplit=1)[0].lower().rstrip(".,;:?!")
     if first in placeholder_tokens:
@@ -247,8 +246,7 @@ def _is_valid_species(species: str | None) -> bool:
         return False
     has_open_nom = bool(
         qualifier
-        and qual_lower
-        in {"sp", "spp", "indet", "gr", "group", "subsp", "var", "nom", "cf", "aff"}
+        and qual_lower in {"sp", "spp", "indet", "gr", "group", "subsp", "var", "nom", "cf", "aff"}
     )
     return has_epithet or has_open_nom
 
@@ -533,9 +531,7 @@ class TaxonRecognizer:
                 continue
             if first_word.lower() in _KNOWN_AUTHOR_SURNAMES:
                 continue
-            entities.append(
-                TaxonEntity(text=full, start=m.start(0), end=m.end(0), score=0.55)
-            )
+            entities.append(TaxonEntity(text=full, start=m.start(0), end=m.end(0), score=0.55))
         return entities
 
     @staticmethod
@@ -826,7 +822,6 @@ _NON_TAXON_SECOND_WORDS: frozenset[str] = frozenset(
         "image",
         "spectra",
         "spectrum",
-        "gen",
         "gen.",
     }
 )

@@ -11,6 +11,7 @@ Covers the audit's next tier:
      calls. Previously the hive was wrong and the GUI
      would re-create defaults on every launch.
 """
+
 from __future__ import annotations
 
 import os
@@ -21,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -38,11 +40,12 @@ def test_progress_cell_delegate_wraps_draw_in_save_restore():
     delegate must call painter.save() / painter.restore() to
     prevent leaks into the next paint call."""
     import inspect
+
     from rlpe.gui.jobs_tab import _ProgressCellDelegate
+
     src = inspect.getsource(_ProgressCellDelegate.paint)
     assert "painter.save()" in src, (
-        "_ProgressCellDelegate.paint must call painter.save() "
-        "before drawControl"
+        "_ProgressCellDelegate.paint must call painter.save() before drawControl"
     )
     assert "painter.restore()" in src, (
         "_ProgressCellDelegate.paint must call painter.restore() "
@@ -64,13 +67,13 @@ def test_tr_combobox_blocks_signals_during_construction():
     during addItems/setCurrentIndex so slot handlers don't fire
     on a half-built widget."""
     import inspect
+
     from rlpe.gui.i18n_widgets import tr_combobox
+
     src = inspect.getsource(tr_combobox)
     # The factory should call blockSignals(True) at the start of
     # construction and blockSignals(False) at the end (in finally).
-    assert "blockSignals(True)" in src, (
-        "tr_combobox must call blockSignals(True) before addItems"
-    )
+    assert "blockSignals(True)" in src, "tr_combobox must call blockSignals(True) before addItems"
     assert "blockSignals(False)" in src, (
         "tr_combobox must call blockSignals(False) in a finally block"
     )
@@ -85,10 +88,12 @@ def test_qsettings_uses_app_author_not_app_domain():
     APP_AUTHOR). The GUI would then re-create defaults on every
     launch because the read hive is empty. Fixed: use APP_AUTHOR
     everywhere QSettings is constructed."""
-    import rlpe.gui.settings_tab as st
-    import rlpe.gui.main_window as mw
-    import rlpe.gui.app as app_mod
     import inspect
+
+    import rlpe.gui.app as app_mod
+    import rlpe.gui.main_window as mw
+    import rlpe.gui.settings_tab as st
+
     for mod in (st, mw, app_mod):
         src = inspect.getsource(mod)
         # We don't have a constant for the value in source; the
@@ -109,6 +114,7 @@ def test_i18n_add_listener_dedupe_still_works():
     """Regression: Phase 44 dedupe must still work after Phase 45
     changes."""
     from rlpe.gui import i18n
+
     i18n._LISTENERS.clear()
 
     calls = []
@@ -125,10 +131,6 @@ def test_i18n_add_listener_dedupe_still_works():
     # jobs_tab, settings_tab, etc.). The dedupe prevents the SAME
     # listener from being added twice.
     # Verify dedupe specifically: the function is in the list once
-    listener_count = sum(
-        1 for fn in i18n._LISTENERS if fn is listener
-    )
-    assert listener_count == 1, (
-        f"add_listener must dedupe by identity; got {listener_count} copies"
-    )
+    listener_count = sum(1 for fn in i18n._LISTENERS if fn is listener)
+    assert listener_count == 1, f"add_listener must dedupe by identity; got {listener_count} copies"
     i18n._LISTENERS.clear()

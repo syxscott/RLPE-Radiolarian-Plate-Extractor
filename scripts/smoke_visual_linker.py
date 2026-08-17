@@ -52,13 +52,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str((_REPO_ROOT / "src").resolve()))
 sys.path.insert(0, str(_REPO_ROOT.resolve()))
 
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
 from rlpe.cross_figure_linker import (  # noqa: E402
     link_species_to_geology,
     link_visual_coordinates,
 )
 from rlpe.m3_engine import M3Engine  # noqa: E402
-
+from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Canned M3 response — deterministic for structural precision check
@@ -76,22 +75,26 @@ def _make_m3_engine() -> M3Engine:
     tiny adapter that bypasses the image guard for the smoke test.
     Real pipeline callers always pass real PIL images.
     """
-    backend = FakeM3Backend(canned_responses=[
-        {
-            "raw_text": json.dumps({
-                "plate_panels": [
+    backend = FakeM3Backend(
+        canned_responses=[
+            {
+                "raw_text": json.dumps(
                     {
-                        "cell_label": "1",
-                        "species": "Genus species",
-                        "links_to_strat_layer": 1,
-                        "links_to_age": "Late Triassic",
-                        "links_to_formation": "Scaglia Fm",
-                        "confidence": 0.9,
+                        "plate_panels": [
+                            {
+                                "cell_label": "1",
+                                "species": "Genus species",
+                                "links_to_strat_layer": 1,
+                                "links_to_age": "Late Triassic",
+                                "links_to_formation": "Scaglia Fm",
+                                "confidence": 0.9,
+                            }
+                        ]
                     }
-                ]
-            }),
-        },
-    ])
+                ),
+            },
+        ]
+    )
     engine = M3Engine(backend=backend, config={})
     # Replace the visual method with a variant that accepts None images
     # by delegating to a minimal-image stub. This keeps the smoke
@@ -103,8 +106,12 @@ def _make_m3_engine() -> M3Engine:
         class _Stub:
             width = 256
             height = 256
+
         return _raw_visual(
-            _Stub(), _Stub(), plate_caption or "", strat_caption or "",
+            _Stub(),
+            _Stub(),
+            plate_caption or "",
+            strat_caption or "",
         )
 
     engine.cross_figure_visual_inference = _smoke_visual  # type: ignore[assignment]
@@ -124,30 +131,27 @@ def _load_gold(path: Path, paper_id: str) -> list[dict[str, Any]]:
             if not line:
                 continue
             rec = json.loads(line)
-            panels.append({
-                "paper_id": paper_id,
-                "figure_id": rec.get("figure_id") or "",
-                "panel_id": rec.get("panel_id"),
-                "species": rec.get("species"),
-                "caption_snippet": "",
-            })
+            panels.append(
+                {
+                    "paper_id": paper_id,
+                    "figure_id": rec.get("figure_id") or "",
+                    "panel_id": rec.get("panel_id"),
+                    "species": rec.get("species"),
+                    "caption_snippet": "",
+                }
+            )
     return panels
 
 
-def _attach_caption(
-    panels: list[dict[str, Any]], caption: str
-) -> list[dict[str, Any]]:
+def _attach_caption(panels: list[dict[str, Any]], caption: str) -> list[dict[str, Any]]:
     return [{**p, "caption_snippet": caption} for p in panels]
 
 
-def _with_plate_figure(
-    paper_figures: list[dict[str, Any]], paper_id: str
-) -> list[dict[str, Any]]:
+def _with_plate_figure(paper_figures: list[dict[str, Any]], paper_id: str) -> list[dict[str, Any]]:
     """Ensure paper has at least one plate figure so Phase C's
     structural trigger ('plate AND anchor') fires."""
     has_plate = any(
-        str(f.get("figure_type") or "").lower() in ("plate", "plate_image")
-        for f in paper_figures
+        str(f.get("figure_type") or "").lower() in ("plate", "plate_image") for f in paper_figures
     )
     if has_plate:
         return paper_figures
@@ -262,15 +266,20 @@ def _scenario_beccaro() -> PaperRun:
         _load_gold(_REPO_ROOT / "data" / "gold" / "beccaro2006.jsonl", paper_id),
         "All specimens from Sample S1, Sicily",
     )
-    figures = _with_plate_figure([
-        {
-            "figure_id": "strat1", "paper_id": paper_id,
-            "figure_type": "strat_column",
-            "caption": "Sample S1, Sicily, Scaglia Fm",
-            "formation": "Scaglia Fm", "age": "Late Triassic",
-            "locality": "Sicily",
-        },
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Sample S1, Sicily, Scaglia Fm",
+                "formation": "Scaglia Fm",
+                "age": "Late Triassic",
+                "locality": "Sicily",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Beccaro 2006 (real OA)", panels, figures)
 
 
@@ -280,15 +289,20 @@ def _scenario_baumgartner() -> PaperRun:
         _load_gold(_REPO_ROOT / "data" / "gold" / "baumgartner2008.jsonl", paper_id),
         "Tunisia outcrop",
     )
-    figures = _with_plate_figure([
-        {
-            "figure_id": "strat1", "paper_id": paper_id,
-            "figure_type": "strat_column",
-            "caption": "Tunisia, Jurassic",
-            "formation": "Jurassic", "age": "Jurassic",
-            "locality": "Tunisia",
-        },
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Tunisia, Jurassic",
+                "formation": "Jurassic",
+                "age": "Jurassic",
+                "locality": "Tunisia",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Baumgartner 2008 (real OA)", panels, figures)
 
 
@@ -298,15 +312,20 @@ def _scenario_danelian() -> PaperRun:
         _load_gold(_REPO_ROOT / "data" / "gold" / "danelian2006.jsonl", paper_id),
         "Greece section",
     )
-    figures = _with_plate_figure([
-        {
-            "figure_id": "strat1", "paper_id": paper_id,
-            "figure_type": "strat_column",
-            "caption": "Greece, Cretaceous",
-            "formation": "Cretaceous", "age": "Cretaceous",
-            "locality": "Greece",
-        },
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Greece, Cretaceous",
+                "formation": "Cretaceous",
+                "age": "Cretaceous",
+                "locality": "Greece",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Danelian 2006 (real OA)", panels, figures)
 
 
@@ -316,15 +335,20 @@ def _scenario_pouille() -> PaperRun:
         _load_gold(_REPO_ROOT / "data" / "gold" / "pouille2014.jsonl", paper_id),
         "NW Turkey",
     )
-    figures = _with_plate_figure([
-        {
-            "figure_id": "strat1", "paper_id": paper_id,
-            "figure_type": "litholog_column",
-            "caption": "NW Turkey, Late Jurassic",
-            "formation": "Late Jurassic", "age": "Late Jurassic",
-            "locality": "NW Turkey",
-        },
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "litholog_column",
+                "caption": "NW Turkey, Late Jurassic",
+                "formation": "Late Jurassic",
+                "age": "Late Jurassic",
+                "locality": "NW Turkey",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Pouille 2014 (real OA)", panels, figures)
 
 
@@ -334,15 +358,20 @@ def _scenario_bandini() -> PaperRun:
         _load_gold(_REPO_ROOT / "data" / "gold" / "bandini2011.jsonl", paper_id),
         "Italy specimens",
     )
-    figures = _with_plate_figure([
-        {
-            "figure_id": "strat1", "paper_id": paper_id,
-            "figure_type": "strat_column",
-            "caption": "Italy, Late Cretaceous",
-            "formation": "Late Cretaceous", "age": "Late Cretaceous",
-            "locality": "Italy",
-        },
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Italy, Late Cretaceous",
+                "formation": "Late Cretaceous",
+                "age": "Late Cretaceous",
+                "locality": "Italy",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Bandini 2011 (real OA)", panels, figures)
 
 
@@ -352,15 +381,20 @@ def _scenario_boughdiri() -> PaperRun:
         _load_gold(_REPO_ROOT / "data" / "gold" / "boughdiri2007.jsonl", paper_id),
         "Spain section",
     )
-    figures = _with_plate_figure([
-        {
-            "figure_id": "strat1", "paper_id": paper_id,
-            "figure_type": "strat_column",
-            "caption": "Spain, Jurassic",
-            "formation": "Jurassic", "age": "Jurassic",
-            "locality": "Spain",
-        },
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Spain, Jurassic",
+                "formation": "Jurassic",
+                "age": "Jurassic",
+                "locality": "Spain",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Boughdiri 2007 (real OA)", panels, figures)
 
 
@@ -370,15 +404,20 @@ def _scenario_feng() -> PaperRun:
         _load_gold(_REPO_ROOT / "data" / "gold" / "feng2007.jsonl", paper_id),
         "China, South China block",
     )
-    figures = _with_plate_figure([
-        {
-            "figure_id": "strat1", "paper_id": paper_id,
-            "figure_type": "strat_column",
-            "caption": "China, Permian",
-            "formation": "Permian", "age": "Permian",
-            "locality": "China",
-        },
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "China, Permian",
+                "formation": "Permian",
+                "age": "Permian",
+                "locality": "China",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Feng 2007 (real OA)", panels, figures)
 
 
@@ -388,15 +427,20 @@ def _scenario_bragin() -> PaperRun:
         _load_gold(_REPO_ROOT / "data" / "gold" / "bragin2025.jsonl", paper_id),
         "Russia, Siberia",
     )
-    figures = _with_plate_figure([
-        {
-            "figure_id": "strat1", "paper_id": paper_id,
-            "figure_type": "strat_column",
-            "caption": "Russia, Triassic",
-            "formation": "Triassic", "age": "Triassic",
-            "locality": "Russia",
-        },
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Russia, Triassic",
+                "formation": "Triassic",
+                "age": "Triassic",
+                "locality": "Russia",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Bragin 2025 (real OA)", panels, figures)
 
 
@@ -406,15 +450,20 @@ def _scenario_hollis() -> PaperRun:
         _load_gold(_REPO_ROOT / "data" / "gold" / "hollis2006.jsonl", paper_id),
         "New Zealand",
     )
-    figures = _with_plate_figure([
-        {
-            "figure_id": "map1", "paper_id": paper_id,
-            "figure_type": "paleogeographic_map",
-            "caption": "New Zealand, Cretaceous",
-            "formation": "Cretaceous", "age": "Cretaceous",
-            "locality": "New Zealand",
-        },
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "map1",
+                "paper_id": paper_id,
+                "figure_type": "paleogeographic_map",
+                "caption": "New Zealand, Cretaceous",
+                "formation": "Cretaceous",
+                "age": "Cretaceous",
+                "locality": "New Zealand",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Hollis 2006 (real OA)", panels, figures)
 
 
@@ -427,19 +476,36 @@ def _scenario_synthetic_sample_only() -> PaperRun:
     paper_id = "syn_sample_only"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "2",
-             "species": "Genus b", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "2",
+                "species": "Genus b",
+                "caption_snippet": "",
+            },
         ],
         "From Sample S1",
     )
-    figures = _with_plate_figure([
-        {"figure_id": "strat1", "paper_id": paper_id,
-         "figure_type": "strat_column",
-         "caption": "Sample S1, Scaglia Fm",
-         "formation": "Scaglia Fm", "age": "Late Triassic"},
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Sample S1, Scaglia Fm",
+                "formation": "Scaglia Fm",
+                "age": "Late Triassic",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Synthetic: Sample-ID only", panels, figures)
 
 
@@ -447,19 +513,37 @@ def _scenario_synthetic_locality_only() -> PaperRun:
     paper_id = "syn_locality_only"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "2",
-             "species": "Genus b", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "2",
+                "species": "Genus b",
+                "caption_snippet": "",
+            },
         ],
         "Collected from Tunisia",
     )
-    figures = _with_plate_figure([
-        {"figure_id": "strat1", "paper_id": paper_id,
-         "figure_type": "strat_column",
-         "caption": "Tunisia, Jurassic",
-         "formation": "Jurassic", "age": "Jurassic", "locality": "Tunisia"},
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Tunisia, Jurassic",
+                "formation": "Jurassic",
+                "age": "Jurassic",
+                "locality": "Tunisia",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Synthetic: Locality-only", panels, figures)
 
 
@@ -467,17 +551,29 @@ def _scenario_synthetic_unlinked() -> PaperRun:
     paper_id = "syn_unlinked"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
         ],
         "No useful info",
     )
-    figures = _with_plate_figure([
-        {"figure_id": "strat1", "paper_id": paper_id,
-         "figure_type": "strat_column",
-         "caption": "Somewhere, some age",
-         "formation": "X", "age": "Y"},
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Somewhere, some age",
+                "formation": "X",
+                "age": "Y",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Synthetic: Unlinked", panels, figures)
 
 
@@ -485,25 +581,46 @@ def _scenario_synthetic_multi_anchor() -> PaperRun:
     paper_id = "syn_multi_anchor"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "2",
-             "species": "Genus b", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "2",
+                "species": "Genus b",
+                "caption_snippet": "",
+            },
         ],
         "Italy, Sample S1",
     )
-    figures = _with_plate_figure([
-        {"figure_id": "strat1", "paper_id": paper_id,
-         "figure_type": "strat_column",
-         "caption": "Italy, Late Triassic",
-         "formation": "Late Triassic", "age": "Late Triassic",
-         "locality": "Italy"},
-        {"figure_id": "map1", "paper_id": paper_id,
-         "figure_type": "paleogeographic_map",
-         "caption": "Italy, Late Triassic",
-         "formation": "Late Triassic", "age": "Late Triassic",
-         "locality": "Italy"},
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Italy, Late Triassic",
+                "formation": "Late Triassic",
+                "age": "Late Triassic",
+                "locality": "Italy",
+            },
+            {
+                "figure_id": "map1",
+                "paper_id": paper_id,
+                "figure_type": "paleogeographic_map",
+                "caption": "Italy, Late Triassic",
+                "formation": "Late Triassic",
+                "age": "Late Triassic",
+                "locality": "Italy",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Synthetic: Plate + strat + map", panels, figures)
 
 
@@ -511,8 +628,13 @@ def _scenario_synthetic_no_anchor() -> PaperRun:
     paper_id = "syn_no_anchor"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
         ],
         "Italy",
     )
@@ -524,25 +646,51 @@ def _scenario_synthetic_ambiguous_locality() -> PaperRun:
     paper_id = "syn_ambiguous_loc"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "2",
-             "species": "Genus b", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "2",
+                "species": "Genus b",
+                "caption_snippet": "",
+            },
         ],
         "Tunisia specimen",
     )
-    figures = _with_plate_figure([
-        {"figure_id": "strat1", "paper_id": paper_id,
-         "figure_type": "strat_column",
-         "caption": "Tunisia, Jurassic",
-         "formation": "Jurassic", "age": "Jurassic", "locality": "Tunisia"},
-        {"figure_id": "strat2", "paper_id": paper_id,
-         "figure_type": "strat_column",
-         "caption": "Tunisia, Cretaceous",
-         "formation": "Cretaceous", "age": "Cretaceous", "locality": "Tunisia"},
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Tunisia, Jurassic",
+                "formation": "Jurassic",
+                "age": "Jurassic",
+                "locality": "Tunisia",
+            },
+            {
+                "figure_id": "strat2",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Tunisia, Cretaceous",
+                "formation": "Cretaceous",
+                "age": "Cretaceous",
+                "locality": "Tunisia",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(
-        paper_id, "Synthetic: Ambiguous locality (2 strat columns)", panels, figures,
+        paper_id,
+        "Synthetic: Ambiguous locality (2 strat columns)",
+        panels,
+        figures,
     )
 
 
@@ -550,18 +698,30 @@ def _scenario_synthetic_litholog_only() -> PaperRun:
     paper_id = "syn_litholog_only"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
         ],
         "Greece",
     )
-    figures = _with_plate_figure([
-        {"figure_id": "litho1", "paper_id": paper_id,
-         "figure_type": "litholog_column",
-         "caption": "Greece, Late Cretaceous",
-         "formation": "Late Cretaceous", "age": "Late Cretaceous",
-         "locality": "Greece"},
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "litho1",
+                "paper_id": paper_id,
+                "figure_type": "litholog_column",
+                "caption": "Greece, Late Cretaceous",
+                "formation": "Late Cretaceous",
+                "age": "Late Cretaceous",
+                "locality": "Greece",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Synthetic: Litholog-only", panels, figures)
 
 
@@ -569,18 +729,30 @@ def _scenario_synthetic_paleogeo_only() -> PaperRun:
     paper_id = "syn_paleogeo_only"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
         ],
         "Italy",
     )
-    figures = _with_plate_figure([
-        {"figure_id": "map1", "paper_id": paper_id,
-         "figure_type": "paleogeographic_map",
-         "caption": "Italy, Late Triassic",
-         "formation": "Late Triassic", "age": "Late Triassic",
-         "locality": "Italy"},
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "map1",
+                "paper_id": paper_id,
+                "figure_type": "paleogeographic_map",
+                "caption": "Italy, Late Triassic",
+                "formation": "Late Triassic",
+                "age": "Late Triassic",
+                "locality": "Italy",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Synthetic: Paleogeographic-map-only", panels, figures)
 
 
@@ -588,18 +760,30 @@ def _scenario_synthetic_strong_locality() -> PaperRun:
     paper_id = "syn_strong_loc"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
         ],
         "Sicily outcrop",
     )
-    figures = _with_plate_figure([
-        {"figure_id": "strat1", "paper_id": paper_id,
-         "figure_type": "strat_column",
-         "caption": "Sicily, Scaglia Fm",
-         "formation": "Scaglia Fm", "age": "Late Triassic",
-         "locality": "Sicily"},
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Sicily, Scaglia Fm",
+                "formation": "Scaglia Fm",
+                "age": "Late Triassic",
+                "locality": "Sicily",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(paper_id, "Synthetic: Strong locality match", panels, figures)
 
 
@@ -609,19 +793,34 @@ def _scenario_synthetic_phase_a_unlinked() -> PaperRun:
     paper_id = "syn_a_unlinked"
     panels = _attach_caption(
         [
-            {"paper_id": paper_id, "figure_id": "pl1", "panel_id": "1",
-             "species": "Genus a", "caption_snippet": ""},
+            {
+                "paper_id": paper_id,
+                "figure_id": "pl1",
+                "panel_id": "1",
+                "species": "Genus a",
+                "caption_snippet": "",
+            },
         ],
         "Specimen XYZ1234",
     )
-    figures = _with_plate_figure([
-        {"figure_id": "strat1", "paper_id": paper_id,
-         "figure_type": "strat_column",
-         "caption": "Locality unknown, Late Cretaceous",
-         "formation": "X", "age": "Late Cretaceous"},
-    ], paper_id)
+    figures = _with_plate_figure(
+        [
+            {
+                "figure_id": "strat1",
+                "paper_id": paper_id,
+                "figure_type": "strat_column",
+                "caption": "Locality unknown, Late Cretaceous",
+                "formation": "X",
+                "age": "Late Cretaceous",
+            },
+        ],
+        paper_id,
+    )
     return _run_one_paper(
-        paper_id, "Synthetic: Phase A unlinked, Phase C tries", panels, figures,
+        paper_id,
+        "Synthetic: Phase A unlinked, Phase C tries",
+        panels,
+        figures,
     )
 
 
@@ -711,9 +910,7 @@ def main() -> int:
         verdict = "PASS"
     else:
         verdict = "INFO"
-    print(
-        f"{verdict} — Phase C visual-linker aggregate precision: {agg_precision_str}"
-    )
+    print(f"{verdict} — Phase C visual-linker aggregate precision: {agg_precision_str}")
     print(
         f"  (panels considered for Phase C: {total_unlinked}, "
         f"M3 returned links for: {total_visual_links})"

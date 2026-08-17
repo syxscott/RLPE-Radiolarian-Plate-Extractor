@@ -64,9 +64,7 @@ def load_env_file(
                 value = value.strip().strip('"').strip("'")
                 if not key:
                     continue
-                should_override = (
-                    force_override or key in project_keys or key not in os.environ
-                )
+                should_override = force_override or key in project_keys or key not in os.environ
                 if should_override:
                     os.environ[key] = value
                     set_count += 1

@@ -20,8 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlpe.taxon import (  # noqa: E402
-    TaxonRecognizer,
     _KNOWN_AUTHOR_SURNAMES,
+    TaxonRecognizer,
 )
 
 

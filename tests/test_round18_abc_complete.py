@@ -38,10 +38,10 @@ def test_geology_extraction_splits_member_group_formation():
     assert "_FORMATION_RE" in src, "Formation regex missing"
     assert "_MEMBER_RE" in src, "Member regex missing"
     # The legacy greedy FORMATION_PATTERN was retired.
-    assert 'groups[0]' in src or "groups[0] if groups" in src, (
+    assert "groups[0]" in src or "groups[0] if groups" in src, (
         "groups[0] must be threaded into the new field path"
     )
-    assert 'members[0]' in src, "members[0] must be threaded into the new field path"
+    assert "members[0]" in src, "members[0] must be threaded into the new field path"
 
 
 def test_geology_extraction_has_lithology_and_biozone():
@@ -59,9 +59,7 @@ def test_geology_extraction_classifies_paleo_vs_modern():
     coords based on context keywords like ``"during the "`` /
     ``"at that time"`` vs ``"today"`` / ``"present-day"``."""
     src = _read("src/rlpe/geology_extraction.py")
-    assert "_classify_coordinate_age" in src, (
-        "_classify_coordinate_age helper missing"
-    )
+    assert "_classify_coordinate_age" in src, "_classify_coordinate_age helper missing"
     assert "paleo_latitude" in src, "paleo_latitude must be populated"
     assert "modern_latitude" in src, "modern_latitude must be populated"
     assert "_PALEO_KEYWORDS" in src, "_PALEO_KEYWORDS missing"
@@ -72,9 +70,17 @@ def test_geology_record_dataclass_has_new_fields():
     """``GeologyRecord`` must declare the new fields so the
     converter can read them off the producer's output."""
     src = _read("src/rlpe/geology_extraction.py")
-    for f in ("group:", "member:", "lithology:", "country:", "biozone:",
-              "modern_latitude:", "modern_longitude:",
-              "paleo_latitude:", "paleo_longitude:"):
+    for f in (
+        "group:",
+        "member:",
+        "lithology:",
+        "country:",
+        "biozone:",
+        "modern_latitude:",
+        "modern_longitude:",
+        "paleo_latitude:",
+        "paleo_longitude:",
+    ):
         assert f in src, f"GeologyRecord missing field {f!r}"
 
 
@@ -116,9 +122,7 @@ def test_geo_vision_options_propagate_to_extra():
     src = _read("src/rlpe/api/app.py")
     # The propagation block must list both keys.
     assert '"use_geo_vision"' in src, "use_geo_vision not propagated to extra"
-    assert '"geo_vision_figure_types"' in src, (
-        "geo_vision_figure_types not propagated to extra"
-    )
+    assert '"geo_vision_figure_types"' in src, "geo_vision_figure_types not propagated to extra"
 
 
 # ---------------------------------------------------------------------------
@@ -205,16 +209,10 @@ def test_frontend_modal_renders_evidence_collapsible():
     ``<details class="modal-geo-evidence">`` block so the operator
     can see WHICH sentence the extractor pulled the data from."""
     src = _read("web/js/app.js")
-    assert "modal-geo-evidence" in src, (
-        "Frontend missing .modal-geo-evidence collapsible block"
-    )
-    assert "evidence_text" in src, (
-        "Frontend not referencing g.evidence_text from geology links"
-    )
+    assert "modal-geo-evidence" in src, "Frontend missing .modal-geo-evidence collapsible block"
+    assert "evidence_text" in src, "Frontend not referencing g.evidence_text from geology links"
     # The summary label should be the 📄 icon + a Chinese phrase.
-    assert "提取证据" in src, (
-        "Evidence summary label missing the Chinese 📄 提取证据 marker"
-    )
+    assert "提取证据" in src, "Evidence summary label missing the Chinese 📄 提取证据 marker"
 
 
 def test_frontend_modal_renders_paleo_and_modern_chips():
@@ -236,6 +234,4 @@ def test_frontend_modal_css_classes_match_js():
     assert ".modal-geo-modern" in src, ".modal-geo-modern CSS missing"
     assert ".modal-geo-evidence" in src, ".modal-geo-evidence CSS missing"
     # The evidence block must have a pre-formatted styling.
-    assert "modal-geo-evidence pre" in src, (
-        "CSS for the evidence <pre> block missing"
-    )
+    assert "modal-geo-evidence pre" in src, "CSS for the evidence <pre> block missing"

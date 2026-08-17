@@ -10,6 +10,7 @@ safe char fallback (4000 chars) and stamps a ``truncation_mode`` metric
 on the resulting ``MatchResult.metadata`` so callers (and tests) can
 verify which strategy was used.
 """
+
 from __future__ import annotations
 
 import re

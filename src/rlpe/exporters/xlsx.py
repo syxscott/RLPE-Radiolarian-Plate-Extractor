@@ -33,8 +33,9 @@ they start with ``=``/``+``/``-``/``@``/TAB to defeat CWE-1236.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -107,9 +108,7 @@ def _autosize_columns(ws, max_width: int = 60) -> None:
             if length > max_len:
                 max_len = length
         # Min 8 chars (empty columns aren't 0-width), capped at max_width.
-        ws.column_dimensions[get_column_letter(col_idx)].width = min(
-            max(max_len + 2, 8), max_width
-        )
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max(max_len + 2, 8), max_width)
 
 
 def _write_header(ws, headers: list[str]) -> None:
@@ -135,15 +134,37 @@ def _write_rows(ws, headers: list[str], rows: list[list[Any]]) -> None:
 
 # --- panel columns (matches the modal "Panel 来源" row) -------------------
 _PANEL_HEADERS = [
-    "论文ID", "图版ID", "Panel标签", "Panel来源",
-    "物种", "置信度", "地质范围",
-    "地层年代", "年代Chrono", "年代Stage", "Ma_top", "Ma_base",
-    "Formation", "Member", "Group",
-    "Locality", "Country", "Modern_Lat", "Modern_Lon", "Coord来源",
-    "Sample IDs", "Lithology", "Biozone",
-    "古环境", "氧化还原", "地球化学", "沉积相",
+    "论文ID",
+    "图版ID",
+    "Panel标签",
+    "Panel来源",
+    "物种",
+    "置信度",
+    "地质范围",
+    "地层年代",
+    "年代Chrono",
+    "年代Stage",
+    "Ma_top",
+    "Ma_base",
+    "Formation",
+    "Member",
+    "Group",
+    "Locality",
+    "Country",
+    "Modern_Lat",
+    "Modern_Lon",
+    "Coord来源",
+    "Sample IDs",
+    "Lithology",
+    "Biozone",
+    "古环境",
+    "氧化还原",
+    "地球化学",
+    "沉积相",
     "BBox",
-    "提取方法", "Needs Review", "Review Reasons",
+    "提取方法",
+    "Needs Review",
+    "Review Reasons",
     # Phase 64 Plan B (Task B.5): one summary column for the
     # schematic / diagram / reconstruction / phylogenetic
     # extraction. Format: "type|text=N|rel=N|conf=0.95"
@@ -157,30 +178,70 @@ _PANEL_HEADERS = [
     # Operator can filter "unlinked" rows to find panels that
     # still need manual linking. Empty when the linker didn't
     # run (legacy rows).
-    "Link Source", "Link Confidence", "Link Figure",
+    "Link Source",
+    "Link Confidence",
+    "Link Figure",
 ]
 # --- geology_context columns ------------------------------------------------
 _GEOLOGY_HEADERS = [
-    "论文ID", "地质上下文ID", "Section Type", "Section Title",
-    "Age", "Chronostratigraphy", "Chrono Rank", "Ma_top", "Ma_base", "Ma_mid",
-    "Formation", "Member", "Group", "Lithology", "Biozone",
-    "古环境", "氧化还原", "地球化学", "沉积相",
-    "Locality", "Country", "Modern_Lat", "Modern_Lon", "Coord来源",
-    "LocalityID", "Confidence", "Evidence Text",
+    "论文ID",
+    "地质上下文ID",
+    "Section Type",
+    "Section Title",
+    "Age",
+    "Chronostratigraphy",
+    "Chrono Rank",
+    "Ma_top",
+    "Ma_base",
+    "Ma_mid",
+    "Formation",
+    "Member",
+    "Group",
+    "Lithology",
+    "Biozone",
+    "古环境",
+    "氧化还原",
+    "地球化学",
+    "沉积相",
+    "Locality",
+    "Country",
+    "Modern_Lat",
+    "Modern_Lon",
+    "Coord来源",
+    "LocalityID",
+    "Confidence",
+    "Evidence Text",
 ]
 # --- locality columns ------------------------------------------------------
 _LOCALITY_HEADERS = [
-    "论文ID", "LocalityID", "Name", "Country", "Region", "Section Name",
-    "Modern_Lat", "Modern_Lon", "Coordinate Source", "Geocoding Source",
-    "Confidence", "Evidence Text (head 80)",
+    "论文ID",
+    "LocalityID",
+    "Name",
+    "Country",
+    "Region",
+    "Section Name",
+    "Modern_Lat",
+    "Modern_Lon",
+    "Coordinate Source",
+    "Geocoding Source",
+    "Confidence",
+    "Evidence Text (head 80)",
 ]
 # --- paleo columns ---------------------------------------------------------
 _PALEO_HEADERS = [
-    "论文ID", "PaleoCoordinateID", "LocalityID", "Plate",
-    "Modern_Lat", "Modern_Lon",
+    "论文ID",
+    "PaleoCoordinateID",
+    "LocalityID",
+    "Plate",
+    "Modern_Lat",
+    "Modern_Lon",
     "Reconstruction Age (Ma)",
-    "Paleo_Lat", "Paleo_Lon",
-    "Reconstruction Model", "Method", "Backend Status", "Confidence",
+    "Paleo_Lat",
+    "Paleo_Lon",
+    "Reconstruction Model",
+    "Method",
+    "Backend Status",
+    "Confidence",
 ]
 
 
@@ -294,9 +355,7 @@ def _summarize_schematic_data(schematic_data: Any) -> str:
     return f"{fig_type}|text={len(text_elements)}|rel={len(relationships)}|conf={conf:.2f}"
 
 
-def _row_for_geology_context(
-    paper_id: str, g: dict[str, Any]
-) -> list[Any]:
+def _row_for_geology_context(paper_id: str, g: dict[str, Any]) -> list[Any]:
     return [
         paper_id,
         g.get("geology_context_id") or "",
@@ -372,27 +431,54 @@ _LEGEND = [
     ("Panel来源", "How the panel_id was derived: image_ocr / caption / position / legacy"),
     ("物种", "Genus + species (e.g. 'Megaporus jini'); may be 'N/A' or a non-biological token"),
     ("置信度", "0.0–1.0 confidence in the species assignment (Round 18 match score)"),
-    ("地质范围", "Round 19 scope marker: panel | figure_anchor | none (whether the geology data is panel-specific or inherited)"),
+    (
+        "地质范围",
+        "Round 19 scope marker: panel | figure_anchor | none (whether the geology data is panel-specific or inherited)",
+    ),
     ("地层年代", "First geology link's age (e.g. 'Late Jurassic'); may be empty"),
-    ("年代Chrono", "First geology link's chronostratigraphy (e.g. 'Kimmeridgian', 'Pliensbachian')"),
+    (
+        "年代Chrono",
+        "First geology link's chronostratigraphy (e.g. 'Kimmeridgian', 'Pliensbachian')",
+    ),
     ("年代Stage", "Round 18 rank: 'period' | 'epoch' | 'age' (Ma precision granularity)"),
     ("Ma_top", "First geology link's ma_top (younger Ma bound from ICS)"),
     ("Ma_base", "First geology link's ma_base (older Ma bound)"),
     ("Formation", "First geology link's formation (e.g. 'Dalong Formation', 'Zabijak Formation')"),
-    ("Member", "First geology link's member (Round 18 split: group/formation/member as separate fields)"),
+    (
+        "Member",
+        "First geology link's member (Round 18 split: group/formation/member as separate fields)",
+    ),
     ("Group", "First geology link's group"),
     ("Locality", "First geology link's locality (e.g. 'Méouge section', 'Karnezeika')"),
     ("Country", "First geology link's country (e.g. 'Greece', 'Tunisia', 'Russia')"),
-    ("Modern_Lat", "First geology link's modern_latitude (Round 21: includes country-centroid fallback)"),
+    (
+        "Modern_Lat",
+        "First geology link's modern_latitude (Round 21: includes country-centroid fallback)",
+    ),
     ("Modern_Lon", "First geology link's modern_longitude"),
     ("Coord来源", "'caption' | 'country_centroid' (Round 21) | 'paleobiology_db' (future)"),
-    ("Sample IDs", "Round 21 sample-id prefixes: S_ legacy | B_ Boughdiri | R_ specimen | N_ numeric | L_ (N) | P_ pl.N"),
+    (
+        "Sample IDs",
+        "Round 21 sample-id prefixes: S_ legacy | B_ Boughdiri | R_ specimen | N_ numeric | L_ (N) | P_ pl.N",
+    ),
     ("Lithology", "First geology link's lithology (Round 18: 30+ rock-name dictionary)"),
     ("Biozone", "First geology link's biozone (N. optima Zone style)"),
-    ("古环境 (paleoenvironment)", "Round 24: oxygen regime of the water column (anoxic/euxinic/oxic/etc.). Critical for P/T boundary research."),
-    ("氧化还原 (redox)", "Round 24: Algeo & Tribovillard 2009 classification (oxic/dysoxic/suboxic/anoxic/euxinic/ferruginous/sulfidic)."),
-    ("地球化学 (chemostrat)", "Round 24: named chemostratigraphic events (CIE / mass extinction / OAE / P/T boundary / LIP / mercury anomaly)."),
-    ("沉积相 (facies)", "Round 24: standard sedimentological facies (turbidite / pelagic / platform / basin / etc.)."),
+    (
+        "古环境 (paleoenvironment)",
+        "Round 24: oxygen regime of the water column (anoxic/euxinic/oxic/etc.). Critical for P/T boundary research.",
+    ),
+    (
+        "氧化还原 (redox)",
+        "Round 24: Algeo & Tribovillard 2009 classification (oxic/dysoxic/suboxic/anoxic/euxinic/ferruginous/sulfidic).",
+    ),
+    (
+        "地球化学 (chemostrat)",
+        "Round 24: named chemostratigraphic events (CIE / mass extinction / OAE / P/T boundary / LIP / mercury anomaly).",
+    ),
+    (
+        "沉积相 (facies)",
+        "Round 24: standard sedimentological facies (turbidite / pelagic / platform / basin / etc.).",
+    ),
     ("BBox", "Panel bounding box [x, y, w, h] in pixels"),
     ("提取方法", "Match method: heuristic | llm_first | cv | hybrid"),
     ("Needs Review", "Round 19: True if panel needs operator review (no printed panel_id, etc.)"),
@@ -400,7 +486,10 @@ _LEGEND = [
     ("Ma_mid", "Mid Ma (average of ma_top/ma_base) for paleo reconstruction"),
     ("Modern_Lat (paleo)", "Locality's modern_latitude (from centroid fallback if needed)"),
     ("Modern_Lon (paleo)", "Locality's modern_longitude"),
-    ("Reconstruction Age (Ma)", "Ma at which the GPlates Seton2012 model reconstructs the position"),
+    (
+        "Reconstruction Age (Ma)",
+        "Ma at which the GPlates Seton2012 model reconstructs the position",
+    ),
     ("Paleo_Lat", "Reconstructed paleo_latitude (NaN if reconstruction failed)"),
     ("Paleo_Lon", "Reconstructed paleo_longitude"),
     ("Reconstruction Model", "'Seton2012' for Round 20+; later models TBD"),
@@ -420,7 +509,8 @@ _LEGEND = [
 
 
 def write_xlsx(
-    run_output: dict[str, Any] | Any, path: str | None = None,
+    run_output: dict[str, Any] | Any,
+    path: str | None = None,
     panel_filter: Callable[[dict[str, Any]], bool] | None = None,
 ) -> bytes | None:
     """Build a multi-sheet .xlsx from a ``RunOutput`` dict.
@@ -483,7 +573,8 @@ def write_xlsx(
     # "panels" sheet and "localities" sheet consistent.
     surviving_paper_ids = (
         {p.get("paper_id") for p in panels if p.get("paper_id")}
-        if panel_filter is not None else None
+        if panel_filter is not None
+        else None
     )
     for l in run_output.get("localities", []) or []:
         # audit 2026-07-26: guard None entries (same null risk as
@@ -519,6 +610,7 @@ def write_xlsx(
     if path is None:
         # In-memory mode for the API endpoint
         from io import BytesIO
+
         buf = BytesIO()
         wb.save(buf)
         return buf.getvalue()
@@ -527,6 +619,7 @@ def write_xlsx(
     # Write to ``path + ".tmp"``, fsync, then ``os.replace`` (atomic on
     # POSIX and Windows).
     import os
+
     path_obj = Path(path)
     tmp = path_obj.with_suffix(path_obj.suffix + ".tmp")
     try:

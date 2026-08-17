@@ -32,6 +32,7 @@ The test asserts:
     ``confidence`` field equals the per-species value (not the
     chart-wide value).
 """
+
 from __future__ import annotations
 
 from dataclasses import fields
@@ -39,8 +40,8 @@ from dataclasses import fields
 from rlpe.range_chart_extractor import (
     RangeChartResult,
     SpeciesRange,
-    build_geology_links_for_panels,
     _parse_extraction_response,
+    build_geology_links_for_panels,
 )
 
 
@@ -105,9 +106,7 @@ def test_extract_range_chart_populates_per_species_confidence():
     assert len(chart.species_ranges) == 2
     # Per-species confidence was 0.92 — both ranges should carry it.
     for sr in chart.species_ranges:
-        assert sr.confidence == 0.92, (
-            f"expected per-species conf=0.92, got {sr.confidence}"
-        )
+        assert sr.confidence == 0.92, f"expected per-species conf=0.92, got {sr.confidence}"
     # Chart-wide confidence is the separate field.
     assert chart.confidence == 0.5
 
@@ -118,9 +117,7 @@ def test_extract_range_chart_inherits_chart_confidence_when_missing():
     chart = _make_chart(species_confidence=None, chart_confidence=0.7)
     assert chart.confidence == 0.7
     for sr in chart.species_ranges:
-        assert sr.confidence == 0.7, (
-            f"expected fallback to chart conf=0.7, got {sr.confidence}"
-        )
+        assert sr.confidence == 0.7, f"expected fallback to chart conf=0.7, got {sr.confidence}"
 
 
 def test_build_geology_links_uses_per_species_confidence():
@@ -137,8 +134,7 @@ def test_build_geology_links_uses_per_species_confidence():
     for link in links:
         if link.get("species") == "Neoalbaillella optima":
             assert link["confidence"] == 0.92, (
-                f"link should carry per-species confidence 0.92, "
-                f"got {link['confidence']}"
+                f"link should carry per-species confidence 0.92, got {link['confidence']}"
             )
 
 

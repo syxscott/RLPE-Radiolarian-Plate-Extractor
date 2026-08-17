@@ -133,13 +133,15 @@ def load_config(path: Path) -> PipelineConfig:
         save_intermediate=_coerce(
             "save_intermediate", payload.get("save_intermediate", False), False
         ),
-        od_caption_window=_coerce(
-            "od_caption_window", payload.get("od_caption_window", 5), 5
-        ),
+        od_caption_window=_coerce("od_caption_window", payload.get("od_caption_window", 5), 5),
         use_yolo_figures=_coerce("use_yolo_figures", payload.get("use_yolo_figures", False), False),
         yolo_model_path=_coerce("yolo_model_path", payload.get("yolo_model_path", ""), ""),
-        yolo_conf_threshold=_coerce("yolo_conf_threshold", payload.get("yolo_conf_threshold", 0.25), 0.25),
-        yolo_iou_threshold=_coerce("yolo_iou_threshold", payload.get("yolo_iou_threshold", 0.45), 0.45),
+        yolo_conf_threshold=_coerce(
+            "yolo_conf_threshold", payload.get("yolo_conf_threshold", 0.25), 0.25
+        ),
+        yolo_iou_threshold=_coerce(
+            "yolo_iou_threshold", payload.get("yolo_iou_threshold", 0.45), 0.45
+        ),
         yolo_device=_coerce("yolo_device", payload.get("yolo_device", "auto"), "auto"),
         extra=payload.get("extra", {}) or {},
     )

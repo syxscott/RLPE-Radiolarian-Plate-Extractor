@@ -4,6 +4,7 @@ Phase 2026-08-16 cleanup: the celery worker had no production
 callers (README admitted it was a skeleton). Jobs run via FastAPI
 BackgroundTasks + on-disk persistence (Phase 49+).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -20,6 +21,7 @@ def test_no_celery_in_source_tree():
     """No src/ tree file should import celery anymore."""
     import os
     import pathlib
+
     src_root = pathlib.Path(__file__).parent.parent / "src"
     hits = []
     for py in src_root.rglob("*.py"):

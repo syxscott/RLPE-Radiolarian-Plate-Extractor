@@ -26,6 +26,7 @@ def _normalise_ocr_lang(lang: Any) -> list[str]:
         out = ["en"]
     return out or ["en"]
 
+
 try:
     import fitz  # PyMuPDF — used for page rendering in the caption-band OCR fallback
 except Exception:  # pragma: no cover
@@ -113,9 +114,7 @@ class OpenDataLoaderExtractor:
         # surfaces immediately rather than producing empty output
         # at runtime.
         if caption_window < 1:
-            raise ValueError(
-                f"caption_window must be >= 1 (got {caption_window})"
-            )
+            raise ValueError(f"caption_window must be >= 1 (got {caption_window})")
         self.caption_window = caption_window
         self._available: bool | None = None
         # Lazy EasyOCR engine + lock. The previous implementation
@@ -496,7 +495,8 @@ class OpenDataLoaderExtractor:
                     key=lambda el: (
                         int((el.get("bounding box") or [0, 0, 0, 0])[2] or 0)
                         - int((el.get("bounding box") or [0, 0, 0, 0])[0] or 0)
-                    ) * (
+                    )
+                    * (
                         int((el.get("bounding box") or [0, 0, 0, 0])[3] or 0)
                         - int((el.get("bounding box") or [0, 0, 0, 0])[1] or 0)
                     ),
@@ -605,11 +605,7 @@ class OpenDataLoaderExtractor:
             _claimed_str: set[str] = set()
             for cid in claimed_image_ids:
                 _claimed_str.add(str(cid))
-            leftover_images = [
-                img
-                for img in images
-                if str(img.get("id", -1)) not in _claimed_str
-            ]
+            leftover_images = [img for img in images if str(img.get("id", -1)) not in _claimed_str]
             if leftover_images:
                 # Build a single fallback figure for unassigned images so the
                 # index-map / Fig. 2 distribution etc. still flow through the
@@ -632,9 +628,7 @@ class OpenDataLoaderExtractor:
                     for img in plate_images:
                         img_id = img.get("id")
                         cap_text = (
-                            caption_for_image.get(str(img_id))
-                            if img_id is not None
-                            else None
+                            caption_for_image.get(str(img_id)) if img_id is not None else None
                         )
                         if cap_text:
                             plate_cap_list.append(cap_text)
@@ -675,9 +669,7 @@ class OpenDataLoaderExtractor:
                 plate_caps: list[str] = []
                 for img in plate_images:
                     img_id = img.get("id")
-                    cap_text = (
-                        caption_for_image.get(str(img_id)) if img_id is not None else None
-                    )
+                    cap_text = caption_for_image.get(str(img_id)) if img_id is not None else None
                     if cap_text:
                         plate_caps.append(cap_text)
 
@@ -972,9 +964,7 @@ def _rescue_missing_images(
                     _rescued_id = int(best_img.get("id", -1) or -1)
                 except (TypeError, ValueError):
                     _rescued_id = -1
-                rescued_used_keys.add(
-                    (int(best_img.get("page number", 0) or 0), _rescued_id)
-                )
+                rescued_used_keys.add((int(best_img.get("page number", 0) or 0), _rescued_id))
         out_pairs.append(p)
     return out_pairs
 
@@ -1332,6 +1322,7 @@ def _is_caption_kind_marker(low: str) -> bool:
         or low.startswith("图")  # ZH Simplified figure marker
         or low.startswith("圖")  # ZH Traditional figure marker
     )
+
 
 # Match an inline plate figure reference inside a body paragraph.
 # Pouille 2014 has no real "Plate N" captions; the species list lives

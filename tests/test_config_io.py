@@ -1,10 +1,12 @@
 """Phase 55 audit: smoke tests for config_io module."""
+
 from __future__ import annotations
 
-import pytest
+import sys
 from pathlib import Path
 
-import sys
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
@@ -13,8 +15,8 @@ class TestConfigIO:
 
     def test_save_and_load_yaml_config(self, tmp_path):
         """Test that YAML config files can be saved and loaded."""
-        from rlpe.config_io import load_config, save_config
         from rlpe.config import PipelineConfig
+        from rlpe.config_io import load_config, save_config
 
         config_file = tmp_path / "test_config.yaml"
         original = PipelineConfig(

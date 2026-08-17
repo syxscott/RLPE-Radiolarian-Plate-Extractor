@@ -15,6 +15,7 @@ The fix: lower the confidence on this fallback path to 0.4 (caption)
 and 0.3 (OCR). The original 0.8/0.7 was for a fully-validated range;
 the degraded single-value path deserves a degraded confidence.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -65,8 +66,7 @@ def test_caption_range_parse_failure_low_confidence():
         f"(expected <=0.5; pre-fix value was 0.8)"
     )
     assert info.confidence == 0.4, (
-        f"range-fallback confidence should be 0.4 (degraded from 0.8), "
-        f"got {info.confidence}"
+        f"range-fallback confidence should be 0.4 (degraded from 0.8), got {info.confidence}"
     )
 
 

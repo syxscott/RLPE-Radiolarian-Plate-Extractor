@@ -23,7 +23,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.exporters.analysis import panels_to_rows, AnalysisOptions  # noqa: E402
+from rlpe.exporters.analysis import AnalysisOptions, panels_to_rows  # noqa: E402
 from rlpe.exporters.archive import write_dwca_zip  # noqa: E402
 from rlpe.provenance import build_provenance  # noqa: E402
 from rlpe.schema_models import (  # noqa: E402

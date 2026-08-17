@@ -20,6 +20,7 @@ from rlpe.cross_figure_linker import (
 @dataclass
 class FakePanel:
     """Minimal panel object the linker accepts."""
+
     paper_id: str = "p1"
     figure_id: str = "fig1"
     panel_id: str | None = "panel1"

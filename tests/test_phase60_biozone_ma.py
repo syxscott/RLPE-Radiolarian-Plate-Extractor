@@ -36,8 +36,7 @@ from rlpe.stratigraphy import (  # noqa: E402
 def test_biozone_table_nonempty():
     """The biozone-to-Ma table must contain at least 5 named zones."""
     assert len(_BIOZONE_TO_MA) >= 5, (
-        f"_BIOZONE_TO_MA shrunk to {len(_BIOZONE_TO_MA)}; "
-        "add named zones back to maintain the fix"
+        f"_BIOZONE_TO_MA shrunk to {len(_BIOZONE_TO_MA)}; add named zones back to maintain the fix"
     )
 
 
@@ -72,12 +71,8 @@ def test_biozone_to_ma_lookup():
         # Tolerate ±5 Ma drift from Baumgartner / Hollis original tables
         # because the curated table rounds to stage boundaries and the
         # ICS Ma values themselves have ±0.5 Ma uncertainty.
-        assert abs(ma_top - exp_top) <= 5.0, (
-            f"{name!r}: ma_top={ma_top} expected ~{exp_top}"
-        )
-        assert abs(ma_base - exp_base) <= 5.0, (
-            f"{name!r}: ma_base={ma_base} expected ~{exp_base}"
-        )
+        assert abs(ma_top - exp_top) <= 5.0, f"{name!r}: ma_top={ma_top} expected ~{exp_top}"
+        assert abs(ma_base - exp_base) <= 5.0, f"{name!r}: ma_base={ma_base} expected ~{exp_base}"
 
 
 def test_lookup_returns_none_for_unknown_biozone():

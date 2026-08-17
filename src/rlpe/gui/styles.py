@@ -5,17 +5,13 @@ The styles target PySide6 / Qt 6 and aim for the look of a polished
 scientific desktop app (think: ImageJ, IGV, ChimeraX, Zotero, IgorPro)
 — dense info, restrained colour, monospace numerics, no skeuomorphism.
 """
+
 from __future__ import annotations
-
-from PySide6.QtCore import Qt
-
 
 # ============================================================
 # Shared design tokens
 # ============================================================
-FONT_FAMILY_SANS = (
-    "Inter, 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
-)
+FONT_FAMILY_SANS = "Inter, 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
 FONT_FAMILY_MONO = (
     "'JetBrains Mono', 'Cascadia Code', 'Source Code Pro', 'Menlo', 'Consolas', monospace"
 )
@@ -786,7 +782,6 @@ def apply_theme(app, theme: str) -> None:
     theme : str
         One of ``"light"``, ``"dark"``, or ``"system"``.
     """
-    from PySide6.QtWidgets import QApplication
 
     if theme == "dark":
         app.setStyleSheet(DARK_QSS)
@@ -794,7 +789,9 @@ def apply_theme(app, theme: str) -> None:
         app.setStyleSheet(LIGHT_QSS)
     else:
         # ``system`` = pick based on Qt's palette hint
-        app.setStyleSheet(DARK_QSS if app.palette().window().color().lightness() < 128 else LIGHT_QSS)
+        app.setStyleSheet(
+            DARK_QSS if app.palette().window().color().lightness() < 128 else LIGHT_QSS
+        )
 
     # Phase 42: re-polish all widgets so any cached QSS styles are
     # refreshed. Without this, widgets that had setProperty() /

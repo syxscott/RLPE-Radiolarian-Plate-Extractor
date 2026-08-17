@@ -28,6 +28,7 @@ tests pin the fixes:
     registered as i18n listeners, so language switches didn't
     refresh their content. Fixed: i18n.add_listener in __init__.
 """
+
 from __future__ import annotations
 
 import os
@@ -38,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -50,6 +52,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_language():
     from rlpe.gui import i18n
+
     i18n.set_language("zh_CN")
     yield
     i18n.set_language("zh_CN")
@@ -62,20 +65,25 @@ def test_open_log_file_does_not_raise_name_error():
     """Phase 37: settings_tab._open_log_file used sys.platform
     without importing sys → NameError. Fixed: import sys inside
     the method."""
-    from rlpe.gui.settings_tab import SettingsTab
     from PySide6.QtWidgets import QMessageBox
+
+    from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
     # Patch QMessageBox.warning/information so the dialog doesn't
     # actually pop up under offscreen mode.
     called = {"warning": False, "info": False}
     orig_warning = QMessageBox.warning
     orig_info = QMessageBox.information
+
     def fake_warning(*a, **k):
         called["warning"] = True
         return QMessageBox.Ok
+
     def fake_info(*a, **k):
         called["info"] = True
         return QMessageBox.Ok
+
     QMessageBox.warning = staticmethod(fake_warning)
     QMessageBox.information = staticmethod(fake_info)
     try:
@@ -98,8 +106,9 @@ def test_on_lang_change_uses_window_not_parent():
     """Phase 37: previously the code did self.parent()._tabs which
     raised AttributeError (parent is a QWidget tab page wrapper,
     not the MainWindow). Fixed: use self.window()."""
-    from rlpe.gui.settings_tab import SettingsTab
     from rlpe.gui import i18n
+    from rlpe.gui.settings_tab import SettingsTab
+
     st = SettingsTab({})
     # Mock the parent chain so we can verify which one it uses.
     # The test ensures the method doesn't raise AttributeError.
@@ -126,6 +135,7 @@ def test_apply_to_run_settings_writes_all_keys():
     last_export_dir, theme — so the Run tab read stale values
     from those keys after Settings was modified."""
     from rlpe.gui.settings_tab import SettingsTab
+
     cache: dict = {}
     st = SettingsTab(cache)
     # Set some non-default values. Phase 47: the theme combo
@@ -160,8 +170,10 @@ def test_reset_defaults_updates_in_memory_cache():
     """Phase 37: _reset_defaults cleared QSettings but didn't
     rebuild the in-memory _settings dict, so the Run tab kept
     stale values until app restart."""
-    from rlpe.gui.settings_tab import SettingsTab
     from PySide6.QtWidgets import QMessageBox
+
+    from rlpe.gui.settings_tab import SettingsTab
+
     cache: dict = {"theme": "dark", "ocr_lang": "en,ja,fr"}
     st = SettingsTab(cache)
     # Mock QMessageBox.question → Yes, info/warning → no-op
@@ -190,17 +202,22 @@ def test_reset_defaults_does_not_fire_theme_change():
     """Phase 37: QSignalBlocker on theme/lang combos during
     _load() prevents _on_theme_change / _on_lang_change from
     firing while we programmatically load defaults."""
-    from rlpe.gui.settings_tab import SettingsTab
     from PySide6.QtWidgets import QMessageBox
+
+    from rlpe.gui.settings_tab import SettingsTab
     from rlpe.gui.styles import apply_theme
+
     cache: dict = {"theme": "dark"}
     st = SettingsTab(cache)
     # Track apply_theme calls
     original_apply = apply_theme
     calls: list[str] = []
+
     def fake_apply(app, theme):
         calls.append(theme)
+
     import rlpe.gui.settings_tab as st_mod
+
     st_mod.apply_theme = fake_apply
     orig_q = QMessageBox.question
     orig_i = QMessageBox.information
@@ -228,8 +245,9 @@ def test_reset_defaults_does_not_fire_theme_change():
 def test_tr_combobox_with_item_keys_translates():
     """Phase 37: tr_combobox items don't translate on language
     switch unless the caller passes item_keys=[i18n_key, ...]."""
-    from rlpe.gui.i18n_widgets import tr_combobox
     from rlpe.gui import i18n
+    from rlpe.gui.i18n_widgets import tr_combobox
+
     # Stub translation keys
     i18n.STRINGS["en"]["test.item.apple"] = "Apple"
     i18n.STRINGS["zh_CN"]["test.item.apple"] = "苹果"
@@ -262,8 +280,9 @@ def test_results_tab_filter_survives_language_switch():
     """Phase 37 audit: filter compared against literal "(all)"/"(any)"
     text. On ZH switch the labels became "(全部)"/"(任意)" so every
     row was dropped. Fixed: use userData sentinels "__ALL__"/"__ANY__"."""
-    from rlpe.gui.results_tab import ResultsTab
     from rlpe.gui import i18n
+    from rlpe.gui.results_tab import ResultsTab
+
     rt = ResultsTab()
     # Start in EN (the OTHER supported language) so we can verify
     # the switch actually mutates the visible label.
@@ -304,8 +323,9 @@ def test_results_tab_filter_survives_language_switch():
 def test_results_tab_filter_preserves_userdata_through_refresh():
     """The _refresh_texts() method must not lose userData on the
     "all"/"any" items when it updates their text."""
-    from rlpe.gui.results_tab import ResultsTab
     from rlpe.gui import i18n
+    from rlpe.gui.results_tab import ResultsTab
+
     rt = ResultsTab()
     # Verify the 3 sentinel items still have their userData
     species_ud = [rt._species_filter.itemData(i) for i in range(rt._species_filter.count())]
@@ -326,8 +346,9 @@ def test_jobs_tab_registers_i18n_listener():
     """Phase 37: JobsTab was missing i18n.add_listener(self._refresh_texts)
     so language switches didn't update its column headers. Fixed by
     adding a lambda wrapper that discards the lang arg."""
-    from rlpe.gui.jobs_tab import JobsTab
     from rlpe.gui import i18n
+    from rlpe.gui.jobs_tab import JobsTab
+
     jt = JobsTab()
     listeners = i18n._LISTENERS
     # The listener is now a lambda wrapping self._refresh_texts;
@@ -336,15 +357,14 @@ def test_jobs_tab_registers_i18n_listener():
     en = [jt._table.horizontalHeaderItem(i).text() for i in range(7)]
     i18n.set_language("zh_CN")
     zh = [jt._table.horizontalHeaderItem(i).text() for i in range(7)]
-    assert en != zh, (
-        f"JobsTab headers did not change on language switch: en={en!r} zh={zh!r}"
-    )
+    assert en != zh, f"JobsTab headers did not change on language switch: en={en!r} zh={zh!r}"
 
 
 def test_results_tab_registers_i18n_listener():
     """Phase 37: ResultsTab was missing i18n.add_listener. Fixed."""
-    from rlpe.gui.results_tab import ResultsTab
     from rlpe.gui import i18n
+    from rlpe.gui.results_tab import ResultsTab
+
     rt = ResultsTab()
     # Set initial to EN to compare against
     i18n.set_language("en")
@@ -352,15 +372,15 @@ def test_results_tab_registers_i18n_listener():
     i18n.set_language("zh_CN")
     zh = rt._species_filter.currentText()
     assert en != zh, (
-        f"ResultsTab species filter did not change on language switch: "
-        f"en={en!r} zh={zh!r}"
+        f"ResultsTab species filter did not change on language switch: en={en!r} zh={zh!r}"
     )
 
 
 def test_jobs_tab_columns_translate_on_language_switch():
     """End-to-end: switching language actually updates jobs-tab headers."""
-    from rlpe.gui.jobs_tab import JobsTab
     from rlpe.gui import i18n
+    from rlpe.gui.jobs_tab import JobsTab
+
     i18n.set_language("en")
     jt = JobsTab()
     en_headers = [jt._table.horizontalHeaderItem(i).text() for i in range(7)]
@@ -374,9 +394,7 @@ def test_jobs_tab_columns_translate_on_language_switch():
     )
     # ZH should contain Chinese chars in some header
     joined = " ".join(zh_headers)
-    assert "任务" in joined or "PDF" in joined, (
-        f"ZH headers should contain Chinese: {zh_headers!r}"
-    )
+    assert "任务" in joined or "PDF" in joined, f"ZH headers should contain Chinese: {zh_headers!r}"
 
 
 # ============================================================
@@ -386,7 +404,9 @@ def test_jobs_tab_no_bare_english_qpushbutton():
     """Phase 37: QPushButton("English text") in JobsTab doesn't
     translate. Verify no such widgets exist."""
     from PySide6.QtWidgets import QPushButton
+
     from rlpe.gui.jobs_tab import JobsTab
+
     jt = JobsTab()
     for btn in jt.findChildren(QPushButton):
         # All buttons should have an objectName set (== i18n key)
@@ -399,12 +419,12 @@ def test_jobs_tab_no_bare_english_qpushbutton():
 
 def test_results_tab_no_bare_english_qpushbutton():
     from PySide6.QtWidgets import QPushButton
+
     from rlpe.gui.results_tab import ResultsTab
+
     rt = ResultsTab()
     for btn in rt.findChildren(QPushButton):
-        assert btn.objectName(), (
-            f"ResultsTab has QPushButton {btn.text()!r} with no objectName"
-        )
+        assert btn.objectName(), f"ResultsTab has QPushButton {btn.text()!r} with no objectName"
 
 
 def test_settings_tab_open_log_file_uses_i18n():
@@ -412,12 +432,10 @@ def test_settings_tab_open_log_file_uses_i18n():
     use i18n keys, not bare English."""
     # Import the source to check we use i18n._tr
     import inspect
+
     from rlpe.gui.settings_tab import SettingsTab
+
     src = inspect.getsource(SettingsTab._open_log_file)
-    assert 'i18n._tr' in src, (
-        "_open_log_file should use i18n._tr for title/body, not bare English"
-    )
+    assert "i18n._tr" in src, "_open_log_file should use i18n._tr for title/body, not bare English"
     # Should not contain bare English like '"Log file"' or '"Could not open"'
-    assert '"Log file"' not in src, (
-        "_open_log_file still has bare English title 'Log file'"
-    )
+    assert '"Log file"' not in src, "_open_log_file still has bare English title 'Log file'"

@@ -649,16 +649,16 @@ PROMPT_REGISTRY: dict[str, str] = {
         "species as documented in the source text.\n\n"
         "STRICT RULES — these are not optional:\n"
         "- If a field is NOT explicitly stated in the source text, set\n"
-        "  it to null. NEVER guess or default to false / 0 / \"absent\".\n"
+        '  it to null. NEVER guess or default to false / 0 / "absent".\n'
         "  In particular, ``spines_present`` MUST be null (not false)\n"
         "  when the text does not mention spines either way.\n"
         "- For numeric ranges, use the values from the text verbatim.\n"
-        "  If the text says \"180-220 µm\", emit min=180, max=220.\n"
-        "  If the text gives a single value \"approximately 200 µm\",\n"
+        '  If the text says "180-220 µm", emit min=180, max=220.\n'
+        '  If the text gives a single value "approximately 200 µm",\n'
         "  emit min=max=200 (or both null if uncertain).\n"
         "- ``diagnostic_features`` is a list of short verbatim phrases\n"
-        "  that distinguish this species (e.g. \"three-bladed apical\n"
-        "  horn\", \"porous thoracic wall\"). Omit the list (return [])\n"
+        '  that distinguish this species (e.g. "three-bladed apical\n'
+        '  horn", "porous thoracic wall"). Omit the list (return [])\n'
         "  if the text has no distinguishing phrases.\n"
         "- ``evidence_text`` MUST be a short verbatim quote (≤ 200 chars)\n"
         "  from the source that supports the extracted fields. If the\n"
@@ -829,9 +829,7 @@ def _redact_enrichment_caption(
     after = pc[end:]
     before_budget = unrelated_budget // 2
     after_budget = unrelated_budget - before_budget
-    before_truncated = (
-        before[-before_budget:] if len(before) > before_budget else before
-    )
+    before_truncated = before[-before_budget:] if len(before) > before_budget else before
     after_truncated = after[:after_budget] if len(after) > after_budget else after
     return f"{before_truncated}[…redacted…]{matched}[…redacted…]{after_truncated}"
 
@@ -1283,13 +1281,9 @@ def _regex_expand_label_list(s: str) -> list[str]:
         if m_letter:
             lo_num, lo_suf, hi_suf = m_letter.groups()
             if ord(hi_suf) >= ord(lo_suf):
-                out.extend(
-                    f"{lo_num}{chr(c)}" for c in range(ord(lo_suf), ord(hi_suf) + 1)
-                )
+                out.extend(f"{lo_num}{chr(c)}" for c in range(ord(lo_suf), ord(hi_suf) + 1))
             else:
-                out.extend(
-                    f"{lo_num}{chr(c)}" for c in range(ord(hi_suf), ord(lo_suf) + 1)
-                )
+                out.extend(f"{lo_num}{chr(c)}" for c in range(ord(hi_suf), ord(lo_suf) + 1))
             continue
         m = re.match(r"(\d+)([a-z]?)\s*[–\-—]\s*(\d+)([a-z]?)$", chunk)
         if m:
@@ -1376,9 +1370,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         r"(\bfigs?\s+(?:\d+[a-z]?(?:\s*[,\-–—]\s*(?:\d+[a-z]?|[a-z]))*))"
         r"\.\s+((?:\d+[a-z]?\.\s*)*(?:\d+[a-z]?))"
         r"(?=[:A-Z])",
-        lambda m: m.group(1)
-        + ", "
-        + ", ".join(x.rstrip(".") for x in m.group(2).split()),
+        lambda m: m.group(1) + ", " + ", ".join(x.rstrip(".") for x in m.group(2).split()),
         text,
         flags=re.IGNORECASE,
     )
@@ -1402,9 +1394,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # gold form ("Entactinia sp. 1"): the modifier is folded into
         # the species string and the modifier field is cleared so the
         # caller doesn't double-count it (e.g. "Entactinia sp. 1 sp.").
-        trailing_id = (
-            (m.group(4) or "").strip() if m.lastindex and m.lastindex >= 4 else ""
-        )
+        trailing_id = (m.group(4) or "").strip() if m.lastindex and m.lastindex >= 4 else ""
         if trailing_id:
             species = (species + " " + modifier + " " + trailing_id).strip()
             modifier = ""
@@ -1488,8 +1478,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             lbl
             for lbl in labels
             if not (
-                re.match(r"(\d+)", lbl)
-                and re.match(r"(\d+)", lbl).group(1) in conflicting_bases
+                re.match(r"(\d+)", lbl) and re.match(r"(\d+)", lbl).group(1) in conflicting_bases
             )
         ]
         if not new_labels:
@@ -1567,9 +1556,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             # string so the caller sees the gold form.
             species = m.group(3).strip()
             modifier = (m.group(4) or "").strip()
-            trailing_id = (
-                (m.group(5) or "").strip() if m.lastindex and m.lastindex >= 5 else ""
-            )
+            trailing_id = (m.group(5) or "").strip() if m.lastindex and m.lastindex >= 5 else ""
             if modifier:
                 # audit 2026-07-31: cf./aff. are comparison qualifiers
                 # whose target follows in the text — folding the bare
@@ -1702,9 +1689,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # the identifier to be at the end of the clause: followed by
         # a clause terminator (``;``, ``.``, or end-of-text), never
         # by a word that would indicate we matched the wrong capital.
-        if re.match(
-            r"^(Spumellaria|Nassellaria)\s+gen\.?$", species, flags=re.IGNORECASE
-        ):
+        if re.match(r"^(Spumellaria|Nassellaria)\s+gen\.?$", species, flags=re.IGNORECASE):
             tail_window = text[m.end() : m.end() + 30]
             m_id = re.search(r"\b([A-Z])\b(?=\s*[;.,]|\s*$)", tail_window)
             if m_id:
@@ -2100,8 +2085,7 @@ class _ThinkingFlagGate:
             self._writers_waiting += 1
             try:
                 while self._writer_thread not in (None, me) or (
-                    self._writer_thread is None
-                    and any(tid != me for tid in self._readers)
+                    self._writer_thread is None and any(tid != me for tid in self._readers)
                 ):
                     self._cond.wait()
             finally:
@@ -2408,9 +2392,7 @@ class M3Engine:
         # papers: ``figs 1-3. Species A. figs 4-5. Species B.``.
         fallback = _regex_parse_caption(caption_text)
         if fallback:
-            logger.info(
-                "Stage 1 parse_caption -> %d pairs (regex fallback)", len(fallback)
-            )
+            logger.info("Stage 1 parse_caption -> %d pairs (regex fallback)", len(fallback))
         return fallback
 
     # ------------------------------------------------------------------ stage 2
@@ -2434,16 +2416,12 @@ class M3Engine:
         if not isinstance(data, dict):
             return PlateClassification()
         cls = PlateClassification(
-            is_radiolarian_plate=_safe_bool(
-                data.get("is_radiolarian_plate"), default=True
-            ),
+            is_radiolarian_plate=_safe_bool(data.get("is_radiolarian_plate"), default=True),
             image_type=str(data.get("image_type") or "micrograph"),
             panel_count_estimate=_safe_int(data.get("panel_count_estimate")),
             specimen_count_estimate=_safe_int(data.get("specimen_count_estimate")),
             quality=str(data.get("quality") or "ok"),
-            dominant_taxa=[
-                str(x) for x in (data.get("dominant_taxa") or []) if str(x).strip()
-            ],
+            dominant_taxa=[str(x) for x in (data.get("dominant_taxa") or []) if str(x).strip()],
             reasoning=str(data.get("reasoning") or "").strip(),
         )
         logger.info(
@@ -2555,11 +2533,7 @@ class M3Engine:
         visual_only = not caption_pairs
         if visual_only:
             system_prompt = _MATCH_PANEL_SYSTEM_VISUAL_ONLY
-            hint = (
-                f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n"
-                if suggested_label
-                else ""
-            )
+            hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
             caption_block = (
                 f"\n[完整图说（仅供参考，可能为空）]\n{caption_text.strip()}\n"
                 if caption_text
@@ -2576,14 +2550,8 @@ class M3Engine:
             pairs_json = json.dumps(
                 [p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2
             )
-            hint = (
-                f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n"
-                if suggested_label
-                else ""
-            )
-            caption_block = (
-                f"\n[完整图说]\n{caption_text.strip()}\n" if caption_text else ""
-            )
+            hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
+            caption_block = f"\n[完整图说]\n{caption_text.strip()}\n" if caption_text else ""
             prompt = (
                 "[候选配对（caption 解析）]\n"
                 f"{pairs_json}\n"
@@ -2749,9 +2717,7 @@ class M3Engine:
         if len(votes) > 1:
             sorted_groups = sorted(votes.values(), key=lambda g: -len(g))
             if len(sorted_groups) > 1:
-                ru = max(
-                    sorted_groups[1], key=lambda r: _safe_float(r.get("confidence"))
-                )
+                ru = max(sorted_groups[1], key=lambda r: _safe_float(r.get("confidence")))
                 ru_sp = str(ru.get("species") or "").strip() or None
                 if ru_sp and ru_sp != best.get("species"):
                     runner_up = ru_sp
@@ -2800,9 +2766,7 @@ class M3Engine:
         if caption_pairs:
             pairs_block = (
                 "\n[图说解析出的候选配对]\n"
-                + json.dumps(
-                    [p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2
-                )
+                + json.dumps([p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2)
                 + "\n"
             )
         prompt = (
@@ -2844,9 +2808,7 @@ class M3Engine:
                 Critique(
                     panel_id=str(item.get("panel_id") or ""),
                     verdict=verdict,
-                    suggested_species=(
-                        str(item.get("suggested_species") or "").strip() or None
-                    ),
+                    suggested_species=(str(item.get("suggested_species") or "").strip() or None),
                     confidence=max(0.0, min(1.0, conf)),
                     reasoning=str(item.get("reasoning") or "").strip(),
                 )
@@ -2886,9 +2848,7 @@ class M3Engine:
             consumed[m.panel_id] = pos + 1
             c = cands[pos]
             if c.verdict == "agree":
-                m.raw.setdefault(
-                    "critique", {"verdict": "agree", "confidence": c.confidence}
-                )
+                m.raw.setdefault("critique", {"verdict": "agree", "confidence": c.confidence})
                 continue
             if c.suggested_species and c.confidence >= override_threshold:
                 m.raw["critique"] = {
@@ -2927,9 +2887,7 @@ class M3Engine:
         with self._thinking_gate.read():
             enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
             try:
-                res = self.backend.infer_text(
-                    system_prompt=system_prompt, user_prompt=user_prompt
-                )
+                res = self.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
             except FallbackRecommendedError:
                 # audit 2026-07-31: mirror _infer_vision — the backend
                 # asked us to switch to the configured fallback; swallowing
@@ -3798,9 +3756,7 @@ class M3Engine:
 
         system_prompt = PROMPT_REGISTRY["multi_plate_enrich"]
         constraint = (
-            f" This image is plate '{expected_plate_label}'."
-            if expected_plate_label
-            else ""
+            f" This image is plate '{expected_plate_label}'." if expected_plate_label else ""
         )
         user_prompt = (
             f"Paper: {paper_id}\n"

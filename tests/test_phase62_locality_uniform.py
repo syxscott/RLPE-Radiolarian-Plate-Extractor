@@ -1,4 +1,4 @@
-"""Phase 62 Plan 5 (Bug 5.17): LOCALITY_PATTERN punctuation normalisation.
+r"""Phase 62 Plan 5 (Bug 5.17): LOCALITY_PATTERN punctuation normalisation.
 
 The ``LOCALITY_PATTERN`` regex captures a Capitalised word +
 optionally 1-3 more Capitalised tokens, then looks ahead for
@@ -26,6 +26,7 @@ This test asserts:
   * Trailing stop-words ("Italy, the") are trimmed off the
     captured locality.
 """
+
 from __future__ import annotations
 
 from rlpe.geology_extraction import (

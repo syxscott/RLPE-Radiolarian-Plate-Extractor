@@ -22,14 +22,24 @@ sibling-filter approach so the article-strip semantics stay
 backward-compatible (the new filter only ADDS rejection of more
 prefixes; it does not change the existing article-strip behaviour).
 """
+
 from __future__ import annotations
 
 from rlpe.geology_extraction import extract_geology_from_sections
 
-
-_FORMATION_STOPWORD_PREFIXES = frozenset({
-    "the", "a", "an", "of", "in", "and", "from", "near", "by",
-})
+_FORMATION_STOPWORD_PREFIXES = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "of",
+        "in",
+        "and",
+        "from",
+        "near",
+        "by",
+    }
+)
 
 
 def _first_word_of_prefix(name: str, keyword: str) -> str:
@@ -52,9 +62,9 @@ def _assert_no_stopword_prefix(record_value, keyword):
 def test_group_rejects_in_prefix():
     """'In Group we found fossils' → group='In Group' must be dropped."""
     text = "In Group we found abundant fossils"
-    records = extract_geology_from_sections([
-        {"text": text, "title": "t", "section_type": "geological_setting"}
-    ])
+    records = extract_geology_from_sections(
+        [{"text": text, "title": "t", "section_type": "geological_setting"}]
+    )
     groups = [r.group for r in records if r.group]
     for gname in groups:
         _assert_no_stopword_prefix(gname, "Group")
@@ -63,9 +73,9 @@ def test_group_rejects_in_prefix():
 def test_group_rejects_of_prefix():
     """'Of Group we infer age' → group='Of Group' must be dropped."""
     text = "Of Group we infer a different age"
-    records = extract_geology_from_sections([
-        {"text": text, "title": "t", "section_type": "geological_setting"}
-    ])
+    records = extract_geology_from_sections(
+        [{"text": text, "title": "t", "section_type": "geological_setting"}]
+    )
     groups = [r.group for r in records if r.group]
     for gname in groups:
         _assert_no_stopword_prefix(gname, "Group")
@@ -74,9 +84,9 @@ def test_group_rejects_of_prefix():
 def test_group_rejects_by_prefix():
     """'By Group we mean the type section' → group='By Group' must be dropped."""
     text = "By Group we mean the type section"
-    records = extract_geology_from_sections([
-        {"text": text, "title": "t", "section_type": "geological_setting"}
-    ])
+    records = extract_geology_from_sections(
+        [{"text": text, "title": "t", "section_type": "geological_setting"}]
+    )
     groups = [r.group for r in records if r.group]
     for gname in groups:
         _assert_no_stopword_prefix(gname, "Group")
@@ -85,9 +95,9 @@ def test_group_rejects_by_prefix():
 def test_member_rejects_from_prefix():
     """'From Member we infer the contact' → member='From Member' must be dropped."""
     text = "From Member we infer the contact"
-    records = extract_geology_from_sections([
-        {"text": text, "title": "t", "section_type": "geological_setting"}
-    ])
+    records = extract_geology_from_sections(
+        [{"text": text, "title": "t", "section_type": "geological_setting"}]
+    )
     members = [r.member for r in records if r.member]
     for mname in members:
         _assert_no_stopword_prefix(mname, "Member")
@@ -96,9 +106,9 @@ def test_member_rejects_from_prefix():
 def test_formation_rejects_of_prefix():
     """'Of Formation we will speak later' → formation='Of Formation' must be dropped."""
     text = "Of Formation we will speak later in this section"
-    records = extract_geology_from_sections([
-        {"text": text, "title": "t", "section_type": "geological_setting"}
-    ])
+    records = extract_geology_from_sections(
+        [{"text": text, "title": "t", "section_type": "geological_setting"}]
+    )
     formations = [r.formation for r in records if r.formation]
     for fname in formations:
         _assert_no_stopword_prefix(fname, "Formation")
@@ -108,9 +118,9 @@ def test_real_formation_name_passes():
     """Regression: 'The Fonzaso Formation' (article + real name) must
     still produce 'Fonzaso Formation' on the record."""
     text = "The Fonzaso Formation is siliceous limestone"
-    records = extract_geology_from_sections([
-        {"text": text, "title": "t", "section_type": "geological_setting"}
-    ])
+    records = extract_geology_from_sections(
+        [{"text": text, "title": "t", "section_type": "geological_setting"}]
+    )
     formations = [r.formation for r in records if r.formation]
     assert "Fonzaso Formation" in formations, (
         f"expected 'Fonzaso Formation' in records, got: {formations}"
@@ -120,10 +130,8 @@ def test_real_formation_name_passes():
 def test_real_group_name_passes():
     """Regression: 'Sicanian Group' must still pass."""
     text = "The Sicanian Group contains the Lower Member"
-    records = extract_geology_from_sections([
-        {"text": text, "title": "t", "section_type": "geological_setting"}
-    ])
-    groups = [r.group for r in records if r.group]
-    assert "Sicanian Group" in groups, (
-        f"expected 'Sicanian Group' in records, got: {groups}"
+    records = extract_geology_from_sections(
+        [{"text": text, "title": "t", "section_type": "geological_setting"}]
     )
+    groups = [r.group for r in records if r.group]
+    assert "Sicanian Group" in groups, f"expected 'Sicanian Group' in records, got: {groups}"

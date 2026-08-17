@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 from PIL import Image
 
-from rlpe.m3_engine import M3Engine, PROMPT_REGISTRY, SECTION_TYPE_BY_FIGURE
+from rlpe.m3_engine import PROMPT_REGISTRY, SECTION_TYPE_BY_FIGURE, M3Engine
 from tests.fakes.fake_m3_backend import FakeM3Backend
 
 

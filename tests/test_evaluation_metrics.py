@@ -165,9 +165,7 @@ class TestEvaluate:
         """The figure_id gate: a pred in fig_X must NOT count for a
         gold entry in fig_Y, even with the same panel_id."""
         gold = [GoldPanel("p1", "fig_1", "1", "Species A")]
-        preds = [
-            {**_pred("p1", "1", "Species A"), "figure_id": "fig_2"}
-        ]  # wrong figure
+        preds = [{**_pred("p1", "1", "Species A"), "figure_id": "fig_2"}]  # wrong figure
         report = evaluate(preds, gold)
         m = report.papers["p1"]
         # panel_match counts gold panels that have at least one pred in
@@ -281,9 +279,7 @@ class TestPlaceholderFilter:
 class TestEvaluateRun:
     def test_against_real_gold(self):
         """Smoke test: evaluate batch4_v2 predictions against the gold set."""
-        preds_path = (
-            Path(__file__).resolve().parents[1] / "work" / "batch4_v2" / "results.jsonl"
-        )
+        preds_path = Path(__file__).resolve().parents[1] / "work" / "batch4_v2" / "results.jsonl"
         if not preds_path.exists():
             pytest.skip(f"{preds_path} not available")
         report = evaluate_run(preds_path, GOLD_DIR)
@@ -458,9 +454,9 @@ class TestSpeciesNormAsymmetric:
 
         g = _norm_species(gold)
         p = _norm_species(pred)
-        assert _species_compatible(
-            g, p
-        ), f"gold={gold!r} → {g!r}, pred={pred!r} → {p!r} must be compatible"
+        assert _species_compatible(g, p), (
+            f"gold={gold!r} → {g!r}, pred={pred!r} → {p!r} must be compatible"
+        )
 
     @pytest.mark.parametrize(
         "gold,pred",
@@ -542,13 +538,9 @@ class TestCompareBeforeAfterRound9:
                 "panel_path": None,
             },
         ]
-        gold = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}
-        ]
+        gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}]
         result = compare_before_after(before, after, gold)
-        assert (
-            result["n_samples"] == 1
-        ), "LLM-first vs rules comparison must not silently drop rows"
+        assert result["n_samples"] == 1, "LLM-first vs rules comparison must not silently drop rows"
         assert result["match_acc_before"] == 1.0
         assert result["match_acc_after"] == 1.0
         assert result["match_improvement"] == 0.0
@@ -618,9 +610,7 @@ class TestCompareBeforeAfterRound9:
                 "panel_path": None,
             },
         ]
-        gold = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}
-        ]
+        gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}]
         result = compare_before_after(before, after, gold)
         # Only the panel_id="1" row participates (1 from each side).
         assert result["n_samples"] == 1
@@ -648,9 +638,7 @@ class TestCompareBeforeAfterRound9:
                 "metadata": {"gemma_confidence": 0.85},
             },
         ]
-        gold = [
-            {"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}
-        ]
+        gold = [{"paper_id": "p1", "figure_id": "fig1", "panel_id": "1", "species": "A"}]
         result = compare_before_after(before, after, gold)
         assert result["gemma_confidence_mean"] == 0.85
 

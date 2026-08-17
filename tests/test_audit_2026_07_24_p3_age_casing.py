@@ -30,6 +30,6 @@ def test_extract_age_terms_preserves_source_casing(caption: str, expected: list[
 
 def test_extract_age_terms_dedup_keeps_first_seen_casing() -> None:
     """If 'Late Cretaceous' appears twice with different casing, keep first."""
-    assert extract_age_terms(
-        "Late Cretaceous of Tunisia; LATE CRETACEOUS of Greece"
-    ) == ["Late Cretaceous"]
+    assert extract_age_terms("Late Cretaceous of Tunisia; LATE CRETACEOUS of Greece") == [
+        "Late Cretaceous"
+    ]

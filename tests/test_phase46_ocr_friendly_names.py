@@ -18,6 +18,7 @@ Tests pin:
   6. The i18n placeholders for OCR language no longer mention
      "en, ja, ch_sim" codes.
 """
+
 from __future__ import annotations
 
 import os
@@ -28,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QComboBox  # noqa: E402
 
@@ -40,6 +42,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_language():
     from rlpe.gui import i18n
+
     i18n.set_language("zh_CN")
     yield
     i18n.set_language("zh_CN")
@@ -53,6 +56,7 @@ def test_ocr_language_options_contains_standard_languages():
     Chinese (Simplified + Traditional), Japanese, Korean, French,
     German, Russian."""
     from rlpe.gui.constants import OCR_LANGUAGE_OPTIONS
+
     codes = [code for code, _en, _zh in OCR_LANGUAGE_OPTIONS]
     assert "en" in codes
     assert "ch_sim" in codes
@@ -68,21 +72,12 @@ def test_ocr_language_options_each_has_friendly_name():
     """Phase 46: each entry must have an English friendly name AND
     a Chinese friendly name (not the raw ISO code)."""
     from rlpe.gui.constants import OCR_LANGUAGE_OPTIONS
+
     for code, en_name, zh_name in OCR_LANGUAGE_OPTIONS:
-        assert en_name != code, (
-            f"Friendly name for {code!r} is the raw ISO code: "
-            f"en={en_name!r}"
-        )
-        assert zh_name != code, (
-            f"Chinese name for {code!r} is the raw ISO code: "
-            f"zh={zh_name!r}"
-        )
-        assert len(en_name) > 1, (
-            f"English name for {code!r} is too short: {en_name!r}"
-        )
-        assert len(zh_name) > 0, (
-            f"Chinese name for {code!r} is empty: {zh_name!r}"
-        )
+        assert en_name != code, f"Friendly name for {code!r} is the raw ISO code: en={en_name!r}"
+        assert zh_name != code, f"Chinese name for {code!r} is the raw ISO code: zh={zh_name!r}"
+        assert len(en_name) > 1, f"English name for {code!r} is too short: {en_name!r}"
+        assert len(zh_name) > 0, f"Chinese name for {code!r} is empty: {zh_name!r}"
 
 
 # ============================================================
@@ -90,6 +85,7 @@ def test_ocr_language_options_each_has_friendly_name():
 # ============================================================
 def test_ocr_lang_to_friendly_name_zh():
     from rlpe.gui.constants import ocr_lang_to_friendly_name
+
     assert ocr_lang_to_friendly_name("en") == "英语"
     assert ocr_lang_to_friendly_name("ch_sim") == "中文 (简体)"
     assert ocr_lang_to_friendly_name("ja") == "日语"
@@ -98,6 +94,7 @@ def test_ocr_lang_to_friendly_name_zh():
 def test_ocr_lang_to_friendly_name_en():
     from rlpe.gui import i18n
     from rlpe.gui.constants import ocr_lang_to_friendly_name
+
     i18n.set_language("en")
     assert ocr_lang_to_friendly_name("en") == "English"
     assert ocr_lang_to_friendly_name("ch_sim") == "Chinese (Simplified)"
@@ -107,6 +104,7 @@ def test_ocr_lang_to_friendly_name_en():
 def test_ocr_lang_to_friendly_name_unknown_iso_falls_back():
     from rlpe.gui import i18n
     from rlpe.gui.constants import ocr_lang_to_friendly_name
+
     i18n.set_language("en")
     # Unknown ISO code → return as-is
     assert ocr_lang_to_friendly_name("xyz") == "xyz"
@@ -120,6 +118,7 @@ def test_ocr_lang_to_friendly_name_unknown_iso_falls_back():
 def test_ocr_lang_friendly_options_returns_pairs():
     from rlpe.gui import i18n
     from rlpe.gui.constants import ocr_lang_friendly_options
+
     i18n.set_language("en")
     options = ocr_lang_friendly_options()
     assert isinstance(options, list)
@@ -135,13 +134,13 @@ def test_ocr_lang_friendly_options_returns_pairs():
 def test_ocr_lang_friendly_options_zh_uses_chinese():
     from rlpe.gui import i18n
     from rlpe.gui.constants import ocr_lang_friendly_options
+
     i18n.set_language("zh_CN")
     options = ocr_lang_friendly_options()
     # In zh_CN, the "en" option should display as "英语" not "English"
     en_option = next(opt for opt in options if opt[0] == "en")
     assert en_option[1] == "英语", (
-        f"Under zh_CN, ocr_lang_friendly_options should return Chinese names, "
-        f"got {en_option!r}"
+        f"Under zh_CN, ocr_lang_friendly_options should return Chinese names, got {en_option!r}"
     )
 
 
@@ -152,11 +151,10 @@ def test_run_tab_ocr_lang_is_qcombobox_with_friendly_names():
     """Phase 46: the ocr_lang widget must be a QComboBox with
     friendly names as labels and ISO codes in userData."""
     from rlpe.gui.run_tab import RunTab
+
     rt = RunTab({})
-    from PySide6.QtWidgets import QComboBox
     assert isinstance(rt._ocr_lang_edit, QComboBox), (
-        f"ocr_lang widget must be a QComboBox, got "
-        f"{type(rt._ocr_lang_edit).__name__}"
+        f"ocr_lang widget must be a QComboBox, got {type(rt._ocr_lang_edit).__name__}"
     )
     assert rt._ocr_lang_edit.count() >= 8, (
         f"ocr_lang combo should have >= 8 entries, got {rt._ocr_lang_edit.count()}"
@@ -178,6 +176,7 @@ def test_run_tab_ocr_lang_default_is_english():
     the friendly name (English / 英语)."""
     from rlpe.gui import i18n
     from rlpe.gui.run_tab import RunTab
+
     i18n.set_language("zh_CN")
     rt = RunTab({})
     # Default currentData should be "en"
@@ -186,8 +185,7 @@ def test_run_tab_ocr_lang_default_is_english():
     )
     # Default text should be the friendly name (Chinese: 英语)
     assert rt._ocr_lang_edit.currentText() == "英语", (
-        f"default ocr_lang text should be '英语' in zh_CN, got "
-        f"{rt._ocr_lang_edit.currentText()!r}"
+        f"default ocr_lang text should be '英语' in zh_CN, got {rt._ocr_lang_edit.currentText()!r}"
     )
 
 
@@ -200,6 +198,7 @@ def test_collect_settings_returns_iso_code_for_ocr_lang():
     needs the ISO code."""
     from rlpe.gui import i18n
     from rlpe.gui.run_tab import RunTab
+
     i18n.set_language("zh_CN")
     rt = RunTab({})
     # Find the Japanese item, select it
@@ -220,6 +219,7 @@ def test_collect_settings_handles_custom_typed_string():
     collect_settings uses the typed text (power user override)."""
     from rlpe.gui import i18n
     from rlpe.gui.run_tab import RunTab
+
     i18n.set_language("en")
     rt = RunTab({})
     # Simulate power user typing "en,ja" — set the currentIndex
@@ -242,8 +242,8 @@ def test_runtab_ocr_lang_placeholder_does_not_mention_iso_codes():
     """Phase 46: the placeholder for the OCR language field
     should not show the raw ISO codes as the only example —
     it should hint at friendly names like English / 中文 / 日本語."""
-    from rlpe.gui import i18n
-    from rlpe.gui import strings_en
+    from rlpe.gui import i18n, strings_en
+
     i18n.set_language("en")
     en_placeholder = strings_en.STRINGS.get("runtab.ocr_lang.placeholder", "")
     # The placeholder may STILL mention ISO codes (it's a hint for
@@ -254,11 +254,10 @@ def test_runtab_ocr_lang_placeholder_does_not_mention_iso_codes():
 
 
 def test_settab_ocr_lang_placeholder_does_not_mention_iso_codes():
-    from rlpe.gui import i18n
-    from rlpe.gui import strings_en
+    from rlpe.gui import i18n, strings_en
+
     i18n.set_language("en")
     en_placeholder = strings_en.STRINGS.get("settab.ocr.lang.placeholder", "")
     assert "English" in en_placeholder or "中文" in en_placeholder, (
-        f"EN settings placeholder should hint at friendly names: "
-        f"{en_placeholder!r}"
+        f"EN settings placeholder should hint at friendly names: {en_placeholder!r}"
     )

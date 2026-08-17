@@ -7,43 +7,35 @@ import functools
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtCore import QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QProgressBar,
-    QPushButton,
     QScrollArea,
     QSpinBox,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from . import i18n
 from .constants import (
     BUTTON_MIN_HEIGHT,
     BUTTON_PRIMARY_HEIGHT,
-    COMBO_MIN_WIDTH,
     DEFAULT_GROBID_MAX_RETRIES,
     DEFAULT_GROBID_TIMEOUT,
     DEFAULT_GROBID_URL,
     DEFAULT_LLM_BACKEND,
-    DEFAULT_M3_BUDGET,
     DEFAULT_M3_PROMPT_LANG,
     DEFAULT_M3_TIMEOUT,
-    DEFAULT_M3_MAX_RETRIES,
-    DEFAULT_M3_OUTPUT_TOKENS,
     DEFAULT_MINIMAX_MODEL,
     DEFAULT_OCR_BACKEND,
     DEFAULT_OCR_LANG,
@@ -53,21 +45,19 @@ from .constants import (
     INPUT_WIDTH_OCR_LANG,
     INPUT_WIDTH_PATH,
     INPUT_WIDTH_SHORT,
-    QS_KEY_LAST_DIR,
     RANGE_DPI,
     RANGE_GROBID_MAX_RETRIES,
     RANGE_GROBID_TIMEOUT,
     RANGE_M3_BUDGET,
+    RANGE_M3_MAX_RETRIES,
     RANGE_M3_OUTPUT_TOKENS,
     RANGE_M3_TIMEOUT,
-    RANGE_M3_MAX_RETRIES,
     RANGE_OD_CAPTION_WINDOW,
     RANGE_PALEO_OCC,
 )
 from .i18n_widgets import (
     tr_button,
     tr_checkbox,
-    tr_combobox,
     tr_doublespinbox,
     tr_form_row,
     tr_groupbox,
@@ -75,13 +65,10 @@ from .i18n_widgets import (
     tr_lineedit,
     tr_spinbox,
 )
-from . import i18n
-from .styles import SPACE_L, SPACE_M, SPACE_S, SPACE_XL
 from .pipeline_worker import PipelineWorker
+from .styles import SPACE_L, SPACE_M, SPACE_S
 from .utils import (
-    file_size_human,
     get_gui_logger,
-    short_path,
 )
 
 
@@ -179,8 +166,9 @@ class RunTab(QWidget):
         row = 0
 
         # OCR backend — friendly names shown in the UI, raw code stored in userData.
-        from .constants import ocr_backend_friendly_options
         from PySide6.QtWidgets import QSizePolicy
+
+        from .constants import ocr_backend_friendly_options
 
         basic_layout.addWidget(tr_label("runtab.label.ocr_backend"), row, 0)
         self._ocr_combo = QComboBox()
@@ -322,8 +310,9 @@ class RunTab(QWidget):
 
         self._llm_combo = QComboBox()
         # Friendly backend names — stored as userData, displayed as itemText.
-        from .constants import llm_backend_friendly_options
         from PySide6.QtWidgets import QSizePolicy
+
+        from .constants import llm_backend_friendly_options
 
         self._llm_combo.setMinimumHeight(32)
         self._llm_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
@@ -338,8 +327,9 @@ class RunTab(QWidget):
         adv_layout.addRow(lbl, w)
 
         self._m3_lang = QComboBox()
-        from .constants import m3_prompt_lang_friendly_options
         from PySide6.QtWidgets import QSizePolicy
+
+        from .constants import m3_prompt_lang_friendly_options
 
         self._m3_lang.setMinimumHeight(32)
         self._m3_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
@@ -816,7 +806,7 @@ class RunTab(QWidget):
             # panels". Pass the message through unchanged.
             safe_message = message or ""
             self._progress.setFormat(
-                f"{{value}} / {{maxValue}}  ·  {{message}}".replace("{value}", "%v")
+                "{value} / {maxValue}  ·  {message}".replace("{value}", "%v")
                 .replace("{maxValue}", "%m")
                 .replace("{message}", safe_message)
             )

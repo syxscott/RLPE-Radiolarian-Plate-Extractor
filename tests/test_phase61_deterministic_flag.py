@@ -8,11 +8,12 @@ The fix exposes ``--deterministic`` and PipelineConfig.extra["deterministic"];
 when True, every backend sets temperature=0.0 and do_sample=False and
 seeds Python / Torch / numpy RNGs.
 """
+
 from __future__ import annotations
 
 import pytest
 
-from rlpe.config import PipelineConfig, _KNOWN_EXTRA_KEYS
+from rlpe.config import _KNOWN_EXTRA_KEYS, PipelineConfig
 
 
 def test_deterministic_in_known_keys():
@@ -51,11 +52,10 @@ def test_cli_flag_exists():
 
     # Import the CLI parser builder without running main().
     from rlpe.cli import build_parser
+
     parser = build_parser()
     # Parse minimal args.
-    ns = parser.parse_args(
-        ["--pdf-dir", "/tmp/a", "--work-dir", "/tmp/b", "--deterministic"]
-    )
+    ns = parser.parse_args(["--pdf-dir", "/tmp/a", "--work-dir", "/tmp/b", "--deterministic"])
     assert ns.deterministic is True
     ns2 = parser.parse_args(["--pdf-dir", "/tmp/a", "--work-dir", "/tmp/b"])
     assert ns2.deterministic is False

@@ -20,6 +20,7 @@ Phase 39 fixes:
   5. Toolbar ``Run / Jobs / Results / Settings`` actions switched
      to tr_action with toolbar.* keys.
 """
+
 from __future__ import annotations
 
 import os
@@ -30,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 
@@ -42,6 +44,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_language():
     from rlpe.gui import i18n
+
     i18n.set_language("zh_CN")
     yield
     i18n.set_language("zh_CN")
@@ -62,29 +65,28 @@ def test_file_menu_title_is_chinese_by_default():
     """Phase 39: tr_menu('menu.file', ...) makes the menu
     translate to '文件(&F)' on first construct."""
     from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     title = _file_menu(w).title()
-    assert "文件" in title, (
-        f"File menu title should be Chinese by default, got {title!r}"
-    )
+    assert "文件" in title, f"File menu title should be Chinese by default, got {title!r}"
 
 
 def test_file_menu_title_switches_to_english():
-    from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     fm = _file_menu(w)
     i18n.set_language("en")
-    assert "&File" in fm.title(), (
-        f"File menu title should switch to English, got {fm.title()!r}"
-    )
+    assert "&File" in fm.title(), f"File menu title should switch to English, got {fm.title()!r}"
     i18n.set_language("zh_CN")
     assert "文件" in fm.title()
 
 
 def test_file_menu_actions_translate():
-    from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     fm = _file_menu(w)
     # Default is zh_CN
@@ -106,28 +108,29 @@ def test_file_menu_actions_translate():
 # ============================================================
 def test_all_top_menus_translate():
     """Phase 39: View, Tools, Help, Theme menus all translate."""
-    from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     i18n.set_language("en")
     en_menus = [m.title() for m in w.menuBar().findChildren(QMenu)]
     i18n.set_language("zh_CN")
     zh_menus = [m.title() for m in w.menuBar().findChildren(QMenu)]
-    assert en_menus != zh_menus, (
-        f"Top menus did NOT translate: en={en_menus!r} zh={zh_menus!r}"
-    )
+    assert en_menus != zh_menus, f"Top menus did NOT translate: en={en_menus!r} zh={zh_menus!r}"
 
 
 # ============================================================
 # Toolbar
 # ============================================================
 def test_toolbar_title_translates():
-    from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     tb = w.findChild(type(w.menuBar()), "mainToolBar")
     # Or look it up by QToolBar type
     from PySide6.QtWidgets import QToolBar
+
     tbars = w.findChildren(QToolBar)
     assert len(tbars) >= 1
     tb = tbars[0]
@@ -135,18 +138,18 @@ def test_toolbar_title_translates():
     en_title = tb.windowTitle()
     i18n.set_language("zh_CN")
     zh_title = tb.windowTitle()
-    assert en_title != zh_title, (
-        f"Toolbar title did NOT translate: en={en_title!r} zh={zh_title!r}"
-    )
+    assert en_title != zh_title, f"Toolbar title did NOT translate: en={en_title!r} zh={zh_title!r}"
     assert "主" in zh_title or "工具" in zh_title
 
 
 def test_toolbar_actions_translate():
     """Phase 39: toolbar actions (Open PDF / Batch / Run / Jobs / ...)
     translate on language switch."""
-    from rlpe.gui.main_window import MainWindow
-    from rlpe.gui import i18n
     from PySide6.QtWidgets import QToolBar
+
+    from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     tb = w.findChildren(QToolBar)[0]
     en_actions = [a.text() for a in tb.actions() if a.text()]
@@ -163,8 +166,9 @@ def test_toolbar_actions_translate():
 # Status bar
 # ============================================================
 def test_status_bar_default_text_is_chinese():
-    from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     i18n.set_language("zh_CN")
     w = MainWindow()
     # Phase 39: _status_perm is now tr_label('main.idle')
@@ -175,21 +179,21 @@ def test_status_bar_default_text_is_chinese():
 
 
 def test_status_bar_text_translates_on_switch():
-    from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     i18n.set_language("en")
     en = w._status_perm.text()
     i18n.set_language("zh_CN")
     zh = w._status_perm.text()
-    assert en != zh, (
-        f"Status bar text did NOT translate: en={en!r} zh={zh!r}"
-    )
+    assert en != zh, f"Status bar text did NOT translate: en={en!r} zh={zh!r}"
 
 
 def test_status_bar_running_uses_i18n():
-    from rlpe.gui.main_window import MainWindow
     from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     w = MainWindow()
     i18n.set_language("zh_CN")
     w._on_job_started("abc123", "/tmp/x")
@@ -208,9 +212,11 @@ def test_status_bar_running_uses_i18n():
 # ============================================================
 def test_about_dialog_uses_i18n():
     """Phase 39: About dialog should not have bare English."""
-    from rlpe.gui.main_window import MainWindow
-    from rlpe.gui import i18n
     import inspect
+
+    from rlpe.gui import i18n
+    from rlpe.gui.main_window import MainWindow
+
     src = inspect.getsource(MainWindow._on_about)
     # Must use i18n._tr
     assert "i18n._tr" in src, "_on_about should use i18n._tr for its message"

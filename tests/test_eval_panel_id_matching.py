@@ -244,6 +244,5 @@ class TestFigureIdSchemaVariantMatching:
         )
         # The fix should lift panel_match_rate from 63% to >= 70%.
         assert m.panel_match_rate >= 0.70, (
-            f"panel_match_rate regressed: got {m.panel_match_rate:.3f}, "
-            f"expected >= 0.70"
+            f"panel_match_rate regressed: got {m.panel_match_rate:.3f}, expected >= 0.70"
         )

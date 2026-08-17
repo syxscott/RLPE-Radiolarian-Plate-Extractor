@@ -30,9 +30,7 @@ def test_matcher_uses_schematic_extract_key():
     src = _read_script()
     # Find the matcher lambda
     match = re.search(r'"match":\s*lambda sp:\s*"([^"]+)"\s+in sp', src)
-    assert match is not None, (
-        "Could not find FakeM3Backend matcher lambda in smoke_schematic.py"
-    )
+    assert match is not None, "Could not find FakeM3Backend matcher lambda in smoke_schematic.py"
     matched_key = match.group(1)
     # The actual PROMPT_REGISTRY key for schematic extraction is
     # "schematic_extract" (renamed from "schematic_geo" in Phase 64
@@ -50,22 +48,18 @@ def test_matcher_does_not_use_legacy_schematic_geo_key():
     src = _read_script()
     # The legacy key should not appear anywhere except possibly in comments
     # explaining why we changed it.
-    legacy_matches = re.findall(
-        r'"\s*schematic_geo\s*"\s*,?\s*\)?', src, re.MULTILINE
-    )
+    legacy_matches = re.findall(r'"\s*schematic_geo\s*"\s*,?\s*\)?', src, re.MULTILINE)
     # Allow zero matches in non-comment lines (we removed the lambda body).
     # Strip both # comments and triple-quoted docstrings before counting
     # active code occurrences.
     import re as _re
+
     code_only = _re.sub(r'"""[\s\S]*?"""', "", src)
     code_only = _re.sub(r"'''[\s\S]*?'''", "", code_only)
     code_only = "\n".join(
-        line for line in code_only.splitlines()
-        if not line.lstrip().startswith("#")
+        line for line in code_only.splitlines() if not line.lstrip().startswith("#")
     )
-    code_occurrences = re.findall(
-        r'"\s*schematic_geo\s*"', code_only
-    )
+    code_occurrences = re.findall(r'"\s*schematic_geo\s*"', code_only)
     assert code_occurrences == [], (
         f"Active code still references the legacy 'schematic_geo' key: "
         f"{code_occurrences}. This is the typo that made the smoke test a no-op."

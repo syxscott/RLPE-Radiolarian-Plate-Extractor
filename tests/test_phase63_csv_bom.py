@@ -19,13 +19,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.exporters import write_csv, AnalysisOptions  # noqa: E402
-from rlpe.exporters.analysis import AnalysisOptions as AO  # noqa: E402
 from rlpe.export import export_csv  # noqa: E402
+from rlpe.exporters import AnalysisOptions, write_csv  # noqa: E402
+from rlpe.exporters.analysis import AnalysisOptions as AO  # noqa: E402
 from rlpe.provenance import build_provenance  # noqa: E402
 from rlpe.schema_models import (  # noqa: E402
-    PanelRecord,
     PanelMetadata,
+    PanelRecord,
     PaperMetadataRecord,
     ProvenanceRecord,
     RunOutput,
@@ -47,8 +47,12 @@ def test_analysis_csv_encoding_default_is_utf8_sig():
 def _dummy_run() -> RunOutput:
     prov = ProvenanceRecord(**build_provenance().to_dict())
     pm = PaperMetadataRecord(
-        title="Test", authors=["Author"], year=2020, doi="10.1/t",
-        source="opendataloader", confidence=0.8,
+        title="Test",
+        authors=["Author"],
+        year=2020,
+        doi="10.1/t",
+        source="opendataloader",
+        confidence=0.8,
     )
     meta = PanelMetadata()
     panel = PanelRecord(
@@ -80,7 +84,7 @@ def test_analysis_csv_readable_as_utf8_sig(tmp_path: Path):
     """Reading with ``utf-8-sig`` yields the BOM-stripped first line."""
     target = tmp_path / "out.csv"
     write_csv(_dummy_run(), target)
-    with open(target, "r", encoding="utf-8-sig") as f:
+    with open(target, encoding="utf-8-sig") as f:
         first_line = f.readline()
     assert first_line.startswith("occurrenceID"), first_line[:80]
 
@@ -95,8 +99,7 @@ def test_export_csv_has_bom(tmp_path: Path):
     export_csv(rows, target)
     raw = target.read_bytes()
     assert raw[:3] == b"\xef\xbb\xbf", (
-        f"export_csv missing UTF-8 BOM; first bytes={raw[:6]!r}. "
-        "Phase 63 Plan 6.10 fix regressed?"
+        f"export_csv missing UTF-8 BOM; first bytes={raw[:6]!r}. Phase 63 Plan 6.10 fix regressed?"
     )
 
 

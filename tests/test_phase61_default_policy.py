@@ -10,6 +10,7 @@ The fix changes the CLI default and the backend's dataclass default to
 ``api_full``. ``api_redacted`` is still available via the flag for
 operators working with sensitive preprints.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -20,18 +21,15 @@ def test_default_policy_is_api_full():
     from rlpe.cli import build_parser
 
     parser = build_parser()
-    ns = parser.parse_args(
-        ["--pdf-dir", "/tmp/a", "--work-dir", "/tmp/b"]
-    )
+    ns = parser.parse_args(["--pdf-dir", "/tmp/a", "--work-dir", "/tmp/b"])
     assert ns.data_outbound_policy == "api_full"
 
 
 def test_backend_default_is_api_full():
     """MiniMaxM3Backend dataclass default for data_outbound_policy."""
     from dataclasses import fields
+
     from rlpe.llm_backends import MiniMaxM3Backend
 
-    field_obj = next(
-        f for f in fields(MiniMaxM3Backend) if f.name == "data_outbound_policy"
-    )
+    field_obj = next(f for f in fields(MiniMaxM3Backend) if f.name == "data_outbound_policy")
     assert field_obj.default == "api_full"

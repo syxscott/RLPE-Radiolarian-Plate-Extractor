@@ -39,9 +39,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def _read(rel: str) -> str:
-    return Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel
-    ).read_text(encoding="utf-8")
+    return Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel).read_text(
+        encoding="utf-8"
+    )
 
 
 # --- 1) String image IDs survive the FALLBACK path -----------------------
@@ -63,8 +63,7 @@ def test_int_cast_replaced_with_string_in_fallback():
         "failure mode that drops Boughdiri's non-plate figures."
     )
     assert "int(img_id)" not in src, (
-        "opendataloader_extractor.py still has `int(img_id)` — same "
-        "int cast issue for image IDs."
+        "opendataloader_extractor.py still has `int(img_id)` — same int cast issue for image IDs."
     )
     assert "str(linked)" in src, (
         "opendataloader_extractor.py missing str(linked) cast — the "
@@ -134,7 +133,7 @@ def test_boughdiri_caption_yields_od_fig_pair():
     caption + 1 non-plate Fig. 2 caption, both with linked-content
     string IDs. After Round 21 the rescue must produce a real
     FigureCaptionPair for Fig. 2 with the non-empty caption_text."""
-    from rlpe.opendataloader_extractor import OpenDataLoaderExtractor, FigureCaptionPair
+    from rlpe.opendataloader_extractor import FigureCaptionPair, OpenDataLoaderExtractor
 
     # We test the rescue method directly. The full extract() flow
     # requires a real PDF + OD subprocess; that path is exercised
@@ -168,21 +167,16 @@ def test_boughdiri_caption_yields_od_fig_pair():
     extractor.caption_window = 5
     # First arg is the full OD data dict (we wrap kids in expected shape)
     data = {"kids": kids}
-    rescued = extractor._extract_unpaired_captions(
-        data, existing, Path("/tmp"), "test_paper"
-    )
+    rescued = extractor._extract_unpaired_captions(data, existing, Path("/tmp"), "test_paper")
     # After Round 21, the rescue must emit a FigureCaptionPair for
     # Fig. 2 with the real caption.
-    assert any(
-        "Fig. 2" in (r.caption_text or "") for r in rescued
-    ), (
-        f"Rescue did not emit Fig. 2; got: "
-        f"{[r.caption_text for r in rescued]}"
+    assert any("Fig. 2" in (r.caption_text or "") for r in rescued), (
+        f"Rescue did not emit Fig. 2; got: {[r.caption_text for r in rescued]}"
     )
     # And the stub pair was overwritten / not duplicated.
-    assert all(
-        (r.caption_text or "") != "" for r in rescued
-    ), "Empty caption in rescued pair — Round 21 dedup tightening failed"
+    assert all((r.caption_text or "") != "" for r in rescued), (
+        "Empty caption in rescued pair — Round 21 dedup tightening failed"
+    )
 
 
 def test_rescue_handles_string_linked_content_id():
@@ -190,9 +184,7 @@ def test_rescue_handles_string_linked_content_id():
     building the caption-image linkage dict, so non-integer OD image
     IDs (like ``"p011f1"``) work."""
     src = _read("src/rlpe/opendataloader_extractor.py")
-    assert 'caption_for_image[str(linked)]' in src or (
-        'caption_for_image[str(' in src
-    ), (
+    assert "caption_for_image[str(linked)]" in src or ("caption_for_image[str(" in src), (
         "opendataloader_extractor.py is missing str(linked) cast in "
         "caption_for_image dict — string image IDs cannot link."
     )

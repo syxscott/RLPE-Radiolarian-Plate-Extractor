@@ -23,11 +23,11 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import re as _re
 import socket
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-import re as _re
 
 # Compat shim: ``datetime.UTC`` was added in Python 3.11; on 3.10
 # (and earlier) the canonical spelling is ``datetime.timezone.utc``.
@@ -191,6 +191,7 @@ def _input_sha256(pdf_paths: list[Path]) -> dict[str, str]:
         digests[key] = digest
     if missing_or_unreadable:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning("Some input PDFs could not be hashed: %s", "; ".join(missing_or_unreadable))
     return digests
@@ -246,7 +247,6 @@ _API_KEY_FIELD_NAMES = {
     "anthropic_api_key",
     "openai_api_key",
     "google_api_key",
-    "minimax_api_key",
     "minimax_secret_key",
     "gemma_api_key",
     "huggingface_token",

@@ -15,15 +15,12 @@ the Results tab and loads the rows.
 
 from __future__ import annotations
 
-import sys
 import time
-import traceback
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import (
-    QAction,
     QCloseEvent,
     QColor,
     QIcon,
@@ -44,12 +41,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .batch_dialog import BatchDialog
 from . import i18n
+from .batch_dialog import BatchDialog
 from .styles import apply_theme
 from .utils import (
     get_gui_logger,
-    is_linux,
     is_macos,
     is_windows,
 )
@@ -63,7 +59,6 @@ def _make_app_icon() -> QIcon:
     size so it works on all platforms including the system tray.
     """
     from PySide6.QtCore import QRectF
-    from PySide6.QtGui import QPainter, QPixmap
 
     pm = QPixmap(64, 64)
     pm.fill(Qt.transparent)
@@ -86,7 +81,6 @@ def _make_app_icon() -> QIcon:
 
 from .constants import (
     APP_AUTHOR,
-    APP_DOMAIN,
     APP_NAME,
     APP_VERSION,
     MAIN_WINDOW_DEFAULT_SIZE,
@@ -96,9 +90,7 @@ from .constants import (
     QS_KEY_LAST_EXPORT_DIR,
     QS_KEY_STATE,
     QS_KEY_THEME,
-    STATUS_CANCELLED,
     STATUS_DONE,
-    STATUS_FAILED,
     STATUS_QUEUED,
     STATUS_RUNNING,
     TAB_JOBS,
@@ -107,7 +99,6 @@ from .constants import (
     TAB_SETTINGS,
     THEME_LIGHT,
 )
-from .styles import SPACE_M, SPACE_S
 from .jobs_tab import JobRecord, JobsTab
 from .results_tab import ResultsTab
 from .run_tab import RunTab
@@ -642,8 +633,8 @@ class MainWindow(QMainWindow):
         )
         if path:
             self._settings["last_export_dir"] = path
-            from PySide6.QtGui import QDesktopServices
             from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
 
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
@@ -667,8 +658,8 @@ class MainWindow(QMainWindow):
     def _open_log_file(self) -> None:
         import os
         import subprocess
+
         from .utils import LOG_FILE_NAME
-        from PySide6.QtCore import QFileInfo
 
         log_path = Path(os.path.expanduser(f"~/.cache/rlpe/gui/{LOG_FILE_NAME}"))
         # Phase 55 audit — on a fresh install the log file does not
@@ -841,7 +832,6 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _open_results(self, job_id: str) -> None:
         # Find the job in the jobs tab
-        from PySide6.QtCore import Qt as _Qt
 
         jobs = getattr(self._jobs_tab, "_jobs", {})
         if job_id not in jobs:
@@ -852,7 +842,6 @@ class MainWindow(QMainWindow):
 
     def _on_retry(self, job_id: str, settings: dict) -> None:
         # Re-run the job with the same PDF + (possibly updated) settings
-        from PySide6.QtCore import Qt as _Qt
 
         jobs = getattr(self._jobs_tab, "_jobs", {})
         if job_id not in jobs:
@@ -961,8 +950,9 @@ class MainWindow(QMainWindow):
         the destination. Falls back to the batch output_dir when
         the user cancels.
         """
-        from PySide6.QtWidgets import QFileDialog
         import datetime as _dt
+
+        from PySide6.QtWidgets import QFileDialog
 
         all_rows: list[dict[str, Any]] = []
         for job in getattr(self._jobs_tab, "_jobs", {}).values():

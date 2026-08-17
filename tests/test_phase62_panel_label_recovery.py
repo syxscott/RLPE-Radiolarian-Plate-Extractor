@@ -2,7 +2,7 @@
 
 ``_PANEL_LABEL_SHAPE`` (used by ``is_valid_panel_label``) is
 anchored fullmatch on
-    ^(?:[A-H]|[1-9]\d{0,2}[a-z]?|0)$
+    ^(?:[A-H]|[1-9]\\d{0,2}[a-z]?|0)$
 
 OCR sometimes reads ``3a`` as ``3a0`` (trailing noise — the next
 character of the printed panel label has bled into the OCR
@@ -21,6 +21,7 @@ This is intentionally conservative: only ONE trailing digit is
 stripped, and only when the base shape is otherwise a valid
 panel-label shape.
 """
+
 from __future__ import annotations
 
 from rlpe.association import _normalize_panel_label, is_valid_panel_label

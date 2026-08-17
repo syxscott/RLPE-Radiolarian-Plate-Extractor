@@ -39,11 +39,18 @@ class TestPipelinePanelIndexPropagation:
         from rlpe.types import MatchResult
 
         return MatchResult(
-            paper_id="p", figure_id="f", panel_id="1",
-            species="Genus species", panel_path="/tmp/1.png",
-            bbox=[10, 20, 100, 200], confidence=0.7,
-            label_text="1", caption_snippet="Plate 1",
-            ocr_text=None, metadata={}, paper_metadata=None,
+            paper_id="p",
+            figure_id="f",
+            panel_id="1",
+            species="Genus species",
+            panel_path="/tmp/1.png",
+            bbox=[10, 20, 100, 200],
+            confidence=0.7,
+            label_text="1",
+            caption_snippet="Plate 1",
+            ocr_text=None,
+            metadata={},
+            paper_metadata=None,
             panel_index=panel_index,
         )
 
@@ -70,11 +77,18 @@ class TestPipelinePanelIndexPropagation:
         from rlpe.types import MatchResult
 
         m = MatchResult(
-            paper_id="p", figure_id="f", panel_id="1",
-            species="Genus species", panel_path="/tmp/1.png",
-            bbox=[10, 20, 100, 200], confidence=0.7,
-            label_text="1", caption_snippet="Plate 1",
-            ocr_text=None, metadata={}, paper_metadata=None,
+            paper_id="p",
+            figure_id="f",
+            panel_id="1",
+            species="Genus species",
+            panel_path="/tmp/1.png",
+            bbox=[10, 20, 100, 200],
+            confidence=0.7,
+            label_text="1",
+            caption_snippet="Plate 1",
+            ocr_text=None,
+            metadata={},
+            paper_metadata=None,
         )
         from rlpe.converters import panel_record_from_match
 
@@ -123,10 +137,7 @@ class TestPipelinePanelIndexSourceGuard:
         # other code paths legitimately use None (e.g. classical
         # fallback stubs at line 776). Instead assert the specific
         # comment marker is gone.
-        assert (
-            "Phase 55 audit CRITICAL-2 fix: explicitly pass panel_index=None"
-            not in text
-        ), (
+        assert "Phase 55 audit CRITICAL-2 fix: explicitly pass panel_index=None" not in text, (
             "Fix 5 removed the Phase 55 hard-coded panel_index=None "
             "from the primary LLM-first site. If this comment is back, "
             "panel_index regressed to None on every LLM-first row."

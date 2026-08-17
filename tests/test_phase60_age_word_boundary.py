@@ -27,20 +27,17 @@ def test_find_ages_word_boundary():
     # Cambrian must NOT match inside Cambrianian.
     out = find_ages_in_text("the Cambrianian formation of uncertain age")
     assert all(c.period != "Cambrian" for c in out), (
-        f"Cambrian matched inside 'Cambrianian': "
-        f"{[(c.period, c.age) for c in out]}"
+        f"Cambrian matched inside 'Cambrianian': {[(c.period, c.age) for c in out]}"
     )
     # Permian must NOT match inside Permianian.
     out = find_ages_in_text("Permianian strata")
     assert all(c.period != "Permian" for c in out), (
-        f"Permian matched inside 'Permianian': "
-        f"{[(c.period, c.age) for c in out]}"
+        f"Permian matched inside 'Permianian': {[(c.period, c.age) for c in out]}"
     )
     # Jurassic must NOT match inside Jurassicpark (hypothetical).
     out = find_ages_in_text("Jurassicpark fossils")
     assert all(c.period != "Jurassic" for c in out), (
-        f"Jurassic matched inside 'Jurassicpark': "
-        f"{[(c.period, c.age) for c in out]}"
+        f"Jurassic matched inside 'Jurassicpark': {[(c.period, c.age) for c in out]}"
     )
 
 

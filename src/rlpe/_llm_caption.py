@@ -16,6 +16,7 @@ This module exposes ``_truncate_caption_for_llm`` which:
 The function is intentionally small and side-effect-free so it can be
 called from pipeline.py without dragging in a backend object.
 """
+
 from __future__ import annotations
 
 import logging

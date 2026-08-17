@@ -22,7 +22,6 @@ STRINGS = {
         "<p>Native Qt6 desktop GUI for radiolarian plate extraction.</p>"
         "<p>Powered by PySide6, the RLPE pipeline, FastAPI, and PBDB.</p>"
     ),
-
     # ============================================================
     # Main window menus
     # ============================================================
@@ -34,7 +33,6 @@ STRINGS = {
     "menu.theme.light": "&Light",
     "menu.theme.dark": "&Dark",
     "menu.theme.system": "&System default",
-
     "menu.file.open": "📂  &Open PDF…",
     "menu.file.batch": "📚  &Batch…",
     "menu.file.outdir": "📁  Open output &directory…",
@@ -45,7 +43,6 @@ STRINGS = {
     "menu.view.jobs": "&Jobs tab",
     "menu.view.results": "&Results tab",
     "menu.view.settings": "&Settings tab",
-
     "toolbar.title": "Main toolbar",
     "toolbar.open": "📂  Open PDF",
     "toolbar.batch": "📚  Batch…",
@@ -54,7 +51,6 @@ STRINGS = {
     "toolbar.jobs": "📋  Jobs",
     "toolbar.results": "📊  Results",
     "toolbar.settings": "⚙️  Settings",
-
     # ============================================================
     # Tab labels
     # ============================================================
@@ -62,7 +58,6 @@ STRINGS = {
     "tab.jobs": "📋  Jobs",
     "tab.results": "📊  Results",
     "tab.settings": "⚙️  Settings",
-
     # ============================================================
     # Run tab
     # ============================================================
@@ -74,10 +69,8 @@ STRINGS = {
     "runtab.out.placeholder": "Where to write manifests / figures / xlsx…",
     "runtab.out.choose": "Choose…",
     "runtab.out.open": "Open",
-
     "runtab.basic_group": "⚙️ Basic configuration",
     "runtab.adv_group": "🔬 Advanced (LLM / M3 / PBDB)",
-
     "runtab.label.ocr_backend": "OCR backend:",
     "runtab.label.ocr_lang": "OCR language(s):",
     "runtab.label.grobid_url": "GROBID URL:",
@@ -91,7 +84,6 @@ STRINGS = {
     "runtab.gpu_check": "Auto-detect CUDA at startup",
     "runtab.ocr_lang.placeholder": "e.g. English, 中文 (简体), 日本語",
     "runtab.ocr_lang.tooltip": "OCR language (e.g. English, 中文, 日本語).\nEditable — power users can type 'en,ja' for multi-lang.",
-
     "runtab.label.llm_backend": "LLM backend:",
     "runtab.label.m3_lang": "M3 prompt lang:",
     "runtab.label.m3_model": "M3 model:",
@@ -100,7 +92,6 @@ STRINGS = {
     "runtab.label.m3_timeout": "M3 timeout (s):",
     "runtab.label.m3_max_retries": "M3 max retries:",
     "runtab.label.paleodb_occ": "PBDB max occurrences:",
-
     "runtab.use_pbdb": "Use Paleobiology Database for taxonomy + occurrence enrichment",
     "runtab.geo_vision": "Multi-modal geology vision (Round 6)",
     "runtab.m3_stage3": "M3 stage 3 (panel refinement)",
@@ -108,7 +99,6 @@ STRINGS = {
     "runtab.od_fallback": "Allow OpenDataLoader fallback when GROBID fails (Phase 29)",
     "runtab.save_intermediate": "Save intermediate panels (large disk usage)",
     "runtab.label.dpi": "Render DPI:",
-
     "runtab.start": "▶  Start extraction",
     "runtab.cancel": "⏹  Cancel",
     "runtab.status.idle": "Idle",
@@ -128,7 +118,6 @@ STRINGS = {
     "runtab.prompt.no_outdir.body": "Please choose an output directory.",
     "runtab.prompt.cancelled": "Cancellation requested.",
     "runtab.prompt.error.title": "Pipeline error",
-
     # ============================================================
     # Jobs tab
     # ============================================================
@@ -157,7 +146,6 @@ STRINGS = {
     "jobstab.loaded_from_disk": "Loaded from disk",
     "jobstab.export.saved": "Saved {count} rows → {path}",
     "jobstab.export.saved_short": "Saved → {path}",
-
     # ============================================================
     # Results tab
     # ============================================================
@@ -260,7 +248,6 @@ STRINGS = {
     "restab.detail.visual_formation": "Formation",
     "restab.detail.visual_confidence": "Confidence",
     "restab.detail.visual_empty": "(no visual links)",
-
     # ============================================================
     # Settings tab
     # ============================================================
@@ -319,7 +306,6 @@ STRINGS = {
     "settab.log.path": "Log file: {path}",
     "settab.log.not_yet": "No log file yet.\n\nThe log file is created on the first pipeline run.\n\nExpected path:\n{path}",
     "settab.log.title": "Log file",
-
     # ============================================================
     # Batch dialog
     # ============================================================
@@ -342,7 +328,6 @@ STRINGS = {
     "batch.no_outdir.title": "Batch",
     "batch.no_outdir.body": "Please choose an output directory.",
     "batch.outdir.not_writable": "Output directory is not writable.\n\n{path}\n\n{error}",
-
     # ============================================================
     # Image preview
     # ============================================================
@@ -354,7 +339,6 @@ STRINGS = {
     "preview.no_image": "(no image)",
     "preview.missing": "(missing) {name}",
     "preview.failed": "(failed to load) {name}",
-
     # ============================================================
     # Main window status / metrics
     # ============================================================
@@ -365,7 +349,6 @@ STRINGS = {
     "main.batch_complete": "Batch complete.",
     "main.batch_stopped_on_error": "Batch stopped on error: {failed} ({remaining} remaining).",
     "main.recent_loaded": "Loaded {n} recent job(s) from disk.",
-
     # ============================================================
     # Common dialogs
     # ============================================================
@@ -385,7 +368,6 @@ STRINGS = {
     "common.settings_saved": "Settings saved.",
     "common.retry.title": "Retry",
     "common.retry.body": "Original file no longer exists:\n{path}",
-
     # ============================================================
     # Open-file / save-file dialog filters
     # ============================================================
@@ -396,7 +378,6 @@ STRINGS = {
     "filter.csv": "CSV files (*.csv)",
     "filter.zip": "Zip files (*.zip)",
     "filter.dir": "Directories",
-
     # ============================================================
     # Phase 48: file-dialog titles + export dialogs + summary labels
     # ============================================================
@@ -420,7 +401,6 @@ STRINGS = {
     # Jobs tab summary
     "jobstab.summary.count": "{total} jobs · running {running} · done {done} · failed {failed}",
     "jobstab.summary.count_label": "{total} jobs  ·  running {running}  ·  done {done}  ·  failed {failed}",
-
     # Added in Phase 34 for language switcher
     "settab.lang": "Language:",
     "app.name": "RLPE - Radiolarian Plate Extractor",
@@ -432,9 +412,15 @@ STRINGS = {
 # strings_zh_CN). Python silently keeps the LAST duplicate in a
 # dict literal, masking upstream bugs in the translation generator.
 import re as _re_dup_en
-_src_dup_en = _re_dup_en.sub(r"\"\"\".*?\"\"\"", "", open(__file__, encoding="utf-8").read(), flags=_re_dup_en.S)
-_keys_dup_en = _re_dup_en.findall(r"^\s*['\"]([a-zA-Z][\w.]*)['\"]\s*:", _src_dup_en, flags=_re_dup_en.M)
+
+_src_dup_en = _re_dup_en.sub(
+    r"\"\"\".*?\"\"\"", "", open(__file__, encoding="utf-8").read(), flags=_re_dup_en.S
+)
+_keys_dup_en = _re_dup_en.findall(
+    r"^\s*['\"]([a-zA-Z][\w.]*)['\"]\s*:", _src_dup_en, flags=_re_dup_en.M
+)
 import collections as _coll_dup_en
+
 _dup_counts_en = _coll_dup_en.Counter(_keys_dup_en)
 _dup_check_en = [k for k, n in _dup_counts_en.items() if n > 1]
 if _dup_check_en:

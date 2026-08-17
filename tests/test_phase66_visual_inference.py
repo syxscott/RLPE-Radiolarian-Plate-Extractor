@@ -26,7 +26,6 @@ import pytest
 from rlpe.m3_engine import PROMPT_REGISTRY, M3Engine
 from tests.fakes.fake_m3_backend import FakeM3Backend
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -61,10 +60,7 @@ class TestCrossFigureVisualPrompt:
         prompt = PROMPT_REGISTRY["cross_figure_visual"].lower()
         assert "plate" in prompt
         # Mentions at least one of: strat column, paleogeographic map, litholog
-        assert any(
-            kw in prompt
-            for kw in ("strat", "paleogeographic", "litholog", "map")
-        )
+        assert any(kw in prompt for kw in ("strat", "paleogeographic", "litholog", "map"))
 
     def test_prompt_describes_output_shape(self):
         prompt = PROMPT_REGISTRY["cross_figure_visual"]
@@ -83,17 +79,19 @@ class TestCrossFigureVisualPrompt:
 
 class TestCrossFigureVisualInferenceHappyPath:
     def test_basic_visual_inference(self):
-        engine = _make_engine([
-            {
-                "raw_text": (
-                    '{"plate_panels": ['
-                    '  {"cell_label": "5", "species": "Triassocampe sp.", '
-                    '   "links_to_strat_layer": 3, "links_to_age": "Late Triassic", '
-                    '   "links_to_formation": "Scaglia Rossa", "confidence": 0.92}'
-                    ']}'
-                ),
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": (
+                        '{"plate_panels": ['
+                        '  {"cell_label": "5", "species": "Triassocampe sp.", '
+                        '   "links_to_strat_layer": 3, "links_to_age": "Late Triassic", '
+                        '   "links_to_formation": "Scaglia Rossa", "confidence": 0.92}'
+                        "]}"
+                    ),
+                }
+            ]
+        )
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),
@@ -112,20 +110,22 @@ class TestCrossFigureVisualInferenceHappyPath:
         assert 0.0 <= panel["confidence"] <= 1.0
 
     def test_multiple_panels(self):
-        engine = _make_engine([
-            {
-                "raw_text": (
-                    '{"plate_panels": ['
-                    '  {"cell_label": "1", "species": "Genus a", '
-                    '   "links_to_strat_layer": 1, "links_to_age": "Late Triassic", '
-                    '   "links_to_formation": "Scaglia", "confidence": 0.88},'
-                    '  {"cell_label": "2", "species": "Genus b", '
-                    '   "links_to_strat_layer": 2, "links_to_age": "Late Triassic", '
-                    '   "links_to_formation": "Scaglia", "confidence": 0.81}'
-                    ']}'
-                ),
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": (
+                        '{"plate_panels": ['
+                        '  {"cell_label": "1", "species": "Genus a", '
+                        '   "links_to_strat_layer": 1, "links_to_age": "Late Triassic", '
+                        '   "links_to_formation": "Scaglia", "confidence": 0.88},'
+                        '  {"cell_label": "2", "species": "Genus b", '
+                        '   "links_to_strat_layer": 2, "links_to_age": "Late Triassic", '
+                        '   "links_to_formation": "Scaglia", "confidence": 0.81}'
+                        "]}"
+                    ),
+                }
+            ]
+        )
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),
@@ -198,9 +198,7 @@ class TestCrossFigureVisualInferenceFallback:
         assert result == {"plate_panels": []}
 
     def test_tiny_image_returns_empty(self):
-        engine = _make_engine([
-            {"raw_text": '{"plate_panels": [{"cell_label": "1"}]}'}
-        ])
+        engine = _make_engine([{"raw_text": '{"plate_panels": [{"cell_label": "1"}]}'}])
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(8, 8),
             strat_image=_DummyImage(8, 8),
@@ -212,17 +210,19 @@ class TestCrossFigureVisualInferenceFallback:
     def test_panel_entry_without_required_fields_is_dropped(self):
         """Per Plan C.1, panel entries that lack cell_label OR species are
         noise — drop them so the downstream linker only sees clean rows."""
-        engine = _make_engine([
-            {
-                "raw_text": (
-                    '{"plate_panels": ['
-                    '  {"cell_label": "1", "species": "Genus a", "confidence": 0.9},'
-                    '  {"cell_label": "2"},'  # missing species
-                    '  {"species": "Genus c"}'  # missing cell_label
-                    ']}'
-                ),
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": (
+                        '{"plate_panels": ['
+                        '  {"cell_label": "1", "species": "Genus a", "confidence": 0.9},'
+                        '  {"cell_label": "2"},'  # missing species
+                        '  {"species": "Genus c"}'  # missing cell_label
+                        "]}"
+                    ),
+                }
+            ]
+        )
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),
@@ -233,14 +233,16 @@ class TestCrossFigureVisualInferenceFallback:
         assert result["plate_panels"][0]["cell_label"] == "1"
 
     def test_panel_confidence_clamped_to_unit_interval(self):
-        engine = _make_engine([
-            {
-                "raw_text": (
-                    '{"plate_panels": [{"cell_label": "1", "species": "G s", '
-                    '"confidence": 1.5}]}'
-                ),
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": (
+                        '{"plate_panels": [{"cell_label": "1", "species": "G s", '
+                        '"confidence": 1.5}]}'
+                    ),
+                }
+            ]
+        )
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),
@@ -257,9 +259,7 @@ class TestCrossFigureVisualInferenceFallback:
 
 class TestCrossFigureVisualPromptPlumbing:
     def test_includes_plate_caption_in_prompt(self):
-        engine = _make_engine([
-            {"raw_text": '{"plate_panels": []}'}
-        ])
+        engine = _make_engine([{"raw_text": '{"plate_panels": []}'}])
         engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),
@@ -273,9 +273,7 @@ class TestCrossFigureVisualPromptPlumbing:
         assert "UNIQUE_PLATE_CAPTION_42" in user_prompt
 
     def test_includes_strat_caption_in_prompt(self):
-        engine = _make_engine([
-            {"raw_text": '{"plate_panels": []}'}
-        ])
+        engine = _make_engine([{"raw_text": '{"plate_panels": []}'}])
         engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),

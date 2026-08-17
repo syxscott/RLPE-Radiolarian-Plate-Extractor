@@ -201,12 +201,8 @@ class TestCancelEventPlumbing:
         # (event.wait returns immediately). The first attempt is
         # allowed to run; on its failure the second iteration should
         # detect the cancelled event and raise.
-        assert (
-            call_count["n"] == 1
-        ), f"only the first attempt should run, got {call_count['n']}"
-        assert (
-            elapsed < 1.0
-        ), f"event.set() must short-circuit the back-off, took {elapsed:.2f}s"
+        assert call_count["n"] == 1, f"only the first attempt should run, got {call_count['n']}"
+        assert elapsed < 1.0, f"event.set() must short-circuit the back-off, took {elapsed:.2f}s"
 
     def test_cancel_event_default_none_preserves_behaviour(self):
         """Constructing ``M3Engine`` with no ``cancel_event`` must keep
@@ -242,17 +238,15 @@ class TestCancelEventPlumbing:
             def infer_text(self, system_prompt, user_prompt):
                 return {"raw_text": "ok"}
 
-        engine = M3Engine(
-            backend=_NullBackend(), config={}, cancel_event=pipe._cancel_event
-        )
+        engine = M3Engine(backend=_NullBackend(), config={}, cancel_event=pipe._cancel_event)
         assert engine._cancel_event is evt
 
         # Simulate the cancel handler flipping the event (mirrors
         # what the pipeline's ``run()`` does on user cancellation).
         evt.set()
-        assert (
-            engine._cancel_event.is_set()
-        ), "event stored on the engine must observe the same set() call"
+        assert engine._cancel_event.is_set(), (
+            "event stored on the engine must observe the same set() call"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -330,16 +324,16 @@ class TestBackendSwitchLock:
         still OOM."""
         from rlpe import pipeline as pipeline_mod
 
-        assert hasattr(
-            pipeline_mod, "_BACKEND_SWITCH_LOCK"
-        ), "_BACKEND_SWITCH_LOCK must exist at module level"
+        assert hasattr(pipeline_mod, "_BACKEND_SWITCH_LOCK"), (
+            "_BACKEND_SWITCH_LOCK must exist at module level"
+        )
         lock = pipeline_mod._BACKEND_SWITCH_LOCK
         # ``threading.Lock`` is a factory function; the type of an
         # acquired lock is the internal ``_thread.lock``. Just check
         # it behaves like a lock (acquire/release is a no-op when
         # uncontended).
-        assert hasattr(lock, "acquire") and hasattr(
-            lock, "release"
-        ), "_BACKEND_SWITCH_LOCK must be a lock-like object"
+        assert hasattr(lock, "acquire") and hasattr(lock, "release"), (
+            "_BACKEND_SWITCH_LOCK must be a lock-like object"
+        )
         # And that it's shared across all callers (same identity).
         assert pipeline_mod._BACKEND_SWITCH_LOCK is lock

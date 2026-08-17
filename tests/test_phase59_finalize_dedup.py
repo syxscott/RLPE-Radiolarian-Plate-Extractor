@@ -128,9 +128,7 @@ def test_finalize_dedups_identical_panel_id_none() -> None:
         },
     ]
     result = pipe._finalize_rows(rows)
-    assert len(result) == 1, (
-        f"True duplicates should still dedup to one; got {len(result)}"
-    )
+    assert len(result) == 1, f"True duplicates should still dedup to one; got {len(result)}"
     # Higher confidence wins.
     assert result[0].get("confidence") == 0.6, (
         f"Higher confidence should win; got {result[0].get('confidence')}"
@@ -187,6 +185,4 @@ def test_finalize_dedups_panel_id_correctly() -> None:
         },
     ]
     result = pipe._finalize_rows(rows)
-    assert len(result) == 2, (
-        f"Expected 2 deduped rows; got {len(result)}"
-    )
+    assert len(result) == 2, f"Expected 2 deduped rows; got {len(result)}"

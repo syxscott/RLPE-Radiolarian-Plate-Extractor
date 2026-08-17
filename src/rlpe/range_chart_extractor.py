@@ -310,9 +310,7 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
     # then got species-mined ("An attempt of" shipped as a species).
     # Match "plate"/"plates" as a whole word and veto the words that
     # merely contain the substring.
-    if not any(w in low for w in _PLATE_SUBSTRING_VETO_WORDS) and _PLATE_WORD_RE.search(
-        low
-    ):
+    if not any(w in low for w in _PLATE_SUBSTRING_VETO_WORDS) and _PLATE_WORD_RE.search(low):
         # Even if plate-like, check if the caption ALSO mentions
         # range/distribution — that overrides.
         for rc_kw in _FIGURE_TYPE_PROMPT_KEYWORDS["range_chart"]:
@@ -723,9 +721,7 @@ def extract_range_chart(
                     result.error_message = f"ValueError: {exc}"
                     return result
         except requests.RequestException as exc:
-            logger.warning(
-                "range_chart API call failed for %s/%s: %s", paper_id, figure_id, exc
-            )
+            logger.warning("range_chart API call failed for %s/%s: %s", paper_id, figure_id, exc)
             # M21: transport-level failures (DNS, connect, timeout)
             # used to return an empty result indistinguishable from
             # success-with-no-data. Mark as error.
@@ -750,9 +746,7 @@ def extract_range_chart(
     try:
         parsed = _safe_json_loads(raw_text)
     except ValueError as exc:
-        logger.warning(
-            "range_chart JSON parse failed for %s/%s: %s", paper_id, figure_id, exc
-        )
+        logger.warning("range_chart JSON parse failed for %s/%s: %s", paper_id, figure_id, exc)
         # M21 (audit 2026-08-01): previously this returned a
         # ``status="ok"`` empty result — indistinguishable from
         # "API said no data here". Mark as error and surface the
@@ -999,9 +993,7 @@ def build_geology_links_for_panels(
                 "chronostratigraphy": sr.biozone or None,
                 "chronostratigraphy_rank": "biozone" if sr.biozone else None,
                 "formation": (
-                    ", ".join(sec_meta.formations)
-                    if sec_meta and sec_meta.formations
-                    else None
+                    ", ".join(sec_meta.formations) if sec_meta and sec_meta.formations else None
                 ),
                 "locality": sr.section or None,
                 "latitude": None,

@@ -39,7 +39,6 @@ def test_geology_links_dict_contains_link_source() -> None:
 def test_linkresult_has_figure_id_field() -> None:
     """LinkResult.figure_id is already defined; just verify it's wired through."""
     from src.rlpe.cross_figure_linker import LinkResult
+
     fields = {f.name for f in LinkResult.__dataclass_fields__.values()}
-    assert "figure_id" in fields, (
-        f"LinkResult missing figure_id field. Has: {fields}"
-    )
+    assert "figure_id" in fields, f"LinkResult missing figure_id field. Has: {fields}"

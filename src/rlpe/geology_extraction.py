@@ -1208,9 +1208,7 @@ def _extract_first_coord(
     # already enforces valid ranges, but does NOT enforce this
     # specific signal requirement.
     raw = coord.raw or ""
-    has_hemisphere = bool(
-        re.search(r"\b[NSEWnsew]\b", raw)
-    )
+    has_hemisphere = bool(re.search(r"\b[NSEWnsew]\b", raw))
     has_degree = "°" in raw
     if not has_hemisphere and not has_degree:
         return None, None, None, None

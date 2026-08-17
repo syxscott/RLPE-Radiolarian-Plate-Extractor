@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 def qapp():
     """Module-scoped QApplication for GUI tests."""
     from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance() or QApplication(sys.argv)
     yield app
 
@@ -45,6 +46,7 @@ def qapp():
 # ---------------------------------------------------------------------------
 # MINOR-1 — \n literals
 # ---------------------------------------------------------------------------
+
 
 def test_minor1_no_escaped_newlines_in_strings() -> None:
     """Both string files must not contain the two-char sequence ``\\n``
@@ -57,7 +59,7 @@ def test_minor1_no_escaped_newlines_in_strings() -> None:
         # Look for the two-character sequence "\\\\n" inside a quoted
         # string literal. The regex skips the docstring header.
         body = text.split('"""', 2)[-1]
-        bad = re.findall(r'\\\\n', body)
+        bad = re.findall(r"\\\\n", body)
         assert not bad, (
             f"{fname} still contains {len(bad)} escaped \\\\n sequence(s); "
             "use a real newline character so .format() / Qt widgets "
@@ -69,6 +71,7 @@ def test_minor1_no_escaped_newlines_in_strings() -> None:
 # MINOR-2 — __version__ synced with APP_VERSION
 # ---------------------------------------------------------------------------
 
+
 def test_minor2_gui_version_equals_app_version() -> None:
     """rlpe.gui.__version__ must equal constants.APP_VERSION."""
     # Force fresh imports.
@@ -77,6 +80,7 @@ def test_minor2_gui_version_equals_app_version() -> None:
             del sys.modules[mod]
     import rlpe.gui
     from rlpe.gui.constants import APP_VERSION
+
     assert rlpe.gui.__version__ == APP_VERSION, (
         f"gui.__version__={rlpe.gui.__version__!r} but "
         f"constants.APP_VERSION={APP_VERSION!r} — keep them in sync."
@@ -87,17 +91,20 @@ def test_minor2_gui_version_equals_app_version() -> None:
 # MINOR-3 — log-file pre-check
 # ---------------------------------------------------------------------------
 
+
 def test_minor3_open_log_file_checks_existence(qapp, tmp_path, monkeypatch) -> None:
     """_open_log_file must show an info dialog (not a yellow warning)
     when the log file doesn't exist yet.
     """
     import importlib
+
     main_window_mod = importlib.import_module("rlpe.gui.main_window")
     MainWindow = main_window_mod.MainWindow
 
     # Don't actually open a MainWindow — just instantiate _open_log_file
     # logic by patching the QMessageBox to record what was shown.
     from PySide6.QtWidgets import QMessageBox
+
     shown: list[tuple[str, str]] = []
 
     def _fake_information(parent, title, body, *args, **kwargs):
@@ -113,6 +120,7 @@ def test_minor3_open_log_file_checks_existence(qapp, tmp_path, monkeypatch) -> N
 
     # Patch LOG_FILE_NAME to point at a file that doesn't exist.
     from rlpe.gui import utils as utils_mod
+
     monkeypatch.setattr(utils_mod, "LOG_FILE_NAME", "nonexistent_probe_log.log")
     monkeypatch.setattr(
         main_window_mod.Path,
@@ -139,6 +147,7 @@ def test_minor3_open_log_file_checks_existence(qapp, tmp_path, monkeypatch) -> N
 # MINOR-4 — OCR-lang tooltip registered
 # ---------------------------------------------------------------------------
 
+
 def test_minor4_ocr_lang_tooltip_translates(qapp) -> None:
     """The OCR language combo tooltip must be a registered i18n key
     in both string files. We check the keys exist; the actual
@@ -157,13 +166,15 @@ def test_minor4_ocr_lang_tooltip_translates(qapp) -> None:
 # MINOR-5 — bbox click prefers rect over label
 # ---------------------------------------------------------------------------
 
+
 def test_minor5_bbox_click_prefers_rect(qapp) -> None:
     """Phase 55 audit F-8 — image_preview.mousePressEvent must check
     QGraphicsRectItem hits BEFORE QGraphicsTextItem hits, so an
     overlapping label can't redirect the click to a different bbox.
     """
-    src = (Path(__file__).resolve().parents[1]
-           / "src" / "rlpe" / "gui" / "image_preview.py").read_text(encoding="utf-8")
+    src = (
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "image_preview.py"
+    ).read_text(encoding="utf-8")
     # Find each ``for item in items:`` loop's start position, then
     # verify the FIRST one contains QGraphicsRectItem and the SECOND
     # contains QGraphicsTextItem. If only one loop exists, the F-8
@@ -175,8 +186,8 @@ def test_minor5_bbox_click_prefers_rect(qapp) -> None:
         "fallback). Phase 55 F-8 fix missing — only one pass found."
     )
     # Slice between consecutive loop starts and inspect each block.
-    first_block = src[loops[0]:loops[1]]
-    second_block = src[loops[1]:loops[1] + 500]  # enough to capture label type check
+    first_block = src[loops[0] : loops[1]]
+    second_block = src[loops[1] : loops[1] + 500]  # enough to capture label type check
     assert "QGraphicsRectItem" in first_block, (
         "First loop should test QGraphicsRectItem (rect-first preference)."
     )
@@ -189,28 +200,29 @@ def test_minor5_bbox_click_prefers_rect(qapp) -> None:
 # MINOR-6 — batch output-dir writability probe
 # ---------------------------------------------------------------------------
 
+
 def test_minor6_batch_dialog_probes_writability(qapp, tmp_path) -> None:
     """batch_dialog must probe writability before accepting an output
     directory. audit 2026-07-31: the probe moved to the Qt-free
     outdir_probe module (unit-testable without PySide6); the dialog
     delegates to it.
     """
-    probe_src = (Path(__file__).resolve().parents[1]
-                 / "src" / "rlpe" / "gui" / "outdir_probe.py").read_text(encoding="utf-8")
+    probe_src = (
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "outdir_probe.py"
+    ).read_text(encoding="utf-8")
     assert "def probe_output_dir_writable" in probe_src, (
         "outdir_probe.py missing the writability probe."
     )
     assert "os.open" in probe_src, "probe must actually create a temp file"
-    dialog_src = (Path(__file__).resolve().parents[1]
-                  / "src" / "rlpe" / "gui" / "batch_dialog.py").read_text(encoding="utf-8")
+    dialog_src = (
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "batch_dialog.py"
+    ).read_text(encoding="utf-8")
     assert "probe_output_dir_writable" in dialog_src, (
         "batch_dialog.py must delegate to probe_output_dir_writable"
     )
     # audit 2026-07-31: the W_OK fallback check lives in the probe
     # module now.
-    assert "W_OK" in probe_src, (
-        "outdir_probe.py missing the os.access(W_OK) fallback check."
-    )
+    assert "W_OK" in probe_src, "outdir_probe.py missing the os.access(W_OK) fallback check."
     assert "batch.outdir.not_writable" in dialog_src, (
         "batch_dialog.py doesn't reference the new 'not writable' i18n key."
     )

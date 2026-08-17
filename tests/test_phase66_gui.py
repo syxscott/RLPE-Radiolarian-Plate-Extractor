@@ -17,21 +17,16 @@ import pytest
 
 try:
     import PySide6  # noqa: F401
+
     _HAS_PYSIDE6 = True
 except ImportError:
     _HAS_PYSIDE6 = False
 
 # Source-guard fallback so the contract is also pinned in envs without
 # PySide6 installed.
-_SRC_RESULTS_TAB = (
-    Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "results_tab.py"
-)
-_SRC_STRINGS_EN = (
-    Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "strings_en.py"
-)
-_SRC_STRINGS_ZH = (
-    Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "strings_zh_CN.py"
-)
+_SRC_RESULTS_TAB = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "results_tab.py"
+_SRC_STRINGS_EN = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "strings_en.py"
+_SRC_STRINGS_ZH = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "strings_zh_CN.py"
 
 
 @pytest.mark.skipif(not _HAS_PYSIDE6, reason="PySide6 not installed")
@@ -45,8 +40,10 @@ class TestVisualLinksGuiRender:
         # a module function; the test env now has PySide6 so construct
         # a real instance.
         from PySide6.QtWidgets import QApplication
+
         _app = QApplication.instance() or QApplication([])
         from rlpe.gui.results_tab import ResultsTab
+
         _rt = ResultsTab()
 
         class _FakeBrowser:
@@ -74,9 +71,8 @@ class TestVisualLinksGuiRender:
         }
         _rt._render_detail({"metadata": md})
         html = _rt._detail_browser.last_html
-        assert ("Visual" in html or "视觉" in html), (
-            "expected a visual-coordinate link section in the rendered detail; "
-            f"got: {html[:300]}"
+        assert "Visual" in html or "视觉" in html, (
+            f"expected a visual-coordinate link section in the rendered detail; got: {html[:300]}"
         )
         assert "strat1" in html
         assert "Late Triassic" in html

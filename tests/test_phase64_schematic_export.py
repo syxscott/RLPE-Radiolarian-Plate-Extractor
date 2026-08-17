@@ -49,14 +49,12 @@ except Exception:
 
 
 if _HAS_OPENPYXL:
-    from rlpe.exporters.xlsx import _summarize_schematic_data, _PANEL_HEADERS
+    from rlpe.exporters.xlsx import _PANEL_HEADERS, _summarize_schematic_data
 else:
     # Source-guard fallback: read xlsx.py and check for the
     # expected literal strings. Same defensive pattern used by
     # test_p0_xlsx_panel_id_source.py and test_phase60_biozone_ma.py.
-    _SRC_XLSX = (
-        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "exporters" / "xlsx.py"
-    )
+    _SRC_XLSX = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "exporters" / "xlsx.py"
     _XLSX_SOURCE = _SRC_XLSX.read_text(encoding="utf-8") if _SRC_XLSX.exists() else ""
 
     def _summarize_schematic_data(schematic_data):

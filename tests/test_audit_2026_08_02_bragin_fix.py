@@ -5,7 +5,6 @@ from __future__ import annotations
 from rlpe.evaluation import GoldPanel, evaluate
 from rlpe.evaluation.metrics import _figure_id_logical_key
 
-
 PAPER = "bragin2025"
 GOLD_FIGURE = "od_plate_bragin2025_p001_pl01"
 PRED_FIGURE = "od_plate_2e85364a3c605326_p006_pl01"
@@ -36,19 +35,15 @@ def test_bragin_schema_variant_matches_panel_and_species():
 
 
 def test_bragin_plate_number_remains_distinct():
-    assert _figure_id_logical_key(
-        "od_plate_2e85364a3c605326_p007_pl02"
-    ) == "bragin2025_pl02"
-    assert _figure_id_logical_key(
-        "od_plate_2e85364a3c605326_p007_pl02"
-    ) != _figure_id_logical_key(PRED_FIGURE)
+    assert _figure_id_logical_key("od_plate_2e85364a3c605326_p007_pl02") == "bragin2025_pl02"
+    assert _figure_id_logical_key("od_plate_2e85364a3c605326_p007_pl02") != _figure_id_logical_key(
+        PRED_FIGURE
+    )
 
 
 def test_non_bragin_hash_keeps_page_guard():
     # Do not broaden the Bragin exception to every OD document hash.
-    assert _figure_id_logical_key(
-        "od_plate_deadbeefdeadbeef_p006_pl01"
-    ) == "deadbeefdeadbeef_p006"
+    assert _figure_id_logical_key("od_plate_deadbeefdeadbeef_p006_pl01") == "deadbeefdeadbeef_p006"
 
 
 def test_bragin_wrong_panel_does_not_match():

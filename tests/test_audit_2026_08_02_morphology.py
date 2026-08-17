@@ -40,6 +40,7 @@ from tests.fakes.fake_m3_backend import FakeM3Backend
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine(canned: list[dict[str, Any]]) -> M3Engine:
     """Build an M3Engine wired to a FakeM3Backend."""
     backend = FakeM3Backend(canned_responses=canned)
@@ -62,6 +63,7 @@ def _make_prov() -> ProvenanceRecord:
 # ---------------------------------------------------------------------------
 # TestMorphologyLocator
 # ---------------------------------------------------------------------------
+
 
 class TestMorphologyLocator:
     """Body-text locator for the morphology enrichment."""
@@ -154,6 +156,7 @@ class TestMorphologyLocator:
 # TestM3InferMorphology
 # ---------------------------------------------------------------------------
 
+
 class TestM3InferMorphology:
     """M3Engine.infer_morphology() — Stage 6 morphology inference."""
 
@@ -173,30 +176,34 @@ class TestM3InferMorphology:
             assert needle in prompt, f"missing {needle!r} in morphology_extract prompt"
 
     def test_happy_path_full_response(self) -> None:
-        engine = _make_engine([
-            {
-                "raw_text": json.dumps({
-                    "test_shape": "campanulate",
-                    "test_length_um_min": 180.0,
-                    "test_length_um_max": 220.0,
-                    "num_segments": 3,
-                    "cephalis_shape": "spherical",
-                    "thorax_shape": "campanulate",
-                    "pore_pattern": "circular, regular",
-                    "pore_diameter_um_min": 8.0,
-                    "pore_diameter_um_max": 10.0,
-                    "spines_present": True,
-                    "spine_count": 3,
-                    "apertural_structure": "narrow, constricted",
-                    "diagnostic_features": [
-                        "three-bladed apical horn",
-                        "porous thoracic wall",
-                    ],
-                    "confidence": 0.85,
-                    "evidence_text": "Test 180-220 µm; cephalis spherical.",
-                }),
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": json.dumps(
+                        {
+                            "test_shape": "campanulate",
+                            "test_length_um_min": 180.0,
+                            "test_length_um_max": 220.0,
+                            "num_segments": 3,
+                            "cephalis_shape": "spherical",
+                            "thorax_shape": "campanulate",
+                            "pore_pattern": "circular, regular",
+                            "pore_diameter_um_min": 8.0,
+                            "pore_diameter_um_max": 10.0,
+                            "spines_present": True,
+                            "spine_count": 3,
+                            "apertural_structure": "narrow, constricted",
+                            "diagnostic_features": [
+                                "three-bladed apical horn",
+                                "porous thoracic wall",
+                            ],
+                            "confidence": 0.85,
+                            "evidence_text": "Test 180-220 µm; cephalis spherical.",
+                        }
+                    ),
+                }
+            ]
+        )
         result = engine.infer_morphology(
             species_name="Genus species",
             source_text="Genus species. Description: Test 180-220 µm.",
@@ -223,17 +230,21 @@ class TestM3InferMorphology:
         absent"). Verify that the engine forwards null unchanged
         rather than substituting False.
         """
-        engine = _make_engine([
-            {
-                "raw_text": json.dumps({
-                    "test_shape": "ovoid",
-                    "spines_present": None,  # not mentioned
-                    "spine_count": None,     # not mentioned
-                    "confidence": 0.4,
-                    "evidence_text": None,
-                }),
-            }
-        ])
+        engine = _make_engine(
+            [
+                {
+                    "raw_text": json.dumps(
+                        {
+                            "test_shape": "ovoid",
+                            "spines_present": None,  # not mentioned
+                            "spine_count": None,  # not mentioned
+                            "confidence": 0.4,
+                            "evidence_text": None,
+                        }
+                    ),
+                }
+            ]
+        )
         result = engine.infer_morphology(
             species_name="Genus sp.",
             source_text="Genus sp. is ovoid.",
@@ -253,9 +264,11 @@ class TestM3InferMorphology:
 
     def test_confidence_clamped_to_unit_interval(self) -> None:
         """Confidence must be clamped to [0.0, 1.0] even if M3 returns 1.5."""
-        engine = _make_engine([
-            {"raw_text": json.dumps({"confidence": 1.5})},
-        ])
+        engine = _make_engine(
+            [
+                {"raw_text": json.dumps({"confidence": 1.5})},
+            ]
+        )
         result = engine.infer_morphology(
             species_name="Genus species",
             source_text="Genus species description.",
@@ -282,6 +295,7 @@ class TestM3InferMorphology:
 # ---------------------------------------------------------------------------
 # TestSchemaMorphology
 # ---------------------------------------------------------------------------
+
 
 class TestSchemaMorphology:
     """Schema v1.2.0 surface — MorphologyRecord + TaxonRecord.morphology_ids."""
@@ -401,10 +415,13 @@ class TestSchemaMorphology:
 # TestPipelineIntegration
 # ---------------------------------------------------------------------------
 
+
 class TestPipelineIntegration:
     """Pipeline._apply_morphology_enrichment() helper."""
 
-    def _build_pipeline(self, *, m3_stage_6: bool, policy: str, fake_canned: list[dict[str, Any]] | None = None):
+    def _build_pipeline(
+        self, *, m3_stage_6: bool, policy: str, fake_canned: list[dict[str, Any]] | None = None
+    ):
         """Build a minimal RadiolarianPipeline with Stage-6 wired up."""
         from rlpe.config import PipelineConfig
         from rlpe.pipeline import RadiolarianPipeline
@@ -455,16 +472,41 @@ class TestPipelineIntegration:
 
         pipeline.m3_engine.infer_morphology = fake_infer_morphology  # type: ignore[assignment]
         rows = [
-            {"paper_id": "p1", "species": "Genus alpha", "figure_id": "f1", "panel_id": "1",
-             "caption_snippet": "Genus alpha description with enough text " * 4},
-            {"paper_id": "p1", "species": "Genus alpha", "figure_id": "f1", "panel_id": "2",
-             "caption_snippet": "Genus alpha description with enough text " * 4},
-            {"paper_id": "p1", "species": "Genus beta",  "figure_id": "f2", "panel_id": "1",
-             "caption_snippet": "Genus beta description with enough text " * 4},
-            {"paper_id": "p1", "species": "Genus beta",  "figure_id": "f2", "panel_id": "2",
-             "caption_snippet": "Genus beta description with enough text " * 4},
-            {"paper_id": "p1", "species": "Genus gamma", "figure_id": "f3", "panel_id": "1",
-             "caption_snippet": "Genus gamma description with enough text " * 4},
+            {
+                "paper_id": "p1",
+                "species": "Genus alpha",
+                "figure_id": "f1",
+                "panel_id": "1",
+                "caption_snippet": "Genus alpha description with enough text " * 4,
+            },
+            {
+                "paper_id": "p1",
+                "species": "Genus alpha",
+                "figure_id": "f1",
+                "panel_id": "2",
+                "caption_snippet": "Genus alpha description with enough text " * 4,
+            },
+            {
+                "paper_id": "p1",
+                "species": "Genus beta",
+                "figure_id": "f2",
+                "panel_id": "1",
+                "caption_snippet": "Genus beta description with enough text " * 4,
+            },
+            {
+                "paper_id": "p1",
+                "species": "Genus beta",
+                "figure_id": "f2",
+                "panel_id": "2",
+                "caption_snippet": "Genus beta description with enough text " * 4,
+            },
+            {
+                "paper_id": "p1",
+                "species": "Genus gamma",
+                "figure_id": "f3",
+                "panel_id": "1",
+                "caption_snippet": "Genus gamma description with enough text " * 4,
+            },
         ]
         out = pipeline._apply_morphology_enrichment(rows, "p1", fulltext_sections=None)
         # Rows unchanged in shape.
@@ -482,14 +524,21 @@ class TestPipelineIntegration:
             policy="api_full",
             fake_canned=[{"raw_text": "{}"}],
         )
+
         # Monkey-patch infer_morphology to raise.
         def boom(**_kw):
             raise RuntimeError("simulated M3 backend outage")
+
         pipeline.m3_engine.infer_morphology = boom  # type: ignore[assignment]
 
         rows = [
-            {"paper_id": "p1", "species": "Genus alpha", "figure_id": "f1", "panel_id": "1",
-             "caption_snippet": "Genus alpha description with enough text " * 4},
+            {
+                "paper_id": "p1",
+                "species": "Genus alpha",
+                "figure_id": "f1",
+                "panel_id": "1",
+                "caption_snippet": "Genus alpha description with enough text " * 4,
+            },
         ]
         out = pipeline._apply_morphology_enrichment(rows, "p1", fulltext_sections=None)
         # No records added; row unchanged (no morphology_ids stamped).
@@ -516,8 +565,13 @@ class TestPipelineIntegration:
         # No fulltext_sections → locator returns None → caption path.
         long_caption = "Genus alpha. " + ("long caption text " * 30)
         rows = [
-            {"paper_id": "p1", "species": "Genus alpha", "figure_id": "f1", "panel_id": "1",
-             "caption_snippet": long_caption},
+            {
+                "paper_id": "p1",
+                "species": "Genus alpha",
+                "figure_id": "f1",
+                "panel_id": "1",
+                "caption_snippet": long_caption,
+            },
         ]
         pipeline._apply_morphology_enrichment(rows, "p1", fulltext_sections=None)
         records = pipeline._paper_morphologies.get("p1") or []
@@ -533,8 +587,13 @@ class TestPipelineIntegration:
             fake_canned=[{"raw_text": json.dumps({"test_shape": "ovoid", "confidence": 0.5})}],
         )
         rows = [
-            {"paper_id": "p1", "species": "Genus alpha", "figure_id": "f1", "panel_id": "1",
-             "caption_snippet": "Genus alpha. " + ("long caption text " * 30)},
+            {
+                "paper_id": "p1",
+                "species": "Genus alpha",
+                "figure_id": "f1",
+                "panel_id": "1",
+                "caption_snippet": "Genus alpha. " + ("long caption text " * 30),
+            },
         ]
         pipeline._apply_morphology_enrichment(rows, "p1", fulltext_sections=None)
         # No records produced under local_only.
@@ -548,8 +607,13 @@ class TestPipelineIntegration:
             fake_canned=[{"raw_text": json.dumps({"test_shape": "ovoid"})}],
         )
         rows = [
-            {"paper_id": "p1", "species": "Genus alpha", "figure_id": "f1", "panel_id": "1",
-             "caption_snippet": "Genus alpha. " + ("long caption text " * 30)},
+            {
+                "paper_id": "p1",
+                "species": "Genus alpha",
+                "figure_id": "f1",
+                "panel_id": "1",
+                "caption_snippet": "Genus alpha. " + ("long caption text " * 30),
+            },
         ]
         pipeline._apply_morphology_enrichment(rows, "p1", fulltext_sections=None)
         assert pipeline._paper_morphologies.get("p1") is None

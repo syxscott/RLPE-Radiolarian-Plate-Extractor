@@ -15,7 +15,6 @@ import pytest
 
 from rlpe.schema_models import PanelMetadata, PanelRecord, StrictModel
 
-
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "rlpe-v1.0.0.json"
 
 
@@ -52,12 +51,22 @@ class TestCrossFigureVisualLinksField:
     def test_field_can_hold_multiple_entries(self):
         meta = PanelMetadata(
             cross_figure_visual_links=[
-                {"target_figure_id": "fig_strat_2", "target_layer": 1,
-                 "target_age": "Late Cretaceous", "target_formation": "Scaglia",
-                 "confidence": 0.88, "source": "m3_visual"},
-                {"target_figure_id": "fig_strat_2", "target_layer": 2,
-                 "target_age": "Late Cretaceous", "target_formation": "Scaglia",
-                 "confidence": 0.81, "source": "m3_visual"},
+                {
+                    "target_figure_id": "fig_strat_2",
+                    "target_layer": 1,
+                    "target_age": "Late Cretaceous",
+                    "target_formation": "Scaglia",
+                    "confidence": 0.88,
+                    "source": "m3_visual",
+                },
+                {
+                    "target_figure_id": "fig_strat_2",
+                    "target_layer": 2,
+                    "target_age": "Late Cretaceous",
+                    "target_formation": "Scaglia",
+                    "confidence": 0.81,
+                    "source": "m3_visual",
+                },
             ]
         )
         assert len(meta.cross_figure_visual_links) == 2
@@ -68,9 +77,14 @@ class TestCrossFigureVisualLinksField:
         them all as nullable. The schema must round-trip None values."""
         meta = PanelMetadata(
             cross_figure_visual_links=[
-                {"target_figure_id": "fig_strat_2", "target_layer": None,
-                 "target_age": None, "target_formation": None,
-                 "confidence": 0.7, "source": "m3_visual"}
+                {
+                    "target_figure_id": "fig_strat_2",
+                    "target_layer": None,
+                    "target_age": None,
+                    "target_formation": None,
+                    "confidence": 0.7,
+                    "source": "m3_visual",
+                }
             ]
         )
         entry = meta.cross_figure_visual_links[0]
@@ -92,9 +106,14 @@ class TestPanelRecordRoundTrip:
             panel_path="path/to/panel.png",
             metadata=PanelMetadata(
                 cross_figure_visual_links=[
-                    {"target_figure_id": "fig_strat_2", "target_layer": 5,
-                     "target_age": "Late Triassic", "target_formation": "Scaglia",
-                     "confidence": 0.95, "source": "m3_visual"}
+                    {
+                        "target_figure_id": "fig_strat_2",
+                        "target_layer": 5,
+                        "target_age": "Late Triassic",
+                        "target_formation": "Scaglia",
+                        "confidence": 0.95,
+                        "source": "m3_visual",
+                    }
                 ]
             ),
         )

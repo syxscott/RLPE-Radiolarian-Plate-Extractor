@@ -25,8 +25,9 @@ _GUI = _SRC / "rlpe" / "gui"
 
 class TestReviewCorrections:
     def test_corrections_applied(self, tmp_path):
-        from rlpe.config import PipelineConfig
         from unittest.mock import patch
+
+        from rlpe.config import PipelineConfig
 
         with (
             patch("rlpe.pipeline.GrobidClient"),
@@ -79,8 +80,9 @@ class TestReviewCorrections:
             assert "review_corrected" not in out[1].get("metadata", {})
 
     def test_no_corrections_file_is_noop(self, tmp_path):
-        from rlpe.config import PipelineConfig
         from unittest.mock import patch
+
+        from rlpe.config import PipelineConfig
 
         with (
             patch("rlpe.pipeline.GrobidClient"),
@@ -137,9 +139,7 @@ class TestGuiSourceGuards:
         save_start = src.index("def _save")
         first_setvalue = src.index("setValue(QS_KEY_THEME")
         yolo_check = src.index("yolo_enable.isChecked() and not", save_start)
-        assert yolo_check < first_setvalue, (
-            "YOLO validation must run before any settings write"
-        )
+        assert yolo_check < first_setvalue, "YOLO validation must run before any settings write"
 
     def test_disk_scan_skips_bad_lines(self):
         src = (_GUI / "jobs_tab.py").read_text(encoding="utf-8")

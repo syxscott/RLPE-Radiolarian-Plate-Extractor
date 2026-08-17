@@ -12,6 +12,7 @@ The fix adds ``stage3_rescale_bbox`` that takes (bbox, source_dpi,
 crop_dpi) and returns a bbox scaled to the crop's pixel space, so the
 caller can use it directly without manual arithmetic.
 """
+
 from __future__ import annotations
 
 import pytest

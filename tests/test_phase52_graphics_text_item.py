@@ -23,6 +23,7 @@ Tests:
   4. Source guard: any Qt class used in ``isinstance()`` must
      be imported in the same module.
 """
+
 from __future__ import annotations
 
 import os
@@ -34,9 +35,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
-from PySide6.QtCore import Qt  # noqa: E402
 import pytest
+from PySide6.QtCore import Qt  # noqa: E402
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
@@ -59,6 +62,7 @@ def test_image_preview_imports_qgraphicstextitem():
     without NameError)."""
     # Importing the module must not raise
     import rlpe.gui.image_preview as ip_mod
+
     # And the symbol must be available in the module's namespace
     # (it was used in isinstance() and in a type hint).
     assert hasattr(ip_mod, "QGraphicsTextItem"), (
@@ -72,6 +76,7 @@ def test_image_preview_imports_qgraphicstextitem():
 # ============================================================
 def test_image_preview_widget_instantiates():
     from rlpe.gui.image_preview import ImagePreviewWidget
+
     widget = ImagePreviewWidget()
     assert widget is not None
 
@@ -87,6 +92,7 @@ def test_clicking_text_label_fires_bbox_clicked_signal():
     NameError at click time, crashing the event handler.
     """
     from rlpe.gui.image_preview import ImagePreviewWidget
+
     widget = ImagePreviewWidget()
 
     # Add a QGraphicsTextItem to the scene
@@ -139,16 +145,31 @@ def test_no_unimported_classes_in_isinstance_calls():
     gui_dir = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui"
     # Common Qt classes that are always available via PySide6 imports
     # in any module (so we don't flag them as missing).
-    safe_builtins = {"int", "str", "float", "bool", "list", "dict", "tuple",
-                     "set", "frozenset", "bytes", "bytearray", "object",
-                     "type", "None", "Path", "QStringListModel"}
+    safe_builtins = {
+        "int",
+        "str",
+        "float",
+        "bool",
+        "list",
+        "dict",
+        "tuple",
+        "set",
+        "frozenset",
+        "bytes",
+        "bytearray",
+        "object",
+        "type",
+        "None",
+        "Path",
+        "QStringListModel",
+    }
     failures = []
     for py_file in sorted(gui_dir.glob("*.py")):
         if py_file.name == "__init__.py":
             continue
         src = py_file.read_text(encoding="utf-8")
         # Find all isinstance(x, (A, B, ...)) and isinstance(x, A) calls
-        for m in re.finditer(r'isinstance\([^,]+,\s*([^)]+)\)', src):
+        for m in re.finditer(r"isinstance\([^,]+,\s*([^)]+)\)", src):
             arg = m.group(1).strip()
             # arg is either a single class or a tuple of classes
             classes = [c.strip() for c in arg.strip("()").split(",") if c.strip()]
@@ -162,8 +183,9 @@ def test_no_unimported_classes_in_isinstance_calls():
                 if cls.startswith(("'", '"')):
                     continue
                 # Skip if defined in the same module
-                if re.search(rf'^{re.escape(cls)}\s*=', src, re.MULTILINE) or \
-                   re.search(rf'^class\s+{re.escape(cls)}\b', src, re.MULTILINE):
+                if re.search(rf"^{re.escape(cls)}\s*=", src, re.MULTILINE) or re.search(
+                    rf"^class\s+{re.escape(cls)}\b", src, re.MULTILINE
+                ):
                     continue
                 # Skip builtins
                 if cls in safe_builtins:
@@ -172,8 +194,8 @@ def test_no_unimported_classes_in_isinstance_calls():
                 # Match: `from X import Y` or `from X import (Y, Z)`
                 # Or `import X` and then access X.Y
                 imported_via_from = re.search(
-                    rf'from\s+[\w.]+\s+import\s+[(\s]?[\w\s,]*\b'
-                    rf'{re.escape(cls)}\b',
+                    rf"from\s+[\w.]+\s+import\s+[(\s]?[\w\s,]*\b"
+                    rf"{re.escape(cls)}\b",
                     src,
                 )
                 if imported_via_from:

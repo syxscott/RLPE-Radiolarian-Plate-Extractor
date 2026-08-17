@@ -12,6 +12,7 @@ The fix adds ``_redact_enrichment_caption`` that:
   * preserves that section in full,
   * redacts (truncates) the surrounding unrelated text.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -65,9 +66,7 @@ def test_enrichment_redact_empty_inputs():
 def test_enrichment_redact_truncates_long_unrelated():
     """Long unrelated sections are truncated to a small budget."""
     long_unrelated = "x" * 5000
-    page = (
-        "PLATE 1: small caption for plate 1. " + long_unrelated
-    )
+    page = "PLATE 1: small caption for plate 1. " + long_unrelated
     current = "small caption for plate 1."
     out = _redact_enrichment_caption(page, current)
     assert "small caption for plate 1." in out

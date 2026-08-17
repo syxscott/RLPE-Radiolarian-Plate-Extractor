@@ -97,8 +97,9 @@ class TestLlmFirstContract:
         """The backend returns the parsed dict (possibly with a
         preamble-tainted raw_text). The pipeline must consume the
         parsed result without re-parsing raw_text."""
-        from rlpe.config import PipelineConfig
         from unittest.mock import patch
+
+        from rlpe.config import PipelineConfig
 
         with (
             patch("rlpe.pipeline.GrobidClient"),
@@ -120,10 +121,9 @@ class TestLlmFirstContract:
                     # that would fail strict json.loads
                     return {
                         "panels": [
-                            {"label": "1", "species": "Actinomma leptodermum",
-                             "confidence": 0.9}
+                            {"label": "1", "species": "Actinomma leptodermum", "confidence": 0.9}
                         ],
-                        "raw_text": "Here are the panels: [{\"label\": \"1\"}]",
+                        "raw_text": 'Here are the panels: [{"label": "1"}]',
                         "fallback_used": False,
                     }
 
@@ -131,26 +131,37 @@ class TestLlmFirstContract:
             from rlpe.types import CaptionRecord, FigureRegion
 
             cap = CaptionRecord(
-                paper_id="t", figure_id="f1", caption="Fig. 1. 1. Actinomma leptodermum",
-                entities=[], figure_number="1", page_index=1,
+                paper_id="t",
+                figure_id="f1",
+                caption="Fig. 1. 1. Actinomma leptodermum",
+                entities=[],
+                figure_number="1",
+                page_index=1,
             )
             import numpy as np
 
             region = FigureRegion(
-                page_index=1, bbox=(0, 0, 100, 100), crop_path="t.png",
-                score=0.9, region_id="r1",
+                page_index=1,
+                bbox=(0, 0, 100, 100),
+                crop_path="t.png",
+                score=0.9,
+                region_id="r1",
             )
             rows = pipe._llm_first_extract(
-                paper_id="t", figure_id="f1", caption=cap,
+                paper_id="t",
+                figure_id="f1",
+                caption=cap,
                 region_img=np.zeros((10, 10, 3), dtype=np.uint8),
-                region=region, figure_index=1,
+                region=region,
+                figure_index=1,
             )
             assert rows, "backend-parsed result must be consumed"
             assert rows[0]["species"] == "Actinomma leptodermum"
 
     def test_single_panel_dict_consumed(self, tmp_path):
-        from rlpe.config import PipelineConfig
         from unittest.mock import patch
+
+        from rlpe.config import PipelineConfig
 
         with (
             patch("rlpe.pipeline.GrobidClient"),
@@ -181,19 +192,29 @@ class TestLlmFirstContract:
             from rlpe.types import CaptionRecord, FigureRegion
 
             cap = CaptionRecord(
-                paper_id="t", figure_id="f1", caption="Fig. 1. 1. Unuma echinatus",
-                entities=[], figure_number="1", page_index=1,
+                paper_id="t",
+                figure_id="f1",
+                caption="Fig. 1. 1. Unuma echinatus",
+                entities=[],
+                figure_number="1",
+                page_index=1,
             )
             import numpy as np
 
             region = FigureRegion(
-                page_index=1, bbox=(0, 0, 100, 100), crop_path="t.png",
-                score=0.9, region_id="r1",
+                page_index=1,
+                bbox=(0, 0, 100, 100),
+                crop_path="t.png",
+                score=0.9,
+                region_id="r1",
             )
             rows = pipe._llm_first_extract(
-                paper_id="t", figure_id="f1", caption=cap,
+                paper_id="t",
+                figure_id="f1",
+                caption=cap,
                 region_img=np.zeros((10, 10, 3), dtype=np.uint8),
-                region=region, figure_index=1,
+                region=region,
+                figure_index=1,
             )
             assert rows and rows[0]["species"] == "Unuma echinatus"
 
@@ -245,9 +266,9 @@ class TestFallbackWiring:
             eng._infer_text("sys", "user")
 
     def test_fallback_retry_wrapper_switches_backend(self, tmp_path):
-        from rlpe.config import PipelineConfig
         from unittest.mock import patch
 
+        from rlpe.config import PipelineConfig
         from rlpe.llm_backends import FallbackRecommendedError
 
         with (

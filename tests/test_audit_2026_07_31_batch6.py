@@ -29,9 +29,21 @@ class TestBestPred:
         gold = [GoldPanel("p", "f", "1", "Unuma echinatus")]
         preds = [
             # empty species, high confidence — must NOT win
-            {"paper_id": "p", "figure_id": "f", "panel_id": "1", "species": None, "confidence": 0.99},
+            {
+                "paper_id": "p",
+                "figure_id": "f",
+                "panel_id": "1",
+                "species": None,
+                "confidence": 0.99,
+            },
             # correct species, lower confidence — must win
-            {"paper_id": "p", "figure_id": "f", "panel_id": "1", "species": "Unuma echinatus", "confidence": 0.5},
+            {
+                "paper_id": "p",
+                "figure_id": "f",
+                "panel_id": "1",
+                "species": "Unuma echinatus",
+                "confidence": 0.5,
+            },
         ]
         report = evaluate(preds, gold)
         m = report.papers["p"]
@@ -48,7 +60,13 @@ class TestPrefixDoubleCount:
             GoldPanel("p", "f", "5a", "A species"),
         ]
         preds = [
-            {"paper_id": "p", "figure_id": "f", "panel_id": "5", "species": "A species", "confidence": 0.9},
+            {
+                "paper_id": "p",
+                "figure_id": "f",
+                "panel_id": "5",
+                "species": "A species",
+                "confidence": 0.9,
+            },
         ]
         report = evaluate(preds, gold)
         m = report.papers["p"]
@@ -110,8 +128,9 @@ class TestDwcaHigherClassification:
 
 class TestLowConfidenceReviewFlag:
     def test_low_confidence_flagged(self, tmp_path):
-        from rlpe.config import PipelineConfig
         from unittest.mock import patch
+
+        from rlpe.config import PipelineConfig
 
         with (
             patch("rlpe.pipeline.GrobidClient"),
@@ -124,10 +143,22 @@ class TestLowConfidenceReviewFlag:
 
             pipe = RadiolarianPipeline(cfg)
             rows = [
-                {"paper_id": "p", "figure_id": "f", "panel_id": "1",
-                 "species": "X", "confidence": 0.3, "panel_path": "/x.png"},
-                {"paper_id": "p", "figure_id": "f", "panel_id": "2",
-                 "species": "Y", "confidence": 0.8, "panel_path": "/y.png"},
+                {
+                    "paper_id": "p",
+                    "figure_id": "f",
+                    "panel_id": "1",
+                    "species": "X",
+                    "confidence": 0.3,
+                    "panel_path": "/x.png",
+                },
+                {
+                    "paper_id": "p",
+                    "figure_id": "f",
+                    "panel_id": "2",
+                    "species": "Y",
+                    "confidence": 0.8,
+                    "panel_path": "/y.png",
+                },
             ]
             out = pipe._finalize_rows(rows)
             low = [r for r in out if r["panel_id"] == "1"][0]
@@ -142,7 +173,12 @@ class TestJournalGarbage:
         from rlpe.paper_metadata_cleanup import cleanup_paper_metadata
 
         cleaned, reasons = cleanup_paper_metadata(
-            {"paper_id": "p", "title": "A real title", "journal": "Explanation of Plate", "doi": None}
+            {
+                "paper_id": "p",
+                "title": "A real title",
+                "journal": "Explanation of Plate",
+                "doi": None,
+            }
         )
         assert cleaned["journal"] is None
         assert "journal_extraction_failed" in reasons
@@ -151,6 +187,11 @@ class TestJournalGarbage:
         from rlpe.paper_metadata_cleanup import cleanup_paper_metadata
 
         cleaned, _ = cleanup_paper_metadata(
-            {"paper_id": "p", "title": "A real title", "journal": "Journal of Micropalaeontology", "doi": None}
+            {
+                "paper_id": "p",
+                "title": "A real title",
+                "journal": "Journal of Micropalaeontology",
+                "doi": None,
+            }
         )
         assert cleaned["journal"] == "Journal of Micropalaeontology"

@@ -13,6 +13,7 @@ the one most likely to need iteration — keep the interface small
 (zoom/pan/fit only for now) and add tools (measure, annotate,
 delete bbox) in Phase 33+.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -38,16 +39,15 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from .constants import BUTTON_MIN_WIDTH, IMAGE_PREVIEW_MIN_SIZE
-from .styles import SPACE_M, SPACE_S
 from . import i18n
+from .constants import BUTTON_MIN_WIDTH, IMAGE_PREVIEW_MIN_SIZE
 from .i18n_widgets import tr_label
+from .styles import SPACE_S
 from .utils import get_gui_logger
 
 
@@ -100,6 +100,7 @@ class ImagePreviewWidget(QWidget):
         # have inconsistent width on offscreen renderers, so we set
         # an explicit max width to keep the toolbar from reflowing.)
         from .i18n_widgets import tr_button
+
         for key, slot in (
             ("preview.zoom_in", self._zoom_in),
             ("preview.zoom_out", self._zoom_out),
@@ -228,6 +229,7 @@ class ImagePreviewWidget(QWidget):
             if arr is None:
                 # Fallback: try PIL
                 from PIL import Image as PILImage
+
                 with PILImage.open(path) as im:
                     # GUI-BUG-M1 fix: copy BEFORE passing to QImage — PIL's
                     # with-block may close the image buffer before QImage
@@ -308,7 +310,7 @@ class ImagePreviewWidget(QWidget):
             # Label with species name (if any)
             species = bbox.get("species") or bbox.get("label_text") or ""
             confidence = bbox.get("confidence")
-            label_text = species[:30] if species else f"#{i+1}"
+            label_text = species[:30] if species else f"#{i + 1}"
             if isinstance(confidence, (int, float)):
                 label_text = f"{label_text}  ({confidence:.2f})"
             text_item = self._scene.addText(label_text, font)
@@ -478,7 +480,7 @@ class _PreviewGraphicsView(QGraphicsView):
 # ============================================================
 # Helpers
 # ============================================================
-def _emit_bbox_clicked(view: "QGraphicsView", bbox_data: dict[str, Any]) -> None:
+def _emit_bbox_clicked(view: QGraphicsView, bbox_data: dict[str, Any]) -> None:
     """Bubble a bbox-click signal up to the enclosing ImagePreviewWidget.
 
     Walks the parent chain because the view is a nested child of the
@@ -507,7 +509,11 @@ def _bbox_tooltip(bbox: dict[str, Any]) -> str:
         x, y, w, h = coords
         parts.append(f"x: {x:.0f}  y: {y:.0f}")
         parts.append(f"w: {w:.0f}  h: {h:.0f}")
-    family = (bbox.get("metadata") or {}).get("paleodb", {}).get("taxonomy", {}).get("family") if bbox.get("metadata") else None
+    family = (
+        (bbox.get("metadata") or {}).get("paleodb", {}).get("taxonomy", {}).get("family")
+        if bbox.get("metadata")
+        else None
+    )
     if family:
         parts.append(f"family: {family}")
     return "<br>".join(parts) if parts else ""

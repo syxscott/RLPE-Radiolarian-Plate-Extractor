@@ -25,6 +25,7 @@ streams). ``_build_text_prompt`` no longer prepends the Gemma template.
 These tests guard the helper so a future refactor doesn't reintroduce
 either bug.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,7 +36,6 @@ from rlpe.llm_backends import (
     LlamaCppGemmaBackend,
     _last_balanced_json_object,
 )
-
 
 # ---------------------------------------------------------------------------
 # _last_balanced_json_object — pure helper
@@ -65,7 +65,7 @@ def test_last_balanced_json_returns_none_for_empty():
 
 def test_last_balanced_json_ignores_python_set_literals():
     """``{}`` with no colon is NOT a JSON object (e.g. ``{}``, ``{1,2}``)."""
-    text = "{} not json {\"a\": 1}"
+    text = '{} not json {"a": 1}'
     assert _last_balanced_json_object(text) == '{"a": 1}'
 
 
@@ -85,10 +85,7 @@ def test_last_balanced_json_nested_objects():
 
 def test_clean_strips_think_block_and_picks_real_answer():
     """BUG-B live capture from /completion on Qwen3.8-27B."""
-    response = (
-        '\n\n{\n  "species": "species name"\n}\n\n'
-        '{\n  "species": "Ceratartia"\n}'
-    )
+    response = '\n\n{\n  "species": "species name"\n}\n\n{\n  "species": "Ceratartia"\n}'
     cleaned = LlamaCppGemmaBackend._clean_response_text(response)
     parsed = json.loads(cleaned)
     assert parsed["species"] == "Ceratartia"
@@ -96,7 +93,7 @@ def test_clean_strips_think_block_and_picks_real_answer():
 
 def test_clean_strips_explicit_think_tags():
     response = (
-        '<think>The user asked for a species. The plate shows...</think>'
+        "<think>The user asked for a species. The plate shows...</think>"
         '{"species": "Tricolocapsa", "confidence": 0.7}'
     )
     cleaned = LlamaCppGemmaBackend._clean_response_text(response)
@@ -105,9 +102,7 @@ def test_clean_strips_explicit_think_tags():
 
 
 def test_clean_strips_answer_tags():
-    response = (
-        '<answer>{"species": "Pessagno", "confidence": 0.9}</answer>'
-    )
+    response = '<answer>{"species": "Pessagno", "confidence": 0.9}</answer>'
     cleaned = LlamaCppGemmaBackend._clean_response_text(response)
     parsed = json.loads(cleaned)
     assert parsed["species"] == "Pessagno"
@@ -199,18 +194,17 @@ def test_clean_then_parse_yields_real_species_not_placeholder():
     from rlpe.llm_backends import parse_json_from_text
 
     # Exact response from live probe (2026-08-17):
-    response = (
-        '\n\n{\n  "species": "species name"\n}\n\n'
-        '{\n  "species": "Ceratartia"\n}'
-    )
+    response = '\n\n{\n  "species": "species name"\n}\n\n{\n  "species": "Ceratartia"\n}'
     cleaned = LlamaCppGemmaBackend._clean_response_text(response)
     parsed = parse_json_from_text(cleaned)
     assert parsed["species"] == "Ceratartia"
     assert parsed.get("confidence") is None or parsed.get("confidence") == 0.0
 
+
 # ---------------------------------------------------------------------------
 # parse_json_from_text brace-balanced fallback (Audit 2026-08-17, BUG-C)
 # ---------------------------------------------------------------------------
+
 
 def test_parse_recovers_json_after_prose_with_braces():
     """Audit 2026-08-17 BUG-C: M3 / Qwen3 sometimes emit prose with
@@ -223,11 +217,11 @@ def test_parse_recovers_json_after_prose_with_braces():
     from rlpe.llm_backends import parse_json_from_text
 
     prose_with_braces_then_json = (
-        'The relevant context is {locality: Tunisia, age: Late Cretaceous}. '
-        'Based on this I identify the species as:\n'
-        '```json\n'
+        "The relevant context is {locality: Tunisia, age: Late Cretaceous}. "
+        "Based on this I identify the species as:\n"
+        "```json\n"
         '{"species": "Patellula euessieei", "confidence": 0.3, "reasoning": "..."}'
-        '\n```'
+        "\n```"
     )
     parsed = parse_json_from_text(prose_with_braces_then_json)
     assert parsed["species"] == "Patellula euessieei"
@@ -243,12 +237,12 @@ def test_parse_recovers_json_without_closing_fence():
     from rlpe.llm_backends import parse_json_from_text
 
     truncated = (
-        '```json\n'
-        '{\n'
+        "```json\n"
+        "{\n"
         '  "species": "Patellula euessieei",\n'
         '  "confidence": 0.3,\n'
         '  "reasoning": "Tunisia Late Cretaceous"\n'
-        '}'
+        "}"
     )
     parsed = parse_json_from_text(truncated)
     assert parsed["species"] == "Patellula euessieei"
@@ -281,6 +275,7 @@ def test_parse_handles_nested_json_after_prose():
 # (Audit 2026-08-17, BUG-E)
 # ---------------------------------------------------------------------------
 
+
 def test_normalize_preserves_species_list():
     """BUG-E: M3 multimodal call on Boughdiri 2007 (live probe) returned
     ``{"species_list": [...29 entries...]}`` and the caller asked for
@@ -289,6 +284,7 @@ def test_normalize_preserves_species_list():
     dropping the species_list — the caller thought M3 returned 0
     species. Live re-verify after fix shows 29/28 species preserved."""
     from rlpe.llm_backends import _normalize_panel_dict
+
     obj = {
         "species_list": [
             {"species": "Emiluvia orea", "confidence": 0.92},
@@ -304,6 +300,7 @@ def test_normalize_preserves_species_list():
 
 def test_normalize_preserves_arbitrary_dict_extras():
     from rlpe.llm_backends import _normalize_panel_dict
+
     obj = {
         "species": "X",
         "confidence": 0.5,
@@ -321,8 +318,11 @@ def test_normalize_drops_scalar_extras():
     structural fields make it through. This keeps the result shape
     stable for downstream consumers that expect exactly 4 keys."""
     from rlpe.llm_backends import _normalize_panel_dict
+
     obj = {
-        "species": "X", "confidence": 0.5, "reasoning": "r",
+        "species": "X",
+        "confidence": 0.5,
+        "reasoning": "r",
         "label": "1",
         "stray_field": "should be dropped",
     }
@@ -332,6 +332,7 @@ def test_normalize_drops_scalar_extras():
 
 def test_normalize_does_not_override_canonical_keys():
     from rlpe.llm_backends import _normalize_panel_dict
+
     obj = {
         "species": "Original",
         "species_list": [{"species": "Other"}],

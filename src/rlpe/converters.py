@@ -835,12 +835,8 @@ def panel_record_from_match(match: MatchResult) -> PanelRecord:
     _ci_low_meta = meta.get("confidence_interval_low")
     _ci_high_meta = meta.get("confidence_interval_high")
     _priority_meta = meta.get("review_priority")
-    _ci_low_final = (
-        float(_ci_low_meta) if _ci_low_meta is not None else _ci_low
-    )
-    _ci_high_final = (
-        float(_ci_high_meta) if _ci_high_meta is not None else _ci_high
-    )
+    _ci_low_final = float(_ci_low_meta) if _ci_low_meta is not None else _ci_low
+    _ci_high_final = float(_ci_high_meta) if _ci_high_meta is not None else _ci_high
     _priority_final = (
         int(_priority_meta)
         if _priority_meta is not None

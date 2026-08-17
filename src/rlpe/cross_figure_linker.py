@@ -48,18 +48,16 @@ schema below).
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Protocol
+from typing import Any, Protocol
 
-from .cross_refs import CrossRef, parse_cross_refs
+from .cross_refs import parse_cross_refs
 from .sample_id_extractor import (
-    SampleID,
     _LOCALITY_BLOCKLIST,
-    extract_age_terms,
     extract_locality,
     extract_sample_ids,
 )
-
 
 # ---------------------------------------------------------------------------
 # Result dataclass
@@ -119,6 +117,7 @@ class LinkResult:
 # M3 callback protocol
 # ---------------------------------------------------------------------------
 
+
 class M3InferenceCallable(Protocol):
     """Protocol for the M3 cross-figure inference callable.
 
@@ -130,8 +129,7 @@ class M3InferenceCallable(Protocol):
         self,
         panel_caption: str,
         paper_context: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +228,7 @@ def _extract_figure_number(
 # Index paper figures for fast lookup
 # ---------------------------------------------------------------------------
 
+
 @dataclass(slots=True)
 class _FigureIndex:
     """Indexed view over the paper's strat/map/litholog/range figures."""
@@ -260,9 +259,12 @@ def _build_figure_index(
         # We only index the non-plate figures (strat column / litholog /
         # paleogeographic map / range chart). Plates are what we link FROM.
         if ftype not in (
-            "strat_column", "stratigraphic_column",
-            "litholog_column", "litholog",
-            "paleogeographic_map", "map",
+            "strat_column",
+            "stratigraphic_column",
+            "litholog_column",
+            "litholog",
+            "paleogeographic_map",
+            "map",
             "range_chart",
         ):
             continue
@@ -301,20 +303,22 @@ def _build_figure_index(
             if key not in idx.sample_id_to_figure:
                 idx.sample_id_to_figure[key] = fig
 
-        idx.summary.append({
-            "figure_id": fig_id,
-            "figure_type": ftype,
-            "caption": caption,
-            "formation": formation,
-            "age": age,
-            "locality": locality,
-            # ``figure_num`` is the display-number extracted from the
-            # caption (e.g. "3" from "Fig. 3"). Strategy 4
-            # (cross_refs) uses this to map ``CrossRef.target_figure_num``
-            # back to the underlying figure.
-            "figure_num": _extract_figure_number(fig, fid=fig_id, ftype=ftype),
-            "figure": fig,
-        })
+        idx.summary.append(
+            {
+                "figure_id": fig_id,
+                "figure_type": ftype,
+                "caption": caption,
+                "formation": formation,
+                "age": age,
+                "locality": locality,
+                # ``figure_num`` is the display-number extracted from the
+                # caption (e.g. "3" from "Fig. 3"). Strategy 4
+                # (cross_refs) uses this to map ``CrossRef.target_figure_num``
+                # back to the underlying figure.
+                "figure_num": _extract_figure_number(fig, fid=fig_id, ftype=ftype),
+                "figure": fig,
+            }
+        )
 
     return idx
 
@@ -323,9 +327,8 @@ def _build_figure_index(
 # caption is short (just "Tunisia outcrop, Scaglia Fm"), we want any
 # Capitalized phrase to count as a locality candidate. We then filter
 # against the blocklist.
-_BARE_CAPITALIZED_RE = re.compile(
-    r"\b([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+){0,3})\b"
-)
+_BARE_CAPITALIZED_RE = re.compile(r"\b([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+){0,3})\b")
+
 
 # _LOCALITY_BLOCKLIST is imported from sample_id_extractor above and used directly.
 def _extract_locality_phrases(caption: str) -> list[str]:
@@ -354,6 +357,7 @@ def _extract_locality_phrases(caption: str) -> list[str]:
 # Panel helpers
 # ---------------------------------------------------------------------------
 
+
 def _panel_caption(panel: Any) -> str:
     """Best-effort caption snippet for a panel.
 
@@ -363,7 +367,7 @@ def _panel_caption(panel: Any) -> str:
     ``metadata.figure_caption`` (figure-level).
     """
     if hasattr(panel, "caption_snippet"):
-        val = getattr(panel, "caption_snippet")
+        val = panel.caption_snippet
         if val:
             return str(val)
     if isinstance(panel, dict):
@@ -384,7 +388,7 @@ def _panel_caption(panel: Any) -> str:
 
 def _panel_species(panel: Any) -> str | None:
     if hasattr(panel, "species"):
-        val = getattr(panel, "species")
+        val = panel.species
         if val:
             return str(val)
     if isinstance(panel, dict):
@@ -396,7 +400,7 @@ def _panel_species(panel: Any) -> str | None:
 
 def _panel_paper_id(panel: Any) -> str:
     if hasattr(panel, "paper_id"):
-        return str(getattr(panel, "paper_id") or "")
+        return str(panel.paper_id or "")
     if isinstance(panel, dict):
         return str(panel.get("paper_id") or "")
     return ""
@@ -404,7 +408,7 @@ def _panel_paper_id(panel: Any) -> str:
 
 def _panel_panel_id(panel: Any) -> str | None:
     if hasattr(panel, "panel_id"):
-        return getattr(panel, "panel_id")
+        return panel.panel_id
     if isinstance(panel, dict):
         return panel.get("panel_id")
     return None
@@ -438,6 +442,7 @@ def _panel_figure_id(panel: Any) -> str | None:
 # ---------------------------------------------------------------------------
 # Strategy implementations
 # ---------------------------------------------------------------------------
+
 
 def _strategy1_sample_match(
     panel: Any,
@@ -476,10 +481,7 @@ def _strategy1_sample_match(
         # Try sample-id index first, then fall back to locality index
         # so a "Loc. Tunisia" on the plate matches a bare "Tunisia"
         # on the strat column.
-        fig = (
-            fig_index.sample_id_to_figure.get(key)
-            or fig_index.locality_to_figure.get(key)
-        )
+        fig = fig_index.sample_id_to_figure.get(key) or fig_index.locality_to_figure.get(key)
         if fig is None:
             continue
         fig_id = str(fig.get("figure_id") or "")
@@ -695,6 +697,7 @@ def _unlinked_fallback(panel: Any) -> LinkResult:
 # Public entry point
 # ---------------------------------------------------------------------------
 
+
 def link_species_to_geology(
     panels: Iterable[Any],
     paper_figures: Iterable[PaperFigureLike],
@@ -743,10 +746,7 @@ def link_species_to_geology(
         # still skip panels whose ``paper_id`` doesn't match any of the
         # paper_figures we received (defensive).
         panel_paper = _panel_paper_id(panel)
-        paper_in_input = any(
-            str(f.get("paper_id") or "") == panel_paper
-            for f in paper_figures
-        )
+        paper_in_input = any(str(f.get("paper_id") or "") == panel_paper for f in paper_figures)
         if not paper_in_input and panel_paper:
             # Caller passed figures for a different paper; emit unlinked
             # to make the boundary explicit.
@@ -774,23 +774,32 @@ VISUAL_LINK_SOURCE = "m3_visual"
 # visual-coordinate trigger. If the paper has any of these alongside
 # a plate, Phase C may fire. Mirrors the list in
 # ``_build_figure_index`` above.
-_ANCHOR_FIGURE_TYPES = frozenset({
-    "strat_column", "stratigraphic_column",
-    "litholog_column", "litholog",
-    "paleogeographic_map", "map",
-})
+_ANCHOR_FIGURE_TYPES = frozenset(
+    {
+        "strat_column",
+        "stratigraphic_column",
+        "litholog_column",
+        "litholog",
+        "paleogeographic_map",
+        "map",
+    }
+)
 
 # Phase 66 Plan C.3: figure_type values that count as "plate" for the
 # trigger condition. Papers without a plate don't need Phase C
 # (there's nothing to link).
-_PLATE_FIGURE_TYPES = frozenset({
-    "plate", "plate_image",
-})
+_PLATE_FIGURE_TYPES = frozenset(
+    {
+        "plate",
+        "plate_image",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Phase 66 Plan C.3 — visual coordinate trigger
 # ---------------------------------------------------------------------------
+
 
 def _panel_link_source(panel: Any) -> str | None:
     """Best-effort link_source from a panel dict/object."""
@@ -803,7 +812,9 @@ def _panel_link_source(panel: Any) -> str | None:
     return getattr(meta, "link_source", None)
 
 
-def _has_plate_and_anchor(figures: Iterable[PaperFigureLike]) -> tuple[bool, PaperFigureLike | None, PaperFigureLike | None]:
+def _has_plate_and_anchor(
+    figures: Iterable[PaperFigureLike],
+) -> tuple[bool, PaperFigureLike | None, PaperFigureLike | None]:
     """Return ``(has_both, plate_fig, anchor_fig)``.
 
     Returns the FIRST plate figure and the FIRST anchor figure (strat
@@ -901,9 +912,7 @@ def link_visual_coordinates(
     # images via its ``image.width < 32`` early-return path.
     plate_caption = _figure_caption(plate_fig) if plate_fig is not None else ""
     anchor_caption = _figure_caption(anchor_fig) if anchor_fig is not None else ""
-    anchor_id = (
-        str(anchor_fig.get("figure_id") or "") if anchor_fig is not None else ""
-    )
+    anchor_id = str(anchor_fig.get("figure_id") or "") if anchor_fig is not None else ""
 
     out: list[list[dict[str, Any]]] = []
     for panel in panels_list:
@@ -917,7 +926,10 @@ def link_visual_coordinates(
 
         try:
             result = visual_method(
-                None, None, plate_caption, anchor_caption,
+                None,
+                None,
+                plate_caption,
+                anchor_caption,
             )
         except Exception:
             # Defensive: a backend exception must never propagate up
@@ -942,14 +954,16 @@ def link_visual_coordinates(
             except (TypeError, ValueError):
                 conf = 0.0
             conf = max(0.0, min(1.0, conf))
-            links.append({
-                "target_figure_id": anchor_id,
-                "target_layer": entry.get("links_to_strat_layer"),
-                "target_age": entry.get("links_to_age"),
-                "target_formation": entry.get("links_to_formation"),
-                "confidence": conf,
-                "source": VISUAL_LINK_SOURCE,
-            })
+            links.append(
+                {
+                    "target_figure_id": anchor_id,
+                    "target_layer": entry.get("links_to_strat_layer"),
+                    "target_age": entry.get("links_to_age"),
+                    "target_formation": entry.get("links_to_formation"),
+                    "confidence": conf,
+                    "source": VISUAL_LINK_SOURCE,
+                }
+            )
         out.append(links)
 
     return out

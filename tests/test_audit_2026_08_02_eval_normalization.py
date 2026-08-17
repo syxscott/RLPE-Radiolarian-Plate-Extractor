@@ -71,9 +71,7 @@ class TestSpeciesNormalization:
         """``cf.`` (gold) and ``cf`` (pred) are the same open-nomenclature
         qualifier — only the trailing period differs.
         """
-        assert _pipeline_match(
-            "Archaeodictyomitra cf. tumandae", "Archaeodictyomitra cf tumandae"
-        )
+        assert _pipeline_match("Archaeodictyomitra cf. tumandae", "Archaeodictyomitra cf tumandae")
 
     def test_aff_normalization(self):
         """``Williriedellum aff. W. sp. S`` vs ``Williriedellum aff W. sp. S``.
@@ -81,9 +79,7 @@ class TestSpeciesNormalization:
         Same open-nomenclature rule as cf., but for ``affinis``. The
         suffix ``W. sp. S`` is preserved — only ``aff.`` is normalised.
         """
-        assert _pipeline_match(
-            "Williriedellum aff. W. sp. S", "Williriedellum aff W. sp. S"
-        )
+        assert _pipeline_match("Williriedellum aff. W. sp. S", "Williriedellum aff W. sp. S")
 
     def test_whitespace_collapsing(self):
         """Run of whitespace (typical OCR artefact) collapses to single
@@ -115,9 +111,7 @@ class TestPanelIdNormalization:
         """
         gold = GoldPanel(paper_id="p", figure_id="f", panel_id="1, 2, 3", species=None)
         for tok in ("1", "2", "3"):
-            assert match_panel(
-                gold, "p", tok
-            ), f"pred {tok!r} should match gold '1, 2, 3'"
+            assert match_panel(gold, "p", tok), f"pred {tok!r} should match gold '1, 2, 3'"
         # Pred 4 must NOT match — it's outside the gold range.
         assert not match_panel(gold, "p", "4")
 

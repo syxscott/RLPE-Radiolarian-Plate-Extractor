@@ -19,6 +19,7 @@ The audit found critical runtime bugs:
 
 These tests pin the fixes.
 """
+
 from __future__ import annotations
 
 import os
@@ -30,9 +31,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import (  # noqa: E402
-    QApplication, QGraphicsRectItem, QGraphicsTextItem, QScrollArea,
+    QApplication,
+    QGraphicsRectItem,
+    QGraphicsTextItem,
+    QScrollArea,
 )
 
 _app = QApplication.instance() or QApplication([])
@@ -48,22 +53,21 @@ def test_image_preview_tracks_text_items():
     """Phase 44: _text_items list exists and is cleared on
     _overlay_bboxes re-render."""
     from rlpe.gui.image_preview import ImagePreviewWidget
+
     w = ImagePreviewWidget()
-    assert hasattr(w, "_text_items"), (
-        "ImagePreviewWidget must track _text_items"
-    )
+    assert hasattr(w, "_text_items"), "ImagePreviewWidget must track _text_items"
     assert isinstance(w._text_items, list)
-    assert w._text_items == [], (
-        f"_text_items must start empty, got {w._text_items!r}"
-    )
+    assert w._text_items == [], f"_text_items must start empty, got {w._text_items!r}"
 
 
 def test_image_preview_text_items_cleared_on_set_bboxes():
     """Phase 44: calling set_bboxes twice must not pile up text
     items in the scene."""
-    from rlpe.gui.image_preview import ImagePreviewWidget
-    from PySide6.QtGui import QImage, QColor
     import tempfile
+
+    from PySide6.QtGui import QColor, QImage
+
+    from rlpe.gui.image_preview import ImagePreviewWidget
 
     def make_png(path, w=20, h=20):
         img = QImage(w, h, QImage.Format_RGB888)
@@ -101,7 +105,9 @@ def test_image_preview_mouse_press_accepts_text_items():
     """Phase 44: clicking a QGraphicsTextItem (species label)
     must fire the bbox signal, not be silently ignored."""
     import inspect
+
     from rlpe.gui.image_preview import _PreviewGraphicsView
+
     src = inspect.getsource(_PreviewGraphicsView.mousePressEvent)
     assert "QGraphicsTextItem" in src, (
         "mousePressEvent must accept clicks on QGraphicsTextItem labels"
@@ -116,7 +122,9 @@ def test_image_preview_wheel_event_accepted():
     event doesn't propagate to the parent QScrollArea (which
     would scroll the panel while the user zooms)."""
     import inspect
+
     from rlpe.gui.image_preview import _PreviewGraphicsView
+
     src = inspect.getsource(_PreviewGraphicsView.wheelEvent)
     assert "event.accept()" in src, (
         "wheelEvent must call event.accept() to prevent the wheel "
@@ -132,17 +140,13 @@ def test_main_window_close_event_stops_worker():
     PipelineWorker before accepting the event. Otherwise the
     QThread is destroyed while still running → RuntimeError."""
     import inspect
+
     from rlpe.gui.main_window import MainWindow
+
     src = inspect.getsource(MainWindow.closeEvent)
-    assert "request_cancel" in src, (
-        "closeEvent must call worker.request_cancel()"
-    )
-    assert "worker.wait" in src, (
-        "closeEvent must call worker.wait() to block until thread exits"
-    )
-    assert "QSettings" in src, (
-        "closeEvent must call QSettings().sync() to flush before exit"
-    )
+    assert "request_cancel" in src, "closeEvent must call worker.request_cancel()"
+    assert "worker.wait" in src, "closeEvent must call worker.wait() to block until thread exits"
+    assert "QSettings" in src, "closeEvent must call QSettings().sync() to flush before exit"
 
 
 # ============================================================
@@ -152,17 +156,18 @@ def test_i18n_add_listener_dedupes():
     """Phase 44: add_listener must dedupe by identity so re-creating
     widgets doesn't double-register the same listener."""
     from rlpe.gui import i18n
+
     i18n._LISTENERS.clear()
     initial_count = len(i18n._LISTENERS)
 
-    def my_listener(lang): pass
+    def my_listener(lang):
+        pass
+
     i18n.add_listener(my_listener)
     assert len(i18n._LISTENERS) == initial_count + 1
     # Add the SAME listener again — should NOT add a duplicate
     i18n.add_listener(my_listener)
-    assert len(i18n._LISTENERS) == initial_count + 1, (
-        "add_listener must dedupe by identity (==)"
-    )
+    assert len(i18n._LISTENERS) == initial_count + 1, "add_listener must dedupe by identity (==)"
     # Cleanup
     i18n._LISTENERS.clear()
 
@@ -172,9 +177,13 @@ def test_i18n_set_language_calls_listeners_only_once():
     code), the dedupe logic should prevent the set_language call
     from firing it twice."""
     from rlpe.gui import i18n
+
     i18n._LISTENERS.clear()
     calls = []
-    def listener(lang): calls.append(lang)
+
+    def listener(lang):
+        calls.append(lang)
+
     # Register once
     i18n.add_listener(listener)
     # Manually append a duplicate (simulate a buggy caller)
@@ -195,8 +204,8 @@ def test_main_window_close_event_syncs_qsettings():
     which is only flushed on app exit. closeEvent must call
     QSettings().sync() to ensure pending writes survive."""
     import inspect
+
     from rlpe.gui.main_window import MainWindow
+
     src = inspect.getsource(MainWindow.closeEvent)
-    assert ".sync()" in src, (
-        "closeEvent must call .sync() to flush QSettings before exit"
-    )
+    assert ".sync()" in src, "closeEvent must call .sync() to flush QSettings before exit"

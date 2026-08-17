@@ -100,9 +100,7 @@ def test_trinomial_collapse_real_subspecies():
     assert norm == "Eucyrtidiellum unumaense pustulatum", norm
     assert _species_compatible(norm, "Eucyrtidiellum unumaense")
     # a DIFFERENT subspecies must NOT match
-    assert not _species_compatible(
-        norm, "Eucyrtidiellum unumaense dentatum"
-    )
+    assert not _species_compatible(norm, "Eucyrtidiellum unumaense dentatum")
 
 
 def test_trinomial_collapse_stops_at_qualifier():

@@ -28,18 +28,33 @@ SAMPLE_CAPTIONS: list[tuple[str, str]] = [
     # Boughdiri 2007 — Fig. 2 stratigraphic overview, Fig. 3/4 litholog,
     # Fig. 5 outcrop photos (photo), Fig. 1 location map
     ("Fig. 1. Location of studied sections (Jurassic, Tunisia). a) northern Tunisia.", "map"),
-    ("Fig. 2. Overview of Tunisian Jurassic stratigraphy, comprising Tunisian Dorsale and North Atlasic Tunisia.", "strat_column"),
-    ("Fig. 3. Lithological sections from Jebels Jédidi and Chaâbane (Jurassic, Tunisia)", "litholog_column"),
+    (
+        "Fig. 2. Overview of Tunisian Jurassic stratigraphy, comprising Tunisian Dorsale and North Atlasic Tunisia.",
+        "strat_column",
+    ),
+    (
+        "Fig. 3. Lithological sections from Jebels Jédidi and Chaâbane (Jurassic, Tunisia)",
+        "litholog_column",
+    ),
     ("Fig. 4. Lithological section from Oued Tazega", "litholog_column"),
     ("Fig. 5. Exposures from Oued Tazega section. a) General view", "photo"),
     # Danelian 2006 — Fig. 2 composite lithostrat column
     ("Fig. 2. A) Composite lithostratigraphic column of the Vocontian basin", "strat_column"),
     # Bragin 2025 — Fig. 2 localities, Fig. 3 zones
-    ("Fig. 2. The most important localities of Oxfordian-Valanginian Boreal radiolarians in Russia", "paleogeographic_map"),
-    ("Fig. 3. Zones and beds with radiolarians, as well as Kimmeridgian-Valanginian radiolarian assemblages of the Timan-Pechora", "strat_column"),
+    (
+        "Fig. 2. The most important localities of Oxfordian-Valanginian Boreal radiolarians in Russia",
+        "paleogeographic_map",
+    ),
+    (
+        "Fig. 3. Zones and beds with radiolarians, as well as Kimmeridgian-Valanginian radiolarian assemblages of the Timan-Pechora",
+        "strat_column",
+    ),
     # Plate caption must still return plate
     ("Plate 1. SEM-illustrations of Upper Cretaceous radiolarians from Karnezeika", "plate"),
-    ("Plate I. Jurassic radiolarians from the Jédidi Fm (Tunisia). Scanning Electron Microscope.", "plate"),
+    (
+        "Plate I. Jurassic radiolarians from the Jédidi Fm (Tunisia). Scanning Electron Microscope.",
+        "plate",
+    ),
 ]
 
 
@@ -53,9 +68,8 @@ def test_classifier_handles_all_sampled_captions():
         if got != expected:
             misses.append((caption[:60], expected, got))
 
-    assert not misses, (
-        "Classifier missed these captions:\n"
-        + "\n".join(f"  cap={c!r} expected={e} got={g}" for c, e, g in misses)
+    assert not misses, "Classifier missed these captions:\n" + "\n".join(
+        f"  cap={c!r} expected={e} got={g}" for c, e, g in misses
     )
 
 
@@ -114,8 +128,7 @@ def test_keyword_list_extensions():
     ]
     missing = [k for k in required_new if k not in src]
     assert not missing, (
-        "Round 20 keyword additions not present in "
-        "range_chart_extractor.py: " + ", ".join(missing)
+        "Round 20 keyword additions not present in range_chart_extractor.py: " + ", ".join(missing)
     )
 
 

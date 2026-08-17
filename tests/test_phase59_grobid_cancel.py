@@ -34,7 +34,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlpe.grobid import GrobidClient  # noqa: E402
 
-
 _REPO = Path(__file__).resolve().parents[1]
 
 
@@ -90,9 +89,7 @@ def test_grobid_cancel_breaks_retry_loop() -> None:
         with pytest.raises(PipelineCancelledError):
             c.process_pdf(pdf, Path("/tmp/__grobid_cancel_out__"))
         elapsed = time.monotonic() - start
-        assert elapsed < 1.0, (
-            f"cancel_event must short-circuit within 1s; took {elapsed:.2f}s"
-        )
+        assert elapsed < 1.0, f"cancel_event must short-circuit within 1s; took {elapsed:.2f}s"
     finally:
         grobid_mod.requests.post = original_post
         Path("/tmp/__grobid_cancel_pdf__.pdf").unlink(missing_ok=True)
@@ -104,8 +101,9 @@ def test_grobid_cancel_during_retry_loop_aborts() -> None:
     The first attempt fails normally; the cancel event is set during
     the backoff sleep; the second iteration sees the event and aborts.
     """
-    import requests
     from unittest.mock import MagicMock
+
+    import requests
 
     cancel = threading.Event()
     call_count = {"n": 0}
@@ -116,7 +114,9 @@ def test_grobid_cancel_during_retry_loop_aborts() -> None:
             raise requests.ConnectionError("transient")
         # Second call shouldn't happen because cancel kicks in.
         resp = MagicMock()
-        resp.text = "<TEI xmlns=\"http://www.tei-c.org/ns/1.0\"><teiHeader/><text><body/></text></TEI>"
+        resp.text = (
+            '<TEI xmlns="http://www.tei-c.org/ns/1.0"><teiHeader/><text><body/></text></TEI>'
+        )
         resp.raise_for_status = lambda: None
         return resp
 

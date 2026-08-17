@@ -4,6 +4,7 @@ Without --matcher-checkpoint-path, --use-neural-matcher is a no-op
 (heuristic fallback). This test guards against silent regressions
 where the warning gets dropped.
 """
+
 from __future__ import annotations
 
 import logging

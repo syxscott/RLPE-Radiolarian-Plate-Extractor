@@ -34,9 +34,7 @@ except Exception:
 if _HAS_OPENPYXL:
     from rlpe.exporters.xlsx import _PANEL_HEADERS, _row_for_panel
 else:
-    _SRC_XLSX = (
-        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "exporters" / "xlsx.py"
-    )
+    _SRC_XLSX = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "exporters" / "xlsx.py"
     _XLSX_SOURCE = _SRC_XLSX.read_text(encoding="utf-8") if _SRC_XLSX.exists() else ""
     _PANEL_HEADERS = []
     _row_for_panel = None  # type: ignore[assignment]
@@ -50,6 +48,7 @@ def _make_panel_metadata(
 ):
     """Build a PanelMetadata with the given fields."""
     from rlpe.schema_models import PanelMetadata
+
     return PanelMetadata(
         link_source=link_source,
         link_confidence=link_confidence,
@@ -161,9 +160,9 @@ class TestXlsxExporterSourceGuard:
         assert '"Link Figure"' in _XLSX_SOURCE
 
     def test_row_for_panel_includes_link_in_source(self):
-        assert "md.get(\"link_source\")" in _XLSX_SOURCE
-        assert "md.get(\"link_confidence\")" in _XLSX_SOURCE
-        assert "md.get(\"link_figure_id\")" in _XLSX_SOURCE
+        assert 'md.get("link_source")' in _XLSX_SOURCE
+        assert 'md.get("link_confidence")' in _XLSX_SOURCE
+        assert 'md.get("link_figure_id")' in _XLSX_SOURCE
 
 
 class TestArchiveExporter:

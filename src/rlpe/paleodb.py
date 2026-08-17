@@ -161,6 +161,7 @@ def _iso_to_country(code: str | None) -> str | None:
     # P2-5 fix: warn when a PBDB country code is not in our curated table
     if result is None:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning("PBDB country code %r not in _ISO_TO_COUNTRY table", s)
     return result
@@ -517,9 +518,7 @@ class PaleoDB:
             offset = page_idx * _PAGE_SIZE
             page_params = {**params, "limit": page_limit, "offset": offset}
             page_key = cache_key + f"_off{offset}_lim{page_limit}"
-            payload = self._http_get_json(
-                f"{self.endpoint}/occs/list.json", page_params, page_key
-            )
+            payload = self._http_get_json(f"{self.endpoint}/occs/list.json", page_params, page_key)
             if not payload:
                 break
             page_records = payload.get("records") or []
