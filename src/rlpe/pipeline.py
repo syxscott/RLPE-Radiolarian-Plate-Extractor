@@ -2361,6 +2361,115 @@ class RadiolarianPipeline:
             executor.shutdown(wait=True)
         return results
 
+    def _attach_stage4_5_context(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        caption_pairs: list[Any] | None,
+        grobid_sections: list[dict[str, Any]] | None,
+        figure_page_index: int | None,
+    ) -> None:
+        """Stage 4.5 plumbing (2026-08-17 follow-on).
+
+        The per-panel M3 species-ID method
+        (``_apply_m3_per_panel_species_id``) reads two pieces of context
+        directly off each row dict:
+
+          * ``r["caption_pairs"]``        -- a list of dicts (serialised
+            ``CaptionPair``) that the worker filters by ``panel_id`` to
+            pick the panel-specific caption snippet. Pre-fix the upstream
+            ``match_panels()`` step CONSUMED the pairs to build a
+            label->species lookup but only stamped the derived
+            ``caption_pairs_used`` flag on ``MatchResult.metadata`` -- the
+            raw list was never propagated onto the row.
+
+          * ``r["page_context_snippet"]`` -- a ~1500-char slice of the
+            same-page body text (systematic-paleontology description).
+            The Stage 4.5 worker already truncates to 1500 chars in the
+            prompt builder, so we just need to attach SOMETHING anchored
+            to the figure's page. Pre-fix this key was never set so
+            every M3 call arrived with an empty context block and the
+            model returned uniformly low confidence (0/67 high-conf
+            overwrites in the Task 8 smoke).
+
+        The helper MUTATES ``rows`` in place (Stage 4.5 already expects
+        the dict shape) and is a no-op when either:
+          * ``rows`` is empty (the figure produced no panels), or
+          * both inputs are empty (M3 disabled, no body text, etc.).
+
+        We do NOT filter the caption pairs by panel_id at this layer --
+        the Stage 4.5 worker does the per-row label match in
+        ``_apply_m3_per_panel_species_id``, and pushing the filter
+        upstream would force every call site to know about the
+        panel-id labelling rules.
+        """
+        if not rows:
+            return
+        # Serialise the CaptionPair dataclass to plain dicts. The Stage
+        # 4.5 worker accepts either shape (it uses ``getattr(cp, ...)``
+        # or ``cp.get(...)`` interchangeably) so this is a safe
+        # normalisation. Defensive: ``CaptionPair.to_dict`` returns
+        # ``asdict(...)`` which is a deep copy, so the caller's list
+        # is not mutated.
+        serialised_pairs: list[dict[str, Any]] = []
+        for cp in caption_pairs or []:
+            if cp is None:
+                continue
+            if hasattr(cp, "to_dict"):
+                try:
+                    serialised_pairs.append(cp.to_dict())
+                    continue
+                except Exception:
+                    pass
+            if isinstance(cp, dict):
+                serialised_pairs.append(dict(cp))
+        # Build a per-page body-text lookup from the paper's fulltext
+        # sections. ``od_result.fulltext_sections`` and
+        # ``grobid_result.fulltext_sections`` are both
+        # ``list[dict[str, str]]`` with keys ``page_index`` and
+        # ``text``; we use a defensive ``get`` so any odd shape is
+        # silently skipped rather than raising.
+        page_text_lookup: dict[int, str] = {}
+        for sec in grobid_sections or []:
+            if not isinstance(sec, dict):
+                continue
+            page_idx = sec.get("page_index")
+            text = sec.get("text", "")
+            if page_idx is None or not text:
+                continue
+            try:
+                page_text_lookup[int(page_idx)] = text
+            except (TypeError, ValueError):
+                continue
+        # Pick the same-page text when available; fall back to ±1 / ±2
+        # windows (the figure may sit on a caption-only page with the
+        # actual systematic-paleontology description on the next page),
+        # and finally to the full paper blob. The truncation to 1500
+        # chars is duplicated in the Stage 4.5 prompt builder (defense
+        # in depth) but doing it here too keeps the per-row payload
+        # small.
+        page_context = ""
+        if page_text_lookup:
+            chosen = ""
+            if figure_page_index is not None:
+                for off in (0, -1, 1, -2, 2):
+                    cand = page_text_lookup.get(int(figure_page_index) + off)
+                    if cand:
+                        chosen = cand
+                        break
+            if not chosen:
+                chosen = "\n\n".join(page_text_lookup.values())
+            page_context = chosen[:1500]
+        # Stamp the new keys on every row. We always overwrite
+        # ``caption_pairs`` / ``page_context_snippet`` because the
+        # Stage 4.5 worker checks ``r.get(...)`` and a stale value
+        # from a prior round would otherwise leak into the new
+        # prompt. The fix's correctness depends on these reflecting
+        # the figure we just processed.
+        for r in rows:
+            r["caption_pairs"] = serialised_pairs
+            r["page_context_snippet"] = page_context
+
     def _apply_multi_plate_enrichment(
         self,
         results: list[dict[str, Any]],
@@ -4841,6 +4950,25 @@ Rules:
                     section_links=section_links,
                     grobid_sections=grobid_sections,
                 )
+                # Stage 4.5 plumbing (2026-08-17 follow-on): the LLM-first
+                # path built ``pair_lookup`` from the same regex/M3 caption
+                # parser the classical path uses, so we plumb the same
+                # caption pairs + page context here. The local var
+                # ``pair_lookup`` is keyed on label, so we still have the
+                # underlying list in ``regex_pairs`` / ``caption_pairs``.
+                # See the classical-path call above for the rationale.
+                if llm_results:
+                    # ``caption_pairs`` is only assigned when the regex
+                    # parser returned nothing AND M3 is configured; use
+                    # ``locals().get`` so the unbound-name case doesn't
+                    # blow up at import / no-M3 sites.
+                    llm_caption_pairs = locals().get("caption_pairs") or regex_pairs
+                    self._attach_stage4_5_context(
+                        llm_results,
+                        caption_pairs=llm_caption_pairs,
+                        grobid_sections=grobid_sections,
+                        figure_page_index=best_page_index,
+                    )
                 return llm_results
             logger.debug(
                 "LLM-first failed for %s/%s, falling back to classical path",
@@ -5284,6 +5412,29 @@ Rules:
             self._attach_paleodb_metadata(matches)
 
         results: list[dict[str, Any]] = [m.to_dict() for m in matches]
+
+        # Stage 4.5 plumbing (2026-08-17 follow-on): the per-panel M3
+        # species-ID method reads ``caption_pairs`` and
+        # ``page_context_snippet`` directly off each row dict. The
+        # upstream ``match_panels()`` step CONSUMES the caption pairs
+        # to build a label->species lookup but never propagates the raw
+        # list back onto MatchResult, and the per-page body text from
+        # ``grobid_sections`` is never sliced onto rows at all. Without
+        # this plumbing the Stage 4.5 prompt arrives at M3 with empty
+        # context and the model returns uniformly low confidence (0/67
+        # high-conf overwrites in the Task 8 smoke). The fix attaches
+        # the figure-level caption pairs (serialised) and a ~1500-char
+        # slice of the same-page body text so the per-panel call has
+        # anchored context to work with. Rows get a fresh copy of the
+        # list so the Stage 4.5 filter (match by panel_id) operates on
+        # every row independently.
+        if results:
+            self._attach_stage4_5_context(
+                results,
+                caption_pairs=m3_caption_pairs,
+                grobid_sections=grobid_sections,
+                figure_page_index=best_page_index,
+            )
 
         if self.config.save_intermediate:
             write_json(

@@ -780,3 +780,284 @@ def test_cli_no_longer_mirrors_m3_per_panel_into_extra(tmp_path):
     assert 'cfg.extra["m3_per_panel_min_conf"]' not in src
     assert 'cfg.extra["m3_per_panel_max_per_figure"]' not in src
     assert 'cfg.extra["m3_per_panel_max_per_paper"]' not in src
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-08-17 follow-on: caption_pairs + page_context plumbing.
+#
+# Pre-fix (after commit 80361aa): the Stage 4.5 per-panel method reads
+# ``r.get("caption_pairs")`` and ``r.get("page_context_snippet")`` from
+# each row dict, but the upstream ``match_panels()`` step consumed the
+# pairs and never propagated them onto the row, and the per-page body
+# text was never sliced. Result: M3 received panels with no context and
+# returned uniformly low confidence (0/67 high-conf overwrites in the
+# Task 8 smoke). The fix adds ``_attach_stage4_5_context`` and calls it
+# from the two paths in ``_process_region`` (LLM-first and classical).
+#
+# These tests pin the plumbing:
+#   1. caption_pairs is propagated into the M3 prompt as caption_for_panel
+#   2. page_context_snippet is propagated into the M3 prompt body
+#   3. empty context still calls M3 (no silent skip)
+# ---------------------------------------------------------------------------
+
+
+class _CaptureBackend:
+    """Backend that records the prompt the worker builds.
+
+    Inspect-mode: we don't actually run an M3 call; we capture the
+    prompt / metadata the Stage 4.5 worker passes to the backend so the
+    test can assert on the propagated context. The M3 response is a
+    parseable high-confidence JSON so the row gets overwritten and the
+    stamp path completes cleanly.
+    """
+
+    def __init__(self) -> None:
+        self.backend_name = "capture"
+        self.last_user_prompt: str | None = None
+        self.last_caption_text: str | None = None
+        self.last_ocr_labels: list[str] | None = None
+        self.last_system_prompt: str | None = None
+        self.call_count: int = 0
+
+    def infer_panel(self, **kwargs):  # noqa: ANN001
+        self.last_user_prompt = kwargs.get("user_prompt")
+        self.last_caption_text = kwargs.get("caption_text")
+        self.last_ocr_labels = kwargs.get("ocr_labels")
+        self.last_system_prompt = kwargs.get("system_prompt")
+        self.call_count += 1
+        # High-confidence parse so the stamp + overwrite path runs and
+        # the test can assert against the final row state.
+        return {
+            "species": "Test species",
+            "label": "1",
+            "confidence": 0.85,
+            "reasoning": "captured for test",
+            "alternative": None,
+        }
+
+
+def test_caption_pairs_plumbed_into_m3_prompt(tmp_path):
+    """When a row carries a populated ``caption_pairs`` whose labels
+    include the row's panel_id, the M3 prompt's caption block carries
+    the corresponding species / modifier / notes string -- not the
+    generic 'no candidate pairs were supplied' message.
+    """
+    from types import SimpleNamespace
+
+    from rlpe.m3_engine import CaptionPair
+
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    pipe = _StubPipeline(cfg)
+    backend = _CaptureBackend()
+    pipe.m3_engine = SimpleNamespace(backend=backend)
+
+    crop = tmp_path / "panel1.png"
+    _write_valid_png(crop)
+
+    # Simulate a row that the new _attach_stage4_5_context helper has
+    # stamped: caption_pairs carries one pair whose labels list contains
+    # the row's panel_id and whose species is "Emiluvia orea".
+    rows = [
+        {
+            "panel_id": "1",
+            "species": "regex_old",
+            "label": "1",
+            "panel_path": str(crop),
+            "caption_pairs": [
+                CaptionPair(
+                    labels=["1"],
+                    species="Emiluvia orea",
+                    modifier="",
+                    confidence=0.9,
+                    notes="",
+                    raw_text="1. Emiluvia orea",
+                ).to_dict()
+            ],
+            "page_context_snippet": "Tunisia, Late Cretaceous, Scaglia Fm.",
+            "metadata": {},
+        }
+    ]
+    out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
+    # The worker received the species in the prompt; the prompt template
+    # renders it as "[This panel]\\n<species>\\n\\n[Same-page context]...".
+    assert backend.call_count == 1
+    assert backend.last_user_prompt is not None
+    assert "Emiluvia orea" in backend.last_user_prompt
+    assert "[This panel]" in backend.last_user_prompt
+    assert "[Same-page context]" in backend.last_user_prompt
+    # The species block was actually used to overwrite the row (high conf).
+    assert out[0]["species"] == "Test species"
+    assert "m3_per_panel" in out[0]["metadata"]
+
+
+def test_page_context_snippet_plumbed_into_m3_prompt(tmp_path):
+    """When a row carries a populated ``page_context_snippet``, that
+    snippet is rendered into the M3 prompt's '[Same-page context]' block.
+    """
+    from types import SimpleNamespace
+
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    pipe = _StubPipeline(cfg)
+    backend = _CaptureBackend()
+    pipe.m3_engine = SimpleNamespace(backend=backend)
+
+    crop = tmp_path / "panel1.png"
+    _write_valid_png(crop)
+
+    page_text = (
+        "Bandini 2011 reports Pseudocrucella? elisabethae from the upper "
+        "Scaglia Rossa formation near Gubbio, central Italy. Specimens "
+        "are Late Cretaceous (Campanian) in age, recovered from marly "
+        "limestone beds interbedded with chert."
+    )
+    rows = [
+        {
+            "panel_id": "2",
+            "species": "regex_old",
+            "label": "2",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": page_text,
+            "metadata": {},
+        }
+    ]
+    out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
+    assert backend.call_count == 1
+    assert backend.last_user_prompt is not None
+    # The same-page context must show up in the prompt body.
+    assert "Gubbio" in backend.last_user_prompt
+    assert "Campanian" in backend.last_user_prompt
+    assert page_text[:200] in backend.last_user_prompt
+    assert out[0]["species"] == "Test species"
+
+
+def test_empty_context_still_calls_m3(tmp_path):
+    """Guards the no-context path: an empty ``caption_pairs`` + empty
+    ``page_context_snippet`` MUST still produce an M3 call (no silent
+    skip). The prompt's context block will be empty, but the model
+    receives the panel image and the OCR label and can still attempt
+    an identification. This is the existing behaviour and must not
+    regress when we add the plumbing.
+    """
+    from types import SimpleNamespace
+
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    pipe = _StubPipeline(cfg)
+    backend = _CaptureBackend()
+    pipe.m3_engine = SimpleNamespace(backend=backend)
+
+    crop = tmp_path / "panel1.png"
+    _write_valid_png(crop)
+
+    rows = [
+        {
+            "panel_id": "1",
+            "species": "regex_old",
+            "label": "1",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
+    ]
+    out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
+    assert backend.call_count == 1
+    assert backend.last_user_prompt is not None
+    # The prompt still has the bracketed section headers, just no
+    # filled-in context between them. This is the "no-context" path
+    # that the previous wiring hit and which we now try to AVOID by
+    # plumbing real context.
+    assert "[This panel]" in backend.last_user_prompt
+    assert "[Same-page context]" in backend.last_user_prompt
+    assert out[0]["species"] == "Test species"
+    assert "m3_per_panel" in out[0]["metadata"]
+
+
+def test_attach_stage4_5_context_attaches_caption_pairs_and_page_text(tmp_path):
+    """End-to-end test on the new ``_attach_stage4_5_context`` helper:
+    build a row list with no context, run the helper, and assert both
+    ``caption_pairs`` and ``page_context_snippet`` end up on every row.
+    """
+    from types import SimpleNamespace
+
+    from rlpe.m3_engine import CaptionPair
+
+    cfg = _make_cfg(tmp_path)
+    pipe = _StubPipeline(cfg)
+
+    pairs = [
+        CaptionPair(
+            labels=["1", "2"],
+            species="Emiluvia orea",
+            modifier="sp.",
+            confidence=0.9,
+            notes="",
+            raw_text="1, 2. Emiluvia orea sp.",
+        )
+    ]
+    grobid_sections = [
+        {"page_index": 5, "text": "Gubbio, Italy, Late Cretaceous."},
+        {"page_index": 6, "text": "Scaglia Rossa formation, Campanian."},
+    ]
+    rows = [
+        {"panel_id": "1", "species": "x", "metadata": {}},
+        {"panel_id": "2", "species": "y", "metadata": {}},
+    ]
+    # Bind the helper method onto the stub.
+    from rlpe.pipeline import RadiolarianPipeline
+    pipe._attach_stage4_5_context = (
+        RadiolarianPipeline._attach_stage4_5_context.__get__(pipe, RadiolarianPipeline)
+    )
+    pipe._attach_stage4_5_context(
+        rows,
+        caption_pairs=pairs,
+        grobid_sections=grobid_sections,
+        figure_page_index=5,
+    )
+    # Both rows received the same figure-level caption pairs (Stage 4.5
+    # filters by panel_id internally).
+    for r in rows:
+        assert "caption_pairs" in r
+        assert isinstance(r["caption_pairs"], list)
+        assert len(r["caption_pairs"]) == 1
+        cp = r["caption_pairs"][0]
+        assert cp["species"] == "Emiluvia orea"
+        assert cp["labels"] == ["1", "2"]
+        # Page context is sliced from the same-page (page_index 5) text.
+        assert r["page_context_snippet"] == "Gubbio, Italy, Late Cretaceous."
+
+
+def test_attach_stage4_5_context_handles_noop_inputs(tmp_path):
+    """The helper must be a safe no-op when called with empty inputs:
+    no rows, no caption pairs, no body text. Rows without context just
+    keep their pre-existing fields untouched.
+    """
+    from rlpe.pipeline import RadiolarianPipeline
+
+    cfg = _make_cfg(tmp_path)
+    pipe = _StubPipeline(cfg)
+    from rlpe.pipeline import RadiolarianPipeline
+    pipe._attach_stage4_5_context = (
+        RadiolarianPipeline._attach_stage4_5_context.__get__(pipe, RadiolarianPipeline)
+    )
+    # No rows at all.
+    pipe._attach_stage4_5_context(
+        rows=[],
+        caption_pairs=None,
+        grobid_sections=None,
+        figure_page_index=0,
+    )
+    # Rows present but no context to attach.
+    rows = [{"panel_id": "1", "metadata": {}}]
+    pipe._attach_stage4_5_context(
+        rows=list(rows),
+        caption_pairs=None,
+        grobid_sections=None,
+        figure_page_index=0,
+    )
+    out = rows[0]
+    # We still stamp empty lists/strings so the Stage 4.5 worker's
+    # ``r.get(...)`` paths return a deterministic empty default rather
+    # than raising KeyError. See the helper docstring for the rationale.
+    assert out["caption_pairs"] == []
+    assert out["page_context_snippet"] == ""
