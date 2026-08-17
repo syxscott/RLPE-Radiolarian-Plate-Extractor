@@ -287,6 +287,68 @@ def test_method_keeps_regex_when_m3_low_confidence(tmp_path):
     assert out[0]["species"] == "regex_old_species"
 
 
+def test_method_keeps_regex_when_m3_returns_empty_species(tmp_path):
+    """Regression: when M3 returns confidence >= min_conf but with
+    empty species/label strings, the row should keep the regex match
+    (audit 2026-08-17 final review case 19).
+
+    The guard ``r["species"] = parsed.get("species") or r.get("species")``
+    at pipeline.py:2348 protects against M3 hallucinating an empty
+    species string while being otherwise confident.
+    """
+    cfg = _make_cfg(
+        tmp_path,
+        m3_per_panel_enabled=True,
+        m3_per_panel_min_conf=0.55,
+    )
+
+    # Same fixture as test_method_overwrites_species_when_m3_high_confidence,
+    # but the backend returns empty species/label even though it is
+    # "confident". This is the regression-pin scenario: the gate passes
+    # (confidence >= min_conf) but the payload is empty so the ``or``
+    # fallback must kick in and preserve the regex match.
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "",
+        "label": "",
+        "confidence": 0.95,
+        "reasoning": "high conf but empty payload",
+        "alternative": None,
+    }
+
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+
+    crop = tmp_path / "panel1.png"
+    _write_valid_png(crop)
+
+    results = [
+        {
+            "panel_id": "1",
+            "species": "regex_species_name",
+            "label": "1",
+            "panel_path": str(crop),
+            "caption_pairs": [{"panel_id": "1", "text": "Fig. 1, 1."}],
+            "page_context_snippet": "Tunisia, Late Cretaceous, Scaglia Fm",
+            "metadata": {},
+        }
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+
+    # The ``or`` fallback preserved the regex species + the original label.
+    assert out[0]["species"] == "regex_species_name"
+    assert out[0]["label"] == "1"
+    # The backend WAS called (the gate fired and the body executed), so
+    # the audit stamp must be present. This distinguishes the fallback
+    # path from the low-confidence path (no stamp there) and the
+    # error/exception paths (no stamp there either).
+    assert backend.infer_panel.called
+    assert "m3_per_panel" in out[0]["metadata"]
+    assert out[0]["metadata"]["m3_per_panel"]["confidence"] == pytest.approx(0.95)
+
+
 # ---------------------------------------------------------------------------
 # Task 5: failure-path coverage + caps + audit-tag provenance
 # ---------------------------------------------------------------------------
