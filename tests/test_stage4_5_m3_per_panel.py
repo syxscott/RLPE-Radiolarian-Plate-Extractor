@@ -614,9 +614,169 @@ def test_cli_argparse_accepts_m3_per_panel_flags(tmp_path):
     # Shared dest => explicit opt-out wins when it comes last.
     assert parser.parse_args(base + ["--m3-per-panel", "--no-m3-per-panel"]).m3_per_panel is False
 
-    # Wiring guard: the pipeline reads the enable gate off ``config.extra``
-    # but the threshold/caps off the typed fields, and PipelineConfig does
-    # not sync the two -- so the CLI must populate BOTH or the flag is a
-    # silent no-op.
+    # Wiring guard (Audit 2026-08-17): the CLI must pass the typed flag
+    # as a PipelineConfig kwarg, AND the pipeline must read it from the
+    # typed attribute -- not from ``config.extra``. The earlier mirror
+    # hack (which the previous test version asserted) was a workaround
+    # for mis-wired gates and has been removed: gates + CLI now use the
+    # typed attributes consistently.
     assert "m3_per_panel_enabled=args.m3_per_panel" in src
-    assert 'cfg.extra["m3_per_panel_enabled"]' in src
+    # The Stage 3 + multi-plate enrichment gates have the same defect;
+    # both must be wired as typed kwargs in the CLI.
+    assert "m3_stage3_enabled=bool(args.use_m3_stage3)" in src
+    assert "m3_multi_plate_enrich_enabled=bool(args.m3_multi_plate_enrich)" in src
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-08-17: regression tests for the flag-wiring bug.
+#
+# Pre-fix: CLI set ``m3_per_panel_enabled`` as a typed PipelineConfig
+# attribute, but the Stage 4.5 gate at pipeline.py line 1722 read it from
+# ``self.config.extra.get("m3_per_panel_enabled", False)`` which the CLI
+# never populated. Live smoke on Bandini 2011 (commit 654c0fc) showed
+# 0/64 rows reached Stage 4.5 even with ``--m3-per-panel``. The same
+# defect affected the ``m3_stage3`` / ``m3_multi_plate_enrich`` gates.
+#
+# These tests pin the gates down to the typed attributes and would have
+# caught the bug.
+# ---------------------------------------------------------------------------
+
+
+def test_config_has_m3_gate_typed_attrs(tmp_path):
+    """``PipelineConfig`` must expose the three M3 gate flags as typed
+    attributes (not only via ``extra``). Pre-fix the per-panel flag was
+    typed but the other two were not -- so the gates that read from
+    ``config.extra.get(...)`` silently returned False."""
+    cfg = _make_cfg(tmp_path)
+    for attr in (
+        "m3_per_panel_enabled",
+        "m3_stage3_enabled",
+        "m3_multi_plate_enrich_enabled",
+    ):
+        assert hasattr(cfg, attr), f"PipelineConfig must expose {attr}"
+        assert getattr(cfg, attr) is False, f"{attr} must default to False"
+
+
+def test_pipeline_gates_use_typed_attrs_not_extra(tmp_path):
+    """Source-guard regression for the flag-wiring bug. The three M3
+    gates in ``RadiolarianPipeline.run`` / ``_process_grobid_path`` must
+    read typed attributes, not ``config.extra.get(...)`` -- because the
+    CLI only sets the typed attributes."""
+    import inspect
+
+    from rlpe.pipeline import RadiolarianPipeline
+
+    src = inspect.getsource(RadiolarianPipeline)
+    # The buggy pattern: ``self.config.extra.get("m3_per_panel_enabled", ...``.
+    # After the fix, none of the three M3 gates should still use this
+    # pattern.
+    for forbidden in (
+        'self.config.extra.get("m3_per_panel_enabled"',
+        'self.config.extra.get("m3_stage3"',
+        'self.config.extra.get("m3_multi_plate_enrich"',
+    ):
+        assert forbidden not in src, (
+            f"Pipeline gate still reads from config.extra -- pre-fix "
+            f"behaviour that silently disabled the gate: {forbidden!r}"
+        )
+    # The correct pattern: read typed attributes directly. Spot-check
+    # at least one of the three gates exists.
+    assert "self.config.m3_per_panel_enabled" in src
+    assert "self.config.m3_stage3_enabled" in src
+    assert "self.config.m3_multi_plate_enrich_enabled" in src
+
+
+def test_stage4_5_gate_fires_with_typed_attr(tmp_path):
+    """End-to-end regression: build a config with the typed attribute set
+    to True, drop a row through the per-panel path, and assert the
+    metadata stamp is present (i.e. the gate fired). Pre-fix, the gate
+    read ``config.extra.get(...)`` which returned False so the early
+    return triggered and ``metadata.m3_per_panel`` was never stamped."""
+    from types import SimpleNamespace
+
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+
+    # Stub backend that returns a high-confidence parse so the method
+    # stamps metadata even on this short-circuited path.
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "Emiluvia orea",
+        "label": "1",
+        "confidence": 0.9,
+        "reasoning": "test",
+    }
+
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = SimpleNamespace(backend=backend)
+
+    crop = tmp_path / "panel.png"
+    _write_valid_png(crop)
+    rows = [
+        {
+            "panel_id": "1",
+            "species": "regex_old",
+            "label": "1",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
+    ]
+    out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
+    # The stamp proves the gate fired; the species overwrite proves the
+    # body executed end-to-end.
+    assert "m3_per_panel" in out[0]["metadata"]
+    assert out[0]["species"] == "Emiluvia orea"
+
+
+def test_stage4_5_gate_short_circuits_when_typed_attr_false(tmp_path):
+    """Companion regression: when the typed attribute is False, the
+    method returns the rows untouched. Pre-fix, the gate always read
+    False from ``config.extra`` so this short-circuit was the only path
+    that ever fired in production."""
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=False)
+    pipe = _StubPipeline(cfg)
+    # Give the stub a backend that would otherwise produce a stamp;
+    # the gate must short-circuit before the body runs.
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "X", "label": "X", "confidence": 0.9, "reasoning": "r",
+    }
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+
+    crop = tmp_path / "panel.png"
+    _write_valid_png(crop)
+    rows = [
+        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
+         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+    ]
+    out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
+    assert out == rows, "gate must short-circuit when typed attr is False"
+    assert "m3_per_panel" not in out[0]["metadata"]
+    assert not backend.infer_panel.called, "body must not run when gate is False"
+
+
+def test_cli_no_longer_mirrors_m3_per_panel_into_extra(tmp_path):
+    """The pre-fix workaround was to copy the typed attrs into ``extra``
+    in the CLI. After the fix the CLI passes typed attrs directly and
+    the pipeline gates read them -- the mirror is no longer required
+    and removing it ensures we cannot reintroduce the silent split
+    between typed attr and ``extra`` key."""
+    import inspect
+
+    from rlpe import cli as cli_mod
+
+    src = inspect.getsource(cli_mod)
+    # The four mirror lines that previously copied typed attrs into
+    # extra. After the fix they must be gone -- if they come back, the
+    # gate-vs-typed-attr split can return.
+    assert 'cfg.extra["m3_per_panel_enabled"]' not in src, (
+        "CLI must NOT mirror m3_per_panel_enabled into extra; gates "
+        "now read the typed attribute directly."
+    )
+    assert 'cfg.extra["m3_per_panel_min_conf"]' not in src
+    assert 'cfg.extra["m3_per_panel_max_per_figure"]' not in src
+    assert 'cfg.extra["m3_per_panel_max_per_paper"]' not in src

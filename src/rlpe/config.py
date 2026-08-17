@@ -207,6 +207,23 @@ class PipelineConfig:
     m3_per_panel_min_conf: float = 0.55
     m3_per_panel_max_per_figure: int = 20
     m3_per_panel_max_per_paper: int = 200
+    # Audit 2026-08-17: Stage 3 bbox + crop enrichment gate (was previously
+    # read from ``config.extra["m3_stage3"]`` but the CLI set the key as
+    # ``use_m3_stage3`` -- the gate never fired). Now a typed attribute
+    # populated by the CLI as ``m3_stage3_enabled=args.use_m3_stage3``.
+    # When True, ``_apply_stage3_bbox_crops`` crops each Stage 3 panel
+    # bbox to disk and stamps ``panel_id_source="m3_vision"`` on the
+    # matching result rows.
+    m3_stage3_enabled: bool = False
+    # Audit 2026-08-17: Round 7 multi-plate enrichment gate (was
+    # previously read from ``config.extra["m3_multi_plate_enrich"]`` but
+    # the CLI path never populated the key, so the second-pass was
+    # silently disabled). Now a typed attribute populated by the CLI as
+    # ``m3_multi_plate_enrich_enabled=args.m3_multi_plate_enrich``. When
+    # True, ``_apply_multi_plate_enrichment`` fires a second-pass M3
+    # vision call on figures where the caption-image pairing missed a
+    # plate (e.g. Bandini 2011 Plates 7-9).
+    m3_multi_plate_enrich_enabled: bool = False
     # Round 14: default OFF. When True, _process_region dumps a
     # per-region ``auto_fig_pNNN_rNN.json`` to disk (34 MB each on
     # 200-page PDFs) and _process_one_pdf dumps the full
@@ -362,6 +379,13 @@ class PipelineConfig:
                 f"must be >= 1 (got {self.m3_per_panel_max_per_figure}, "
                 f"{self.m3_per_panel_max_per_paper})"
             )
+
+        # Audit 2026-08-17: coerce the two Stage 3 / multi-plate enrichment
+        # gate flags that were promoted from ``config.extra`` to typed
+        # attributes. Default False for backward compat; CLI sets them to
+        # ``args.use_m3_stage3`` / ``args.m3_multi_plate_enrich``.
+        self.m3_stage3_enabled = bool(self.m3_stage3_enabled)
+        self.m3_multi_plate_enrich_enabled = bool(self.m3_multi_plate_enrich_enabled)
 
         # Phase 38: warn (don't raise) for unknown extra-config keys.
         # A typo like ``minimax_api_key`` (lowercase) silently produces

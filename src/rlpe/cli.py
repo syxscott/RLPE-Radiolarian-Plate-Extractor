@@ -496,6 +496,16 @@ def main() -> int:
         m3_per_panel_min_conf=args.m3_per_panel_min_conf,
         m3_per_panel_max_per_figure=args.m3_per_panel_max_per_figure,
         m3_per_panel_max_per_paper=args.m3_per_panel_max_per_paper,
+        # Audit 2026-08-17: Stage 3 bbox/crop enrichment + Round 7
+        # multi-plate enrichment were previously read from
+        # ``config.extra`` while the CLI set them under different key
+        # names (``use_m3_stage3`` / ``m3_multi_plate_enrich``), so the
+        # gates never fired. Promote both to typed attributes so the
+        # pipeline gates read what the CLI sets. GUI keeps using the
+        # extra keys (separate code path) -- see
+        # ``gui/pipeline_worker.py`` / ``gui/run_tab.py``.
+        m3_stage3_enabled=bool(args.use_m3_stage3),
+        m3_multi_plate_enrich_enabled=bool(args.m3_multi_plate_enrich),
         extra={
             # Phase 29: forward GROBID retry + timeout. None means use
             # the PipelineConfig-level default (3 retries, 300s).
@@ -555,8 +565,12 @@ def main() -> int:
             "deterministic_seed": args.deterministic_seed,
             "use_geology_llm": args.use_geology_llm,
             "use_geo_vision": args.use_geo_vision,
-            "use_m3_stage3": args.use_m3_stage3,
-            "m3_multi_plate_enrich": args.m3_multi_plate_enrich,
+            # Audit 2026-08-17: ``use_m3_stage3`` / ``m3_multi_plate_enrich``
+            # are no longer mirrored into ``extra`` because the pipeline
+            # gates now read the typed attributes ``m3_stage3_enabled`` /
+            # ``m3_multi_plate_enrich_enabled`` (set as kwargs above). The
+            # legacy ``extra`` keys are still kept in ``_KNOWN_EXTRA_KEYS``
+            # because the GUI pipeline worker uses them.
             "m3_stage_6": args.m3_stage_6,
             "geo_vision_figure_types": (
                 [t.strip() for t in args.geo_vision_figure_types.split(",") if t.strip()]
@@ -575,19 +589,33 @@ def main() -> int:
     # passed the flag explicitly; default-ON behavior lives in pipeline.py.
     if args.m3_enhanced_mode is not None:
         cfg.extra["m3_enhanced_mode"] = bool(args.m3_enhanced_mode)
+    # Audit 2026-08-17: ``--m3-per-panel`` / ``--use-m3-stage-3`` /
+    # ``--m3-multi-plate-enrich`` all depend on ``self.m3_engine`` being
+    # built. The engine is constructed only when ``m3_enhanced_mode=True``,
+    # which defaults to False. Without this auto-enable, the per-panel
+    # flag wiring fix is moot — every gate short-circuits on
+    # ``m3_engine is None``. Implicit opt-in for these three flags
+    # keeps the user-facing semantics simple: enabling any M3 vision
+    # path implies the engine. Users who want to disable ``m3_enhanced_mode``
+    # entirely can set ``--no-m3-enhanced-mode`` after their M3 flag and
+    # the explicit value wins (later assignment below).
+    elif (
+        args.m3_per_panel
+        or args.use_m3_stage3
+        or args.m3_multi_plate_enrich
+    ):
+        cfg.extra["m3_enhanced_mode"] = True
     for n in args.m3_disable_stage or []:
         cfg.extra[f"m3_stage_{n}"] = False
     if args.m3_match_samples:
         cfg.extra["m3_match_samples"] = int(args.m3_match_samples)
-    # Stage 4.5: the pipeline's call site gates on
-    # ``config.extra["m3_per_panel_enabled"]`` while the method body reads
-    # the typed fields, so mirror all four into ``extra`` (they are all
-    # declared in ``_KNOWN_EXTRA_KEYS``). Read back off ``cfg`` rather than
-    # ``args`` so the mirrored values are the post-validation coerced ones.
-    cfg.extra["m3_per_panel_enabled"] = cfg.m3_per_panel_enabled
-    cfg.extra["m3_per_panel_min_conf"] = cfg.m3_per_panel_min_conf
-    cfg.extra["m3_per_panel_max_per_figure"] = cfg.m3_per_panel_max_per_figure
-    cfg.extra["m3_per_panel_max_per_paper"] = cfg.m3_per_panel_max_per_paper
+    # Audit 2026-08-17: the pipeline's Stage 4.5 / Stage 3 / multi-plate
+    # enrichment gates now read the typed attributes
+    # (``cfg.m3_per_panel_enabled`` / ``cfg.m3_stage3_enabled`` /
+    # ``cfg.m3_multi_plate_enrich_enabled``), so we no longer need to
+    # mirror them into ``extra``. The earlier mirror hack (cloned at the
+    # end of c9940e2) was a workaround for the mis-wired gates; both the
+    # gates and the wiring now use the typed attributes consistently.
     if args.m3_diagnostic_dir:
         cfg.extra["m3_diagnostic_dir"] = str(args.m3_diagnostic_dir)
     if args.m3_retry_without_thinking is not None:

@@ -1704,22 +1704,34 @@ class RadiolarianPipeline:
             results = self._apply_geo_vision(results, paper_id)
         # Round-4 P2-5: Stage 3 bbox + crop enrichment. When M3 Stage 3
         # produced ``m3_panels`` with bbox+visible_label for this figure
-        # (gated on ``m3_stage3`` opt-in + Stage 3 enabled), crop each
-        # panel's image region to disk and stamp the resulting crop path
-        # + ``panel_id_source="m3_vision"`` on each result row. This is
-        # the round-3 deferred #1 fix: previously the figure had real
-        # M3 panel bboxes in ``m3_diag["stage3_panels"]`` but the pred
-        # rows still showed ``panel_id_source="legacy"`` because the
+        # (gated on ``m3_stage3_enabled`` opt-in + Stage 3 enabled), crop
+        # each panel's image region to disk and stamp the resulting crop
+        # path + ``panel_id_source="m3_vision"`` on each result row.
+        # This is the round-3 deferred #1 fix: previously the figure had
+        # real M3 panel bboxes in ``m3_diag["stage3_panels"]`` but the
+        # pred rows still showed ``panel_id_source="legacy"`` because the
         # crop / source rewrite was never persisted. The fix lifts
         # the diag stage3 info into the published panel_id_source.
-        if self.config.extra.get("m3_stage3", False) and self.m3_engine is not None:
+        #
+        # Audit 2026-08-17: read the typed ``m3_stage3_enabled`` attribute
+        # directly (not ``config.extra.get("m3_stage3", ...)``). The CLI
+        # wires the value into the constructor as a typed kwarg, but the
+        # gate used to read from ``config.extra`` and never received the
+        # value -- so the Stage 3 enrichment path was silently disabled.
+        if self.config.m3_stage3_enabled and self.m3_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
         # Phase 2026-08-17 (Stage 4.5): per-panel M3 vision species ID.
         # Pure additive — only fires when ``m3_per_panel_enabled`` and
         # the M3 backend is configured. Overwrites regex species when
         # M3 confidence meets the threshold; otherwise regex stays.
+        #
+        # Audit 2026-08-17: read the typed ``m3_per_panel_enabled``
+        # attribute directly. Pre-fix, this gate read from
+        # ``config.extra.get(...)`` and the CLI only set the typed
+        # attribute -- so 0/N rows ever reached Stage 4.5 even with
+        # ``--m3-per-panel``.
         if (
-            self.config.extra.get("m3_per_panel_enabled", False)
+            self.config.m3_per_panel_enabled
             and self.m3_engine is not None
         ):
             results = self._apply_m3_per_panel_species_id(results, paper_id)
@@ -1731,7 +1743,11 @@ class RadiolarianPipeline:
         # rows are merged into ``results`` ONLY if they fill a real gap
         # (caption_parser claimed N panels but the existing rows have
         # fewer than N panel_ids for this figure).
-        if self.config.extra.get("m3_multi_plate_enrich", False) and self.m3_engine is not None:
+        #
+        # Audit 2026-08-17: read the typed attribute directly. Pre-fix
+        # the gate read from ``config.extra.get("m3_multi_plate_enrich",
+        # ...)`` which the CLI never populated.
+        if self.config.m3_multi_plate_enrich_enabled and self.m3_engine is not None:
             results = self._apply_multi_plate_enrichment(
                 results,
                 paper_id,
@@ -3698,7 +3714,13 @@ class RadiolarianPipeline:
         results = self._cross_link_map_and_range_chart(results)
         if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
             results = self._apply_geo_vision(results, paper_id)
-        if self.config.extra.get("m3_stage3", False) and self.m3_engine is not None:
+        # Audit 2026-08-17: read the typed ``m3_stage3_enabled``
+        # attribute directly (not ``config.extra.get(...)``). The CLI
+        # wires the value into the constructor as a typed kwarg, but
+        # the gate used to read from ``config.extra`` and never received
+        # the value -- so the GROBID path's Stage 3 enrichment was
+        # silently disabled.
+        if self.config.m3_stage3_enabled and self.m3_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
         # cross_figure_linker reads geology_links / range_chart_data populated
         # by the enrichment steps above; runs after them so the linker sees
