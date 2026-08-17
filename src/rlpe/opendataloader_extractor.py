@@ -493,12 +493,14 @@ class OpenDataLoaderExtractor:
                 chosen_img = max(
                     same_page_imgs,
                     key=lambda el: (
-                        int((el.get("bounding box") or [0, 0, 0, 0])[2] or 0)
-                        - int((el.get("bounding box") or [0, 0, 0, 0])[0] or 0)
-                    )
-                    * (
-                        int((el.get("bounding box") or [0, 0, 0, 0])[3] or 0)
-                        - int((el.get("bounding box") or [0, 0, 0, 0])[1] or 0)
+                        (
+                            int((el.get("bounding box") or [0, 0, 0, 0])[2] or 0)
+                            - int((el.get("bounding box") or [0, 0, 0, 0])[0] or 0)
+                        )
+                        * (
+                            int((el.get("bounding box") or [0, 0, 0, 0])[3] or 0)
+                            - int((el.get("bounding box") or [0, 0, 0, 0])[1] or 0)
+                        )
                     ),
                 )
             if chosen_img is None:

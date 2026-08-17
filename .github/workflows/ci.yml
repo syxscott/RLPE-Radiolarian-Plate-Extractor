@@ -27,6 +27,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      # PySide6 on Linux needs system libs (libEGL, libxkbcommon,
+      # libdbus, libxcb-cursor, etc.) that the upstream wheel doesn't
+      # bundle. Without these, ``from PySide6.QtWidgets import
+      # QApplication`` fails at collection time with
+      # ``ImportError: libEGL.so.1: cannot open shared object file``.
+      # Installing the meta-package libxcb-cursor0 + the rest brings
+      # them all in for ubuntu-latest runners.
+      - name: Install PySide6 system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libfontconfig1 libxrender1
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
@@ -53,6 +68,9 @@ jobs:
       - name: Run pytest with coverage
         env:
           PYTHONPATH: src
+          # Force Qt to use the offscreen platform so headless CI
+          # runners don't need a real display server.
+          QT_QPA_PLATFORM: offscreen
         run: |
           python -m pytest tests/ -q --tb=short \
             --cov=rlpe --cov-report=term-missing --cov-report=xml \
@@ -77,7 +95,12 @@ jobs:
           cache-dependency-path: |
             pyproject.toml
       - name: Install ruff
-        run: python -m pip install ruff
+        # Pin to the same version used in dev so the format check stays
+        # deterministic across runs. Without a pin, pip picks the latest
+        # version on GitHub Actions runners which can disagree with the
+        # local format pass (e.g. 0.13.x wrappings on long lambdas that
+        # 0.12.x left alone). Keep in sync with pyproject [tool.ruff].
+        run: python -m pip install "ruff==0.13.0"
       - name: Lint
         run: |
           ruff check src/ tests/ scripts/
