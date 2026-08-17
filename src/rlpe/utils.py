@@ -30,23 +30,28 @@ def stable_id(path: Path | str) -> str:
     The hash is computed in streaming chunks so a 100MB PDF doesn't
     allocate 100MB of RAM per call (and so the worker pool doesn't
     cumulatively hold many full PDFs in memory at once).
+
+    NOTE: this is SHA1, not SHA256. Phase 54 audit proposed a SHA1→SHA256
+    switch (commit referencing "m17") but that change broke backward
+    compat with the committed 9-paper gold dataset (data/gold/*.jsonl),
+    which still uses the SHA1-derived paper_ids. Regenerating predictions
+    against the current code would emit paper_ids that don't match any
+    gold file, dropping aggregate F1 to 0. The SHA1 risk is acceptable
+    here because:
+      * paper_id is a content-dedup key, not a security primitive
+      * the corpus is a fixed set of OA radiolarian PDFs; an attacker
+        cannot realistically inject a SHA1-colliding radiolarian PDF
+      * the change broke a working CI smoke check, so we revert to keep
+        gold + predictions + eval internally consistent.
     """
     p = Path(path)
     try:
         if p.is_file():
             size = p.stat().st_size
-            # Phase 54 audit m17 — switch from SHA1 to SHA256. SHA1 is
-            # broken for adversarial collisions (SHAttered, 2017); for
-            # paper-dedup it's harmless in practice (an attacker can't
-            # craft a colliding radiolarian PDF), but SHA256 costs
-            # ~negligible extra and removes a misleading "vanishingly
-            # rare" comment. Also widen the truncation prefix from 12
-            # to 16 hex chars (64 bits) so an accidental collision on
-            # two distinct PDFs is even more unlikely.
-            h = hashlib.sha256()
-            # size prefix prevents the (vanishingly rare) SHA256 collision
+            # size prefix prevents the (vanishingly rare) SHA1 collision
             # between two PDFs of the same content length, and makes
             # the id clearly content-derived.
+            h = hashlib.sha1()
             h.update(f"{size}:".encode("ascii"))
             with p.open("rb") as f:
                 for chunk in iter(lambda: f.read(1024 * 1024), b""):
@@ -54,8 +59,7 @@ def stable_id(path: Path | str) -> str:
             return h.hexdigest()[:16]
     except OSError:
         pass
-    # Phase 54 audit m17 — match the SHA256 change above.
-    return hashlib.sha256(str(path).encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return hashlib.sha1(str(path).encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
 def _json_default(obj: Any) -> Any:

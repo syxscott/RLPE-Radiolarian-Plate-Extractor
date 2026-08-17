@@ -175,9 +175,12 @@ def test_pattern_list_has_round21_additions():
     and patterns added in Round 21."""
     import re
 
-    src = Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/src/rlpe/converters.py"
-    ).read_text(encoding="utf-8")
+    # Resolve converters.py relative to this test file so the path
+    # works in CI (where the runner cwd is the checkout root, not the
+    # developer's /home/user/shenyaxuan/... absolute path).
+    src = (Path(__file__).resolve().parent.parent / "src" / "rlpe" / "converters.py").read_text(
+        encoding="utf-8"
+    )
     # Strip whitespace for substring search so multi-line strings
     # (Python implicit concatenation across lines) match.
     src_compact = re.sub(r"\s+", "", src)
