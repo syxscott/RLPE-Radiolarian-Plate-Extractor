@@ -156,15 +156,25 @@ def test_boughdiri_short_codes_still_work():
 
 
 def test_legacy_sample_capital_still_works():
-    """'Sample 12' (capital S) must still match the S_ pattern. The
-    Round 20 regex captures only the ID (not the literal word
-    "Sample"), so the resulting sample_id is ``S_12``."""
+    """'Sample 12' (capital S) must still match *some* sample-id pattern.
+
+    Audit 2026-08-18: the Phase 65 ``extract_sample_ids`` helper now
+    matches ``Sample N`` first and emits ``X_N`` (the helper prefix).
+    The legacy ``S_`` regex still fires but is dropped by the
+    cross-prefix dedup because the helper already registered
+    ``(paper_id, "12")`` in ``raw_seen``. The invariant we still need
+    to defend is that the literal numeric ID ``12`` is captured as
+    *some* sample record (either ``S_12`` legacy OR ``X_12`` helper);
+    the prefix depends on which detector fires first. Accept either."""
     from rlpe.converters import sample_records_from_matches
 
     matches = [_build_match("p1", "From Sample 12, locality X")]
     samples = sample_records_from_matches(matches)
     sids = {s["sample_id"] for s in samples}
-    assert "S_12" in sids, f"Legacy Sample pattern broken: {sids}"
+    assert "S_12" in sids or "X_12" in sids, (
+        f"Legacy Sample pattern broken (expected S_12 from regex path "
+        f"or X_12 from extract_sample_ids helper): {sids}"
+    )
 
 
 # --- 6) Source guard: pattern list has the new entries -----------------
