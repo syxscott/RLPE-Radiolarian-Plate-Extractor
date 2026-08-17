@@ -1714,6 +1714,15 @@ class RadiolarianPipeline:
         # the diag stage3 info into the published panel_id_source.
         if self.config.extra.get("m3_stage3", False) and self.m3_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
+        # Phase 2026-08-17 (Stage 4.5): per-panel M3 vision species ID.
+        # Pure additive — only fires when ``m3_per_panel_enabled`` and
+        # the M3 backend is configured. Overwrites regex species when
+        # M3 confidence meets the threshold; otherwise regex stays.
+        if (
+            self.config.extra.get("m3_per_panel_enabled", False)
+            and self.m3_engine is not None
+        ):
+            results = self._apply_m3_per_panel_species_id(results, paper_id)
         # Round 7 multi-plate enrichment: when the OpenDataLoader
         # caption-image pairing missed a plate (e.g. Bandini 2011 Plate
         # 7-9 were dropped), fire a second-pass M3 vision call on each

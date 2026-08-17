@@ -533,3 +533,29 @@ def test_method_records_image_sha(tmp_path):
     md = out[0]["metadata"]["m3_per_panel"]
     assert "image_sha" in md
     assert len(md["image_sha"]) == 16  # truncated sha256[:16]
+
+
+def test_pipeline_main_loop_calls_stage4_5(tmp_path):
+    """Source-guard: the main per-figure loop in ``pipeline.run`` (or
+    equivalent) must invoke ``_apply_m3_per_panel_species_id`` after
+    Stage 3 bbox crops. Pre-fix the call was missing → opt-in flag
+    had no effect."""
+    import inspect
+
+    from rlpe import pipeline as pipeline_mod
+    from rlpe.pipeline import RadiolarianPipeline
+
+    src = inspect.getsource(RadiolarianPipeline)
+    assert "_apply_m3_per_panel_species_id" in src
+    # Must be called AFTER stage3 bbox crops, BEFORE multi-plate enrichment
+    stage3_idx = src.find("_apply_stage3_bbox_crops")
+    per_panel_idx = src.find("_apply_m3_per_panel_species_id")
+    enrich_idx = src.find("_apply_multi_plate_enrichment")
+    assert stage3_idx != -1 and per_panel_idx != -1 and enrich_idx != -1, (
+        "all three methods must exist on the pipeline"
+    )
+    assert stage3_idx < per_panel_idx < enrich_idx, (
+        f"per-panel must be called AFTER stage3 (idx={stage3_idx}) and "
+        f"BEFORE multi-plate enrich (idx={enrich_idx}); got per-panel "
+        f"at {per_panel_idx}"
+    )
