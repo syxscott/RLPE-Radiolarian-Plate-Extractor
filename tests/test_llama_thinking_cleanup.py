@@ -207,3 +207,70 @@ def test_clean_then_parse_yields_real_species_not_placeholder():
     parsed = parse_json_from_text(cleaned)
     assert parsed["species"] == "Ceratartia"
     assert parsed.get("confidence") is None or parsed.get("confidence") == 0.0
+
+# ---------------------------------------------------------------------------
+# parse_json_from_text brace-balanced fallback (Audit 2026-08-17, BUG-C)
+# ---------------------------------------------------------------------------
+
+def test_parse_recovers_json_after_prose_with_braces():
+    """Audit 2026-08-17 BUG-C: M3 / Qwen3 sometimes emit prose with
+    inline ``{key: value}`` placeholders BEFORE the real JSON.
+    ``_JSON_RE = r\"{.*?}\"`` matched the FIRST prose block (which is
+    not valid JSON — missing quotes around keys) and json.loads raised.
+    After the fix, ``_last_balanced_json_object`` scans for the LAST
+    balanced JSON object, which is the real answer.
+    """
+    from rlpe.llm_backends import parse_json_from_text
+
+    prose_with_braces_then_json = (
+        'The relevant context is {locality: Tunisia, age: Late Cretaceous}. '
+        'Based on this I identify the species as:\n'
+        '```json\n'
+        '{"species": "Patellula euessieei", "confidence": 0.3, "reasoning": "..."}'
+        '\n```'
+    )
+    parsed = parse_json_from_text(prose_with_braces_then_json)
+    assert parsed["species"] == "Patellula euessieei"
+    assert parsed["confidence"] == 0.3
+
+
+def test_parse_recovers_json_without_closing_fence():
+    """Audit 2026-08-17: M3 truncated output (max_tokens hit) often
+    lacks the closing ```json``` fence. The previous fence-strip regex
+    ``re.sub(r\"\\s*```\\s*$\", \"\", cleaned)`` then leaves the
+    unclosed-fence marker at the start of the text, which makes
+    ``json.loads(cleaned)`` fail on the truncated body."""
+    from rlpe.llm_backends import parse_json_from_text
+
+    truncated = (
+        '```json\n'
+        '{\n'
+        '  "species": "Patellula euessieei",\n'
+        '  "confidence": 0.3,\n'
+        '  "reasoning": "Tunisia Late Cretaceous"\n'
+        '}'
+    )
+    parsed = parse_json_from_text(truncated)
+    assert parsed["species"] == "Patellula euessieei"
+    assert parsed["confidence"] == 0.3
+
+
+def test_parse_handles_nested_json_after_prose():
+    """Nested JSON inside prose preamble + the real answer at the end.
+
+    Note: ``_normalize_panel_dict`` only keeps
+    ``label/species/confidence/reasoning`` keys (audit M12 contract),
+    so we assert on those, not on the dropped nested ``details`` key.
+    """
+    from rlpe.llm_backends import parse_json_from_text
+
+    text = (
+        'I see context like {"foo": "bar"} in the prompt. '
+        'My answer: {"species": "Tricolocapsa", "confidence": 0.7, '
+        '"reasoning": "based on Tunisian Late Cretaceous", '
+        '"details": {"strat": "Scaglia Fm"}}'
+    )
+    parsed = parse_json_from_text(text)
+    assert parsed["species"] == "Tricolocapsa"
+    assert parsed["confidence"] == 0.7
+    assert "Late Cretaceous" in parsed["reasoning"]

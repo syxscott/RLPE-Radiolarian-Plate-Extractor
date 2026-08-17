@@ -354,11 +354,39 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
         except Exception:
             pass
 
-    # 3) Fall back to first {...} match (non-greedy to avoid swallowing)
+    # 3) Fall back to first {...} match (non-greedy to avoid swallowing).
+    #    Audit 2026-08-17 BUG-C: when prose preamble contains inline
+    #    JSON-like placeholders (e.g. ``{foo: bar}`` quoting a dictionary
+    #    shape), the non-greedy ``_JSON_RE`` matches the FIRST object
+    #    — which is not the real answer. We accept the match only if
+    #    it carries at least one of the schema's expected keys
+    #    (``species`` / ``label``); otherwise fall through to path 4
+    #    which uses the LAST balanced object (the real answer).
     obj_match = _JSON_RE.search(cleaned)
     if obj_match:
         try:
             obj = json.loads(obj_match.group(0))
+            if isinstance(obj, dict):
+                if any(k in obj for k in ("species", "label")):
+                    return _normalize_panel_dict(obj)
+                # else: not a panel-shape JSON, keep looking
+        except Exception:
+            pass
+    # 4) Audit 2026-08-17: brace-balanced scan. Real M3 / Qwen3
+    #    responses sometimes emit a prose preamble that itself
+    #    contains ``{...}`` placeholders (e.g. "The relevant context is
+    #    {locality: Tunisia, age: Late Cretaceous}") followed by a
+    #    JSON object inside a ```json``` fence but the fence is
+    #    unclosed (truncated output, max_tokens hit). The non-greedy
+    #    ``_JSON_RE`` above matches the FIRST prose block — which is
+    #    NOT valid JSON — and json.loads raises. ``_last_balanced_json_object``
+    #    scans for balanced braces and returns the LAST one, which is
+    #    almost always the real JSON answer (the model puts prose
+    #    first and JSON last).
+    last_obj = _last_balanced_json_object(cleaned)
+    if last_obj is not None:
+        try:
+            obj = json.loads(last_obj)
             if isinstance(obj, dict):
                 return _normalize_panel_dict(obj)
         except Exception:
