@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from dataclasses import asdict
@@ -12,6 +13,10 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+from PIL import Image
+
+from .llm_backends import _normalize_panel_dict
+from .m3_engine import _MATCH_PANEL_SYSTEM
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +88,26 @@ from .types import (
     PaperMetadata,
 )
 from .utils import ensure_dir, slugify, stable_id, write_json, write_jsonl
+
+
+def _sha256_file(path: Path) -> str:
+    """Cheap content hash for image reproducibility audit (first 16 hex chars).
+
+    Distinct from the longer ``_sha256_file`` in ``provenance/stamp.py``:
+    that one is used as a stable content-addressable key for caching
+    pipeline artifacts (returns the full digest). This one is stamped
+    onto per-row M3-vision metadata so an operator can quickly tell
+    whether two panels came from the same crop without comparing MBs of
+    image data. 16 hex chars (64 bits) is enough entropy to disambiguate
+    real-world crops.
+    """
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(8192):
+            h.update(chunk)
+    return h.hexdigest()[:16]
 
 
 class RadiolarianPipeline:
@@ -2185,7 +2210,6 @@ class RadiolarianPipeline:
                     paper_id,
                 )
             return results
-        # TODO (Task 4): fan out via semaphore + per-panel call
         # Surface the missing-context rate for the non-empty-items path too
         # so partial-skip rates are visible in DEBUG logs.
         if missing_caption_pairs or missing_page_context:
@@ -2206,6 +2230,85 @@ class RadiolarianPipeline:
                 len(items),
                 paper_id,
             )
+
+        # 2. Apply per-figure cap. Group by figure_id.
+        per_fig_count: dict[str, int] = {}
+        capped_items: list[tuple[dict[str, Any], Path, str, str]] = []
+        for r, crop, cap, ctx in items:
+            fid = r.get("figure_id", "__default__")
+            if per_fig_count.get(fid, 0) >= self.config.m3_per_panel_max_per_figure:
+                continue
+            per_fig_count[fid] = per_fig_count.get(fid, 0) + 1
+            capped_items.append((r, crop, cap, ctx))
+        # Apply per-paper cap.
+        capped_items = capped_items[: self.config.m3_per_panel_max_per_paper]
+
+        # 3. Fan out via ThreadPoolExecutor + bounded concurrency.
+        backend = self.m3_engine.backend
+        max_conc = 8
+        try:
+            # Prefer MiniMax_max_concurrent if it's a positive int
+            raw = self.config.extra.get("MiniMax_max_concurrent", 8)
+            if isinstance(raw, int) and raw > 0:
+                max_conc = raw
+        except Exception:
+            pass
+        executor = ThreadPoolExecutor(max_workers=max_conc)
+
+        def _one(
+            r: dict[str, Any],
+            crop: Path,
+            caption_for_panel: str,
+            page_context: str,
+        ) -> None:
+            try:
+                img = Image.open(crop).convert("RGB")
+                prompt = (
+                    f"[This panel]\n{caption_for_panel.strip()}\n\n"
+                    f"[Same-page context]\n{page_context.strip()[:1500]}\n\n"
+                    "Identify the radiolarian species in this single panel. "
+                    "Output strict JSON: "
+                    "{label, species, confidence, reasoning, alternative}."
+                )
+                t0 = time.monotonic()
+                raw_resp = backend.infer_panel(
+                    panel_image=img,
+                    caption_text=caption_for_panel,
+                    ocr_labels=[r.get("panel_id", "")],
+                    system_prompt=_MATCH_PANEL_SYSTEM,
+                    user_prompt=prompt,
+                )
+                dt = time.monotonic() - t0
+                if not isinstance(raw_resp, dict) or raw_resp.get("fallback_used"):
+                    return
+                parsed = _normalize_panel_dict(raw_resp)
+                parsed["confidence"] = max(
+                    0.0, min(1.0, float(parsed.get("confidence") or 0.0))
+                )
+                md = r.setdefault("metadata", {})
+                md["m3_per_panel"] = {
+                    "species": parsed.get("species"),
+                    "label": parsed.get("label"),
+                    "confidence": parsed["confidence"],
+                    "reasoning": parsed.get("reasoning"),
+                    "alternative": parsed.get("alternative"),
+                    "latency_sec": round(dt, 2),
+                    "fallback_used": False,
+                    "image_sha": _sha256_file(crop),
+                }
+                if parsed["confidence"] >= self.config.m3_per_panel_min_conf:
+                    r["species"] = parsed.get("species") or r.get("species")
+                    r["label"] = parsed.get("label") or r.get("label")
+            except Exception as exc:
+                logger.warning(
+                    "Stage 4.5 M3 per-panel failed for %s/%s: %s",
+                    paper_id,
+                    r.get("panel_id"),
+                    exc,
+                )
+
+        list(executor.map(lambda t: _one(*t), capped_items))
+        executor.shutdown(wait=True)
         return results
 
     def _apply_multi_plate_enrichment(

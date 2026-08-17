@@ -6,9 +6,13 @@ Plan: docs/superpowers/plans/2026-08-17-m3-per-panel-pipeline.md
 from __future__ import annotations
 
 import inspect
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+from PIL import Image
 
 from rlpe.config import PipelineConfig
 
@@ -181,3 +185,103 @@ def test_method_truncates_page_context_at_1500_chars(tmp_path):
     assert "1500" in src, (
         "page-context snippet must be truncated (spec §3 says 1500 chars)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: fan-out via semaphore + per-panel backend call
+# ---------------------------------------------------------------------------
+
+
+def _write_valid_png(path: Path) -> None:
+    """Write a tiny valid PNG so ``PIL.Image.open`` can decode it.
+
+    PIL rejects an \"almost PNG\" byte string (the magic without a
+    parseable IHDR chunk) with ``UnidentifiedImageError``, which would
+    drive the production ``_one`` helper onto its exception path and
+    silently leave the row's species unchanged — masking whatever the
+    test was trying to assert. A real 10x10 white PNG keeps the test
+    focused on the confidence-gate wiring.
+    """
+    Image.new("RGB", (10, 10), "white").save(path)
+
+
+def test_method_overwrites_species_when_m3_high_confidence(tmp_path):
+    """When ``backend.infer_panel`` returns parseable JSON with
+    confidence ``>= m3_per_panel_min_conf``, the row's species is
+    overwritten."""
+    cfg = _make_cfg(
+        tmp_path,
+        m3_per_panel_enabled=True,
+        m3_per_panel_min_conf=0.55,
+    )
+
+    # Fake backend that returns a high-confidence species.
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "Emiluvia orea",
+        "label": "1",
+        "confidence": 0.92,
+        "reasoning": "Late Cretaceous nassellarian",
+        "alternative": "Archaeodictyomitra",
+    }
+
+    # Stub pipeline with fake engine + backend.
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+
+    # Fake crop file (must be a real PNG — see _write_valid_png).
+    crop = tmp_path / "panel1.png"
+    _write_valid_png(crop)
+
+    results = [
+        {
+            "panel_id": "1",
+            "species": "regex_old_species",
+            "label": "1",
+            "panel_path": str(crop),
+            "caption_pairs": [{"panel_id": "1", "text": "Fig. 1, 1."}],
+            "page_context_snippet": "Tunisia, Late Cretaceous, Scaglia Fm",
+            "metadata": {},
+        }
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    assert out[0]["species"] == "Emiluvia orea"
+    assert out[0]["label"] == "1"
+    assert backend.infer_panel.called
+
+
+def test_method_keeps_regex_when_m3_low_confidence(tmp_path):
+    """M3 confidence < min_conf → regex species stays."""
+    cfg = _make_cfg(
+        tmp_path,
+        m3_per_panel_enabled=True,
+        m3_per_panel_min_conf=0.55,
+    )
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "Emiluvia orea",
+        "label": "1",
+        "confidence": 0.3,  # below threshold
+        "reasoning": "uncertain",
+    }
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel1.png"
+    _write_valid_png(crop)
+    results = [
+        {
+            "panel_id": "1",
+            "species": "regex_old_species",
+            "label": "1",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        }
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    assert out[0]["species"] == "regex_old_species"
