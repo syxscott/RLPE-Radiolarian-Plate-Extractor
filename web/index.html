@@ -504,6 +504,17 @@
                         <label>备注</label>
                         <textarea id="correction-notes" placeholder="可选的备注信息" rows="3"></textarea>
                     </div>
+                    <!-- audit 2026-08-17 (WEB-B7): three-state image_verified toggle.
+                         When checked, set image_verified=true on POST /review/correction;
+                         when unchecked and the row was previously verified, send image_verified=false.
+                         The hidden default "" tells the JS to omit the field entirely so a
+                         regular text correction does NOT clobber the existing image_verified flag. -->
+                    <div class="form-group form-group-checkbox">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="correction-image-verified" value="">
+                            <span>标记为图像核实通过（覆盖原有 image_verified）</span>
+                        </label>
+                    </div>
                     <div class="form-buttons">
                         <button type="submit" class="btn btn-primary">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
@@ -519,6 +530,6 @@
         <div id="notification" class="notification hidden" role="status" aria-live="polite"></div>
     </div>
 
-    <script src="/web/js/app.js?v=20260708c"></script>
+    <script src="/web/js/app.js?v=20260817a"></script>
 </body>
 </html>

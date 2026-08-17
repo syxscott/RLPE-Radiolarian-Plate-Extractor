@@ -926,7 +926,13 @@ def job_result(job_id: str):
 
 
 @app.get("/jobs/{job_id}/export.xlsx")
-def export_job_xlsx(job_id: str):
+def export_job_xlsx(
+    job_id: str,
+    paper_ids: str | None = None,
+    species: str | None = None,
+    panel_ids: str | None = None,
+    search: str | None = None,
+):
     """Download a multi-sheet .xlsx for one job.
 
     Round 24: the user requested an Excel export that captures
@@ -940,6 +946,16 @@ def export_job_xlsx(job_id: str):
     which already sanitises formula-injection (CWE-1236) and
     uses ``openpyxl`` (transitive via the install env at
     version 3.1.5).
+
+    audit 2026-08-17 (WEB-B5): the optional ``paper_ids`` /
+    ``species`` / ``panel_ids`` / ``search`` query parameters
+    row-filter the panels sheet so the .xlsx download can mirror
+    the operator's UI filter (without these, the export always
+    produced the full job and silently disagreed with the
+    visible table). Each list param is comma-separated; values
+    are matched case-insensitively. ``search`` does a substring
+    match across paper_id, species, panel_id, figure_id and the
+    first geology-link's formation/locality/country/age/lithology.
     """
     job = RESULT_CACHE.get(job_id)
     if not job:
@@ -951,8 +967,53 @@ def export_job_xlsx(job_id: str):
         )
     if not job.get("result"):
         raise HTTPException(status_code=404, detail=f"Job {job_id} has no result")
+    # Parse comma-separated filters into Python lists. Empty / None
+    # entries are dropped so a ``?paper_ids=&species=`` request
+    # behaves the same as no filter at all.
+    paper_id_list = _split_csv(paper_ids)
+    species_list = _split_csv(species)
+    panel_id_list = _split_csv(panel_ids)
+    search_term = (search or "").strip().lower()
     try:
         from ..exporters.xlsx import write_xlsx
+
+        def _panel_filter(p: dict[str, Any]) -> bool:
+            if paper_id_list and p.get("paper_id") not in paper_id_list:
+                return False
+            if species_list and p.get("species") not in species_list:
+                return False
+            if panel_id_list and str(p.get("panel_id") or "") not in panel_id_list:
+                return False
+            if search_term:
+                blob = " ".join(
+                    str(x or "").lower() for x in [
+                        p.get("paper_id"),
+                        p.get("species"),
+                        p.get("panel_id"),
+                        p.get("figure_id"),
+                    ]
+                )
+                md = p.get("metadata") or {}
+                gl0 = (
+                    (md.get("geology_links") or [{}])[0]
+                    if isinstance(md.get("geology_links"), list) and md.get("geology_links")
+                    else {}
+                )
+                if isinstance(gl0, list):
+                    gl0 = gl0[0] if gl0 else {}
+                blob += " " + " ".join(
+                    str(x or "").lower() for x in [
+                        gl0.get("formation"),
+                        gl0.get("locality"),
+                        gl0.get("country"),
+                        gl0.get("age"),
+                        gl0.get("chronostratigraphy"),
+                        gl0.get("lithology"),
+                    ]
+                )
+                if search_term not in blob:
+                    return False
+            return True
 
         run_output = {
             "panels": job["result"],
@@ -965,7 +1026,7 @@ def export_job_xlsx(job_id: str):
             "localities": job.get("localities", []) or [],
             "paleo_coordinates": job.get("paleo_coordinates", []) or [],
         }
-        xlsx_bytes = write_xlsx(run_output)
+        xlsx_bytes = write_xlsx(run_output, panel_filter=_panel_filter)
     except Exception as exc:
         logger.exception("xlsx export failed for %s", job_id)
         raise HTTPException(
@@ -985,6 +1046,18 @@ def export_job_xlsx(job_id: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def _split_csv(raw: str | None) -> list[str]:
+    """Split a comma-separated query parameter into a clean list.
+
+    audit 2026-08-17 (WEB-B5): trim whitespace, drop empties, return
+    an empty list for ``None`` so callers can do
+    ``if my_list and ...`` without an extra None-check.
+    """
+    if not raw:
+        return []
+    return [tok.strip() for tok in raw.split(",") if tok.strip()]
 
 
 @app.post("/jobs/{job_id}/cancel")

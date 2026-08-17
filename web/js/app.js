@@ -134,10 +134,30 @@ function formatElapsed(sec) {
     return `${h} 时 ${mm} 分`;
 }
 
-function resolveAssetUrl(path) {
+// Resolve an asset path into a URL the browser can fetch.
+//
+// audit 2026-08-17 (WEB-B1): the previous version only handled
+// ``http(s)://`` and absolute paths starting with ``/``. Real
+// ``panel_path`` values from ``/results`` are filesystem-relative
+// (``work/.../panel_01.png``); the original string was returned
+// verbatim and produced a 404. The row's ``job_id`` is now
+// threaded through so we can build the canonical
+// ``GET /jobs/{job_id}/files/{rel}`` URL the server exposes.
+function resolveAssetUrl(path, jobId) {
     if (!path) return '';
     if (/^https?:\/\//i.test(path)) return path;
     if (path.startsWith('/')) return `${CONFIG.apiBaseUrl}${path}`;
+    // Filesystem-relative path — needs a jobId to map to the
+    // /jobs/{id}/files/... endpoint. If we don't have one, fall
+    // back to the raw path (which will 404) rather than crashing
+    // the whole row render.
+    if (jobId) {
+        // Strip any leading "./" so the server's relative_to check
+        // stays happy. Trailing slashes don't matter (FileResponse
+        // ignores them).
+        const rel = String(path).replace(/^\.\//, '');
+        return `${CONFIG.apiBaseUrl}/jobs/${encodeURIComponent(jobId)}/files/${rel}`;
+    }
     return path;
 }
 
@@ -1597,14 +1617,11 @@ function populateResultFilter() {
     // lost on each poll.
     const prevValue = filter.value;
 
-    if (jobIds.length <= 1) {
-        // 0 or 1 job — nothing to filter. Reset only if a stale selection
-        // would silently match 0 rows.
-        if (prevValue && prevValue !== '' && !jobIds.includes(prevValue)) {
-            filter.value = '';
-        }
-        return;
-    }
+    // audit 2026-08-17 (WEB-B3): the previous version short-circuited
+    // when ``jobIds.length <= 1``, which meant the single-job scenario
+    // (the most common state for a new operator) never rebuilt the
+    // ``<select>`` and stale DOM options lingered across jobs/refreshes.
+    // Always rebuild regardless of count; only the option list differs.
 
     // Keep the first "All papers" option
     filter.innerHTML = '<option value="">全部论文</option>';
@@ -1621,6 +1638,11 @@ function populateResultFilter() {
         filter.value = prevValue;
     } else if (prevValue && prevValue !== '' && !jobIds.includes(prevValue)) {
         filter.value = '';
+    } else {
+        // Default to "全部论文" so the table shows rows immediately after
+        // a fresh load (avoids the "no results" surprise when the user
+        // just had a previous job-id filter that no longer matches).
+        filter.value = '';
     }
 }
 
@@ -1635,19 +1657,21 @@ const resultsTableState = {
 
 function getRecordStatus(r) {
     const md = r.metadata || {};
-    if (md.v18_panel_id_source === 'image_ocr') return 'image_ocr';
+    if (md.panel_id_source === 'image_ocr') return 'image_ocr';
     if (r.panel_path) return 'positional';
     return 'no_image';
 }
 
-function renderResults() {
-    // Reset the record stash so indices in the new render refer to fresh data.
-    __rlpeRecords = [];
-    const searchTerm = document.getElementById('result-search')?.value.toLowerCase() || '';
-    const filterJob = document.getElementById('result-filter')?.value || '';
-
-    const all = resultsData;
-    const filtered = all.filter(r => {
+// Single source of truth for "which rows match the current UI state?".
+// audit 2026-08-17 (WEB-B4): previously ``renderResults()`` searched
+// 6 fields (paper_id / species / panel_id / figure_id / geology blob /
+// caption snippet) while the export path searched 3 (paper_id /
+// species / panel_id) — different filters produced different "what to
+// export" vs "what to display" sets. Export now uses the SAME
+// function so the .xlsx file matches the visible table.
+function filterRows(rows, searchTerm, filterJob) {
+    const term = (searchTerm || '').toLowerCase();
+    return rows.filter(r => {
         const paperId = (r.paper_id || '').toLowerCase();
         const species = (r.species || '').toLowerCase();
         const panelId = String(r.panel_id || '').toLowerCase();
@@ -1668,18 +1692,28 @@ function renderResults() {
             gl0.lithology || '',
         ].join(' ').toLowerCase();
         const caption = String(r.caption_snippet || '').toLowerCase();
-        const matchesSearch = !searchTerm ||
-            paperId.includes(searchTerm) ||
-            species.includes(searchTerm) ||
-            panelId.includes(searchTerm) ||
-            figureId.includes(searchTerm) ||
-            geoBlob.includes(searchTerm) ||
-            caption.includes(searchTerm);
+        const matchesSearch = !term ||
+            paperId.includes(term) ||
+            species.includes(term) ||
+            panelId.includes(term) ||
+            figureId.includes(term) ||
+            geoBlob.includes(term) ||
+            caption.includes(term);
         const matchesFilter = !filterJob || r.job_id === filterJob;
         const matchesStatus = resultsTableState.statusFilter === 'all'
             || getRecordStatus(r) === resultsTableState.statusFilter;
         return matchesSearch && matchesFilter && matchesStatus;
     });
+}
+
+function renderResults() {
+    // Reset the record stash so indices in the new render refer to fresh data.
+    __rlpeRecords = [];
+    const searchTerm = document.getElementById('result-search')?.value.toLowerCase() || '';
+    const filterJob = document.getElementById('result-filter')?.value || '';
+
+    const all = resultsData;
+    const filtered = filterRows(all, searchTerm, filterJob);
 
     // Sort
     const { sortKey, sortDir } = resultsTableState;
@@ -1760,9 +1794,9 @@ function renderResults() {
         const figureId = escapeHtml(r.figure_id);
         const species = escapeHtml(r.species);
         const panelPath = escapeHtml(r.panel_path);
-        const panelPathEscaped = escapeHtml(resolveAssetUrl(r.panel_path || ''));
+        const panelPathEscaped = escapeHtml(resolveAssetUrl(r.panel_path || '', r.job_id));
         const md = r.metadata || {};
-        const ocrSource = md.v18_panel_id_source;
+        const ocrSource = md.panel_id_source;
         const oldPanelId = md.v18_old_panel_id;
         const status = getRecordStatus(r);
         const ocrCell = status === 'image_ocr'
@@ -1834,7 +1868,7 @@ function renderResults() {
                 const idx = parseInt(btn.getAttribute('data-correct-index'), 10);
                 const r = __rlpeRecords[idx];
                 if (r) {
-                    openCorrectionModal(r.paper_id, r.figure_id, r.panel_path);
+                    openCorrectionModal(r.paper_id, r.figure_id, r.panel_path, r);
                 }
                 return;
             }
@@ -2186,22 +2220,14 @@ document.querySelectorAll('#results-table th[data-sort-key]').forEach(th => {
 updateSortIndicators();
 
 // Apply the same filter / search / statusFilter as the rendered table.
+// audit 2026-08-17 (WEB-B4): now delegates to the shared ``filterRows``
+// helper so the export path and the table renderer can never drift
+// apart again (different filter logic used to silently export rows the
+// operator had hidden).
 function getFilteredResults() {
     const searchTerm = document.getElementById('result-search')?.value.toLowerCase() || '';
     const filterJob = document.getElementById('result-filter')?.value || '';
-    return resultsData.filter(r => {
-        const paperId = (r.paper_id || '').toLowerCase();
-        const species = (r.species || '').toLowerCase();
-        const panelId = String(r.panel_id || '').toLowerCase();
-        const matchesSearch = !searchTerm ||
-            paperId.includes(searchTerm) ||
-            species.includes(searchTerm) ||
-            panelId.includes(searchTerm);
-        const matchesFilter = !filterJob || r.job_id === filterJob;
-        const matchesStatus = resultsTableState.statusFilter === 'all'
-            || getRecordStatus(r) === resultsTableState.statusFilter;
-        return matchesSearch && matchesFilter && matchesStatus;
-    });
+    return filterRows(resultsData, searchTerm, filterJob);
 }
 
 // CSV cell formatter: handles null/undefined, escapes embedded quotes by
@@ -2224,6 +2250,13 @@ document.getElementById('export-btn')?.addEventListener('click', async () => {
     // If only one job is in the filtered set, the file is
     // downloaded directly. If multiple, the user is asked to
     // download each one.
+    //
+    // audit 2026-08-17 (WEB-B5): we now thread the active UI
+    // filter to the server via ``paper_ids`` / ``species`` /
+    // ``panel_ids`` / ``search`` query params so the downloaded
+    // .xlsx mirrors the operator's visible table. Pre-fix the
+    // server always exported the FULL job (ignoring the UI
+    // filter), silently disagreeing with what the user could see.
     const rows = getFilteredResults();
     if (rows.length === 0) {
         showNotification('当前筛选下没有可导出的结果');
@@ -2235,13 +2268,28 @@ document.getElementById('export-btn')?.addEventListener('click', async () => {
     for (const r of rows) {
         if (r.job_id) jobIds.add(r.job_id);
     }
+    const searchTerm = document.getElementById('result-search')?.value || '';
     showNotification(`正在导出 ${rows.length} 条结果 (${jobIds.size} 个 job) ...`);
     for (const jobId of jobIds) {
         try {
+            // Narrow the per-job filter to ONLY the rows that
+            // belong to this job. Per-job paper/species/panel
+            // lists keep the URL small even when the global
+            // filter spans many jobs.
+            const jobRows = rows.filter(r => r.job_id === jobId);
+            const qs = new URLSearchParams();
+            const paperIds = [...new Set(jobRows.map(r => r.paper_id).filter(Boolean))];
+            const speciesList = [...new Set(jobRows.map(r => r.species).filter(Boolean))];
+            const panelIds = [...new Set(jobRows.map(r => r.panel_id).filter(p => p != null && p !== ''))];
+            if (paperIds.length) qs.set('paper_ids', paperIds.join(','));
+            if (speciesList.length) qs.set('species', speciesList.join(','));
+            if (panelIds.length) qs.set('panel_ids', panelIds.map(String).join(','));
+            if (searchTerm) qs.set('search', searchTerm);
+            const url = `${CONFIG.apiBaseUrl}/jobs/${jobId}/export.xlsx${qs.toString() ? '?' + qs.toString() : ''}`;
             // audit 2026-07-31: the URL was hard-coded relative while every
     // other request honours CONFIG.apiBaseUrl — a custom API origin
     // made export fail against the page origin.
-            const resp = await fetch(`${CONFIG.apiBaseUrl}/jobs/${jobId}/export.xlsx`, {
+            const resp = await fetch(url, {
                 method: 'GET',
                 credentials: 'same-origin',
             });
@@ -2262,14 +2310,14 @@ document.getElementById('export-btn')?.addEventListener('click', async () => {
             const dispo = resp.headers.get('Content-Disposition') || '';
             const m = dispo.match(/filename="([^"]+)"/);
             const filename = m ? m[1] : `rlpe_export_${jobId}.xlsx`;
-            const url = URL.createObjectURL(blob);
+            const url2 = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
+            a.href = url2;
             a.download = filename;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            setTimeout(() => URL.revokeObjectURL(url2), 1000);
         } catch (err) {
             showNotification(`导出 ${jobId} 异常: ${err}`, 'error');
         }
@@ -2291,7 +2339,7 @@ function openImageModal(src, title, record) {
         info.innerHTML = `<strong>物种:</strong> ${escapeHtml(title || 'Unknown')}`;
     } else {
         const md = record.metadata || {};
-        const ocrSource = md.v18_panel_id_source;
+        const ocrSource = md.panel_id_source;
         const oldPanelId = md.v18_old_panel_id;
         const ocrBadge = ocrSource === 'image_ocr'
             ? `<span class="badge badge-ok" title="panel_id anchored to label visible in the panel image">✓ 图像 OCR</span>`
@@ -2490,7 +2538,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ==================== Correction Modal ==================== //
-function openCorrectionModal(paperId, figureId, panelPath) {
+function openCorrectionModal(paperId, figureId, panelPath, record) {
     // Defensive: if the record was missing paperId / figureId (e.g. an
     // extremely old result row), the dataset would receive the literal
     // string "undefined", which the backend would happily accept and
@@ -2511,6 +2559,19 @@ function openCorrectionModal(paperId, figureId, panelPath) {
     speciesInput.dataset.paperId = paperId;
     speciesInput.dataset.figureId = figureId;
     speciesInput.dataset.panelPath = panelPath || '';
+    // audit 2026-08-17 (WEB-B7): pre-populate the image_verified
+    // checkbox from the row's current value so the operator can see
+    // whether the row has already been verified and decide whether
+    // their correction should re-verify it. Default unchecked + the
+    // hidden "omit" value means a regular text correction does NOT
+    // silently clobber the existing image_verified flag.
+    const ivCheckbox = document.getElementById('correction-image-verified');
+    if (ivCheckbox) {
+        const currentVer = record && record.metadata
+            ? record.metadata.image_verified === true
+            : false;
+        ivCheckbox.checked = !!currentVer;
+    }
     modal.classList.remove('hidden');
 }
 
@@ -2544,6 +2605,14 @@ document.getElementById('correction-form')?.addEventListener('submit', async (e)
         reviewer: document.getElementById('reviewer-name').value,
         notes: document.getElementById('correction-notes').value
     };
+    // audit 2026-08-17 (WEB-B7): include image_verified so a reviewer
+    // can flip the verified bit as part of a correction. Always send
+    // it (true OR false) — the previous behaviour omitted the field
+    // entirely which meant operators had no UI to un-verify a row.
+    const ivEl = document.getElementById('correction-image-verified');
+    if (ivEl) {
+        payload.image_verified = !!ivEl.checked;
+    }
 
     try {
         const response = await fetch(`${CONFIG.apiBaseUrl}/review/correction`, {
@@ -2780,10 +2849,25 @@ function initLLMBackendSync() {
     // vendor-specific value every visit. Stored under
     // LLM_BACKEND_KEY so a privacy-conscious user can clear it via
     // DevTools / site data.
+    //
+    // audit 2026-08-17 (WEB-B6): the previous restore check
+    // ``[basic.value, advanced.value].includes(saved)`` compared the
+    // saved value against the <select>'s CURRENT value — but at
+    // DOMContentLoaded both selects still default to "MiniMax", so
+    // any non-MiniMax saved choice (e.g. "openai", "anthropic",
+    // "MiniMax") silently failed the check and the user's preference
+    // was discarded on every reload. Validate against the union of
+    // all available <option> values across both selects instead.
     const saved = _safeStorageGet(LLM_BACKEND_KEY);
-    if (saved && [basic.value, advanced.value].includes(saved)) {
-        basic.value = saved;
-        advanced.value = saved;
+    if (saved) {
+        const allValues = new Set([
+            ...[...basic.options].map(o => o.value),
+            ...[...advanced.options].map(o => o.value),
+        ]);
+        if (allValues.has(saved)) {
+            basic.value = saved;
+            advanced.value = saved;
+        }
     }
     // basic → advanced
     basic.addEventListener('change', () => {

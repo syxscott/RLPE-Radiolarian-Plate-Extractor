@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -420,7 +420,8 @@ _LEGEND = [
 
 
 def write_xlsx(
-    run_output: dict[str, Any] | Any, path: str | None = None
+    run_output: dict[str, Any] | Any, path: str | None = None,
+    panel_filter: Callable[[dict[str, Any]], bool] | None = None,
 ) -> bytes | None:
     """Build a multi-sheet .xlsx from a ``RunOutput`` dict.
 
@@ -431,17 +432,31 @@ def write_xlsx(
     Accepts either a plain ``dict`` or a Pydantic ``RunOutput``
     model (which has ``.panels`` / ``.localities`` /
     ``.paleo_coordinates`` as model fields, not dict keys).
+
+    audit 2026-08-17 (WEB-B5): ``panel_filter`` lets the API
+    endpoint honour the UI's search / paper-id / species filter
+    so the downloaded .xlsx contains only the rows the operator
+    actually sees on screen. When ``None`` (CLI / legacy callers)
+    every panel row passes through unchanged.
     """
     # Normalise: Pydantic BaseModel has .model_dump(); plain dict does not.
     if hasattr(run_output, "model_dump"):
         run_output = run_output.model_dump()
+    # Apply the caller-supplied row-level filter to the panels array
+    # BEFORE any sheet is built. Geology / paleo sheets iterate over the
+    # same panels array so they automatically shrink in lockstep.
+    panels_all = list(run_output.get("panels", []) or [])
+    if panel_filter is not None:
+        panels = [p for p in panels_all if isinstance(p, dict) and panel_filter(p)]
+    else:
+        panels = panels_all
     wb = Workbook()
     # ---- Sheet 1: panels -------------------------------------------------
     ws = wb.active
     ws.title = "panels"
     _write_header(ws, _PANEL_HEADERS)
     panel_rows: list[list[Any]] = []
-    for p in run_output.get("panels", []) or []:
+    for p in panels:
         panel_rows.append(_row_for_panel(p))
     _write_rows(ws, _PANEL_HEADERS, panel_rows)
     _autosize_columns(ws)
@@ -450,7 +465,7 @@ def write_xlsx(
     ws2 = wb.create_sheet("geology_contexts")
     _write_header(ws2, _GEOLOGY_HEADERS)
     geo_rows: list[list[Any]] = []
-    for p in run_output.get("panels", []) or []:
+    for p in panels:
         paper_id = p.get("paper_id") or ""
         for g in (p.get("metadata", {}) or {}).get("geology_links") or []:
             geo_rows.append(_row_for_geology_context(paper_id, g))
@@ -461,10 +476,21 @@ def write_xlsx(
     ws3 = wb.create_sheet("localities")
     _write_header(ws3, _LOCALITY_HEADERS)
     loc_rows: list[list[Any]] = []
+    # audit 2026-08-17 (WEB-B5): when a panel filter is active, only
+    # emit locality rows whose paper_id appears in the surviving
+    # panels (a panel filter implicitly narrows the universe of
+    # paper_ids the operator wants). This keeps the workbook's
+    # "panels" sheet and "localities" sheet consistent.
+    surviving_paper_ids = (
+        {p.get("paper_id") for p in panels if p.get("paper_id")}
+        if panel_filter is not None else None
+    )
     for l in run_output.get("localities", []) or []:
         # audit 2026-07-26: guard None entries (same null risk as
         # geology_links) before calling .get() on the row.
         if not isinstance(l, dict):
+            continue
+        if surviving_paper_ids is not None and l.get("paper_id") not in surviving_paper_ids:
             continue
         loc_rows.append(_row_for_locality(l.get("paper_id") or "", l))
     _write_rows(ws3, _LOCALITY_HEADERS, loc_rows)
@@ -476,6 +502,8 @@ def write_xlsx(
     paleo_rows: list[list[Any]] = []
     for p in run_output.get("paleo_coordinates", []) or []:
         if not isinstance(p, dict):
+            continue
+        if surviving_paper_ids is not None and p.get("paper_id") not in surviving_paper_ids:
             continue
         paleo_rows.append(_row_for_paleo(p.get("paper_id") or "", p))
     _write_rows(ws4, _PALEO_HEADERS, paleo_rows)
