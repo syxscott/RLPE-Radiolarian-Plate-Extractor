@@ -2083,6 +2083,8 @@ class RadiolarianPipeline:
         # 1. Build (row, crop_path, caption_for_panel, page_context) tuples.
         items: list[tuple[dict[str, Any], Path, str, str]] = []
         skipped_no_crop = 0
+        missing_caption_pairs = 0
+        missing_page_context = 0
         for r in results:
             crop_path = r.get("panel_path")
             if not crop_path:
@@ -2092,23 +2094,69 @@ class RadiolarianPipeline:
             if not crop.is_file():
                 skipped_no_crop += 1
                 continue
-            # Find the caption pair whose panel_id matches this row.
+            # CaptionPair has `labels: list[str]` (label tokens like ["1", "a"])
+            # and `species` / `modifier` / `notes` / `raw_text` — no
+            # `panel_id` / `text` fields. Match by checking if the row's
+            # panel_id appears in the caption pair's labels list. Build
+            # the caption snippet from species + modifier + notes.
+            #
+            # Note (Task 6 / 8): raw row dicts do NOT currently carry a
+            # `caption_pairs` key — the upstream `match_panels()` step
+            # consumes them but only the derived `caption_pairs_used` /
+            # `caption_pairs_source` flags end up on MatchResult metadata.
+            # For now we surface the miss-rate via logger.debug so we can
+            # measure how often caption context is unavailable. Task 6/8
+            # will wire production data through this path.
             caption_for_panel = ""
-            for cp in (r.get("caption_pairs") or []):
-                # CaptionPair is dataclass-like: .panel_id / .text
-                # but rows may also pass plain dicts with the same names.
-                cp_pid = (
-                    getattr(cp, "panel_id", None)
-                    or (cp.get("panel_id") if isinstance(cp, dict) else None)
-                )
-                if cp_pid == r.get("panel_id"):
-                    caption_for_panel = (
-                        getattr(cp, "text", None)
-                        or (cp.get("text") if isinstance(cp, dict) else None)
-                        or ""
+            row_caption_pairs = r.get("caption_pairs")
+            if not row_caption_pairs:
+                missing_caption_pairs += 1
+            else:
+                row_pid = r.get("panel_id")
+                for cp in row_caption_pairs:
+                    cp_labels = (
+                        getattr(cp, "labels", None)
+                        or (cp.get("labels") if isinstance(cp, dict) else None)
+                        or []
                     )
-                    break
-            page_context = (r.get("page_context_snippet") or "")[:1500]
+                    # None-equality guard (Important #4): skip the
+                    # ``in`` check when row_pid is None — ``None in [...]``
+                    # would never be True for a list of strings, but we
+                    # make the intent explicit.
+                    if row_pid is not None and row_pid in cp_labels:
+                        species = (
+                            getattr(cp, "species", None)
+                            or (cp.get("species") if isinstance(cp, dict) else None)
+                            or ""
+                        )
+                        modifier = (
+                            getattr(cp, "modifier", None)
+                            or (cp.get("modifier") if isinstance(cp, dict) else None)
+                            or ""
+                        )
+                        notes = (
+                            getattr(cp, "notes", None)
+                            or (cp.get("notes") if isinstance(cp, dict) else None)
+                            or ""
+                        )
+                        raw_text = (
+                            getattr(cp, "raw_text", None)
+                            or (cp.get("raw_text") if isinstance(cp, dict) else None)
+                            or ""
+                        )
+                        # Concatenate non-empty parts with a single space;
+                        # if all four are empty, fall back to raw_text
+                        # (still better than an empty string).
+                        parts = [p for p in [species, modifier, notes] if p]
+                        caption_for_panel = " ".join(parts) if parts else raw_text
+                        break
+            # Eager truncation here matches spec pseudocode (cap at 1500
+            # chars before downstream use); also bounds memory if many
+            # rows share a large context.
+            raw_page_context = r.get("page_context_snippet")
+            if not raw_page_context:
+                missing_page_context += 1
+            page_context = (raw_page_context or "")[:1500]
             items.append((r, crop, caption_for_panel, page_context))
         if not items:
             if skipped_no_crop:
@@ -2118,8 +2166,46 @@ class RadiolarianPipeline:
                     len(results),
                     paper_id,
                 )
+            else:
+                logger.debug(
+                    "Stage 4.5: processed all %d rows (no skips) for paper=%s",
+                    len(results),
+                    paper_id,
+                )
+            # Surface the missing-context rate even on the early-exit
+            # path so telemetry is consistent.
+            if missing_caption_pairs or missing_page_context:
+                logger.debug(
+                    "Stage 4.5: missing caption_pairs=%d/%d, page_context_snippet=%d/%d "
+                    "(paper=%s) — production wiring deferred to Task 6/8",
+                    missing_caption_pairs,
+                    len(results),
+                    missing_page_context,
+                    len(results),
+                    paper_id,
+                )
             return results
         # TODO (Task 4): fan out via semaphore + per-panel call
+        # Surface the missing-context rate for the non-empty-items path too
+        # so partial-skip rates are visible in DEBUG logs.
+        if missing_caption_pairs or missing_page_context:
+            logger.debug(
+                "Stage 4.5: built %d items, missing caption_pairs=%d/%d, "
+                "page_context_snippet=%d/%d (paper=%s) — production wiring "
+                "deferred to Task 6/8",
+                len(items),
+                missing_caption_pairs,
+                len(results),
+                missing_page_context,
+                len(results),
+                paper_id,
+            )
+        else:
+            logger.debug(
+                "Stage 4.5: built %d items, all rows had caption context (paper=%s)",
+                len(items),
+                paper_id,
+            )
         return results
 
     def _apply_multi_plate_enrichment(
