@@ -345,6 +345,24 @@ class PipelineConfig:
                 f"got {self.m3_morphology_min_caption_chars}"
             )
 
+        # Phase 2026-08-17 Stage 4.5: coerce the 4 new fields from YAML
+        # string inputs and validate their ranges. Matches the
+        # ``m3_morphology_*`` precedent right above.
+        self.m3_per_panel_enabled = bool(self.m3_per_panel_enabled)
+        self.m3_per_panel_min_conf = float(self.m3_per_panel_min_conf)
+        if not (0.0 <= self.m3_per_panel_min_conf <= 1.0):
+            raise ValueError(
+                f"m3_per_panel_min_conf must be in [0, 1], got {self.m3_per_panel_min_conf}"
+            )
+        self.m3_per_panel_max_per_figure = int(self.m3_per_panel_max_per_figure)
+        self.m3_per_panel_max_per_paper = int(self.m3_per_panel_max_per_paper)
+        if self.m3_per_panel_max_per_figure < 1 or self.m3_per_panel_max_per_paper < 1:
+            raise ValueError(
+                "m3_per_panel_max_per_figure / m3_per_panel_max_per_paper "
+                f"must be >= 1 (got {self.m3_per_panel_max_per_figure}, "
+                f"{self.m3_per_panel_max_per_paper})"
+            )
+
         # Phase 38: warn (don't raise) for unknown extra-config keys.
         # A typo like ``minimax_api_key`` (lowercase) silently produces
         # a config that ignores the value.
