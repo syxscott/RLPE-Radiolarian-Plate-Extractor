@@ -3637,7 +3637,7 @@ class M3Engine:
           otherwise NOT clamped to any narrower band — the visual
           signal can support > 0.6 confidence legitimately.
         """
-        empty = {"plate_panels": []}
+        empty: dict[str, list[Any]] = {"plate_panels": []}
         if self.backend is None:
             return empty
         # Tiny images produce only noise; bail early without burning

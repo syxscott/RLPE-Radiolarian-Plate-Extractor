@@ -113,6 +113,12 @@ class MainWindow(QMainWindow):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # Type-annotated initialisations (mypy: prevents dynamic-attr
+        # errors when these attrs are read before assignment).
+        self._mini_progress_timer: QTimer | None = None
+        self._batch_pdfs: list[Path] = []
+        self._batch_index: int = 0
+        self._batch_settings: dict[str, Any] = {}
         self._log = get_gui_logger()
         self._qsettings = QSettings(APP_AUTHOR, APP_NAME)
         self._settings = self._load_settings_cache()

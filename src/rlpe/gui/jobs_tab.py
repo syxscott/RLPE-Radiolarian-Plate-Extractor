@@ -630,32 +630,14 @@ class JobsTab(QWidget):
         if not path:
             return
         run_output = self._build_run_output(job)
-        # Try cli_export first (Round 24), fall back to direct write_xlsx.
-        # audit 2026-07-31: only ImportError was caught around
-        # export_run_output_to_xlsx — a runtime error (e.g. openpyxl
-        # version issue) escaped silently with no dialog. Catch it and
-        # surface the message.
+        # Use the canonical xlsx exporter (write_xlsx from exporters.xlsx).
+        # audit 2026-07-31: catch runtime errors and surface the message
+        # in a dialog so the operator isn't left wondering.
         try:
-            from ..cli_export import export_run_output_to_xlsx
+            from ..exporters.xlsx import write_xlsx
 
-            export_run_output_to_xlsx(run_output, path)
-        except ImportError:
-            try:
-                from ..exporters.xlsx import write_xlsx
-
-                write_xlsx(run_output, path)
-            except Exception as exc:
-                QMessageBox.warning(
-                    self,
-                    i18n._tr("jobstab.menu.export_xlsx"),
-                    i18n._tr("jobstab.export.failed").format(
-                        error=f"{type(exc).__name__}: {exc}",
-                    ),
-                )
-                return
+            write_xlsx(run_output, path)
         except Exception as exc:
-            # audit 2026-07-31: runtime errors from cli_export escaped
-            # (only ImportError was caught) with no user feedback.
             QMessageBox.warning(
                 self,
                 i18n._tr("jobstab.menu.export_xlsx"),

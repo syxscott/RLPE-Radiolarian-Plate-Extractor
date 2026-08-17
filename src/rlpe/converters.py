@@ -1490,12 +1490,12 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 # short-code pattern uses an alternation that doesn't
                 # capture, so the whole match is the id).
                 sid_raw = sm.group(1) if sm.lastindex else sm.group(0)
-                sid = f"{prefix}{sid_raw}"
-                key = (m.paper_id, sid)
+                sid_str = f"{prefix}{sid_raw}"
+                key = (m.paper_id, sid_str)
                 if key in seen:
                     continue
                 rec = SampleRecord(
-                    sample_id=sid,
+                    sample_id=sid_str,
                     paper_id=m.paper_id,
                     figure_id=m.figure_id,
                     caption_panel_range=None,

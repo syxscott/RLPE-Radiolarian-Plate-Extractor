@@ -299,7 +299,7 @@ def detect_figure_regions_yolo(
                     "or disable YOLO in Settings."
                 ) from exc
             try:
-                model = YOLO(str(model_path), device=device)
+                _loaded_model = YOLO(str(model_path), device=device)
             except Exception as exc:
                 raise RuntimeError(
                     f"YOLO model failed to load from {model_path}: {exc}. "
@@ -313,7 +313,7 @@ def detect_figure_regions_yolo(
                 import numpy as np
 
                 _dummy = np.zeros((64, 64, 3), dtype=np.uint8)
-                model(_dummy, verbose=False)
+                _loaded_model(_dummy, verbose=False)
             except Exception as exc:
                 import logging
 
@@ -325,7 +325,7 @@ def detect_figure_regions_yolo(
             # radiolarian-trained one. Warn loudly (don't raise — backward
             # compat for any non-COCO users).
             try:
-                names = getattr(model, "names", None) or {}
+                names = getattr(_loaded_model, "names", None) or {}
                 if isinstance(names, dict) and str(names.get(0, "")).lower() in {
                     "person",
                     "bicycle",
@@ -343,7 +343,7 @@ def detect_figure_regions_yolo(
                     )
             except Exception:
                 pass  # don't fail the load just because class-name check failed
-            setattr(detect_figure_regions_yolo, cache_key, model)
+            setattr(detect_figure_regions_yolo, cache_key, _loaded_model)
 
     model: Any = getattr(detect_figure_regions_yolo, cache_key)
 

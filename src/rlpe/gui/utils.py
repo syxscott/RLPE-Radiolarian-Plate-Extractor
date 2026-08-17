@@ -80,7 +80,7 @@ def file_size_human(path: Path | None) -> str:
     """
     if path is None or not path.exists():
         return "—"
-    size = path.stat().st_size
+    size: float = float(path.stat().st_size)
     if size < 0:
         return "—"
     # Pick the right unit (1024-based for binary, but readable).
@@ -239,7 +239,7 @@ def to_jsonable(obj: Any) -> Any:
     import decimal
 
     if is_dataclass(obj):
-        return to_jsonable(asdict(obj))
+        return to_jsonable(asdict(obj))  # type: ignore[arg-type]
     if obj is None or isinstance(obj, (str, int, float, bool)):
         return obj
     if isinstance(obj, Path):
