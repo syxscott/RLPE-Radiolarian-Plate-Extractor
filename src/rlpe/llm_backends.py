@@ -162,6 +162,63 @@ def _redact_api_keys(text: str) -> str:
     return text
 
 
+def _last_balanced_json_object(text: str) -> str | None:
+    """Return the LAST balanced JSON object substring, or None.
+
+    Uses a brace counter that respects string boundaries so that braces
+    inside a string literal (e.g. ``"key": "{not really json}"``) do
+    not throw the counter off. Audit 2026-08-17: when a thinking block
+    contains an EXAMPLE JSON object (e.g. ``{"species": "species name"}``)
+    and the real answer comes after ``</think>`` as a SECOND JSON
+    object, ``parse_json_from_text``'s "load whole text" path used to
+    pick the FIRST one. By returning the LAST balanced object we let
+    callers default to the real answer.
+
+    Returns ``None`` if no balanced object is found.
+    """
+    if not text:
+        return None
+    last: str | None = None
+    n = len(text)
+    i = 0
+    while i < n:
+        c = text[i]
+        if c == "{":
+            depth = 1
+            j = i + 1
+            in_string = False
+            escape_next = False
+            while j < n and depth > 0:
+                cj = text[j]
+                if in_string:
+                    if escape_next:
+                        escape_next = False
+                    elif cj == "\\":
+                        escape_next = True
+                    elif cj == '"':
+                        in_string = False
+                else:
+                    if cj == '"':
+                        in_string = True
+                    elif cj == "{":
+                        depth += 1
+                    elif cj == "}":
+                        depth -= 1
+                        if depth == 0:
+                            candidate = text[i : j + 1]
+                            # Must contain at least one colon to be
+                            # plausibly a JSON object (not a Python set
+                            # literal or empty ``{}``).
+                            if ":" in candidate:
+                                last = candidate
+                            break
+                j += 1
+            i = j
+        else:
+            i += 1
+    return last
+
+
 # ----------------------------------------------------------------------
 # SSRF guard for user-supplied LLM hosts
 # ----------------------------------------------------------------------
@@ -655,7 +712,8 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             )
             resp.raise_for_status()
             data = resp.json()
-            return str(data.get("content") or data.get("response") or ""), False
+            raw = str(data.get("content") or data.get("response") or "")
+            return self._clean_response_text(raw), False
         # 1) 优先尝试 OpenAI-compatible chat/completions
         payload = {
             "model": self.model or "default",
@@ -672,7 +730,7 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             resp = requests.post(url, json=payload, timeout=self.timeout_sec)
             resp.raise_for_status()
             data = resp.json()
-            return self._extract_chat_text(data), False
+            return self._clean_response_text(self._extract_chat_text(data)), False
         except Exception:
             # 2) 回退到 llama.cpp /completion 接口（纯文本）
             # Audit M7: signal the degraded mode so callers can tell
@@ -697,7 +755,8 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             )
             resp.raise_for_status()
             data = resp.json()
-            return str(data.get("content") or data.get("response") or ""), True
+            raw = str(data.get("content") or data.get("response") or "")
+            return self._clean_response_text(raw), True
 
     def _system_message(self, system_prompt: str) -> dict[str, Any]:
         return {"role": "system", "content": system_prompt}
@@ -716,7 +775,78 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
         }
 
     def _build_text_prompt(self, system_prompt: str, user_prompt: str) -> str:
+        """Build the /completion prompt.
+
+        Audit 2026-08-17 (live llama.cpp + Qwen3.8-27B): the previous
+        implementation worked for Gemma-era backends; for Qwen3 the
+        chat template injects a <think>...</think> block whenever the
+        prompt ends with ``assistant\\n<think>\\n`` — which we used to
+        pre-pend — so the model copied the template back verbatim and
+        emitted the real JSON only AFTER the closing ``</think>``.
+        ``parse_json_from_text`` then loaded the FIRST JSON object
+        (a placeholder / template residue) instead of the real answer.
+        Live probe returned ``{"species": "species name"}`` instead of
+        ``{"species": "Ceratartia"}``.
+
+        Fix: do NOT prepend the Gemma-style template. /completion has
+        no chat-template auto-injection; Qwen3 emits a thinking block
+        only when its chat template asks for one (gated by the request's
+        ``enable_thinking`` field, which we don't set).
+        """
         return f"{system_prompt}\n\n{user_prompt}\n\nPlease output strict JSON only."
+
+    @staticmethod
+    def _clean_response_text(text: str) -> str:
+        """Strip thinking blocks + fences + whitespace.
+
+        Audit 2026-08-17 (live llama.cpp + Qwen3.8-27B): even with the
+        fixed ``_build_text_prompt``, real backends occasionally emit a
+        ``<think>...</think>`` segment (especially when the chat
+        template auto-injects one). Leaving it in causes
+        ``parse_json_from_text`` to load the FIRST JSON object — which
+        inside a thinking block is usually a placeholder example like
+        ``{"species": "species name"}`` — instead of the real answer
+        that comes after the closing ``</think>``.
+
+        Strategy:
+        1. Strip ``<think>...</think>`` (non-greedy, case-insensitive)
+        2. Strip ``<answer>...</answer>`` (Qwen alternative tag)
+        3. Strip ``` fences
+        4. Return the LAST non-empty JSON object if more than one
+           survived the fence strip (the model occasionally emits a
+           "draft" object first and the real answer second). We pick
+           last because the real answer typically comes after the draft
+           in Qwen3 output streams.
+        5. Fallback to the raw stripped text if no JSON object is found
+           (so callers see the model's prose instead of an empty string)
+        """
+        if not text:
+            return text
+        # Strip think/answer segments
+        cleaned = re.sub(
+            r"<think>.*?</think>",
+            "",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        # <answer> is a wrapper (Qwen uses it to delimit the final
+        # answer); KEEP the contents, drop the tags only.
+        cleaned = re.sub(
+            r"</?answer>",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        # Strip ``` fences (markdown code blocks)
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned.strip(), flags=re.MULTILINE)
+        cleaned = re.sub(r"\s*```\s*$", "", cleaned, flags=re.MULTILINE).strip()
+        # If we still see multiple JSON objects, keep the LAST one.
+        # We scan balanced braces so we don't get tripped up by braces
+        # inside strings.
+        last_obj = _last_balanced_json_object(cleaned)
+        if last_obj is not None:
+            return last_obj
+        return cleaned
 
     def _extract_chat_text(self, data: dict[str, Any]) -> str:
         choices = data.get("choices") or []
