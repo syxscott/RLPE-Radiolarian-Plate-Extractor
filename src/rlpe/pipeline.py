@@ -2052,6 +2052,39 @@ class RadiolarianPipeline:
             )
         return out
 
+    def _apply_m3_per_panel_species_id(
+        self,
+        results: list[dict[str, Any]],
+        paper_id: str,
+    ) -> list[dict[str, Any]]:
+        """Stage 4.5 (Phase 2026-08-17): per-panel M3 vision species ID.
+
+        For each result row whose ``panel_path`` (Stage 3 crop) is
+        present, fire one M3 vision call carrying the panel crop + the
+        row's caption snippet + the same-page systematic-paleontology
+        context. When M3 returns a parseable JSON with
+        ``confidence >= m3_per_panel_min_conf``, overwrite the row's
+        species (which currently came from regex matching) with M3's
+        answer. Otherwise the row's regex species stays.
+
+        Pure additive — every backend failure path (no backend, no
+        crop, parse fail, exception) falls through and the regex
+        species survives. Per-figure and per-paper caps prevent cost
+        runaway on big papers.
+
+        See ``docs/superpowers/specs/2026-08-17-m3-per-panel-pipeline-design.md``.
+        """
+        if not self.config.m3_per_panel_enabled:
+            return results
+        if self.m3_engine is None or self.m3_engine.backend is None:
+            return results
+        if not results:
+            return results
+        # TODO (Task 3): build (row, crop, caption, context) tuples
+        # TODO (Task 4): fan out via semaphore + per-panel call
+        # TODO (Task 5): merge results + caps + metadata stamp
+        return results
+
     def _apply_multi_plate_enrichment(
         self,
         results: list[dict[str, Any]],

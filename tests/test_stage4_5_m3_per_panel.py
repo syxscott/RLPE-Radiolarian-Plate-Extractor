@@ -50,3 +50,83 @@ def test_config_field_overrides_work(tmp_path):
     assert cfg.m3_per_panel_min_conf == pytest.approx(0.7)
     assert cfg.m3_per_panel_max_per_figure == 10
     assert cfg.m3_per_panel_max_per_paper == 50
+
+
+# ---------------------------------------------------------------------------
+# Task 2: method shell with early-return guards
+# ---------------------------------------------------------------------------
+
+from rlpe.pipeline import RadiolarianPipeline
+
+
+class _StubPipeline:
+    """Minimal stand-in: bind the unbound method and provide config."""
+
+    def __init__(self, cfg: PipelineConfig):
+        self.config = cfg
+        # Provide the m3_engine attribute since the method's guard
+        # touches it after the enabled check. No backend is wired.
+        self.m3_engine = None
+        self._apply_m3_per_panel_species_id = (
+            RadiolarianPipeline._apply_m3_per_panel_species_id.__get__(
+                self, RadiolarianPipeline
+            )
+        )
+
+
+def test_method_early_returns_when_disabled(tmp_path):
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=False)
+    pipe = _StubPipeline(cfg)
+    out = pipe._apply_m3_per_panel_species_id(
+        results=[{"panel_id": "1", "species": "regex_match"}],
+        paper_id="paper1",
+    )
+    # When disabled, results pass through unchanged (regex match survives).
+    assert out == [{"panel_id": "1", "species": "regex_match"}]
+
+
+def test_method_no_op_when_no_results(tmp_path):
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    pipe = _StubPipeline(cfg)
+    out = pipe._apply_m3_per_panel_species_id(results=[], paper_id="paper1")
+    assert out == []
+
+
+# ---------------------------------------------------------------------------
+# Minor #1 (from Task 1 CQ review): post_init coercion + range validation
+# ---------------------------------------------------------------------------
+
+
+def test_config_coerces_string_inputs_in_post_init(tmp_path):
+    """YAML/JSON loads can produce string booleans/floats/ints.
+    ``__post_init__`` must coerce them to the declared types."""
+    cfg = PipelineConfig(
+        pdf_dir=tmp_path / "pdfs",
+        work_dir=tmp_path / "work",
+        output_dir=tmp_path / "out",
+    )
+    # Simulate YAML load: assign raw strings before triggering __post_init__.
+    # Easiest way is to construct then mutate the fields and call __post_init__
+    # if available, but slotted dataclass fields are harder. Use object.__setattr__
+    # to bypass slots.
+    object.__setattr__(cfg, "m3_per_panel_enabled", "true")
+    object.__setattr__(cfg, "m3_per_panel_min_conf", "0.7")
+    object.__setattr__(cfg, "m3_per_panel_max_per_figure", "10")
+    object.__setattr__(cfg, "m3_per_panel_max_per_paper", "50")
+    cfg.__post_init__()
+    assert cfg.m3_per_panel_enabled is True
+    assert cfg.m3_per_panel_min_conf == pytest.approx(0.7)
+    assert cfg.m3_per_panel_max_per_figure == 10
+    assert cfg.m3_per_panel_max_per_paper == 50
+
+
+def test_config_post_init_validates_conf_range(tmp_path):
+    cfg = _make_cfg(tmp_path, m3_per_panel_min_conf=1.5)
+    with pytest.raises(ValueError, match=r"m3_per_panel_min_conf must be"):
+        cfg.__post_init__()
+
+
+def test_config_post_init_validates_caps_positive(tmp_path):
+    cfg = _make_cfg(tmp_path, m3_per_panel_max_per_figure=0)
+    with pytest.raises(ValueError, match=r"must be >= 1"):
+        cfg.__post_init__()
