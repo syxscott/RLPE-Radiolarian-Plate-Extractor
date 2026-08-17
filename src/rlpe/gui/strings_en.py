@@ -216,6 +216,26 @@ STRINGS = {
     "restab.detail.phylum": "Phylum",
     "restab.detail.class": "Class",
     "restab.detail.order": "Order",
+    "restab.detail.genus": "Genus",
+    "restab.detail.cross_figure_link": "Cross-figure link",
+    "restab.detail.sample_ids": "Sample IDs",
+    # audit 2026-08-17 (GUI-A3): v1.1.0 schema fields surfaced
+    # in the detail panel. Confidence interval uses the
+    # Wilson 95% lower/upper bounds the pipeline stamps on every
+    # PanelRecord. Image-verified / review-priority are
+    # operator-visible labels for the v1.1.0 schema fields.
+    "restab.detail.ci": "CI",
+    "restab.detail.image_verified": "Image verified",
+    "restab.detail.image_unverified": "Image not verified",
+    "restab.detail.review_priority": "Review priority",
+    "restab.detail.scale_bar": "Scale bar",
+    # audit 2026-08-17 (GUI-A4): Results tab "Mark verified" /
+    # "Mark unverified" buttons + success / failure dialog messages.
+    "restab.detail.mark_verified": "✓  Mark verified",
+    "restab.detail.mark_unverified": "✗  Mark unverified",
+    "restab.detail.verify_success": "Marked {n} row(s) as {state}.",
+    "restab.detail.verify_failed": "Could not flip image_verified: {error}",
+    "restab.detail.no_selection": "Select a row in the table first.",
     # Phase 64 Plan B (Task B.7): schematic figure content.
     "restab.detail.schematic": "Schematic content",
     "restab.detail.schematic_type": "Figure type",

@@ -606,11 +606,14 @@ class MainWindow(QMainWindow):
     # Menu / toolbar slots
     # ------------------------------------------------------------------
     def _on_open_pdf(self) -> None:
+        # audit 2026-08-17 (GUI-D1): use the i18n key instead of the
+        # hardcoded English "Open PDF" so the dialog title
+        # localises on language switch.
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open PDF",
+            i18n._tr("menu.file.open"),
             self._settings.get("last_pdf_dir", str(Path.home())),
-            "PDF files (*.pdf)",
+            i18n._tr("filter.pdf"),
         )
         if not path:
             return
@@ -630,8 +633,12 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_open_outdir(self) -> None:
+        # audit 2026-08-17 (GUI-D1): use the i18n key instead of the
+        # hardcoded English "Open output directory".
         path = QFileDialog.getExistingDirectory(
-            self, "Open output directory", self._settings.get("last_export_dir", str(Path.home()))
+            self,
+            i18n._tr("menu.file.outdir"),
+            self._settings.get("last_export_dir", str(Path.home())),
         )
         if path:
             self._settings["last_export_dir"] = path
@@ -853,10 +860,16 @@ class MainWindow(QMainWindow):
         job = jobs[job_id]
         path = Path(job.pdf_path)
         if not path.exists():
+            # audit 2026-08-17 (GUI-D2): use the canonical
+            # ``common.retry.title`` i18n key for the dialog title
+            # and ``common.retry.body`` for the body so the message
+            # localises on language switch. Previously
+            # ``main.retry`` was undefined and silently rendered as
+            # ``⟦main.retry⟧``.
             QMessageBox.warning(
                 self,
-                i18n._tr("main.retry", default="Retry"),
-                f"Original file no longer exists:\n{path}",
+                i18n._tr("common.retry.title"),
+                i18n._tr("common.retry.body").format(path=str(path)),
             )
             return
         # Re-push the PDF + settings into Run tab and start

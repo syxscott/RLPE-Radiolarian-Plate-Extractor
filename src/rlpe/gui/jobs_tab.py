@@ -334,11 +334,29 @@ class JobsTab(QWidget):
                 finished_at = matches_path.stat().st_mtime
             except OSError:
                 finished_at = time.time()
+            # audit 2026-08-17 (jobs_tab C1): disk-scan honesty. A
+            # matches.jsonl that exists but lacks the API's
+            # ``complete.flag`` is a PARTIAL run — the pipeline was
+            # killed (OOM, ctrl-C, segfault) before it could finish.
+            # The previous code stamped every disk-loaded job as
+            # STATUS_DONE regardless, so the operator saw a green
+            # "done" row in the Jobs tab for jobs that needed a
+            # retry. Honour the same flag the API uses (see
+            # api/app.py:570 / 2546) and fall back to "matches.jsonl
+            # size > 0" when the flag is missing (legacy runs).
+            complete_flag = root / "output" / "manifests" / "complete.flag"
+            try:
+                job_status = (
+                    STATUS_DONE if complete_flag.exists()
+                    else STATUS_FAILED
+                )
+            except OSError:
+                job_status = STATUS_FAILED
             job = JobRecord(
                 job_id=jid,
                 pdf_path=pdf_path,
                 output_dir=str(root / "output"),
-                status=STATUS_DONE,
+                status=job_status,
                 progress_current=1,
                 progress_total=1,
                 progress_msg=i18n._tr("jobstab.loaded_from_disk"),

@@ -157,6 +157,12 @@ QS_KEY_THEME: Final[str] = "ui/theme"
 QS_KEY_GEOMETRY: Final[str] = "ui/main_window_geometry"
 QS_KEY_STATE: Final[str] = "ui/main_window_state"
 QS_KEY_RECENT_DIRS: Final[str] = "io/recent_dirs"
+# audit 2026-08-17 (GUI-A4): URL of the running FastAPI server that
+# exposes ``POST /review/correction``. Defaults to the same loopback
+# bind the API uses (``run_web_server.py``). Operators who run the
+# API on a remote box override via QSettings at ``io/api_url``.
+QS_KEY_API_URL: Final[str] = "io/api_url"
+DEFAULT_API_URL: Final[str] = "http://127.0.0.1:8000"
 # ============================================================
 # Input widget sizing (Phase 33)
 # ============================================================

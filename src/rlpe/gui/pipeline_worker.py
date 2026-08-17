@@ -356,22 +356,85 @@ class PipelineWorker(QThread):
         ``row`` is a plain ``dict`` per the pipeline's run() return
         type. We coerce nested structures (paper_metadata, metadata)
         to plain dicts so ``QVariant`` marshalling works.
+
+        audit 2026-08-17 (GUI-A3): a previous version only forwarded
+        v1.0 fields (paper/figure/panel/species/bbox/...) and silently
+        dropped every v1.1.0 / v1.2.0 field. Operators running the GUI
+        could not see ``confidence_interval_low/high``, ``image_verified``,
+        or ``review_priority`` even though every emitted row carried
+        them; the GUI showed "—" for the CI column and no badge for
+        image-verified, which made the v1.1.0 audit workflow impossible
+        from the desktop client.
+
+        Fix:
+          * If the row is a Pydantic ``PanelRecord`` (or any object
+            with ``model_dump`` / ``to_dict``) we round-trip through
+            that — it preserves every declared field including the
+            three new ones, and any future fields the schema adds
+            (the ``extra="ignore"`` ConfigDict on the API ResultRecord
+            means schema evolution reaches the GUI automatically).
+          * If the row is a plain dict, we explicitly enumerate the
+            v1.1.0 fields so the keys survive even when the producer
+            is a hand-rolled dict that lacks ``model_dump``.
+          * We also forward the metadata sub-fields the GUI's
+            detail panel reads (``scale_bar``, ``m3_diagnostic``,
+            ``page_index``) so the detail panel doesn't have to fall
+            back to ``"—"`` for them.
         """
+        # Pydantic v2 path: model_dump() captures every field the
+        # schema declares, including v1.1.0 / v1.2.0 additions.
+        if hasattr(row, "model_dump"):
+            try:
+                return row.model_dump()
+            except Exception:
+                pass
+        # Pydantic v1 / dataclass path.
         if hasattr(row, "to_dict"):
             return row.to_dict()
         if isinstance(row, dict):
+            md = _flatten_metadata(row.get("metadata") or {})
+            # Forward metadata sub-fields the GUI's detail panel
+            # surfaces (scale_bar, m3_diagnostic, page_index). These
+            # are also exposed via the PanelRecord.metadata sub-object
+            # so the keys appear under both paths.
+            if row.get("metadata"):
+                raw_md = row.get("metadata") or {}
+                for sub_key in ("scale_bar", "m3_diagnostic", "page_index"):
+                    if sub_key not in md and sub_key in raw_md:
+                        md[sub_key] = raw_md.get(sub_key)
             return {
+                # ---- v1.0 fields (legacy core) ----
                 "paper_id": row.get("paper_id"),
                 "figure_id": row.get("figure_id"),
                 "panel_id": row.get("panel_id"),
+                "caption_panel_id": row.get("caption_panel_id"),
+                "printed_panel_id": row.get("printed_panel_id"),
+                "pipeline_panel_index": row.get("pipeline_panel_index"),
+                "canonical_panel_id": row.get("canonical_panel_id"),
+                "panel_id_source": row.get("panel_id_source"),
                 "species": row.get("species"),
+                "taxon_id": row.get("taxon_id"),
+                "sample_id": row.get("sample_id"),
+                "geology_context_id": row.get("geology_context_id"),
                 "panel_path": row.get("panel_path"),
+                "figure_image_path": row.get("figure_image_path"),
                 "bbox": row.get("bbox"),
                 "confidence": row.get("confidence"),
                 "label_text": row.get("label_text"),
                 "caption_snippet": row.get("caption_snippet"),
                 "ocr_text": row.get("ocr_text"),
-                "metadata": _flatten_metadata(row.get("metadata") or {}),
+                "extraction_method": row.get("extraction_method", ""),
+                "needs_review": row.get("needs_review", False),
+                "review_reasons": row.get("review_reasons", []),
+                # ---- audit 2026-08-02 / v1.1.0 fields (GUI-A3) ----
+                # All three are optional on the schema; None / False /
+                # 0 are the legitimate "not computed" states.
+                "confidence_interval_low": row.get("confidence_interval_low"),
+                "confidence_interval_high": row.get("confidence_interval_high"),
+                "image_verified": row.get("image_verified", False),
+                "review_priority": row.get("review_priority", 0),
+                # ---- metadata sub-block ----
+                "metadata": md,
                 "paper_metadata": _flatten_metadata(row.get("paper_metadata") or {}),
                 "geology_links": row.get("geology_links", []),
             }

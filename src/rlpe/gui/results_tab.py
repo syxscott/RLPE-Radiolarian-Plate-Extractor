@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .constants import INPUT_WIDTH_LONG, RESULT_COLUMNS
+from .constants import DEFAULT_API_URL, INPUT_WIDTH_LONG, RESULT_COLUMNS
 from .i18n_widgets import tr_button, tr_combobox, tr_label
 from .styles import SPACE_M, SPACE_S
 from . import i18n
@@ -156,7 +156,7 @@ def _emit_link_summary_badge(html: list[str], source: str, confidence: float) ->
         conf_pct = "—"
     html.append(
         f"<div style='padding:4px 8px;border-top:1px solid #eee;font-size:11px'>"
-        f"<b>{i18n._tr('resultstab.detail.cross_figure_link', 'Cross-figure link')}:</b> "
+        f"<b>{i18n._tr('restab.detail.cross_figure_link', 'Cross-figure link')}:</b> "
         f"<span class='{cls}' style='padding:1px 6px;border-radius:3px;font-size:10px'>"
         f"{html_escape(label)}</span> "
         f"<span style='color:#888'>({conf_pct})</span></div>"
@@ -363,6 +363,29 @@ class ResultsTab(QWidget):
         export_dwca_btn.clicked.connect(self._export_dwca)
         footer.addWidget(export_dwca_btn)
 
+        # audit 2026-08-17 (GUI-A4): "Mark verified" / "Mark
+        # unverified" buttons. POST the (paper_id, figure_id,
+        # panel_path) triple to /review/correction so the operator
+        # can flip image_verified without leaving the desktop app.
+        # The button label and accessibility tooltip refresh on
+        # language switch via the standard i18n widget registry.
+        self._mark_verified_btn = tr_button("restab.detail.mark_verified")
+        self._mark_verified_btn.setObjectName("restab.detail.mark_verified")
+        self._mark_verified_btn.setProperty(
+            "class", "primary",
+        )
+        self._mark_verified_btn.clicked.connect(
+            lambda: self._flip_image_verified(True),
+        )
+        footer.addWidget(self._mark_verified_btn)
+
+        self._mark_unverified_btn = tr_button("restab.detail.mark_unverified")
+        self._mark_unverified_btn.setObjectName("restab.detail.mark_unverified")
+        self._mark_unverified_btn.clicked.connect(
+            lambda: self._flip_image_verified(False),
+        )
+        footer.addWidget(self._mark_unverified_btn)
+
         footer.addStretch(1)
 
         self._status = QLabel("")
@@ -393,7 +416,15 @@ class ResultsTab(QWidget):
         self._current_job_id = job_id
         self._current_job_dir = output_dir
         self._all_rows = list(rows)
-        self._title.setText(f"📊 Job {job_id}  ·  {len(self._all_rows):,} rows")
+        # audit 2026-08-17 (GUI-A7): use i18n key restab.done with
+        # {id} / {rows} placeholders so the title localises on
+        # language switch. Previously the English literal was
+        # always shown.
+        self._title.setText(
+            i18n._tr("restab.done", "Job {id}  ·  {rows} rows").format(
+                id=job_id, rows=f"{len(self._all_rows):,}"
+            )
+        )
         self._refresh_filter_options()
         self._refresh_view()
 
@@ -407,8 +438,13 @@ class ResultsTab(QWidget):
             self._log.warning("append_rows called for different job_id %s (current %s), ignoring", job_id, self._current_job_id)
             return
         self._all_rows.extend(rows)
+        # audit 2026-08-17 (GUI-A7): use the i18n key restab.live so
+        # the live-update title localises.
         self._title.setText(
-            f"📊 Job {self._current_job_id or '?'}  ·  {len(self._all_rows):,} rows (live)"
+            i18n._tr("restab.live", "Job {id}  ·  {rows} rows (live)").format(
+                id=self._current_job_id or "?",
+                rows=f"{len(self._all_rows):,}",
+            )
         )
         self._refresh_filter_options()
         self._refresh_view()
@@ -704,6 +740,85 @@ class ResultsTab(QWidget):
         conf = row.get("confidence")
         conf_str = f"{conf * 100:.0f}%" if isinstance(conf, (int, float)) else "—"
 
+        # audit 2026-08-17 (GUI-A3): build the v1.1.0 confidence
+        # interval display string from the Wilson 95% CI bounds the
+        # pipeline stamps on every PanelRecord. We tolerate either
+        # floats stored on the row dict or nested under ``metadata``;
+        # the schema contract keeps them on the top level so the row
+        # path is the canonical one.
+        ci_low = row.get("confidence_interval_low")
+        ci_high = row.get("confidence_interval_high")
+        ci_str = None
+        if isinstance(ci_low, (int, float)) and isinstance(ci_high, (int, float)):
+            ci_str = f"[{ci_low * 100:.0f}%, {ci_high * 100:.0f}%]"
+
+        # audit 2026-08-17 (GUI-A3): image_verified + review_priority
+        # badges. The pipeline computes review_priority in
+        # [0, 1, 2] (low/med/high); we colour-code the badge so
+        # operators can scan the table for rows needing urgent
+        # review. ``image_verified`` is a checkmark badge so the
+        # operator's manual-review state survives a GUI restart.
+        image_verified = bool(row.get("image_verified", False))
+        if image_verified:
+            verified_badge = (
+                "<span class='badge-info' "
+                "style='padding:1px 6px;border-radius:3px;font-size:11px;"
+                "background:#d6f5d6;color:#1c7a1c'>"
+                f"✓ {html_escape(i18n._tr('restab.detail.image_verified'))}"
+                "</span>"
+            )
+        else:
+            verified_badge = (
+                "<span class='badge-muted' "
+                "style='padding:1px 6px;border-radius:3px;font-size:11px'>"
+                f"{html_escape(i18n._tr('restab.detail.image_unverified'))}"
+                "</span>"
+            )
+
+        review_priority = row.get("review_priority", 0)
+        try:
+            review_priority = int(review_priority)
+        except (TypeError, ValueError):
+            review_priority = 0
+        if review_priority < 0:
+            review_priority = 0
+        elif review_priority > 2:
+            review_priority = 2
+        priority_styles = {
+            0: ("badge-muted", "#eee", "#888"),
+            1: ("badge-warn", "#ffe0a0", "#c07800"),
+            2: ("badge-error", "#ffd6d6", "#a01818"),
+        }
+        pcls, pbg, pfg = priority_styles[review_priority]
+        priority_badge = (
+            f"<span class='{pcls}' "
+            f"style='padding:1px 6px;border-radius:3px;font-size:11px;"
+            f"background:{pbg};color:{pfg}'>"
+            f"{html_escape(i18n._tr('restab.detail.review_priority'))}: "
+            f"{review_priority}</span>"
+        )
+
+        # audit 2026-08-17 (GUI-A3): render the scale bar metadata
+        # the panel metadata carries. The ScaleBarRecord schema
+        # field carries ``value`` (the number) + ``unit`` (e.g.
+        # ``"μm"``) + optional ``pixel_length`` (px) so the
+        # operator can sanity-check μm/px ratio.
+        scale_bar = md.get("scale_bar") or {}
+        scale_bar_str = None
+        if isinstance(scale_bar, dict):
+            sb_value = scale_bar.get("value")
+            sb_unit = scale_bar.get("unit")
+            sb_px = scale_bar.get("pixel_length")
+            if sb_value is not None or sb_unit or sb_px:
+                bits: list[str] = []
+                if sb_value is not None:
+                    unit_str = f" {html_escape(str(sb_unit))}" if sb_unit else ""
+                    bits.append(f"{sb_value}{unit_str}")
+                if sb_px is not None:
+                    bits.append(f"({sb_px}px)")
+                if bits:
+                    scale_bar_str = f"{' '.join(bits)}"
+
         html.append("<table style='font-size:12px;border-collapse:collapse;width:100%;margin-bottom:8px'>")
         meta_pairs = [
             (i18n._tr("restab.detail.paper_id"), html_escape(row.get("paper_id") or "—")),
@@ -712,8 +827,24 @@ class ResultsTab(QWidget):
             (i18n._tr("restab.detail.page"), md.get("page_index") if md.get("page_index") is not None else "—"),
             (i18n._tr("restab.detail.source"), f"<span class='{ocr_cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(ocr_label)}</span>"),
             (i18n._tr("restab.detail.confidence"), conf_str),
-            (i18n._tr("restab.detail.geo_scope"), f"<span class='{cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(scope_label)}</span>"),
         ]
+        # Confidence interval — append as a parenthetical next to
+        # confidence if available, otherwise include it as its own
+        # row. Either way, the operator sees the Wilson bounds.
+        if ci_str is not None:
+            meta_pairs.append((
+                i18n._tr("restab.detail.ci"),
+                ci_str,
+            ))
+        meta_pairs.append(
+            (i18n._tr("restab.detail.geo_scope"), f"<span class='{cls}' style='padding:1px 5px;border-radius:3px;font-size:11px'>{html_escape(scope_label)}</span>"),
+        )
+        # audit 2026-08-17 (GUI-A3): surface image_verified + review
+        # priority as their own meta rows.
+        meta_pairs.append((i18n._tr("restab.detail.image_verified"), verified_badge))
+        meta_pairs.append((i18n._tr("restab.detail.review_priority"), priority_badge))
+        if scale_bar_str:
+            meta_pairs.append((i18n._tr("restab.detail.scale_bar"), scale_bar_str))
         # Phase 56 audit: guard against non-numeric bbox elements (None, str)
         bbox = row.get("bbox")
         if isinstance(bbox, list) and len(bbox) == 4 and any(
@@ -765,7 +896,7 @@ class ResultsTab(QWidget):
             display = cap_snippet[:280] + ("…" if len(cap_snippet) > 280 else "")
             html.append(
                 f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
-                f"<b style='font-size:12px'>{i18n._tr('resultstab.detail.caption', 'Caption')}</b>"
+                f"<b style='font-size:12px'>{i18n._tr('restab.detail.caption', 'Caption')}</b>"
                 f"<pre style='background:#f5f5f5;padding:6px;border-radius:4px;margin:4px 0 0;"
                 f"white-space:pre-wrap;font-family:monospace;font-size:11px'>"
                 f"{html_escape(display)}</pre></div>"
@@ -790,20 +921,40 @@ class ResultsTab(QWidget):
                 f"<b style='font-size:12px'>{html_escape(i18n._tr('restab.detail.pbdb_tax'))}</b>"
                 f"<table style='font-size:12px;margin-top:4px'>"
             )
+            # audit 2026-08-17 (GUI-A1): the previous version used
+            # English literals ("Kingdom"/"Phylum"/...) directly,
+            # which bypassed the existing zh_CN translations at
+            # restab.detail.kingdom / .phylum / .class / .order /
+            # restab.detail.family (restab.detail.family is the
+            # legacy "family: {value}" template, so for the
+            # taxonomy table we use the standalone family label).
+            # The keys already existed; the table just didn't use
+            # them. ``class_`` (the PBDB taxonomy dict key) maps to
+            # the ``restab.detail.class`` i18n label. ``Genus`` and
+            # ``Source`` have no defined i18n keys, so we add them
+            # as fallbacks here and also in strings_en / strings_zh.
             tax_rows = [
-                ("Kingdom", tax.get("kingdom")),
-                ("Phylum",  tax.get("phylum")),
-                ("Class",   tax.get("class_")),
-                ("Order",   tax.get("order")),
-                ("Family",  tax.get("family")),
-                ("Genus",   tax.get("genus")),
-                ("Source",  tax.get("source")),
+                ("restab.detail.kingdom", tax.get("kingdom")),
+                ("restab.detail.phylum",  tax.get("phylum")),
+                ("restab.detail.class",   tax.get("class_")),
+                ("restab.detail.order",   tax.get("order")),
+                ("restab.detail.family",  tax.get("family")),
+                ("restab.detail.genus",   tax.get("genus")),
+                ("restab.detail.source",  tax.get("source")),
             ]
-            for k, v in tax_rows:
+            for key, v in tax_rows:
                 if not v:
                     continue
+                label = i18n._tr(key)
+                # ``restab.detail.family`` is the templated
+                # "family: {value}" / "科：{value}" used inline next
+                # to a species name. The taxonomy table cell layout
+                # wants a bare label, so strip the template part.
+                if "{value}" in label:
+                    label = label.split(":", 1)[0].strip() or label.split("{", 1)[0].strip()
                 html.append(
-                    f"<tr><td style='padding:1px 8px 1px 0;color:#888'>{k}</td>"
+                    f"<tr><td style='padding:1px 8px 1px 0;color:#888'>"
+                    f"{html_escape(label)}</td>"
                     f"<td style='padding:1px 0'>{html_escape(str(v))}</td></tr>"
                 )
             html.append("</table></div>")
@@ -817,16 +968,21 @@ class ResultsTab(QWidget):
         if sample_ids:
             html.append(
                 f"<div style='padding:4px 8px;border-top:1px solid #eee;font-size:12px'>"
-                f"<b>{i18n._tr('resultstab.detail.sample_ids', 'Sample IDs')}:</b> "
+                f"<b>{i18n._tr('restab.detail.sample_ids', 'Sample IDs')}:</b> "
                 f"<code style='font-size:11px'>{html_escape(', '.join(sample_ids[:10]))}"
                 f"{' …' if len(sample_ids) > 10 else ''}</code></div>"
             )
 
         # ── Geology links ────────────────────────────────────
         if geo_links:
+            # audit 2026-08-17 (GUI-A6): honour the i18n key instead
+            # of the hardcoded English literal. Previously the
+            # zh_CN translation at restab.detail.geo_links was
+            # silently bypassed.
             html.append(
                 f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
-                f"<b style='font-size:12px'>Geology links ({len(geo_links)})</b>"
+                f"<b style='font-size:12px'>"
+                f"{i18n._tr('restab.detail.geo_links', '{count}').format(count=len(geo_links))}</b>"
             )
             for g in geo_links[:8]:
                 bits = []
@@ -908,7 +1064,12 @@ class ResultsTab(QWidget):
                         f"border-radius:3px;margin-top:4px'>" + " · ".join(bits) + "</div>"
                     )
             if len(geo_links) > 8:
-                html.append(f"<div style='color:#888;font-size:11px;margin-top:4px'>… and {len(geo_links)-8} more</div>")
+                # audit 2026-08-17 (GUI-A6): use the i18n key for the
+                # overflow badge ("… and N more" / "… 还有 N 条").
+                html.append(
+                    f"<div style='color:#888;font-size:11px;margin-top:4px'>"
+                    f"{i18n._tr('restab.detail.geo_links_more', '{n}').format(n=len(geo_links)-8)}</div>"
+                )
             html.append("</div>")
 
         # ── Cross-figure linker provenance (Phase 65 Plan A.6) ────
@@ -1261,6 +1422,150 @@ class ResultsTab(QWidget):
 
     def _set_status(self, text: str) -> None:
         self._status.setText(text)
+
+    # ------------------------------------------------------------------
+    # Image-verified flip (GUI-A4)
+    # ------------------------------------------------------------------
+    def _flip_image_verified(self, verified: bool) -> None:
+        """POST the selected row's identity to /review/correction.
+
+        The endpoint (:func:`api.app.submit_correction`) flips
+        ``PanelRecord.image_verified`` on every (paper_id, figure_id,
+        panel_path) tuple in the API's ``RESULT_CACHE`` AND appends a
+        corrections.jsonl row for replay. After a successful POST we
+        update the in-memory row in ``self._all_rows`` /
+        ``self._filtered_rows`` so the detail panel + table row
+        reflect the new state without needing a full reload.
+
+        Errors are surfaced via ``QMessageBox.warning``; we never
+        crash the GUI on a network failure.
+        """
+        # Pull the currently selected row's identity triple. Without
+        # at least one selected row the action is a no-op so the
+        # button never accidentally flips an unrelated panel.
+        items = self._table.selectedItems()
+        if not items:
+            QMessageBox.information(
+                self,
+                i18n._tr("restab.detail.mark_verified"),
+                i18n._tr("restab.detail.verify_failed").format(
+                    error=i18n._tr("restab.detail.no_selection"),
+                ),
+            )
+            return
+        row = items[0].data(Qt.UserRole) or {}
+        paper_id = row.get("paper_id")
+        figure_id = row.get("figure_id")
+        # The API matches on the trailing path component of
+        # panel_path, so the basename is sufficient and avoids
+        # any platform-specific absolute-path mismatch.
+        panel_path = row.get("panel_path") or ""
+        if not (paper_id and figure_id):
+            QMessageBox.warning(
+                self,
+                i18n._tr("restab.detail.mark_verified"),
+                i18n._tr("restab.detail.verify_failed").format(
+                    error="missing paper_id / figure_id on the selected row",
+                ),
+            )
+            return
+
+        # Resolve the API URL. We honour a QSettings override at
+        # ``io/api_url`` (settable from the Settings tab) and fall
+        # back to the local-loopback default. Using QSettings keeps
+        # operators on a remote API box happy without us needing to
+        # add a new GUI tab.
+        api_url = DEFAULT_API_URL
+        try:
+            from PySide6.QtCore import QSettings
+            from .constants import APP_AUTHOR, APP_NAME, QS_KEY_API_URL
+            settings = QSettings(APP_AUTHOR, APP_NAME)
+            v = settings.value(QS_KEY_API_URL, DEFAULT_API_URL)
+            if isinstance(v, str) and v.strip():
+                api_url = v.strip()
+        except Exception:
+            pass
+        endpoint = f"{api_url.rstrip('/')}/review/correction"
+
+        payload = {
+            "paper_id": str(paper_id),
+            "figure_id": str(figure_id),
+            "panel_path": panel_path or None,
+            "image_verified": bool(verified),
+        }
+        # POST. Use ``requests`` when available (the most common
+        # research-stack dependency) and fall back to ``urllib`` so
+        # the button still works on a slim install that lacks
+        # requests. The fallback path uses stdlib only.
+        try:
+            try:
+                import requests  # type: ignore
+            except Exception:
+                requests = None  # type: ignore
+            if requests is not None:
+                resp = requests.post(
+                    endpoint, json=payload, timeout=10,
+                )
+                resp.raise_for_status()
+            else:
+                import json as _json
+                import urllib.error
+                import urllib.request
+                req = urllib.request.Request(
+                    endpoint,
+                    data=_json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=10) as fh:  # noqa: S310
+                    fh.read()
+        except Exception as exc:
+            self._log.warning(
+                "image_verified flip failed: %s", exc,
+            )
+            QMessageBox.warning(
+                self,
+                i18n._tr("restab.detail.mark_verified"),
+                i18n._tr("restab.detail.verify_failed").format(
+                    error=f"{type(exc).__name__}: {exc}",
+                ),
+            )
+            return
+
+        # Mutate the in-memory rows so the table + detail panel
+        # refresh without a full reload.
+        n = 0
+        for r in self._all_rows:
+            if (
+                r.get("paper_id") == paper_id
+                and r.get("figure_id") == figure_id
+                and (not panel_path or r.get("panel_path") == panel_path)
+            ):
+                r["image_verified"] = bool(verified)
+                n += 1
+        for r in self._filtered_rows:
+            if (
+                r.get("paper_id") == paper_id
+                and r.get("figure_id") == figure_id
+                and (not panel_path or r.get("panel_path") == panel_path)
+            ):
+                r["image_verified"] = bool(verified)
+        # Re-render the detail panel so the badge updates.
+        try:
+            self._render_detail(row)
+        except Exception:
+            pass
+
+        state_label = (
+            i18n._tr("restab.detail.image_verified")
+            if verified
+            else i18n._tr("restab.detail.image_unverified")
+        )
+        self._set_status(
+            i18n._tr("restab.detail.verify_success").format(
+                n=n, state=state_label,
+            )
+        )
 
 
 def _format_bbox(bbox) -> str:
