@@ -274,3 +274,70 @@ def test_parse_handles_nested_json_after_prose():
     assert parsed["species"] == "Tricolocapsa"
     assert parsed["confidence"] == 0.7
     assert "Late Cretaceous" in parsed["reasoning"]
+
+
+# ---------------------------------------------------------------------------
+# _normalize_panel_dict — preserve species_list / structural extras
+# (Audit 2026-08-17, BUG-E)
+# ---------------------------------------------------------------------------
+
+def test_normalize_preserves_species_list():
+    """BUG-E: M3 multimodal call on Boughdiri 2007 (live probe) returned
+    ``{"species_list": [...29 entries...]}`` and the caller asked for
+    that key explicitly. ``_normalize_panel_dict`` returned only the
+    4 canonical keys (label/species/confidence/reasoning), silently
+    dropping the species_list — the caller thought M3 returned 0
+    species. Live re-verify after fix shows 29/28 species preserved."""
+    from rlpe.llm_backends import _normalize_panel_dict
+    obj = {
+        "species_list": [
+            {"species": "Emiluvia orea", "confidence": 0.92},
+            {"species": "Stichocapsa robusta", "confidence": 0.92},
+        ],
+        "notes": "Cretaceous assemblage",
+    }
+    out = _normalize_panel_dict(obj)
+    assert "species_list" in out, "species_list must be preserved"
+    assert len(out["species_list"]) == 2
+    assert out["species_list"][0]["species"] == "Emiluvia orea"
+
+
+def test_normalize_preserves_arbitrary_dict_extras():
+    from rlpe.llm_backends import _normalize_panel_dict
+    obj = {
+        "species": "X",
+        "confidence": 0.5,
+        "reasoning": "r",
+        "morphology": {"shell": "conical", "segments": 5},
+        "stratigraphy": {"age": "Late Cretaceous", "formation": "Scaglia Fm"},
+    }
+    out = _normalize_panel_dict(obj)
+    assert out["morphology"]["segments"] == 5
+    assert out["stratigraphy"]["formation"] == "Scaglia Fm"
+
+
+def test_normalize_drops_scalar_extras():
+    """Scalar extras (str/int) are NOT preserved — only list/dict
+    structural fields make it through. This keeps the result shape
+    stable for downstream consumers that expect exactly 4 keys."""
+    from rlpe.llm_backends import _normalize_panel_dict
+    obj = {
+        "species": "X", "confidence": 0.5, "reasoning": "r",
+        "label": "1",
+        "stray_field": "should be dropped",
+    }
+    out = _normalize_panel_dict(obj)
+    assert "stray_field" not in out
+
+
+def test_normalize_does_not_override_canonical_keys():
+    from rlpe.llm_backends import _normalize_panel_dict
+    obj = {
+        "species": "Original",
+        "species_list": [{"species": "Other"}],
+        "confidence": 0.7,
+        "reasoning": "...",
+    }
+    out = _normalize_panel_dict(obj)
+    assert out["species"] == "Original"
+    assert out["species_list"][0]["species"] == "Other"

@@ -426,6 +426,18 @@ def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
         "reasoning": str(obj.get("reasoning", "")).strip() or "No reasoning provided.",
     }
     out["confidence"] = max(0.0, min(1.0, round(out["confidence"], 2)))
+    # Audit 2026-08-17 BUG-E: preserve structural extras (e.g.
+    # ``species_list`` returned when the prompt asks for "list every
+    # species in this plate"). The previous implementation returned
+    # only the 4 normalized keys, silently dropping any list/dict
+    # fields the caller explicitly asked for. We keep any list-typed
+    # or dict-typed values verbatim so callers can consume them
+    # downstream (e.g. for per-panel species matching against gold).
+    for k, v in obj.items():
+        if k in out:
+            continue
+        if isinstance(v, (list, dict)):
+            out[k] = v
     return out
 
 
