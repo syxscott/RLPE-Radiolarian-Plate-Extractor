@@ -105,6 +105,12 @@ _KNOWN_EXTRA_KEYS = {
     "use_m3_stage3",
     "m3_multi_plate_enrich",
     "m3_stage_6",
+    # Phase 2026-08-17: Stage 4.5 per-panel M3 vision species ID.
+    # Opt-in flag; default disabled for backward compat.
+    "m3_per_panel_enabled",
+    "m3_per_panel_min_conf",
+    "m3_per_panel_max_per_figure",
+    "m3_per_panel_max_per_paper",
     # LLM-first extraction (opt-in; default True when Gemma runtime is set)
     "use_llm_first",
     # Multi-modal geology vision (Commit 2 / Round 3)
@@ -192,6 +198,15 @@ class PipelineConfig:
     m3_morphology_max_species_per_paper: int = 100
     m3_morphology_max_context_chars: int = 6000
     m3_morphology_min_caption_chars: int = 120
+    # Phase 2026-08-17: Stage 4.5 per-panel M3 vision species ID.
+    # Opt-in; when True, fans out one M3 vision call per Stage-3 panel
+    # crop and overwrites the regex-matched species when M3's confidence
+    # meets the threshold. Pure additive — falls back to regex on any
+    # backend error. See ``_apply_m3_per_panel_species_id``.
+    m3_per_panel_enabled: bool = False
+    m3_per_panel_min_conf: float = 0.55
+    m3_per_panel_max_per_figure: int = 20
+    m3_per_panel_max_per_paper: int = 200
     # Round 14: default OFF. When True, _process_region dumps a
     # per-region ``auto_fig_pNNN_rNN.json`` to disk (34 MB each on
     # 200-page PDFs) and _process_one_pdf dumps the full
