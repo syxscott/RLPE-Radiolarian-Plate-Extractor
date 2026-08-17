@@ -56,13 +56,13 @@ def test_config_field_overrides_work(tmp_path):
 # Task 2: method shell with early-return guards
 # ---------------------------------------------------------------------------
 
-from rlpe.pipeline import RadiolarianPipeline
-
 
 class _StubPipeline:
     """Minimal stand-in: bind the unbound method and provide config."""
 
     def __init__(self, cfg: PipelineConfig):
+        from rlpe.pipeline import RadiolarianPipeline
+
         self.config = cfg
         # Provide the m3_engine attribute since the method's guard
         # touches it after the enabled check. No backend is wired.
@@ -100,19 +100,16 @@ def test_method_no_op_when_no_results(tmp_path):
 def test_config_coerces_string_inputs_in_post_init(tmp_path):
     """YAML/JSON loads can produce string booleans/floats/ints.
     ``__post_init__`` must coerce them to the declared types."""
-    cfg = PipelineConfig(
-        pdf_dir=tmp_path / "pdfs",
-        work_dir=tmp_path / "work",
-        output_dir=tmp_path / "out",
+    cfg = _make_cfg(
+        tmp_path,
+        m3_per_panel_enabled="true",
+        m3_per_panel_min_conf="0.7",
+        m3_per_panel_max_per_figure="10",
+        m3_per_panel_max_per_paper="50",
     )
-    # Simulate YAML load: assign raw strings before triggering __post_init__.
-    # Easiest way is to construct then mutate the fields and call __post_init__
-    # if available, but slotted dataclass fields are harder. Use object.__setattr__
-    # to bypass slots.
-    object.__setattr__(cfg, "m3_per_panel_enabled", "true")
-    object.__setattr__(cfg, "m3_per_panel_min_conf", "0.7")
-    object.__setattr__(cfg, "m3_per_panel_max_per_figure", "10")
-    object.__setattr__(cfg, "m3_per_panel_max_per_paper", "50")
+    # _make_cfg uses plain setattr; __post_init__ was already called once
+    # during construction but the string overrides bypass coercion, so
+    # re-invoke it explicitly to exercise the coercion path.
     cfg.__post_init__()
     assert cfg.m3_per_panel_enabled is True
     assert cfg.m3_per_panel_min_conf == pytest.approx(0.7)
