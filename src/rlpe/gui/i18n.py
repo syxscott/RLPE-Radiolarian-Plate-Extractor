@@ -140,7 +140,25 @@ def register_widget_text(object_name: str, attr: str, key: str, **fmt) -> None:
     the same ``{app}`` / ``{version}`` slots).
     """
     _REGISTRY.append((object_name, attr, key, fmt))
-    _apply_to_one(object_name, attr, key, fmt)
+    # Audit 2026-08-17 (third pass): do NOT call _apply_to_one here.
+    # Every tr_label / tr_button / tr_checkbox / tr_groupbox /
+    # tr_lineedit / tr_spinbox helper sets the widget's text
+    # directly via ``widget.setText(i18n._tr(text_key))`` right
+    # after ``register_widget_text`` returns, so the immediate-
+    # apply lookup via ``app.allWidgets()`` was redundant for
+    # first-paint correctness. The lookup is the source of the
+    # CI pytest 3.11 segfault (exit code 139) at ``_apply_to_one``
+    # because PySide6 6.11.x with Python 3.11 segfaults INSIDE the
+    # Qt parent-tree walk when a stale widget is present, and
+    # SIGSEGV cannot be caught by Python ``try/except``.
+    #
+    # On language switches, ``_apply_registry`` re-applies the text
+    # to every registered widget via its own ``allWidgets()`` walk
+    # — but that path is wrapped in ``try/except`` AND skips on
+    # failure, so a single stale widget can no longer crash pytest.
+    # Skipping the lookup here removes the most common crash site
+    # (widget construction triggers dozens of register_widget_text
+    # calls, each of which used to walk the entire Qt tree).
 
 
 def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None) -> None:
