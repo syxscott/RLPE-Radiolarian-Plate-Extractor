@@ -28,20 +28,21 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("PySide6")
-from PySide6.QtGui import QColor, QImage  # noqa: E402
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# Force the Qt platform before QApplication is constructed so headless
+# CI runners don't try to open a real display.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
-
-pytest.importorskip("PySide6")
+from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+# A single shared QApplication for the whole module. Constructing it
+# at import time guarantees it exists before any test fixture runs,
+# which is required for ``i18n.register_widget_text`` (called inside
+# RunTab.__init__) to be able to look up widgets via
+# ``QApplication.instance().allWidgets()``.
 _app = QApplication.instance() or QApplication([])
-
-
-import pytest
 
 
 @pytest.fixture(autouse=True)

@@ -147,6 +147,17 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
     """Apply a single (objectName, attr, key) immediately.
 
     Skipped if QApplication is not yet constructed (early imports).
+
+    Audit 2026-08-17: wrap the ``allWidgets()`` iteration in a
+    try/except so a stale/deleted widget doesn't segfault the whole
+    interpreter. PySide6 raises ``RuntimeError`` ("Internal C++
+    object already deleted") when the underlying C++ object has
+    been destroyed but the Python wrapper is still alive (common
+    during widget construction / destruction in tests). Without
+    this guard a single stale widget crashes pytest with exit
+    code 139 — observed in CI pytest 3.11 at ``RunTab.__init__``
+    when ``tr_checkbox`` was called and a previously-deleted
+    widget was still in the Qt parent tree.
     """
     from PySide6.QtWidgets import QApplication
 
@@ -160,8 +171,35 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
     lookup_name = object_name
     if attr == "comboItem" and ":item:" in object_name:
         lookup_name = object_name.rsplit(":item:", 1)[0]
-    for w in app.allWidgets():
-        if w.objectName() != lookup_name:
+    # Iterate defensively: ``app.allWidgets()`` can return widgets
+    # whose underlying C++ object has been deleted (e.g. a test
+    # constructed a widget, then deleted it without the Python
+    # wrapper being GC'd). Calling ``.objectName()`` on a deleted
+    # wrapper raises RuntimeError on most PySide6 builds, but on
+    # some builds (notably 6.11.x with Python 3.11) it segfaults
+    # before the RuntimeError can be raised. Filter explicitly via
+    # ``shiboken6.isValid`` (the canonical "is the C++ object still
+    # alive" check) and catch RuntimeError as a fallback.
+    try:
+        import shiboken6 as _shiboken
+
+        _is_valid = _shiboken.isValid
+    except ImportError:
+        # Audit 2026-08-17: ruff E731 forbids reassigning a lambda to
+        # a name, so we use a def. The shiboken path is the
+        # production one; this fallback exists only for headless
+        # test environments without PySide6 fully wired in.
+        def _is_valid(obj: object) -> bool:
+            return True
+
+    for w in list(app.allWidgets()):
+        try:
+            if not _is_valid(w):
+                continue
+            if w.objectName() != lookup_name:
+                continue
+        except (RuntimeError, TypeError):
+            # Stale wrapper — skip without breaking the whole pass.
             continue
         text = _tr(key)
         # Phase 34: apply .format() so translated templates
@@ -230,7 +268,32 @@ def _apply_registry() -> None:
     # re-texting the UI (tests construct widgets without parents).
     # allWidgets() returns every widget including top-levels; index by
     # objectName and prune only entries whose widget is truly gone.
-    all_widgets = {w.objectName(): w for w in app.allWidgets()}
+    #
+    # Audit 2026-08-17: same defensive iteration guard as
+    # ``_apply_to_one`` — wrap ``objectName()`` calls in try/except
+    # so a stale/deleted widget doesn't segfault the whole interpreter
+    # when ``set_language`` is called from a fixture after a prior
+    # test left a deleted C++ object in the allWidgets() walk.
+    try:
+        import shiboken6 as _shiboken
+
+        _is_valid = _shiboken.isValid
+    except ImportError:
+        # Audit 2026-08-17: ruff E731 forbids reassigning a lambda to
+        # a name, so we use a def.
+        def _is_valid(obj: object) -> bool:
+            return True
+
+    all_widgets: dict[str, object] = {}
+    for w in list(app.allWidgets()):
+        try:
+            if not _is_valid(w):
+                continue
+            obj_name = w.objectName()
+        except (RuntimeError, TypeError):
+            continue
+        if obj_name:
+            all_widgets[obj_name] = w
     # Rebuild registry keeping only entries whose widgets are still alive
     kept, removed = [], 0
     for entry in _REGISTRY:
