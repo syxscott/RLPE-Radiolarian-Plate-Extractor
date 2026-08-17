@@ -17,6 +17,7 @@ import re
 from collections import Counter
 from typing import Any
 
+from .evaluation.metrics import wilson_score_interval
 from .schema_models import (
     FigureRecord,
     GeologyContextRecord,
@@ -36,7 +37,6 @@ from .schema_models import (
 )
 from .types import MatchResult
 from .types import PaperMetadata as InternalPaperMetadata
-from .evaluation.metrics import wilson_score_interval
 
 logger = logging.getLogger(__name__)
 
@@ -1742,6 +1742,11 @@ def locality_records_from_geology(matches: list[MatchResult]) -> list[dict[str, 
             loc_id = _locality_id(g, m.paper_id)
             rec = LocalityRecord(
                 locality_id=loc_id,
+                # audit 2026-08-17 (EXP-1): stamp paper_id so xlsx's
+                # "论文ID" column isn't blank. Previously the
+                # LocalityRecord schema didn't declare paper_id at all
+                # and xlsx fell back to "".
+                paper_id=m.paper_id or "",
                 name=locality,
                 country=g.get("country"),
                 region=None,
@@ -1952,6 +1957,10 @@ def paleo_coordinates_from_localities(
                 age_ma,
                 plate_id,
             ),
+            # audit 2026-08-17 (EXP-1): stamp paper_id so xlsx's
+            # "论文ID" column isn't blank for paleo rows. The parent
+            # locality came from this same paper.
+            paper_id=(loc.get("paper_id") or "") if isinstance(loc, dict) else "",
             locality_id=loc_id,
             modern_latitude=float(mod_lat),
             modern_longitude=float(mod_lon),

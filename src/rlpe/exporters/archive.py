@@ -21,6 +21,7 @@ import zipfile
 from dataclasses import dataclass
 from html import escape as _xml_escape
 from pathlib import Path
+from typing import Any
 
 from ..converters import _extract_authorship, _taxon_parts
 from ..schema_models import PanelRecord, RunOutput
@@ -32,8 +33,14 @@ class DwCAOptions:
 
     include_unmatched: bool = False
     encoding: str = "utf-8"
-    fields_terminated_by: str = "\\t"
-    lines_terminated_by: str = "\\n"
+    # audit 2026-08-17 (EXP-2): the previous defaults were the literal
+    # two-char strings ``"\\t"`` / ``"\\n"``. meta.xml then wrote those
+    # two-char strings as-is (backslash + t), and occurrence.txt was
+    # emitted with a real ``\t``. Strict GBIF validators compared the
+    # declared delimiter to the file's actual byte and rejected the
+    # archive. Defaults are now the real one-char tab / newline.
+    fields_terminated_by: str = "\t"
+    lines_terminated_by: str = "\n"
     fields_enclosed_by: str = ""
     # DwC term URI prefix; GBIF uses http://rs.tdwg.org/dwc/terms/
     term_ns: str = "http://rs.tdwg.org/dwc/terms/"
@@ -303,16 +310,35 @@ def _merged_dynamic_properties(metadata: Any) -> str:
 
 
 def _build_meta_xml(opts: DwCAOptions) -> str:
-    """Build the meta.xml describing the occurrence core."""
+    """Build the meta.xml describing the occurrence core.
+
+    audit 2026-08-17 (EXP-2): previously this wrote the literal
+    two-char strings ``\\t`` / ``\\n`` (backslash + t/n) into
+    ``fieldsTerminatedBy`` / ``linesTerminatedBy``, while
+    ``occurrence.txt`` was actually emitted with a real ``\t``. GBIF
+    validators that compare the declared delimiter against the file's
+    real bytes would reject the archive. We now read the values off
+    ``opts`` (whose defaults are real ``\t`` / ``\n`` since EXP-2) and
+    serialise them via ``xml.sax.saxutils.quoteattr`` so any tab /
+    newline character is correctly escaped into XML attribute syntax
+    (e.g. ``&#9;`` / ``&#10;``) — this is what a strict validator
+    expects.
+    """
+    from xml.sax.saxutils import quoteattr
+
     fields_xml_lines: list[str] = []
     for idx, (_field, uri) in enumerate(DWC_FIELDS, start=1):
         fields_xml_lines.append(f'    <field index="{idx}" term="{uri}"/>')
     fields_xml = "\n".join(fields_xml_lines)
+    ftb = quoteattr(opts.fields_terminated_by)
+    ltb = quoteattr(opts.lines_terminated_by)
+    feb = quoteattr(opts.fields_enclosed_by)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<archive xmlns="http://rs.tdwg.org/dwc/text/" metadata="eml.xml">\n'
-        '  <core encoding="UTF-8" fieldsTerminatedBy="\\t" '
-        'linesTerminatedBy="\\n" fieldsEnclosedBy="" ignoreHeaderLines="1"'
+        f'  <core encoding="UTF-8" fieldsTerminatedBy={ftb} '
+        f'linesTerminatedBy={ltb} fieldsEnclosedBy={feb} '
+        'ignoreHeaderLines="1"'
         ' rowType="http://rs.tdwg.org/dwc/terms/Occurrence">\n'
         "    <files><location>occurrence.txt</location></files>\n"
         f"{fields_xml}\n"
@@ -396,6 +422,34 @@ def write_dwca_zip(
 
     field_names = [f for f, _ in DWC_FIELDS]
     rows = [_occurrence_row(p) for p in panels]
+
+    # audit 2026-08-17 (EXP-3): occurrenceID MUST be unique within a
+    # Darwin Core Archive. Previously ``PanelRecord.panel_id`` was
+    # allowed to be None / duplicated, and ``_occurrence_row`` would
+    # happily produce two rows with the same ``occurrenceID``
+    # (e.g. paper_id:figure_id:_), producing a non-GBIF-compliant
+    # archive. We now collect every occ_id and raise ``ValueError``
+    # with a clear message listing the duplicates, so the operator
+    # can fix the input data (or pass ``include_unmatched=False`` to
+    # drop the empties). We prefer raising over silent suffixing
+    # because silent ``:dupN`` suffixes would silently hide the
+    # underlying data-quality problem.
+    seen_occ_ids: set[str] = set()
+    duplicates: dict[str, int] = {}
+    for r in rows:
+        occ_id = r.get("occurrenceID") or ""
+        if occ_id in seen_occ_ids:
+            duplicates[occ_id] = duplicates.get(occ_id, 0) + 1
+        seen_occ_ids.add(occ_id)
+    if duplicates:
+        sample = sorted(duplicates.items())[:10]
+        raise ValueError(
+            "Duplicate occurrenceID values in DwC-A export: "
+            + ", ".join(f"{oid!r} x{cnt + 1}" for oid, cnt in sample)
+            + (f" (and {len(duplicates) - 10} more)" if len(duplicates) > 10 else "")
+            + ". Fix the panel data (panel_id collisions / missing panel_id) "
+            "or pass DwCAOptions(include_unmatched=False) to drop empty rows."
+        )
 
     # Build occurrence.txt in-memory
     buf = io.StringIO()

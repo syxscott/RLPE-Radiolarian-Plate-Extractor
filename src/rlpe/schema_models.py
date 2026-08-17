@@ -380,6 +380,15 @@ class LocalityRecord(BaseModel):
 
     model_config = StrictModel
     locality_id: str
+    # audit 2026-08-17 (EXP-1): declare paper_id so the xlsx exporter
+    # (and any other consumer that round-trips via model_dump) actually
+    # sees the paper the locality came from. Previously this was
+    # implicit and xlsx wrote an empty "论文ID" column for every
+    # locality row even when the source ``MatchResult`` clearly carried
+    # ``paper_id``. ``paper_id`` is a stable identifier, so we type it
+    # as ``str`` (matching PaperRecord); the converter fills it from
+    # ``MatchResult.paper_id``.
+    paper_id: str = ""
     name: str | None = None
     country: str | None = None
     region: str | None = None
@@ -399,6 +408,11 @@ class PaleoCoordinateRecord(BaseModel):
 
     model_config = StrictModel
     paleo_coordinate_id: str
+    # audit 2026-08-17 (EXP-1): see LocalityRecord.paper_id above.
+    # Previously xlsx "论文ID" column was always empty for the
+    # paleo_coordinates sheet even though every record came from a single
+    # paper (paper_id is in scope at the call site).
+    paper_id: str = ""
     locality_id: str | None = None
     modern_latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
     modern_longitude: float | None = Field(default=None, ge=-180.0, le=180.0)

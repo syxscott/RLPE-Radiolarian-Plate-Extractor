@@ -15,6 +15,13 @@ from .utils import ensure_dir
 # Atomic text-write helper — audit 2026-08-01 W1 / D6
 # ---------------------------------------------------------------------------
 
+# Round 15 audit + audit 2026-08-17 (EXP-4): formula-injection
+# sanitiser (CWE-1236). The same prefixes are dangerous in both CSV
+# (Excel/LibreOffice) and Excel-cell (xlsx) contexts, so the sanitiser
+# lives here in ``export`` and is re-used by both ``export._csv_cell``
+# and ``exporters.analysis._sanitise_csv_cell``.
+_CSV_DANGER_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
 
 def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
     """Write ``text`` to ``path`` atomically (tmp file + fsync + os.replace).
@@ -162,9 +169,28 @@ def flatten_for_csv(row: dict[str, Any]) -> dict[str, Any]:
     - Compound lifts (dict/list) are JSON-encoded as strings (so csv.DictWriter
       can write them without repr-truncation).
     - The original ``metadata`` dict is preserved untouched.
+    - The function is idempotent: calling it twice on the same row
+      produces the same dict, with no ``_md__*`` overflow keys.
+
+    audit 2026-08-17 (EXP-6): the previous implementation decided
+    "this key would clobber an existing top-level value" by checking
+    ``out[dst] not in (None, "", [])``. On the FIRST call, that was a
+    valid primitive (``out[dst] = 5``), so the second call saw a
+    non-empty primitive and pushed the metadata value into
+    ``_md__<dst>`` as a JSON string. Downstream CSV consumers got
+    mixed types (some rows had ``int`` in ``chronostratigraphy_rank``
+    and others had a JSON-encoded string). The fix stamps a
+    ``__rlpe_flattened__`` sentinel so the second pass is a no-op.
     """
     md = row.get("metadata")
     if not isinstance(md, dict) or not md:
+        return row
+    # Idempotency: a row that has already been flattened carries the
+    # sentinel. Skip the metadata lift entirely so a second pass
+    # cannot push the row into ``_md__*`` overflow keys with
+    # JSON-encoded strings (different downstream type than the
+    # original primitive).
+    if row.get("__rlpe_flattened__"):
         return row
     out = dict(row)
     for src, dst in _MD_LIFT_KEYS:
@@ -179,6 +205,7 @@ def flatten_for_csv(row: dict[str, Any]) -> dict[str, Any]:
             out[dst] = val
         else:
             out[dst] = _jsonify(val)
+    out["__rlpe_flattened__"] = True
     return out
 
 
@@ -232,12 +259,75 @@ def export_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 
 def _csv_cell(v: Any) -> str:
-    """Convert a Python value into a string cell that csv.DictWriter accepts."""
-    if v is None:
+    """Convert a Python value into a string cell that csv.DictWriter accepts.
+
+    audit 2026-08-17 (EXP-4): previously this just ``str(v)``'d the
+    value, bypassing the formula-injection sanitiser that lived in
+    ``exporters.analysis._sanitise_csv_cell``. The CLI ``--export-csv``
+    path went through here and a paper species like ``=cmd|'/c
+    calc'!A1`` would land verbatim in the CSV. We now route every
+    string through :func:`_sanitise_csv_cell` so both code paths use
+    the same CWE-1236 defence.
+    """
+    return _sanitise_csv_cell(v)
+
+
+def sanitise_csv_cell(value: Any) -> Any:  # public alias for shared use
+    """Public alias of :func:`_sanitise_csv_cell` — keep behaviour in
+    sync. Use this from callers that want to defend a single value
+    without going through :func:`_csv_cell`.
+    """
+    return _sanitise_csv_cell(value)
+
+
+def _sanitise_csv_cell(value: Any) -> Any:
+    """Sanitise a single CSV cell value.
+
+    Two concerns are addressed here:
+
+    1. Formula-injection (CWE-1236, Round 15 audit). A leading
+       ``=``/``+``/``-``/``@``/TAB makes Excel/LibreOffice treat
+       the cell as a formula; a paper caption like ``=cmd|'/c
+       calc'!A1`` would execute on open. Prefixing with a single
+       quote neutralises the formula.
+    2. NaN/Inf / non-finite floats (Phase 63 Plan 6.8, Bug 6.8).
+       Scale-bar / coordinate parsing paths occasionally emit
+       ``float('nan')`` or ``float('inf')``. CSV writers wrote
+       these as the Python repr ("nan"/"inf"), which Excel
+       rendered as ``#NAME?`` and which GBIF/PBDB ingest
+       rejected. We coerce them to ``""`` so the exported CSV
+       has the same shape as a missing value.
+
+    Numeric values that are finite and not bool pass through; None
+    becomes the empty string.
+
+    audit 2026-08-17 (EXP-4): lifted out of ``exporters.analysis`` so
+    both the analysis export (``write_csv``) and the CLI
+    ``--export-csv`` path (``export.export_csv`` → ``_csv_cell``) use
+    the same sanitiser. Previously the CLI path bypassed this
+    defence entirely.
+    """
+    if value is None:
         return ""
-    if isinstance(v, (bool, int, float, str)):
-        return v if isinstance(v, str) else str(v)
-    return _jsonify(v)
+    # NB: bool subclasses int; check it first so ``True`` and
+    # ``False`` keep their literal rendering (Excel doesn't treat
+    # ``True`` as a formula).
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        # NaN / Inf — Excel/pandas/most CSV readers render the Python
+        # repr as ``nan`` / ``inf``, which downstream consumers
+        # treat as a parse error. Drop these to the same shape as
+        # a missing value.
+        if math.isnan(value) or math.isinf(value):
+            return ""
+        return value
+    if isinstance(value, int):
+        return value
+    s = str(value)
+    if s and s[0] in _CSV_DANGER_PREFIXES:
+        return "'" + s
+    return s
 
 
 def copy_assets(

@@ -40,19 +40,28 @@ def _split_for_paper(paper_id: str, options: MLOptions) -> str:
 
 
 def _to_ml_record(panel: PanelRecord, split: str) -> dict:
-    """Project a panel into an ML-friendly flat dict."""
+    """Project a panel into an ML-friendly flat dict.
+
+    audit 2026-08-17 (EXP-5): defend every optional field against
+    ``None``. ``PanelRecord.confidence`` is typed ``float`` (non-None),
+    but Pydantic's ``model_construct`` and ``dict``-based round-trips
+    can produce ``None`` confidence values that crashed ``float(None)``
+    with ``TypeError``. We also defend ``species`` and ``panel_id`` —
+    ``PanelRecord`` declares both as ``str | None`` — by emitting the
+    empty string (a safe ML-feature default) instead of ``None``.
+    """
     return {
-        "paper_id": panel.paper_id,
-        "figure_id": panel.figure_id,
-        "panel_id": panel.panel_id,
-        "species": panel.species,
-        "label_text": panel.label_text,
-        "confidence": float(panel.confidence),
+        "paper_id": panel.paper_id or "",
+        "figure_id": panel.figure_id or "",
+        "panel_id": panel.panel_id or "",
+        "species": panel.species or "",
+        "label_text": panel.label_text or "",
+        "confidence": float(panel.confidence) if panel.confidence is not None else 0.0,
         "bbox": list(panel.bbox) if panel.bbox else None,
-        "caption_snippet": panel.caption_snippet,
-        "ocr_text": panel.ocr_text,
-        "extraction_source": panel.metadata.extraction_source,
-        "matcher_type": panel.metadata.matcher_type,
+        "caption_snippet": panel.caption_snippet or "",
+        "ocr_text": panel.ocr_text or "",
+        "extraction_source": panel.metadata.extraction_source or "",
+        "matcher_type": panel.metadata.matcher_type or "",
         "split": split,
     }
 
