@@ -1098,7 +1098,6 @@ def test_attach_stage4_5_context_handles_noop_inputs(tmp_path):
 
     cfg = _make_cfg(tmp_path)
     pipe = _StubPipeline(cfg)
-    from rlpe.pipeline import RadiolarianPipeline
     pipe._attach_stage4_5_context = (
         RadiolarianPipeline._attach_stage4_5_context.__get__(pipe, RadiolarianPipeline)
     )
