@@ -2111,6 +2111,13 @@ class RadiolarianPipeline:
             page_context = (r.get("page_context_snippet") or "")[:1500]
             items.append((r, crop, caption_for_panel, page_context))
         if not items:
+            if skipped_no_crop:
+                logger.debug(
+                    "Stage 4.5: skipped %d/%d rows (no panel_path or file missing) for paper=%s",
+                    skipped_no_crop,
+                    len(results),
+                    paper_id,
+                )
             return results
         # TODO (Task 4): fan out via semaphore + per-panel call
         return results
