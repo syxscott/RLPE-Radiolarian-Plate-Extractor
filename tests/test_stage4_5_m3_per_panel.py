@@ -559,3 +559,64 @@ def test_pipeline_main_loop_calls_stage4_5(tmp_path):
         f"BEFORE multi-plate enrich (idx={enrich_idx}); got per-panel "
         f"at {per_panel_idx}"
     )
+
+
+def test_cli_argparse_accepts_m3_per_panel_flags(tmp_path):
+    """Source-guard + behaviour: CLI must accept the 4 new Stage 4.5 flags.
+
+    The guard checks flag spellings rather than argparse ``dest`` names:
+    ``--no-m3-per-panel`` deliberately *shares* ``dest="m3_per_panel"``
+    with ``--m3-per-panel`` (so the last flag on the command line wins),
+    which means no ``no_m3_per_panel`` identifier exists to grep for.
+    """
+    import inspect
+
+    from rlpe import cli as cli_mod
+
+    src = inspect.getsource(cli_mod)
+    for flag in [
+        "--m3-per-panel",
+        "--no-m3-per-panel",
+        "--m3-per-panel-min-conf",
+        "--m3-per-panel-max-per-figure",
+        "--m3-per-panel-max-per-paper",
+    ]:
+        assert flag in src, f"CLI must define {flag}"
+
+    parser = cli_mod.build_parser()
+    base = ["--pdf-dir", str(tmp_path), "--work-dir", str(tmp_path / "work")]
+
+    # Defaults mirror the PipelineConfig defaults; Stage 4.5 is opt-in.
+    defaults = parser.parse_args(base)
+    assert defaults.m3_per_panel is False
+    assert defaults.m3_per_panel_min_conf == 0.55
+    assert defaults.m3_per_panel_max_per_figure == 20
+    assert defaults.m3_per_panel_max_per_paper == 200
+
+    # Each flag parses onto the dest the cfg wiring reads from.
+    on = parser.parse_args(
+        base
+        + [
+            "--m3-per-panel",
+            "--m3-per-panel-min-conf",
+            "0.9",
+            "--m3-per-panel-max-per-figure",
+            "3",
+            "--m3-per-panel-max-per-paper",
+            "7",
+        ]
+    )
+    assert on.m3_per_panel is True
+    assert on.m3_per_panel_min_conf == 0.9
+    assert on.m3_per_panel_max_per_figure == 3
+    assert on.m3_per_panel_max_per_paper == 7
+
+    # Shared dest => explicit opt-out wins when it comes last.
+    assert parser.parse_args(base + ["--m3-per-panel", "--no-m3-per-panel"]).m3_per_panel is False
+
+    # Wiring guard: the pipeline reads the enable gate off ``config.extra``
+    # but the threshold/caps off the typed fields, and PipelineConfig does
+    # not sync the two -- so the CLI must populate BOTH or the flag is a
+    # silent no-op.
+    assert "m3_per_panel_enabled=args.m3_per_panel" in src
+    assert 'cfg.extra["m3_per_panel_enabled"]' in src

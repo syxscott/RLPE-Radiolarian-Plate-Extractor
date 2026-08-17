@@ -340,6 +340,40 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Number of self-consistency samples for stage 4 (default 1)",
     )
+    # ---- Stage 4.5: per-panel M3 vision species ID (opt-in) ----------------
+    # Threshold / cap defaults mirror the PipelineConfig defaults so the
+    # CLI and the YAML/GUI paths agree when no flag is passed.
+    p.add_argument(
+        "--m3-per-panel",
+        dest="m3_per_panel",
+        action="store_true",
+        default=False,
+        help="Enable Stage 4.5: per-panel M3 vision species ID (default off).",
+    )
+    p.add_argument(
+        "--no-m3-per-panel",
+        dest="m3_per_panel",
+        action="store_false",
+        help="Disable Stage 4.5 (explicit opt-out).",
+    )
+    p.add_argument(
+        "--m3-per-panel-min-conf",
+        type=float,
+        default=0.55,
+        help="Minimum M3 confidence to overwrite regex species (default 0.55).",
+    )
+    p.add_argument(
+        "--m3-per-panel-max-per-figure",
+        type=int,
+        default=20,
+        help="Cap Stage 4.5 calls per figure (default 20).",
+    )
+    p.add_argument(
+        "--m3-per-panel-max-per-paper",
+        type=int,
+        default=200,
+        help="Cap Stage 4.5 calls per paper (default 200).",
+    )
     p.add_argument(
         "--m3-diagnostic-dir",
         type=str,
@@ -452,6 +486,16 @@ def main() -> int:
         od_caption_window=(
             args.od_caption_window if args.od_caption_window is not None else 5
         ),
+        # Phase 2026-08-17 (Stage 4.5): per-panel M3 vision species ID.
+        # Passed as real PipelineConfig fields (not ``extra``) because
+        # ``_apply_m3_per_panel_species_id`` reads the typed attributes
+        # for its guard, threshold and caps -- and routing them through
+        # the constructor gets the ``__post_init__`` range validation
+        # (min_conf in [0,1], caps >= 1) for free.
+        m3_per_panel_enabled=args.m3_per_panel,
+        m3_per_panel_min_conf=args.m3_per_panel_min_conf,
+        m3_per_panel_max_per_figure=args.m3_per_panel_max_per_figure,
+        m3_per_panel_max_per_paper=args.m3_per_panel_max_per_paper,
         extra={
             # Phase 29: forward GROBID retry + timeout. None means use
             # the PipelineConfig-level default (3 retries, 300s).
@@ -535,6 +579,15 @@ def main() -> int:
         cfg.extra[f"m3_stage_{n}"] = False
     if args.m3_match_samples:
         cfg.extra["m3_match_samples"] = int(args.m3_match_samples)
+    # Stage 4.5: the pipeline's call site gates on
+    # ``config.extra["m3_per_panel_enabled"]`` while the method body reads
+    # the typed fields, so mirror all four into ``extra`` (they are all
+    # declared in ``_KNOWN_EXTRA_KEYS``). Read back off ``cfg`` rather than
+    # ``args`` so the mirrored values are the post-validation coerced ones.
+    cfg.extra["m3_per_panel_enabled"] = cfg.m3_per_panel_enabled
+    cfg.extra["m3_per_panel_min_conf"] = cfg.m3_per_panel_min_conf
+    cfg.extra["m3_per_panel_max_per_figure"] = cfg.m3_per_panel_max_per_figure
+    cfg.extra["m3_per_panel_max_per_paper"] = cfg.m3_per_panel_max_per_paper
     if args.m3_diagnostic_dir:
         cfg.extra["m3_diagnostic_dir"] = str(args.m3_diagnostic_dir)
     if args.m3_retry_without_thinking is not None:
