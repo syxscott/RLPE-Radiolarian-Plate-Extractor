@@ -101,6 +101,19 @@ class TestStage3BboxCrops:
                         RadiolarianPipeline._apply_stage3_bbox_crops.__get__(self, type(self))
                     )
 
+                # Audit 2026-08-18: production code added a YOLO
+                # fallback helper in commit "fix(audit 2026-08-16 C2)".
+                # When ``figure_to_panels`` is empty the production
+                # method calls ``self._yolo_fallback_for_stage3`` to
+                # try synthesising panels from a YOLO pass; if that
+                # path isn't reachable the function AttributeError-s
+                # mid-call. Tests in this file don't exercise the
+                # YOLO branch, so stub the helper to return ``{}``
+                # (= no synthesised panels; behaviour identical to
+                # the pre-YOLO-fallback path).
+                def _yolo_fallback_for_stage3(self, *args, **kwargs):
+                    return {}
+
             return _Helper()
         except Exception:
             return self._make_inline_helper(tmp_path, figure_image_dir, cfg)

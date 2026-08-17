@@ -1353,6 +1353,15 @@ def _safe_morphology_record(entry: dict[str, Any]) -> dict[str, Any] | None:
 
 def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any]]:
     seen: dict[tuple[str, str], dict[str, Any]] = {}
+    # Audit 2026-08-18: separate index for cross-prefix dedup.
+    # ``seen`` indexes by the full prefixed sample_id (X_PR-SB28, S_PR-SB28)
+    # so the function returns exactly one record per distinct prefixed id.
+    # ``raw_seen`` indexes by the raw sample value (PR-SB28) so when the
+    # legacy ``S_`` regex fires after the helper already inserted X_PR-SB28,
+    # the legacy hit is dropped. Both indexes are dicts; the function only
+    # returns ``seen.values()`` so the raw_seen entries never surface as
+    # duplicate records.
+    raw_seen: set[tuple[str, str]] = set()
     # audit 2026-08-05 (Fill Gaps): try the canonical
     # ``extract_sample_ids`` helper from
     # ``src/rlpe/sample_id_extractor.py`` first. It already covers
@@ -1394,6 +1403,11 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                     confidence=sid.confidence,
                 )
                 seen[key] = rec.model_dump()
+                # Audit 2026-08-18: register the raw value so the
+                # legacy ``S_`` regex path's cross-prefix dedup
+                # check (see ``raw_key in raw_seen`` below) drops
+                # hits for ids the helper already covered.
+                raw_seen.add((m.paper_id, sid.value))
     # Round 20 sampling: Boughdiri 2007 captions use the formats
     # ``CH4, specimen 7``, ``MB4, specimen 15`` — the old regex
     # ``Sample\\s+[A-Za-z0-9\\-]+`` matched none of these, leaving
@@ -1491,8 +1505,19 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 # capture, so the whole match is the id).
                 sid_raw = sm.group(1) if sm.lastindex else sm.group(0)
                 sid_str = f"{prefix}{sid_raw}"
+                # Audit 2026-08-18: dedupe across extractor prefixes.
+                # The ``X_`` (extract_sample_ids helper) and ``S_``
+                # (legacy regex) both match "Sample PR-SB28" — without
+                # cross-prefix dedup the data package carried 2 records
+                # per unique id, inflating the sample count. Compare
+                # the raw value as a secondary key: if either the
+                # helper or a previous regex already recorded this
+                # sample value, skip the legacy hit.
                 key = (m.paper_id, sid_str)
                 if key in seen:
+                    continue
+                raw_key = (m.paper_id, sid_raw)
+                if raw_key in raw_seen:
                     continue
                 rec = SampleRecord(
                     sample_id=sid_str,
@@ -1506,6 +1531,7 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                     confidence=0.5,
                 )
                 seen[key] = rec.model_dump()
+                raw_seen.add(raw_key)
     return list(seen.values())
 
 

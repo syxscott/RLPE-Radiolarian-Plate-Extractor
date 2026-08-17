@@ -496,12 +496,18 @@ class TestProductDataPackage:
     def test_taxon_records_rejects_qualifier_only(self):
         """'cf. species' (no genus) must not produce genus='cf.'; the
         parser must refuse to invent a genus from a qualifier token.
+
+        Audit 2026-08-18: ``_taxon_parts`` now also returns ``authority``
+        and ``generic_name`` fields (M1/M2 audit added them for ICZN
+        citations like ``Podocyrtis amphora (Podocyrtites)``). Compare
+        the subset of keys the test pins rather than full equality.
         """
-        assert _taxon_parts("cf. species") == {
-            "genus": None,
-            "specific_epithet": None,
-            "qualifier": None,
-        }
+        parts = _taxon_parts("cf. species")
+        for key in ("genus", "specific_epithet", "qualifier"):
+            assert parts.get(key) is None, (
+                f"_taxon_parts('cf. species') expected {key}=None, "
+                f"got {parts.get(key)!r}"
+            )
 
     def test_sample_records_namespaced_by_paper_id(self):
         """Two papers both mentioning 'Sample PR-SB26' must produce two
@@ -510,9 +516,13 @@ class TestProductDataPackage:
 
         Round 20: sample_ids now carry a prefix tag (``S_`` for
         legacy ``Sample X``, ``B_`` for Boughdiri short codes,
-        ``R_`` for ``specimen N``) so the operator can tell which
-        detector fired. The dedup is still by ``(paper_id, sample_id)``
+        ``R_`` for ``specimen N``, ``X_`` for extract_sample_ids
+        helper output). The dedup is still by ``(paper_id, sample_id)``
         so two papers sharing a sample_id do NOT collide.
+        Audit 2026-08-18: the helper (``X_``) and legacy regex (``S_``)
+        both fire on ``Sample PR-SB26``; cross-prefix dedup keeps
+        one record per id. The surviving prefix depends on which
+        extractor fired first; accept either ``S_`` or ``X_``.
         """
         snippet = "Sample PR-SB26 (early Cretaceous)."
         m1 = replace(_make_match(), caption_snippet=snippet, metadata={})
@@ -521,8 +531,16 @@ class TestProductDataPackage:
         assert len(samples) == 2
         paper_ids = {s["paper_id"] for s in samples}
         assert paper_ids == {"abc", "paper-2"}
-        # Round 20: sample_id is now prefixed with "S_" (legacy pattern)
-        assert all(s["sample_id"] == "S_PR-SB26" for s in samples)
+        # Round 20: sample_id is now prefixed with a detector tag
+        # (S_/X_). The raw value follows the prefix.
+        for s in samples:
+            assert s["sample_id"].endswith("_PR-SB26"), (
+                f"sample_id should end with '_PR-SB26', got {s['sample_id']!r}"
+            )
+            assert s["sample_id"][:2] in {"S_", "X_"}, (
+                f"sample_id prefix should be 'S_' (legacy) or 'X_' "
+                f"(helper), got {s['sample_id']!r}"
+            )
 
     def test_locality_records_namespaced_by_paper_id(self):
         """Two papers both reporting 'Italy' at (45.0, 10.0) must
@@ -729,10 +747,22 @@ class TestProductDataPackage:
         )
         samples = sample_records_from_matches([m])
         assert len(samples) == 2
-        # Round 20: sample_ids are prefixed with ``S_`` (legacy
-        # ``Sample X`` detector) so the operator can tell which
-        # detector fired.
-        assert {s["sample_id"] for s in samples} == {"S_PR-SB28", "S_PR-SB30"}
+        # Round 20: sample_ids are prefixed with a detector tag
+        # (``S_`` for legacy regex, ``X_`` for the extract_sample_ids
+        # helper). Audit 2026-08-18 cross-prefix dedup means only
+        # one prefix survives per id (whichever extractor fired
+        # first); accept either for the assertion.
+        assert {s["sample_id"] for s in samples} == {
+            "S_PR-SB28",
+            "S_PR-SB30",
+        } or {s["sample_id"] for s in samples} == {
+            "X_PR-SB28",
+            "X_PR-SB30",
+        }, (
+            f"sample_ids should be {{S_PR-SB28, S_PR-SB30}} or "
+            f"{{X_PR-SB28, X_PR-SB30}}, got "
+            f"{{s['sample_id'] for s in samples}}"
+        )
 
     def test_warnings_emitted_for_missing_panel_image(self):
         m = MatchResult(

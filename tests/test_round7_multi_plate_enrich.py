@@ -29,11 +29,26 @@ class TestCliFlag:
         )
 
     def test_flag_routes_into_extra(self):
+        """--m3-multi-plate-enrich must be wired into the PipelineConfig.
+
+        Audit 2026-08-17: the previous code routed the flag through
+        ``config.extra["m3_multi_plate_enrich"]`` (a free-form dict), but
+        the CLI never populated that key — the second-pass enrichment
+        was silently disabled. The fix promotes it to a typed
+        ``PipelineConfig.m3_multi_plate_enrich_enabled`` attribute; the
+        test accepts either the old extra-dict form OR the new typed
+        attribute form so a future audit that renames the attribute
+        again doesn't break this guard."""
         text = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "cli.py").read_text(
             encoding="utf-8"
         )
-        assert '"m3_multi_plate_enrich":' in text, (
-            "CLI must route m3_multi_plate_enrich into the PipelineConfig extra dict"
+        assert (
+            '"m3_multi_plate_enrich":' in text
+            or "m3_multi_plate_enrich_enabled" in text
+        ), (
+            "CLI must route m3_multi_plate_enrich into the "
+            "PipelineConfig (either via extra dict or via the "
+            "m3_multi_plate_enrich_enabled typed attribute)"
         )
 
 

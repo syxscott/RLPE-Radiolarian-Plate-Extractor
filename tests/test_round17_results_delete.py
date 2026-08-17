@@ -29,8 +29,10 @@ def test_delete_all_results_endpoint_exists():
         "src/rlpe/api/app.py is missing @app.delete('/results') — the 一键删除 button would 404."
     )
     # The handler must touch RESULT_CACHE under the lock so concurrent
-    # uploads don't race a clear.
-    assert "RESULT_LOCK" in api_src.split('@app.delete("/results")')[1][:600], (
+    # uploads don't race a clear. The 600-char window was too small
+    # after the audit 2026-08-01 W1 docstring expansion; bump to
+    # 1500 to cover the full handler body.
+    assert "RESULT_LOCK" in api_src.split('@app.delete("/results")')[1][:1500], (
         "DELETE /results handler must acquire RESULT_LOCK before clearing each job's result list."
     )
 
