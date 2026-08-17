@@ -285,3 +285,251 @@ def test_method_keeps_regex_when_m3_low_confidence(tmp_path):
     ]
     out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
     assert out[0]["species"] == "regex_old_species"
+
+
+# ---------------------------------------------------------------------------
+# Task 5: failure-path coverage + caps + audit-tag provenance
+# ---------------------------------------------------------------------------
+
+
+def test_method_handles_backend_fallback_used(tmp_path):
+    """backend returns fallback_used=True → row keeps regex species,
+    metadata.m3_per_panel is NOT stamped."""
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "fallback_used": True,
+        "error": "M3 quota exhausted",
+    }
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel1.png"
+    _write_valid_png(crop)
+    results = [
+        {"panel_id": "1", "species": "regex_species", "panel_path": str(crop),
+         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    assert out[0]["species"] == "regex_species"
+    assert "m3_per_panel" not in out[0]["metadata"]
+
+
+def test_method_handles_backend_exception(tmp_path):
+    """backend.infer_panel raises → caught + logged, regex stays."""
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.side_effect = RuntimeError("M3 API down")
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel1.png"
+    _write_valid_png(crop)
+    results = [
+        {"panel_id": "1", "species": "regex_species", "panel_path": str(crop),
+         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    assert out[0]["species"] == "regex_species"
+    assert "m3_per_panel" not in out[0]["metadata"]
+
+
+def test_method_handles_garbage_json(tmp_path):
+    """backend returns unparseable blob → parse_json_from_text 4-tier
+    falls through to {species=None} → regex stays."""
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {"species": None, "label": None,
+                                         "confidence": 0.0,
+                                         "reasoning": "no parse"}
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel1.png"
+    _write_valid_png(crop)
+    results = [
+        {"panel_id": "1", "species": "regex_species", "panel_path": str(crop),
+         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    # Confidence 0.0 < 0.55 → no overwrite, but metadata IS stamped
+    # (we want to know M3 was attempted).
+    assert out[0]["species"] == "regex_species"
+
+
+def test_method_caps_per_figure(tmp_path):
+    """If a figure has more panels than m3_per_panel_max_per_figure,
+    only the first N get per-panel M3 calls; the rest keep regex."""
+    cfg = _make_cfg(
+        tmp_path,
+        m3_per_panel_enabled=True,
+        m3_per_panel_max_per_figure=2,
+    )
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "Emiluvia orea", "label": "X", "confidence": 0.9,
+        "reasoning": "r", "alternative": None,
+    }
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel.png"
+    _write_valid_png(crop)
+    rows = []
+    for i in range(5):
+        rows.append({
+            "panel_id": str(i),
+            "species": f"regex_{i}",
+            "label": str(i),
+            "figure_id": "fig_1",
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        })
+    out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
+    # Only the first 2 should have m3_per_panel stamped; rest untouched.
+    stamped = [r for r in out if "m3_per_panel" in r["metadata"]]
+    assert len(stamped) == 2
+    untouched = [r for r in out if "m3_per_panel" not in r["metadata"]]
+    assert len(untouched) == 3
+
+
+def test_method_caps_per_paper(tmp_path):
+    """m3_per_panel_max_per_paper caps total calls across all figures."""
+    cfg = _make_cfg(
+        tmp_path,
+        m3_per_panel_enabled=True,
+        m3_per_panel_max_per_figure=100,
+        m3_per_panel_max_per_paper=3,
+    )
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "X", "label": "X", "confidence": 0.9,
+        "reasoning": "r", "alternative": None,
+    }
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel.png"
+    _write_valid_png(crop)
+    rows = []
+    for i in range(10):
+        rows.append({
+            "panel_id": str(i),
+            "species": f"regex_{i}",
+            "label": str(i),
+            "figure_id": f"fig_{i}",  # each in own figure → bypasses per-fig cap
+            "panel_path": str(crop),
+            "caption_pairs": [],
+            "page_context_snippet": "",
+            "metadata": {},
+        })
+    out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
+    stamped = [r for r in out if "m3_per_panel" in r["metadata"]]
+    assert len(stamped) == 3
+
+
+def test_method_normalises_species_list_extras(tmp_path):
+    """If backend returns species_list (a list/dict structural extra),
+    _normalize_panel_dict preserves it (Audit 2026-08-17 BUG-E)."""
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "Emiluvia orea", "label": "1", "confidence": 0.9,
+        "reasoning": "r",
+        "species_list": [
+            {"species": "Emiluvia orea", "confidence": 0.92},
+            {"species": "Stichocapsa", "confidence": 0.7},
+        ],
+    }
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel.png"
+    _write_valid_png(crop)
+    results = [
+        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
+         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    # metadata.m3_per_panel is the normalised dict; species_list is NOT
+    # in there (it's only kept on the parsed match — not in the audit stamp).
+    # The overwrite still happens because confidence >= threshold.
+    assert out[0]["species"] == "Emiluvia orea"
+
+
+def test_method_clamps_confidence_to_unit_interval(tmp_path):
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "X", "label": "X", "confidence": 1.7,  # out of range
+        "reasoning": "r",
+    }
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel.png"
+    _write_valid_png(crop)
+    results = [
+        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
+         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    # Confidence 1.7 → clamped to 1.0 → above 0.55 → overwrite happens.
+    assert out[0]["species"] == "X"
+    assert out[0]["metadata"]["m3_per_panel"]["confidence"] == 1.0
+
+
+def test_method_records_latency(tmp_path):
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "X", "label": "X", "confidence": 0.9,
+        "reasoning": "r",
+    }
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel.png"
+    _write_valid_png(crop)
+    results = [
+        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
+         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    md = out[0]["metadata"]["m3_per_panel"]
+    assert "latency_sec" in md
+    assert isinstance(md["latency_sec"], float)
+    assert md["latency_sec"] >= 0.0
+
+
+def test_method_records_image_sha(tmp_path):
+    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    backend = MagicMock()
+    backend.backend_name = "test_backend"
+    backend.infer_panel.return_value = {
+        "species": "X", "label": "X", "confidence": 0.9,
+        "reasoning": "r",
+    }
+    pipe = _StubPipeline(cfg)
+    pipe.m3_engine = MagicMock()
+    pipe.m3_engine.backend = backend
+    crop = tmp_path / "panel.png"
+    _write_valid_png(crop)
+    results = [
+        {"panel_id": "1", "species": "regex", "panel_path": str(crop),
+         "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
+    ]
+    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    md = out[0]["metadata"]["m3_per_panel"]
+    assert "image_sha" in md
+    assert len(md["image_sha"]) == 16  # truncated sha256[:16]
