@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import threading
 from pathlib import Path
+from typing import Any
 
 import cv2
 
@@ -163,6 +164,7 @@ def detect_figure_regions(
                 raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
         except Exception as exc:
             import logging
+
             logging.getLogger(__name__).warning(
                 "Failed to write crop %s: %s; skipping this region", crop_path, exc
             )
@@ -191,9 +193,11 @@ def detect_figure_regions(
                 raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
         except Exception as exc:
             import logging
+
             logging.getLogger(__name__).warning(
                 "Failed to write fullpage crop %s: %s; proceeding without crop",
-                crop_path, exc,
+                crop_path,
+                exc,
             )
             # Still emit a region with a None-ish crop_path so the page
             # is not silently dropped; downstream can decide how to handle it.
@@ -307,10 +311,12 @@ def detect_figure_regions_yolo(
             # actual page (and the warmup image is always fast).
             try:
                 import numpy as np
+
                 _dummy = np.zeros((64, 64, 3), dtype=np.uint8)
                 model(_dummy, verbose=False)
             except Exception as exc:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "YOLO warmup failed (%s); continuing without warmup", exc
                 )
@@ -339,7 +345,7 @@ def detect_figure_regions_yolo(
                 pass  # don't fail the load just because class-name check failed
             setattr(detect_figure_regions_yolo, cache_key, model)
 
-    model: "ultralytics.YOLO" = getattr(detect_figure_regions_yolo, cache_key)
+    model: Any = getattr(detect_figure_regions_yolo, cache_key)
 
     # audit 2026-07-27 M1: inference exception should return the fullpage
     # fallback region, not []. Returning [] silently drops the page from
@@ -349,9 +355,11 @@ def detect_figure_regions_yolo(
         results = model(image_path, verbose=False, conf=conf, iou=iou)
     except Exception as exc:
         import logging
+
         logging.getLogger(__name__).warning(
             "YOLO inference failed on %s (%s); using fullpage fallback",
-            image_path, exc,
+            image_path,
+            exc,
         )
         h, w = image.shape[:2]
         crop_dir = ensure_dir(image_path.parent / "regions")
@@ -364,7 +372,8 @@ def detect_figure_regions_yolo(
         except Exception as write_exc:
             logging.getLogger(__name__).warning(
                 "Failed to write YOLO fullpage crop %s: %s; proceeding without crop",
-                crop_path, write_exc,
+                crop_path,
+                write_exc,
             )
             return [
                 FigureRegion(
@@ -414,9 +423,11 @@ def detect_figure_regions_yolo(
                     raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
             except Exception as exc:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "Failed to write YOLO crop %s: %s; skipping region",
-                    crop_path, exc,
+                    crop_path,
+                    exc,
                 )
                 continue
             conf_score = float(box.conf.cpu().numpy()[0])
@@ -451,9 +462,11 @@ def detect_figure_regions_yolo(
                 raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
         except Exception as exc:
             import logging
+
             logging.getLogger(__name__).warning(
                 "Failed to write YOLO fullpage crop %s: %s; proceeding without crop",
-                crop_path, exc,
+                crop_path,
+                exc,
             )
             regions.append(
                 FigureRegion(

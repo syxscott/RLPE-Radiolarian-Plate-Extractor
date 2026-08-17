@@ -21,11 +21,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from rlpe.types import PageRecord  # noqa: E402
 
-def _make_page(width: int, height: int, text: str) -> "PageRecord":
+
+def _make_page(width: int, height: int, text: str) -> PageRecord:
     """Build a PageRecord without touching the filesystem."""
-    from rlpe.types import PageRecord
-
     return PageRecord(
         page_index=1,
         image_path="/tmp/x.png",
@@ -65,8 +65,7 @@ def test_choose_best_page_picks_highest_score() -> None:
     )
     assert best is not None, "Should return one of the candidates"
     assert best.page_index == 5, (
-        f"Expected page 5 (lowest density / highest score) to win; "
-        f"got page {best.page_index}"
+        f"Expected page 5 (lowest density / highest score) to win; got page {best.page_index}"
     )
 
 
@@ -75,8 +74,9 @@ def test_choose_best_page_no_candidate_returns_densest() -> None:
     number, the function still falls back to the page with lowest
     text density (preserved).
     """
-    from rlpe.layout import choose_best_page
     from dataclasses import replace
+
+    from rlpe.layout import choose_best_page
 
     page0 = _make_page(1000, 1000, "no figure here " * 10)
     page1 = _make_page(1000, 1000, "different caption " * 80)
@@ -86,9 +86,7 @@ def test_choose_best_page_no_candidate_returns_densest() -> None:
     # figure_number not present anywhere → no caption-page candidate
     best = choose_best_page([page0, page1], "999", "caption")
     assert best is not None
-    assert best.page_index == 1, (
-        f"Fallback should pick lowest density; got page {best.page_index}"
-    )
+    assert best.page_index == 1, f"Fallback should pick lowest density; got page {best.page_index}"
 
 
 def test_choose_best_page_empty_input() -> None:
@@ -101,9 +99,7 @@ def test_layout_source_ranks_by_score_descending() -> None:
     """Bug 2.7 source-guard: layout.choose_best_page sorts candidates
     by score (descending) before picking the top.
     """
-    src = (Path(__file__).resolve().parents[1] / "src/rlpe/layout.py").read_text(
-        encoding="utf-8"
-    )
+    src = (Path(__file__).resolve().parents[1] / "src/rlpe/layout.py").read_text(encoding="utf-8")
     # Look for sort/reverse/max with score descending semantics.
     # The function must sort candidates by score descending and pick
     # the first one. Use a regex-tolerant check.
@@ -131,8 +127,9 @@ def test_layout_source_ranks_by_score_descending() -> None:
 
 def test_is_likely_plate_page() -> None:
     """is_likely_plate_page returns True for plate keywords."""
-    from rlpe.layout import is_likely_plate_page
     from dataclasses import replace
+
+    from rlpe.layout import is_likely_plate_page
 
     plate_pages = [
         _make_page(1000, 1000, "Plate I. Radiolarian fauna"),
@@ -142,7 +139,9 @@ def test_is_likely_plate_page() -> None:
     ]
     non_plate_pages = [
         _make_page(1000, 1000, "Fig. 5  This species is shown in figure 5"),
-        _make_page(1000, 1000, "a plateau formation"),  # "plateau" contains "plate" but not as a plate keyword
+        _make_page(
+            1000, 1000, "a plateau formation"
+        ),  # "plateau" contains "plate" but not as a plate keyword
         _make_page(1000, 1000, ""),  # empty page
     ]
     for i, p in enumerate(plate_pages):
@@ -159,13 +158,14 @@ def test_is_likely_plate_page() -> None:
 
 def test_find_plate_pages_returns_only_second_half() -> None:
     """find_plate_pages searches only pages in the back half of the document."""
-    from rlpe.layout import find_plate_pages
     from dataclasses import replace
+
+    from rlpe.layout import find_plate_pages
 
     # 10 pages total; mid = 5. Pages 6-10 are "back half".
     pages = []
     for i in range(10):
-        p = _make_page(1000, 1000, f"Plate {i+1}" if i >= 5 else f"Fig. {i+1}")
+        p = _make_page(1000, 1000, f"Plate {i + 1}" if i >= 5 else f"Fig. {i + 1}")
         pages.append(replace(p, page_index=i + 1))
 
     plate_pages = find_plate_pages(pages)
@@ -185,9 +185,7 @@ def test_choose_best_page_source_guard_plate_fallback() -> None:
     ``choose_best_page`` body must still contain the plate-search branch
     as a belt-and-suspenders fallback.
     """
-    src = (Path(__file__).resolve().parents[1] / "src/rlpe/layout.py").read_text(
-        encoding="utf-8"
-    )
+    src = (Path(__file__).resolve().parents[1] / "src/rlpe/layout.py").read_text(encoding="utf-8")
     fn_idx = src.find("def choose_best_page")
     assert fn_idx >= 0
     fn_end = src.find("\n\n\n", fn_idx)
@@ -207,16 +205,17 @@ def test_choose_best_page_no_plate_fallback_when_no_plate_keyword() -> None:
     fallback must NOT trigger — the function should still return the
     lowest-density page from the whole document.
     """
-    from rlpe.layout import choose_best_page
     from dataclasses import replace
 
+    from rlpe.layout import choose_best_page
+
     pages = [
-        replace(_make_page(1000, 1000, "Fig. 3 body reference " * 5),
-                page_index=1),
-        replace(_make_page(1000, 1000, "Plate I. Some radiolarians"),  # plate page in front half
-                page_index=3),
-        replace(_make_page(1000, 1000, "very sparse "),
-                page_index=5),
+        replace(_make_page(1000, 1000, "Fig. 3 body reference " * 5), page_index=1),
+        replace(
+            _make_page(1000, 1000, "Plate I. Some radiolarians"),  # plate page in front half
+            page_index=3,
+        ),
+        replace(_make_page(1000, 1000, "very sparse "), page_index=5),
     ]
 
     # No plate keyword in caption → should NOT return the plate page

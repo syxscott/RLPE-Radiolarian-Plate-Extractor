@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 _REPO = Path(__file__).resolve().parents[1]
 
 
-def _pipeline_via_init_skip() -> "RadiolarianPipeline":
+def _pipeline_via_init_skip() -> RadiolarianPipeline:
     """Build a RadiolarianPipeline with ``__new__`` so we avoid running
     the heavy ``__init__`` (which imports torch/gemma/paddleocr)."""
     import threading
@@ -44,6 +44,12 @@ def _pipeline_via_init_skip() -> "RadiolarianPipeline":
     obj._grobid_in_progress = set()
     obj._grobid_lock = threading.Lock()
     return obj
+
+
+# Import at module level so type annotations resolve (was previously
+# only imported inside the function, but ``from __future__ import
+# annotations`` + ``RadiolarianPipeline`` return type confused ruff).
+from rlpe.pipeline import RadiolarianPipeline  # noqa: E402
 
 
 def test_grobid_in_progress_lock_attribute_exists() -> None:
@@ -121,9 +127,7 @@ def test_grobid_in_progress_lock_serializes_add_contains_discard() -> None:
     )
     # All 2500 attempts succeeded (no one bailed early on a false-positive
     # 'pid in set' due to a torn add/discard).
-    assert entries == 100 * 25, (
-        f"Expected 2500 entries (100 threads * 25 iters), got {entries}"
-    )
+    assert entries == 100 * 25, f"Expected 2500 entries (100 threads * 25 iters), got {entries}"
     completed.set()
 
 

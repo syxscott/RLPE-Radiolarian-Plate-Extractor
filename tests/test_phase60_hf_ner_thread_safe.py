@@ -57,13 +57,10 @@ def test_hf_ner_init_under_lock():
             if line.strip().startswith("pipeline("):
                 pipeline_line_idx = i
                 break
-    assert pipeline_line_idx is not None, (
-        "Could not find `pipeline(` call in _lazy_init:\n" + src
-    )
+    assert pipeline_line_idx is not None, "Could not find `pipeline(` call in _lazy_init:\n" + src
     assert pipeline_line_idx > lock_line_idx, (
-        "pipeline(...) call at line %d sits BEFORE the lock entry "
-        "at line %d — the HF init is not protected by self._lock.\n%s"
-        % (pipeline_line_idx, lock_line_idx, src)
+        f"pipeline(...) call at line {pipeline_line_idx} sits BEFORE the lock entry "
+        f"at line {lock_line_idx} — the HF init is not protected by self._lock.\n{src}"
     )
 
 

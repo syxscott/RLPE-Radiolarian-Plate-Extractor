@@ -24,14 +24,15 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def _read(rel: str) -> str:
-    return Path(
-        "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel
-    ).read_text(encoding="utf-8")
+    return Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/" + rel).read_text(
+        encoding="utf-8"
+    )
 
 
 # --- WS-R25-A: PBDB taxonomy propagation -------------------------------
@@ -48,9 +49,14 @@ def test_taxon_records_use_paleodb_taxonomy():
     # No PBDB payload: family/order/class stay None.
     matches = [
         MatchResult(
-            paper_id="p1", figure_id="f1", panel_id="1",
-            species="Nassellaria sp.", panel_path=None, bbox=None,
-            confidence=0.9, caption_snippet="caption",
+            paper_id="p1",
+            figure_id="f1",
+            panel_id="1",
+            species="Nassellaria sp.",
+            panel_path=None,
+            bbox=None,
+            confidence=0.9,
+            caption_snippet="caption",
             metadata={"extraction_method": "heuristic"},
         )
     ]
@@ -90,9 +96,14 @@ def test_pbdb_enrich_fills_missing_biozone():
 
     matches = [
         MatchResult(
-            paper_id="p1", figure_id="f1", panel_id="1",
-            species="Nassellaria sp.", panel_path=None, bbox=None,
-            confidence=0.9, caption_snippet="",
+            paper_id="p1",
+            figure_id="f1",
+            panel_id="1",
+            species="Nassellaria sp.",
+            panel_path=None,
+            bbox=None,
+            confidence=0.9,
+            caption_snippet="",
             metadata={
                 "paleodb": {
                     "occurrences": [
@@ -102,9 +113,15 @@ def test_pbdb_enrich_fills_missing_biozone():
                     ]
                 },
                 "geology_links": [
-                    {"formation": None, "locality": None, "country": None,
-                     "latitude": None, "longitude": None,
-                     "ma_top": None, "ma_base": None}
+                    {
+                        "formation": None,
+                        "locality": None,
+                        "country": None,
+                        "latitude": None,
+                        "longitude": None,
+                        "ma_top": None,
+                        "ma_base": None,
+                    }
                 ],
             },
         )
@@ -130,9 +147,14 @@ def test_pbdb_enrich_does_not_overwrite_existing_data():
 
     matches = [
         MatchResult(
-            paper_id="p1", figure_id="f1", panel_id="1",
-            species="Nassellaria sp.", panel_path=None, bbox=None,
-            confidence=0.9, caption_snippet="",
+            paper_id="p1",
+            figure_id="f1",
+            panel_id="1",
+            species="Nassellaria sp.",
+            panel_path=None,
+            bbox=None,
+            confidence=0.9,
+            caption_snippet="",
             metadata={
                 "paleodb": {
                     "occurrences": [
@@ -140,10 +162,16 @@ def test_pbdb_enrich_does_not_overwrite_existing_data():
                     ]
                 },
                 "geology_links": [
-                    {"formation": "EXISTING Fm", "locality": "Existing Town",
-                     "country": "Greece", "biozone": "Existing Bio",
-                     "latitude": 1.0, "longitude": 2.0,
-                     "ma_top": 100.0, "ma_base": 200.0}
+                    {
+                        "formation": "EXISTING Fm",
+                        "locality": "Existing Town",
+                        "country": "Greece",
+                        "biozone": "Existing Bio",
+                        "latitude": 1.0,
+                        "longitude": 2.0,
+                        "ma_top": 100.0,
+                        "ma_base": 200.0,
+                    }
                 ],
             },
         )
@@ -167,14 +195,24 @@ def test_pbdb_enrich_no_op_without_paleodb():
 
     matches = [
         MatchResult(
-            paper_id="p1", figure_id="f1", panel_id="1",
-            species="Nassellaria sp.", panel_path=None, bbox=None,
-            confidence=0.9, caption_snippet="",
+            paper_id="p1",
+            figure_id="f1",
+            panel_id="1",
+            species="Nassellaria sp.",
+            panel_path=None,
+            bbox=None,
+            confidence=0.9,
+            caption_snippet="",
             metadata={
                 "geology_links": [
-                    {"formation": "KEEP", "biozone": "KEEP",
-                     "locality": "KEEP", "country": "KEEP",
-                     "latitude": 1.0, "longitude": 2.0}
+                    {
+                        "formation": "KEEP",
+                        "biozone": "KEEP",
+                        "locality": "KEEP",
+                        "country": "KEEP",
+                        "latitude": 1.0,
+                        "longitude": 2.0,
+                    }
                 ],
             },
         )
@@ -261,15 +299,9 @@ def test_isotope_pattern_end_to_end():
         f"Isotope values not captured in evidence_text: {r.evidence_text!r}"
     )
     # And the categorical proxies from Round 24 are still populated
-    assert r.chemostrat, (
-        f"chemostrat not populated; got {r.chemostrat!r}"
-    )
-    assert r.paleoenvironment, (
-        f"paleoenvironment not populated; got {r.paleoenvironment!r}"
-    )
-    assert r.facies, (
-        f"facies not populated; got {r.facies!r}"
-    )
+    assert r.chemostrat, f"chemostrat not populated; got {r.chemostrat!r}"
+    assert r.paleoenvironment, f"paleoenvironment not populated; got {r.paleoenvironment!r}"
+    assert r.facies, f"facies not populated; got {r.facies!r}"
 
 
 # --- WS-R25-D: live PBDB occurrence field aliasing -----------------------
@@ -306,8 +338,6 @@ def test_pbdb_lookup_occurrences_decodes_short_codes():
     """Synthetic PBDB short-code payload → OccurrenceSummary carries
     full canonical field values. Pre-fix this returned ``None`` for
     every geology field because ``paleodb.py`` was reading long names."""
-    from rlpe.paleodb import PaleoDB
-
     # Direct test that doesn't hit the network: write a fake cache,
     # then call lookup_occurrences() so the cache short-circuits the
     # HTTP request. Use a real PBDB endpoint structure (oids, cids,
@@ -315,12 +345,12 @@ def test_pbdb_lookup_occurrences_decodes_short_codes():
     import json
     import tempfile
 
+    from rlpe.paleodb import PaleoDB
+
     cache_dir = Path(tempfile.mkdtemp())
     pbdb = PaleoDB(cache_dir=cache_dir)
     name = "Archaeodictyomitra"
-    cache_key_path = (
-        list(cache_dir.glob("*.json"))[0] if list(cache_dir.glob("*.json")) else None
-    )
+    cache_key_path = list(cache_dir.glob("*.json"))[0] if list(cache_dir.glob("*.json")) else None
     payload = {
         "records": [
             {
@@ -357,6 +387,7 @@ def test_pbdb_lookup_occurrences_decodes_short_codes():
     }
     # Pre-write the cache file so the HTTP call short-circuits.
     import hashlib
+
     cache_key = hashlib.sha1(f"occs|{name.lower()}|25".encode()).hexdigest()[:16]
     # audit 2026-07-31: occurrence cache keys carry the pagination
     # suffix ("_off0_lim25") — the bare key misses and the test
@@ -373,9 +404,7 @@ def test_pbdb_lookup_occurrences_decodes_short_codes():
         f"oei not decoded to early_interval; got {r0.early_interval!r}"
     )
     assert r0.late_interval == "Cenomanian"
-    assert r0.max_ma == 149.2, (
-        f"eag string not decoded to max_ma float; got {r0.max_ma!r}"
-    )
+    assert r0.max_ma == 149.2, f"eag string not decoded to max_ma float; got {r0.max_ma!r}"
     assert r0.min_ma == 93.9
     assert r0.longitude == -100.266998
     assert r0.latitude == 18.283001
@@ -401,10 +430,10 @@ def test_pbdb_lookup_occurrences_accepts_long_codes():
     proxy) returns long names, the alias map still decodes them. This
     protects against silent regression when one of the two shapes
     changes."""
-    from rlpe.paleodb import PaleoDB
-
     import json
     import tempfile
+
+    from rlpe.paleodb import PaleoDB
 
     cache_dir = Path(tempfile.mkdtemp())
     pbdb = PaleoDB(cache_dir=cache_dir)
@@ -427,6 +456,7 @@ def test_pbdb_lookup_occurrences_accepts_long_codes():
         ]
     }
     import hashlib
+
     cache_key = hashlib.sha1(f"occs|{name.lower()}|25".encode()).hexdigest()[:16]
     # audit 2026-07-31: occurrence cache keys carry the pagination
     # suffix ("_off0_lim25") — the bare key misses and the test
@@ -469,9 +499,14 @@ def test_pbdb_enrich_geology_consumes_decoded_occurrences():
 
     matches = [
         MatchResult(
-            paper_id="p1", figure_id="f1", panel_id="1",
-            species="Archaeodictyomitra", panel_path=None, bbox=None,
-            confidence=0.9, caption_snippet="",
+            paper_id="p1",
+            figure_id="f1",
+            panel_id="1",
+            species="Archaeodictyomitra",
+            panel_path=None,
+            bbox=None,
+            confidence=0.9,
+            caption_snippet="",
             metadata={
                 "paleodb": {
                     "occurrences": [
@@ -488,8 +523,14 @@ def test_pbdb_enrich_geology_consumes_decoded_occurrences():
                     ]
                 },
                 "geology_links": [
-                    {"formation": None, "locality": None, "country": None,
-                     "biozone": None, "latitude": None, "longitude": None}
+                    {
+                        "formation": None,
+                        "locality": None,
+                        "country": None,
+                        "biozone": None,
+                        "latitude": None,
+                        "longitude": None,
+                    }
                 ],
             },
         )
@@ -498,9 +539,7 @@ def test_pbdb_enrich_geology_consumes_decoded_occurrences():
     g = matches[0].metadata["geology_links"][0]
     # Without the fix, every field below would be None because the
     # underlying occurrence dicts were empty.
-    assert g["biozone"] == "Tithonian", (
-        f"biozone fallback did not fire; got {g.get('biozone')!r}"
-    )
+    assert g["biozone"] == "Tithonian", f"biozone fallback did not fire; got {g.get('biozone')!r}"
     assert g["country"] == "Mexico"
     assert g["formation"] == "Almoloya Phyllite"
     assert g["locality"] == "Almoloya"
@@ -516,10 +555,11 @@ def test_pbdb_lookup_uses_show_full_param():
     non-core field as ``None``) or to no ``show`` arg (which returns
     only the short codes ``oei`` / ``eag`` / ``lag`` and drops coords).
     """
-    from rlpe.paleodb import PaleoDB
+    import hashlib
     import json
     import tempfile
-    import hashlib
+
+    from rlpe.paleodb import PaleoDB
 
     cache_dir = Path(tempfile.mkdtemp())
     pbdb = PaleoDB(cache_dir=cache_dir)
@@ -557,8 +597,7 @@ def test_pbdb_lookup_uses_show_full_param():
     # ``show=full`` shape: short codes are present and the alias map
     # must surface readable values for every operator-facing field.
     assert r.latitude == 18.283001, (
-        f"lat must be decoded from show=full short code 'lat'; "
-        f"got {r.latitude!r}"
+        f"lat must be decoded from show=full short code 'lat'; got {r.latitude!r}"
     )
     assert r.longitude == -100.266998
     assert r.early_interval == "Tithonian"
@@ -573,19 +612,23 @@ def test_pbdb_params_do_not_contain_invalid_show_attr_loc_strat():
     every non-core field is ``None`` on PBDB occs. Lock down the
     params dict so a future edit can't silently reintroduce the
     invalid token."""
-    from rlpe.paleodb import PaleoDB
     import json
     import tempfile
+
+    from rlpe.paleodb import PaleoDB
 
     cache_dir = Path(tempfile.mkdtemp())
     pbdb = PaleoDB(cache_dir=cache_dir)
     captured: dict[str, str] = {}
 
-    def _capture_params(self: Any, url: str, params: dict[str, Any], cache_key: str) -> dict[str, Any]:
+    def _capture_params(
+        self: Any, url: str, params: dict[str, Any], cache_key: str
+    ) -> dict[str, Any]:
         captured.update(params)
         return {"records": []}
 
     import rlpe.paleodb as _pdb_mod
+
     orig = _pdb_mod.PaleoDB._http_get_json
     _pdb_mod.PaleoDB._http_get_json = _capture_params  # type: ignore[assignment]
     try:
@@ -601,6 +644,4 @@ def test_pbdb_params_do_not_contain_invalid_show_attr_loc_strat():
     # show=full is what brings back lat/lng/cc2/cnm. If the test runs
     # with no show param at all, only short codes are returned and
     # the coord fallback stays inert.
-    assert show_param == "full", (
-        f"show={show_param!r} loses modern lat/lon for the operator"
-    )
+    assert show_param == "full", f"show={show_param!r} loses modern lat/lon for the operator"

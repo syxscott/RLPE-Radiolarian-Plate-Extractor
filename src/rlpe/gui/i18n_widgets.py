@@ -25,15 +25,27 @@ construct + configure the widget — they don't attach it to a layout
 because that would couple widget construction to layout ownership,
 which complicates re-parenting and tab switching.
 """
+
 from __future__ import annotations
 
-from typing import Any, Optional
+from collections.abc import Callable
+from typing import Any
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QAbstractSpinBox, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox,
-    QVBoxLayout, QWidget,
+    QAbstractSpinBox,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QGroupBox,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QPushButton,
+    QSpinBox,
+    QWidget,
 )
 
 from . import i18n
@@ -63,6 +75,7 @@ def _ensure_size_hint(widget: QWidget, patched_height: int) -> None:
         return
     try:
         from PySide6.QtWidgets import QSizePolicy
+
         sp = widget.sizePolicy()
         sp.setVerticalPolicy(QSizePolicy.Policy.Fixed)
         sp.setHorizontalPolicy(QSizePolicy.Policy.Preferred)
@@ -100,6 +113,7 @@ def _set_text(widget: QWidget, attr: str, key: str) -> None:
             setattr(widget, attr, text)
     except Exception as exc:
         import logging
+
         logging.getLogger("rlpe.gui").warning(
             "i18n: failed to set %s on %s (%s): %s", attr, key, type(widget).__name__, exc
         )
@@ -126,8 +140,8 @@ _MENU_ACTIONS: list[tuple[Any, str]] = []  # list of (QAction, key)
 def tr_action(
     text_key: str,
     *,
-    parent: Optional[QWidget] = None,
-) -> "QAction":
+    parent: QWidget | None = None,
+) -> QAction:
     """Create a QAction translated by ``text_key``.
 
     QAction is not a QWidget, so it doesn't show up in
@@ -137,6 +151,7 @@ def tr_action(
     switch.
     """
     from PySide6.QtGui import QAction
+
     act = QAction(i18n._tr(text_key), parent)
     act.setObjectName(text_key)
     _MENU_ACTIONS.append((act, text_key))
@@ -145,14 +160,15 @@ def tr_action(
 
 def tr_menu(
     title_key: str,
-    parent: Optional[QWidget] = None,
-) -> "QMenu":
+    parent: QWidget | None = None,
+) -> QMenu:
     """Create a QMenu translated by ``title_key``.
 
     Like tr_action, the menu title is registered so it translates
     on language switch.
     """
     from PySide6.QtWidgets import QMenu
+
     menu = QMenu(i18n._tr(title_key), parent)
     menu.setObjectName(title_key)
     _MENU_ACTIONS.append((menu, title_key))
@@ -167,6 +183,7 @@ def refresh_all_menu_actions(lang: str) -> None:
     — items already translated are skipped via the registry.
     """
     from PySide6.QtWidgets import QMenu
+
     for item, key in _MENU_ACTIONS:
         try:
             text = i18n._tr(key)
@@ -181,8 +198,8 @@ def refresh_all_menu_actions(lang: str) -> None:
 def tr_label(
     text_key: str,
     *,
-    object_name: Optional[str] = None,
-    parent: Optional[QWidget] = None,
+    object_name: str | None = None,
+    parent: QWidget | None = None,
     align: Qt.AlignmentFlag | None = None,
 ) -> QLabel:
     """Create a QLabel translated by ``text_key``.
@@ -205,8 +222,8 @@ def tr_label(
 def tr_button(
     text_key: str,
     *,
-    object_name: Optional[str] = None,
-    parent: Optional[QWidget] = None,
+    object_name: str | None = None,
+    parent: QWidget | None = None,
     object_name_attr: str = "default",
     min_height: int = 32,
 ) -> QPushButton:
@@ -226,8 +243,8 @@ def tr_button(
 def tr_checkbox(
     text_key: str,
     *,
-    object_name: Optional[str] = None,
-    parent: Optional[QWidget] = None,
+    object_name: str | None = None,
+    parent: QWidget | None = None,
     checked: bool = False,
     min_height: int = 32,
 ) -> QCheckBox:
@@ -249,8 +266,8 @@ def tr_checkbox(
 def tr_groupbox(
     text_key: str,
     *,
-    object_name: Optional[str] = None,
-    parent: Optional[QWidget] = None,
+    object_name: str | None = None,
+    parent: QWidget | None = None,
 ) -> QGroupBox:
     gb = QGroupBox(parent)
     gb.setObjectName(object_name or text_key)
@@ -262,8 +279,8 @@ def tr_groupbox(
 def tr_lineedit(
     placeholder_key: str,
     *,
-    object_name: Optional[str] = None,
-    parent: Optional[QWidget] = None,
+    object_name: str | None = None,
+    parent: QWidget | None = None,
     min_width: int = 180,
     text: str = "",
     min_height: int = 32,
@@ -292,8 +309,8 @@ def tr_lineedit(
 def tr_spinbox(
     text_key: str,
     *,
-    object_name: Optional[str] = None,
-    parent: Optional[QWidget] = None,
+    object_name: str | None = None,
+    parent: QWidget | None = None,
     min_width: int = 100,
     min_val: int = 0,
     max_val: int = 1000,
@@ -322,7 +339,7 @@ def tr_spinbox(
 def tr_doublespinbox(
     *,
     object_name: str = "",
-    parent: Optional[QWidget] = None,
+    parent: QWidget | None = None,
     min_width: int = 100,
     min_val: float = 0.0,
     max_val: float = 1.0,
@@ -345,12 +362,12 @@ def tr_doublespinbox(
 def tr_combobox(
     text_key: str,
     *,
-    object_name: Optional[str] = None,
-    parent: Optional[QWidget] = None,
+    object_name: str | None = None,
+    parent: QWidget | None = None,
     min_width: int = 130,
-    items: Optional[list[str]] = None,
-    current: Optional[str] = None,
-    item_keys: Optional[list[str]] = None,
+    items: list[str] | None = None,
+    current: str | None = None,
+    item_keys: list[str] | None = None,
     min_height: int = 32,
 ) -> QComboBox:
     """Create a QComboBox with a translated list of items.
@@ -414,8 +431,8 @@ def tr_combobox(
 
 def populate_friendly_combo(
     combo: QComboBox,
-    factory: "Callable[[], list[tuple[str, str]]]",
-    default_code: Optional[str] = None,
+    factory: Callable[[], list[tuple[str, str]]],
+    default_code: str | None = None,
 ) -> Callable[[str], None]:
     """Populate ``combo`` from a ``*_friendly_options()`` factory and
     automatically rebuild the displayed items when the language changes.
@@ -455,6 +472,7 @@ def populate_friendly_combo(
             _i18n.remove_listener(old_listener)
         except Exception as exc:
             import logging
+
             logging.getLogger("rlpe.gui").warning(
                 "i18n: failed to remove listener from combo: %s", exc
             )
@@ -519,6 +537,7 @@ def normalise_input_height(widget: QWidget, min_height: int = 30) -> None:
 # that filters QEvent::Wheel on QAbstractSpinBox + QComboBox +
 # QLineEdit, and consumes the event unless the widget has focus.
 
+
 def install_wheel_filter(app: QApplication) -> None:
     """Install a global wheel-event filter on ``app``.
 
@@ -529,7 +548,8 @@ def install_wheel_filter(app: QApplication) -> None:
 
     Idempotent — calling twice is a no-op.
     """
-    from PySide6.QtCore import QObject, QEvent
+    from PySide6.QtCore import QEvent, QObject
+
     if getattr(app, "_phase40_wheel_filter", False):
         return
 
@@ -539,8 +559,10 @@ def install_wheel_filter(app: QApplication) -> None:
                 return False
             # Only filter numeric / combo / line-edit widgets
             from PySide6.QtWidgets import (
-                QAbstractSpinBox, QComboBox, QLineEdit,
+                QComboBox,
+                QLineEdit,
             )
+
             if not isinstance(obj, (QAbstractSpinBox, QComboBox, QLineEdit)):
                 return False
             # If the widget has focus, let the user use the wheel
@@ -557,4 +579,3 @@ def install_wheel_filter(app: QApplication) -> None:
     app.installEventFilter(flt)
     app._phase40_wheel_filter = True
     app._phase40_wheel_filter_obj = flt
-
