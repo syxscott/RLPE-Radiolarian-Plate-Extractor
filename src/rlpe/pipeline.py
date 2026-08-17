@@ -2261,8 +2261,18 @@ class RadiolarianPipeline:
             caption_for_panel: str,
             page_context: str,
         ) -> None:
+            """Single-panel worker: call M3, parse, gate-overwrite species.
+
+            Stamps ``metadata.m3_per_panel`` with provenance on success.
+            On any backend error / parse failure / exception, returns
+            silently so the regex-matched species survives.
+            """
             try:
-                img = Image.open(crop).convert("RGB")
+                with Image.open(crop) as img:
+                    panel_img = img.convert("RGB")
+                # `img` is closed after the with block, but `panel_img`
+                # is the converted RGB copy (independent memory) so it's
+                # safe to use after the context exits.
                 prompt = (
                     f"[This panel]\n{caption_for_panel.strip()}\n\n"
                     f"[Same-page context]\n{page_context.strip()[:1500]}\n\n"
@@ -2272,7 +2282,7 @@ class RadiolarianPipeline:
                 )
                 t0 = time.monotonic()
                 raw_resp = backend.infer_panel(
-                    panel_image=img,
+                    panel_image=panel_img,
                     caption_text=caption_for_panel,
                     ocr_labels=[r.get("panel_id", "")],
                     system_prompt=_MATCH_PANEL_SYSTEM,
@@ -2282,9 +2292,22 @@ class RadiolarianPipeline:
                 if not isinstance(raw_resp, dict) or raw_resp.get("fallback_used"):
                     return
                 parsed = _normalize_panel_dict(raw_resp)
-                parsed["confidence"] = max(
-                    0.0, min(1.0, float(parsed.get("confidence") or 0.0))
-                )
+                # Defense-in-depth: _normalize_panel_dict already clamps
+                # to [0,1], but re-clamp here in case a future backend
+                # bypasses normalization or returns a NaN/inf sentinel.
+                # Explicit NaN guard: Python's min/max short-circuit on
+                # NaN comparisons, so a bare clamp lets NaN through;
+                # downstream >= comparisons correctly return False so
+                # the row is not overwritten, but metadata.confidence
+                # should not contain NaN.
+                conf_raw = parsed.get("confidence")
+                try:
+                    conf_val = float(conf_raw) if conf_raw is not None else 0.0
+                except (TypeError, ValueError):
+                    conf_val = 0.0
+                if conf_val != conf_val:  # NaN check (NaN != NaN)
+                    conf_val = 0.0
+                parsed["confidence"] = max(0.0, min(1.0, conf_val))
                 md = r.setdefault("metadata", {})
                 md["m3_per_panel"] = {
                     "species": parsed.get("species"),
@@ -2307,8 +2330,10 @@ class RadiolarianPipeline:
                     exc,
                 )
 
-        list(executor.map(lambda t: _one(*t), capped_items))
-        executor.shutdown(wait=True)
+        try:
+            list(executor.map(lambda t: _one(*t), capped_items))
+        finally:
+            executor.shutdown(wait=True)
         return results
 
     def _apply_multi_plate_enrichment(
