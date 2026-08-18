@@ -91,7 +91,15 @@ def _env_int(name: str, default: int) -> int:
 # this cap a user uploading 30 PDFs back-to-back can starve
 # /jobs/{id}/status, /results, etc. Default 4 (matches a typical
 # laptop core count for CPU-bound IO); override with RLPE_MAX_JOBS.
-JOB_CONCURRENCY = threading.Semaphore(_env_int("RLPE_MAX_JOBS", 4))
+_RLPE_MAX_JOBS = _env_int("RLPE_MAX_JOBS", 4)
+JOB_CONCURRENCY = threading.Semaphore(_RLPE_MAX_JOBS)
+# Sweep 7 (audit 2026-08-02 N3): max seconds a queued job waits to
+# acquire a JOB_CONCURRENCY slot before giving up with status
+# "queued_timeout". Without this, the 5th concurrent upload sat in
+# "queued" forever when RLPE_MAX_JOBS=1. 60s is conservative — well
+# above typical pipeline runtimes but short enough that a stuck
+# client gets actionable feedback instead of an indefinite hang.
+_JOB_QUEUE_TIMEOUT = float(_env_int("RLPE_JOB_QUEUE_TIMEOUT", 60))
 
 
 # Cached GROBID URL — read from the GROBID_URL env var once at
@@ -782,7 +790,12 @@ async def upload_pdf(
             # "deleted". Web uploads run under ``service_work/<jid>/``;
             # record that root so ``_purge_job`` can remove it (the
             # safe-root / CLI-shared checks below still apply).
-            "_root": str(WORK_DIR / job_id),
+            # Sweep 7 (audit 2026-08-02 C5): ``.resolve()`` for parity
+            # with the CLI-discovered path at line 596 which stores
+            # ``str(root.resolve())``. Readers (lines 858, 1129) call
+            # ``.resolve()`` defensively but a stable string form
+            # makes cached comparisons + audit-log output match.
+            "_root": str((WORK_DIR / job_id).resolve()),
         }
 
     # audit 2026-08-01 W1 / M14: BackgroundTasks runs ``_run_job`` on
@@ -792,8 +805,28 @@ async def upload_pdf(
     # The args are forwarded positionally so that tests asserting
     # ``bg.calls[0][1][2]`` (the 3rd positional arg = job_options dict)
     # keep working.
+    # Sweep 7 (audit 2026-08-02 N3): the bare ``acquire()`` blocked
+    # forever if ``RLPE_MAX_JOBS`` was lower than the upload burst.
+    # The 5th concurrent job sat in "queued" indefinitely with no
+    # timeout, no client-side cancellation, and no health-check.
+    # Bounded acquire + return 503 lets the client retry with
+    # backoff instead of waiting forever.
     def _run_job_with_concurrency(*args, **kwargs) -> None:
-        JOB_CONCURRENCY.acquire()
+        if not JOB_CONCURRENCY.acquire(timeout=_JOB_QUEUE_TIMEOUT):
+            # Slot unavailable within the deadline — surface as a
+            # 503 Service Unavailable so the client knows to retry
+            # rather than polling /jobs/{id}/status forever.
+            with RESULT_LOCK:
+                entry = RESULT_CACHE.get(args[0])
+                if entry is not None:
+                    entry["status"] = "queued_timeout"
+                    entry["detail"] = (
+                        f"Server at max concurrency (RLPE_MAX_JOBS="
+                        f"{_RLPE_MAX_JOBS}); could not acquire slot "
+                        f"within {_JOB_QUEUE_TIMEOUT}s. Retry."
+                    )
+                    entry["progress"] = 0
+            return
         try:
             return _run_job(*args, **kwargs)
         finally:
@@ -2221,8 +2254,6 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 pass
             stop_hb.wait(1.0)
 
-    hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name=f"rlpe-hb-{job_id[:8]}")
-    hb_thread.start()
     # Pre-flight cancel check: if the user hit /jobs/{id}/cancel between
     # the upload's "queued" registration and the moment our worker thread
     # actually started running, the cancel endpoint set status="cancelled".
@@ -2233,20 +2264,25 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
     # before doing any work. Both the read-check AND the status-flip
     # must happen under RESULT_LOCK so /cancel cannot slip in between
     # them and have its "cancelled" write clobbered by our "running".
+    # Sweep 7 (audit 2026-08-02 O5): the heartbeat thread was
+    # previously spawned BEFORE this check; a cancelled job wasted a
+    # Thread + RESULT_CACHE[jid] reference for the 1s tick before
+    # ``stop_hb.set()`` cleaned it up. Spawn AFTER the pre-flight so
+    # cancelled-during-queue never starts the thread.
     with RESULT_LOCK:
         cur = RESULT_CACHE.get(job_id, {})
         if cur.get("status") == "cancelled":
-            stop_hb.set()
             return
         if job_id not in RESULT_CACHE:
             # The /jobs/{id} delete endpoint refuses to drop "queued"
             # entries, but if it ever does (or if a future code path
             # races with us), bail rather than KeyError below.
-            stop_hb.set()
             return
         # Transition out of "queued" so the UI stops showing the waiting
         # spinner once the worker thread has actually started running.
         RESULT_CACHE[job_id]["status"] = "running"
+    hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name=f"rlpe-hb-{job_id[:8]}")
+    hb_thread.start()
     try:
         ensure_dir(APP_ROOT / "static")
         pdf_dir = ensure_dir(WORK_DIR / job_id / "pdfs")
@@ -2444,12 +2480,14 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 # is the correct behaviour.
                 entry = FALLBACK_PENDING.get(job_id) or {}
                 decision = entry.get("decision") or handler.default_action
-                # Cleanup is best-effort; ignore KeyError if another
-                # thread already removed the entry.
-                try:
-                    del FALLBACK_PENDING[job_id]
-                except KeyError:
-                    pass
+                # Sweep 7 (audit 2026-08-02 C2): use ``.pop(..., None)``
+                # for parity with the other 3 FALLBACK_PENDING cleanup
+                # sites (lines 1132, 1248, and the read-without-pop fix
+                # at 2478). ``del`` raises KeyError if another thread
+                # already removed the entry, so we wrapped it in
+                # try/except — ``.pop(..., None)`` is one line and
+                # doesn't need the exception guard.
+                FALLBACK_PENDING.pop(job_id, None)
                 return decision
 
             handler.on_error = _web_fallback_popup
@@ -2597,6 +2635,23 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 _pipeline_for_cleanup.segmenter.unload_sam2()
             except Exception:
                 logger.exception("SAM2 unload failed for job %s", job_id)
+        # Sweep 7 (audit 2026-08-02 N2): drop the MiniMax-fallback
+        # handler closure so the cancelled job's ``_web_fallback_popup``
+        # (which captures ``error_info``, the threading.Event, and a
+        # back-reference to ``_run_job``'s frame) doesn't pin the entry
+        # in ``FALLBACK_PENDING`` for up to 5 minutes after the worker
+        # exits. ``MiniMax_fallback_handler`` lives on
+        # ``RESULT_CACHE[job_id]``; clearing it here releases the
+        # closure as soon as the worker finishes, regardless of which
+        # exit path got us here (success / cancel / failure). Also
+        # unconditionally pop FALLBACK_PENDING so a worker that exited
+        # via the exception path (the user's 5-minute popup timeout)
+        # doesn't leak the entry forever.
+        with RESULT_LOCK:
+            entry = RESULT_CACHE.get(job_id)
+            if entry is not None:
+                entry.pop("MiniMax_fallback_handler", None)
+        FALLBACK_PENDING.pop(job_id, None)
         # Stop the heartbeat thread so it doesn't keep a reference to the
         # job entry in RESULT_CACHE forever.
         # Phase 54 audit: B6 — join the thread instead of just setting
