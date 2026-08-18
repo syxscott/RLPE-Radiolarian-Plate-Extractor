@@ -1375,14 +1375,43 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
     # tell the extract_sample_ids source from the legacy regex
     # sources (S_/B_/R_/N_/L_/P_).
     try:
-        from .sample_id_extractor import extract_sample_ids
+        from .sample_id_extractor import (
+            _ID_RE,
+            _LOC_RE,
+            _SAMPLE_RE,
+            extract_sample_ids,
+        )
     except Exception:  # pragma: no cover - module is shipped
         extract_sample_ids = None  # type: ignore[assignment]
+        _SAMPLE_RE = _LOC_RE = _ID_RE = None  # type: ignore[assignment]
+    # Audit 2026-08-18: text-span dedup. The value-based ``raw_seen``
+    # check misses cases where the helper normalises the captured text
+    # differently from the legacy regex (e.g. ``"Sample ID-203"``: the
+    # helper strips the ``ID-`` prefix → value ``"203"``, but the legacy
+    # ``Sample\s+`` regex keeps the full ``"ID-203"``; ``"Sample 100A"``:
+    # the helper's ``\d{2,}`` branch captures just ``"100"`` but the
+    # legacy regex captures ``"100A"``). Two records get inserted for
+    # the same physical sample, inflating the count. The robust signal
+    # is the text span: if the helper and the legacy regex match
+    # overlapping character offsets in the caption, they refer to the
+    # same physical sample, regardless of how each side normalises the
+    # captured text.
+    helper_spans: set[tuple[str, int, int]] = set()
     if extract_sample_ids is not None:
         for m in matches:
             text = m.caption_snippet or ""
             if not text or not m.paper_id:
                 continue
+            # Track text spans covered by the helper's regexes so the
+            # legacy pass can skip overlapping matches below. We run
+            # the helper's compiled regexes directly (instead of just
+            # looking at the SampleID value list) because the span is
+            # the only reliable overlap signal.
+            for helper_re in (_SAMPLE_RE, _LOC_RE, _ID_RE):
+                if helper_re is None:
+                    continue
+                for sm in helper_re.finditer(text):
+                    helper_spans.add((m.paper_id, sm.start(), sm.end()))
             try:
                 sample_ids = extract_sample_ids(text)
             except Exception:
@@ -1406,7 +1435,9 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 # Audit 2026-08-18: register the raw value so the
                 # legacy ``S_`` regex path's cross-prefix dedup
                 # check (see ``raw_key in raw_seen`` below) drops
-                # hits for ids the helper already covered.
+                # hits for ids the helper already covered. Kept for
+                # backstop — the primary dedup now uses text spans
+                # (see ``helper_spans`` check in the legacy loop).
                 raw_seen.add((m.paper_id, sid.value))
     # Round 20 sampling: Boughdiri 2007 captions use the formats
     # ``CH4, specimen 7``, ``MB4, specimen 15`` — the old regex
@@ -1476,6 +1507,22 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
             re.compile(r"\bsample\s+(\d{1,4}[-/]?\d{0,4})\b", re.IGNORECASE),
             "N_",
         ),
+        # Round 21: "Sample (12)" parenthesized form (rare but seen
+        # in some Bandini captions). Tagged ``S_`` to fold into the
+        # legacy sample bucket.
+        #
+        # Audit 2026-08-18: this pattern must come BEFORE the bare
+        # ``\(\d{1,3}\)`` pattern below. The previous order fired the
+        # bare-parenthesized detector first and emitted ``L_(12)``,
+        # then the ``Sample\s+\(\d+\)`` detector dropped via the
+        # legacy-to-legacy span dedup. Operator saw ``L_(12)`` with
+        # no indication that this was actually a ``Sample (12)``
+        # reference, losing semantic information. By ordering the
+        # more-specific pattern first, the operator sees the more
+        # informative ``S_Sample (12)`` (the bare ``L_`` pattern
+        # still fires for genuinely-bare parenthesized numbers like
+        # Bragin's ``(1) (2) (3)`` caption panel lists).
+        (re.compile(r"Sample\s+\(\d+\)"), "S_"),
         # Round 21: parenthesized numbered list "(1) (2) (3) ..." —
         # common in Bragin 2025 captions ("(1) Praeparvicingula
         # blackhorsensis, (2) Praeparvicingula donnae ..."). Tagged
@@ -1488,10 +1535,6 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
         # and other Russian / older papers. ``pl.`` is unambiguous in
         # plate captions. Tagged with prefix ``P_``.
         (re.compile(r"pl\.\s*(\d{1,2})\b"), "P_"),
-        # Round 21: "Sample (12)" parenthesized form (rare but seen
-        # in some Bandini captions). Tagged ``S_`` to fold into the
-        # legacy sample bucket.
-        (re.compile(r"Sample\s+\(\d+\)"), "S_"),
     )
     for m in matches:
         text = m.caption_snippet or ""
@@ -1505,6 +1548,31 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 # capture, so the whole match is the id).
                 sid_raw = sm.group(1) if sm.lastindex else sm.group(0)
                 sid_str = f"{prefix}{sid_raw}"
+                # Audit 2026-08-18: span-overlap dedup against the helper
+                # AND against any previously-recorded legacy span for the
+                # same paper. Two spans ``[a, b)`` and ``[c, d)`` overlap
+                # iff ``a < d and c < b``. The helper and the legacy
+                # regex might normalise the same physical sample text
+                # differently (e.g. helper strips ``ID-`` from
+                # ``Sample ID-203`` → captures ``Sample ID-203`` span
+                # but extracts ``"203"``; legacy captures ``Sample ID-203``
+                # span and extracts ``"ID-203"``. Same span → dedup.
+                # ``Sample 100A``: helper captures ``Sample 100`` span
+                # (the ``\d{2,}`` branch stops at the trailing ``A``),
+                # legacy captures ``Sample 100A`` span. Different spans
+                # but they overlap → dedup. ``Sample (12)``: the
+                # ``Sample\s+\(\d+\)`` pattern matches ``Sample (12)``
+                # and the bare ``\(\d{1,3}\)` pattern matches ``(12)``
+                # — both fire on the same physical sample. The first
+                # one to fire inserts a record; the second is dropped
+                # because its span overlaps the first's.
+                legacy_start, legacy_end = sm.start(), sm.end()
+                if any(
+                    h_start < legacy_end and legacy_start < h_end
+                    for h_paper, h_start, h_end in helper_spans
+                    if h_paper == m.paper_id
+                ):
+                    continue
                 # Audit 2026-08-18: dedupe across extractor prefixes.
                 # The ``X_`` (extract_sample_ids helper) and ``S_``
                 # (legacy regex) both match "Sample PR-SB28" — without
@@ -1512,7 +1580,8 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 # per unique id, inflating the sample count. Compare
                 # the raw value as a secondary key: if either the
                 # helper or a previous regex already recorded this
-                # sample value, skip the legacy hit.
+                # sample value, skip the legacy hit. (Kept as a
+                # backstop; the span check above is the primary dedup.)
                 key = (m.paper_id, sid_str)
                 if key in seen:
                     continue
@@ -1532,6 +1601,11 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 )
                 seen[key] = rec.model_dump()
                 raw_seen.add(raw_key)
+                # Register this legacy span so a subsequent legacy
+                # pattern that overlaps (e.g. ``\(\d{1,3}\)`` vs
+                # ``Sample\s+\(\d+\)`` both matching ``Sample (12)``)
+                # is dropped. Mirrors the helper-span tracking above.
+                helper_spans.add((m.paper_id, legacy_start, legacy_end))
     return list(seen.values())
 
 

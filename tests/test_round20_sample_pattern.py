@@ -131,3 +131,77 @@ def test_short_code_pattern_source_guard():
             f"converters.py is missing the {needle!r} pattern. "
             "Round 20 sample extraction depends on this."
         )
+
+
+# --- 6) Regression: span-based dedup (Audit 2026-08-18) ---------------
+#
+# Before the span-based dedup, the legacy ``S_`` regex and the
+# ``extract_sample_ids`` helper each emitted one record per match,
+# inflating sample counts. The audit fixed three concrete cases that
+# were silently producing 2 records instead of 1:
+#   - "Sample ID-203"   helper strips "ID-" → "X_203";
+#                        legacy captures full "ID-203" → "S_ID-203"
+#   - "Sample 100A"     helper truncates to "100" (was \d{2,});
+#                        legacy captures "100A" → "S_100A"
+#   - "Sample (12)"     "Sample\s+\(\d+\)" matches "Sample (12)";
+#                        bare "\(\d{1,3}\)" also matches "(12)"
+# Each case now produces exactly one record.
+
+
+def test_dedup_sample_id_with_id_prefix():
+    """``Sample ID-203`` must produce exactly one record."""
+    from rlpe.converters import sample_records_from_matches
+
+    matches = [
+        _build_match("p1", "Plate 1. Radiolarians from Sample ID-203, locality X.")
+    ]
+    samples = sample_records_from_matches(matches)
+    sids = {s["sample_id"] for s in samples}
+    assert len(samples) == 1, f"double-count on Sample ID-203: {sids}"
+    assert "X_203" in sids, f"helper value missing: {sids}"
+
+
+def test_dedup_sample_alphanumeric_suffix():
+    """``Sample 100A`` must produce exactly one record (the ``A`` suffix preserved)."""
+    from rlpe.converters import sample_records_from_matches
+
+    matches = [_build_match("p1", "Sample 100A was collected.")]
+    samples = sample_records_from_matches(matches)
+    sids = {s["sample_id"] for s in samples}
+    assert len(samples) == 1, f"double-count on Sample 100A: {sids}"
+    assert "X_100A" in sids, (
+        f"helper should capture full 100A (with A suffix); got: {sids}"
+    )
+
+
+def test_dedup_sample_parenthesized_keeps_specific_pattern():
+    """``Sample (12)`` must produce exactly one record with ``Sample`` keyword visible."""
+    from rlpe.converters import sample_records_from_matches
+
+    matches = [_build_match("p1", "Section 1. Sample (12), Locality X")]
+    samples = sample_records_from_matches(matches)
+    sids = {s["sample_id"] for s in samples}
+    assert len(samples) == 1, f"double-count on Sample (12): {sids}"
+    # The more-specific Sample\s+\(\d+\) pattern must fire (not the
+    # bare \(\d{1,3}\) one) so the operator sees the "Sample" keyword.
+    assert any("Sample (12)" in s for s in sids), (
+        f"Sample (12) should retain 'Sample' keyword; got: {sids}"
+    )
+
+
+def test_bare_parenthesized_still_works():
+    """A bare ``(1) (2) (3)`` numbered list (no ``Sample`` keyword) still
+    matches the ``L_`` pattern — the reorder for ``Sample (12)`` must
+    not break the genuine Bragin-style numbered-list case."""
+    from rlpe.converters import sample_records_from_matches
+
+    matches = [
+        _build_match(
+            "p1",
+            "(1) Praeparvicingula blackhorsensis, (2) Praeparvicingula donnae",
+        )
+    ]
+    samples = sample_records_from_matches(matches)
+    sids = {s["sample_id"] for s in samples}
+    l_ids = {s for s in sids if s.startswith("L_")}
+    assert len(l_ids) >= 1, f"bare (N) parenthesized lost: {sids}"

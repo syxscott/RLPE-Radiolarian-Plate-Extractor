@@ -61,10 +61,12 @@ class SampleID:
 # ---------------------------------------------------------------------------
 
 # ``Sample S1``, ``sample A12``, ``Sample ID-203`` (with optional ID- prefix),
-# ``sample LR-7``, ``Sample ZX-9``. We deliberately anchor on the keyword so
-# random single-letter strings elsewhere in the caption don't get picked up.
-# Two branches: (a) tokens with a digit (handles ZX-9, LR-7, A12), and
-# (b) pure-letter tokens of 1-6 chars (handles A, LR, etc.).
+# ``sample LR-7``, ``Sample ZX-9``, ``Sample 100A`` (digit + letter suffix).
+# We deliberately anchor on the keyword so random single-letter strings
+# elsewhere in the caption don't get picked up. Three branches:
+# (a) tokens with a digit, letter-led (handles ZX-9, LR-7, A12),
+# (b) pure-letter tokens of 1-6 chars (handles A, LR, etc.),
+# (c) digit-led tokens (handles "100", "100A", "100-2").
 #
 # NOTE: We use ``(?<![A-Za-z])`` / ``(?![A-Za-z])`` rather than ``\b``
 # because the default Python ``\b`` only matches at ASCII word
@@ -81,8 +83,16 @@ _SAMPLE_RE = re.compile(
     #     (``[A-Za-z]+[-]?[A-Za-z]*\d``), silently dropping bare-digit
     #     IDs. Added a third alternation branch ``\d{2,}`` (2+ digits
     #     to avoid matching years like 2024).
+    # Audit fix 2026-08-18:
+    #   - Allow trailing alphanumeric chars after a digit-led branch
+    #     (``\d{2,}[A-Za-z0-9]*``). Captions like ``Sample 100A`` were
+    #     truncated to ``"100"``, then the legacy ``Sample\s+`` regex
+    #     in the converter would emit a separate ``S_100A`` record
+    #     that the cross-prefix dedup had to drop — silently losing
+    #     the ``A`` suffix. Allowing the helper to consume the
+    #     alphanumeric tail keeps both detectors in agreement.
     r"(?<![A-Za-z])Samples?\s+(?:ID[-:]\s*)?"
-    r"([A-Za-z]+[-]?[A-Za-z]*\d[A-Za-z0-9\-]*|[A-Za-z]{1,6}|\d{2,})",
+    r"([A-Za-z]+[-]?[A-Za-z]*\d[A-Za-z0-9\-]*|[A-Za-z]{1,6}|\d{2,}[A-Za-z0-9]*)",
     re.IGNORECASE,
 )
 
