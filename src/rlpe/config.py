@@ -29,6 +29,20 @@ _COCO_YOLO_BASENAMES = {
     "yolo11x-seg.pt",
 }
 
+# Audit 2026-08-02 (M5): valid ``yolo_device`` strings. Without this
+# allow-list a typo (``yolo_device="garbage"``) silently sails through
+# config parsing and only blows up inside ``YOLO(... device=...)``
+# with a cryptic ultralytics AssertionError. Values per the design
+# comment at line 182 + ultralytics conventions:
+#   - "auto" / "" : let ultralytics auto-select (default)
+#   - "cpu"       : force CPU
+#   - "cuda"      : any CUDA-capable GPU
+#   - "mps"       : Apple Silicon GPU
+#   - "0".."7"    : specific GPU index
+_VALID_YOLO_DEVICES = frozenset(
+    {"auto", "cpu", "cuda", "mps"} | {str(i) for i in range(8)}
+)
+
 # Recognised extra-config keys; any key outside this set triggers a warning.
 _KNOWN_EXTRA_KEYS = {
     "sam2_checkpoint",
@@ -329,6 +343,23 @@ class PipelineConfig:
         if not (0.01 <= self.yolo_iou_threshold <= 1.0):
             raise ValueError(
                 f"yolo_iou_threshold must be in [0.01, 1.0], got {self.yolo_iou_threshold}"
+            )
+
+        # Audit 2026-08-02 (M5): validate ``yolo_device`` early. Without
+        # this, a typo (e.g. ``yolo_device="garbage"``) silently sails
+        # through config parsing and only blows up inside the first
+        # ``YOLO(... device=...)`` call with a cryptic
+        # ``AssertionError`` from ultralytics. Valid values per the
+        # design comment at line 182 + ultralytics conventions:
+        #   - "auto" / "" : let ultralytics auto-select (default)
+        #   - "cpu"       : force CPU
+        #   - "cuda"      : any CUDA-capable GPU
+        #   - "mps"       : Apple Silicon GPU
+        #   - "0".."7"    : specific GPU index
+        if self.yolo_device not in _VALID_YOLO_DEVICES:
+            raise ValueError(
+                f"yolo_device must be one of {sorted(_VALID_YOLO_DEVICES)!r} "
+                f"(or empty string ''), got {self.yolo_device!r}"
             )
 
         # Audit 2026-08-02: M3 morphology Stage-6 validation. Coerce
