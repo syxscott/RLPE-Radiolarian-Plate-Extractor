@@ -612,8 +612,10 @@ def main() -> int:
     # Audit 2026-08-02: Stage-6 morphology knobs. ``--m3-stage-6`` is
     # opt-in (default None → off); ``--m3-morphology-max-species-per-
     # paper`` overrides the PipelineConfig default.
+    # Sweep 6 (audit 2026-08-02 C4): write to the typed attr directly
+    # (cfg.m3_stage_6 is a real PipelineConfig field), not cfg.extra.
     if args.m3_stage_6 is not None:
-        cfg.extra["m3_stage_6"] = bool(args.m3_stage_6)
+        cfg.m3_stage_6 = bool(args.m3_stage_6)
     if args.m3_morphology_max_species_per_paper is not None:
         cfg.m3_morphology_max_species_per_paper = int(args.m3_morphology_max_species_per_paper)
     ensure_dir(cfg.work_dir)

@@ -3852,7 +3852,7 @@ class RadiolarianPipeline:
                         yolo_model_path=yolo_path,
                         yolo_conf=self.config.yolo_conf_threshold,
                         yolo_iou=self.config.yolo_iou_threshold,
-                        yolo_device=getattr(self.config, "yolo_device", "auto"),
+                        yolo_device=self.config.yolo_device,
                     )
                 regions = regions_cache[page.page_index]
                 if regions:
@@ -6354,6 +6354,12 @@ Rules:
                     yolo_model_path=yolo_path,
                     yolo_conf=self.config.yolo_conf_threshold,
                     yolo_iou=self.config.yolo_iou_threshold,
+                    # audit 2026-08-02 N1: GROBID-fallback path was
+                    # silently dropping the operator's yolo_device
+                    # choice. The Opendataloader-primary path at
+                    # pipeline.py:3855 already passed it; this brings
+                    # the fallback path into parity.
+                    yolo_device=self.config.yolo_device,
                 ),
                 start=1,
             ):

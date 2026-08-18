@@ -118,13 +118,12 @@ _KNOWN_EXTRA_KEYS = {
     # Round 6 + Round 7 multi-modal vision toggles
     "use_m3_stage3",
     "m3_multi_plate_enrich",
-    "m3_stage_6",
-    # Phase 2026-08-17: Stage 4.5 per-panel M3 vision species ID.
-    # Opt-in flag; default disabled for backward compat.
-    "m3_per_panel_enabled",
-    "m3_per_panel_min_conf",
-    "m3_per_panel_max_per_figure",
-    "m3_per_panel_max_per_paper",
+    # Sweep 6 (audit 2026-08-02 C4): ``m3_stage_6`` and the four
+    # ``m3_per_panel_*`` knobs were listed here as legitimate extras,
+    # but they're real ``PipelineConfig`` dataclass fields (see
+    # ``m3_stage_6`` at line 211, ``m3_per_panel_*`` at lines
+    # 218-220). Code that wrote them to ``cfg.extra`` was wrong
+    # and would have tripped the unknown-keys warning. Removed.
     # LLM-first extraction (opt-in; default True when Gemma runtime is set)
     "use_llm_first",
     # Multi-modal geology vision (Commit 2 / Round 3)
@@ -146,12 +145,13 @@ _KNOWN_EXTRA_KEYS = {
     # Phase 61 Plan 4 (Bug 4.10): optional name of a fallback LLM backend
     # for 4xx-then-retry.
     "fallback_llm_backend",
-    # YOLO-based figure detection (replaces OpenCV detect_figure_regions)
-    "use_yolo_figures",
-    "yolo_model_path",
-    "yolo_conf_threshold",
-    "yolo_iou_threshold",
-    "yolo_device",
+    # Sweep 6 (audit 2026-08-02 C4): the five YOLO knobs (use_yolo_figures,
+    # yolo_model_path, yolo_conf_threshold, yolo_iou_threshold,
+    # yolo_device) used to be listed here as legitimate extras, but
+    # they're real ``PipelineConfig`` dataclass fields (lines 178-185).
+    # Code that wrote them to ``cfg.extra`` was wrong and would now trip
+    # the unknown-keys warning. Removed so the validator catches any
+    # straggler.
 }
 
 
