@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import numpy as np
 from PIL import Image
 
 from .llm_backends import _normalize_panel_dict
@@ -2459,6 +2460,166 @@ class RadiolarianPipeline:
         for r in rows:
             r["caption_pairs"] = serialised_pairs
             r["page_context_snippet"] = page_context
+
+    def _recover_bboxes_via_segmentation(
+        self,
+        results: list[dict[str, Any]],
+        region_img: np.ndarray | None,
+        paper_id: str,
+        figure_id: str,
+    ) -> list[dict[str, Any]]:
+        """Phase 67: recover real per-panel bboxes when all rows for a
+        figure share a placeholder bbox.
+
+        Background: LLM-first extraction returns rows whose ``bbox=None``
+        and ``panel_path=None``. The classical crop writer at :5108-5145
+        is only reachable on the fallback path, so LLM-first rows go out
+        with no bbox and the image-verified eval collapses (8.3% on v18
+        because EasyOCR reads the topmost-leftmost printed label on the
+        WHOLE plate image instead of the named panel).
+
+        This helper is a **no-op when any row already has a real
+        subregion bbox** (the common case for non-OD figures and any
+        figure where Stage 3 / YOLO / classical CV produced real
+        bboxes). It only fires when **every** row for this figure has a
+        placeholder bbox (``None`` / ``(0, 0, 0, 0)`` /
+        ``(0, 0, W, H)``).
+
+        On fire: run ``self.segmenter._segment_with_opencv(region_img)``
+        to get real subregion bboxes, pair them with the LLM rows by
+        reading order (numeric panel_id ascending), stamp each row's
+        bbox and write the per-panel crop to
+        ``panels/<paper_id>/<figure_id>/panel_NN.png``.
+        """
+        if not results or region_img is None:
+            return results
+
+        h_img, w_img = region_img.shape[:2]
+        full_image_bbox = [0, 0, int(w_img), int(h_img)]
+
+        def _is_placeholder(bbox: Any) -> bool:
+            if bbox is None:
+                return True
+            if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                return True
+            bx = list(bbox)
+            # (0, 0, 0, 0) degenerate placeholder.
+            if bx == [0, 0, 0, 0]:
+                return True
+            # (0, 0, W, H) whole-image placeholder.
+            if bx == [0, 0, int(w_img), int(h_img)]:
+                return True
+            return False
+
+        # If ANY row already has a real subregion bbox, someone else
+        # already recovered bboxes for this figure; do nothing.
+        for r in results:
+            if not _is_placeholder(r.get("bbox")):
+                return results
+
+        # All placeholder — run segmentation.
+        try:
+            segmented = self.segmenter._segment_with_opencv(region_img)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Phase 67 bbox recovery: segmentation failed for %s/%s: %s",
+                paper_id,
+                figure_id,
+                exc,
+            )
+            return results
+
+        if not segmented:
+            logger.debug(
+                "Phase 67 bbox recovery: segmentation returned 0 panels for %s/%s",
+                paper_id,
+                figure_id,
+            )
+            return results
+
+        # Sort LLM rows by numeric panel_id (1, 2, 3, …). Fall back to
+        # string sort for non-numeric ids (e.g. "1a", "10b").
+        def _panel_sort_key(r: dict[str, Any]) -> tuple[int, int, str]:
+            pid = r.get("panel_id")
+            try:
+                return (0, int(str(pid).strip()), "")
+            except (ValueError, TypeError):
+                return (1, 0, str(pid) if pid is not None else "")
+
+        sorted_results = sorted(results, key=_panel_sort_key)
+
+        # Pair up to min(len(segmented), len(llm_rows)).
+        n_paired = min(len(segmented), len(sorted_results))
+        if n_paired < len(sorted_results):
+            logger.warning(
+                "Phase 67 bbox recovery: %s/%s segmentation found %d panels but "
+                "LLM declared %d; %d rows will keep placeholder bbox",
+                paper_id,
+                figure_id,
+                len(segmented),
+                len(sorted_results),
+                len(sorted_results) - n_paired,
+            )
+
+        panels_dir = self.config.panels_dir() if hasattr(self.config, "panels_dir") else None
+        crop_dir: Path | None = None
+        if panels_dir is not None:
+            crop_dir = Path(panels_dir) / paper_id / figure_id
+
+        # Read region_img once for crop writes.
+        try:
+            pil_region: Image.Image | None = Image.fromarray(region_img)
+        except Exception:  # pragma: no cover - defensive
+            pil_region = None
+
+        # Apply by original position so we don't reorder rows the
+        # caller already arranged.
+        sorted_results_by_pid: dict[Any, dict[str, Any]] = {
+            r.get("panel_id"): r for r in sorted_results
+        }
+        for orig_r in results:
+            pid = orig_r.get("panel_id")
+            sorted_r = sorted_results_by_pid.get(pid)
+            if sorted_r is None:
+                continue
+            # Find the index of sorted_r in the sorted list — that's
+            # the position we pair with.
+            try:
+                idx = [id(x) for x in sorted_results].index(id(sorted_r))
+            except ValueError:
+                continue
+            if idx >= n_paired:
+                continue  # keep placeholder
+            seg = segmented[idx]
+            x, y, w, h = seg.bbox
+            # Clip to image bounds defensively.
+            x = max(0, min(int(x), w_img - 1))
+            y = max(0, min(int(y), h_img - 1))
+            w = max(1, min(int(w), w_img - x))
+            h = max(1, min(int(h), h_img - y))
+            new_bbox = [x, y, w, h]
+            orig_r["bbox"] = new_bbox
+            md = orig_r.get("metadata") or {}
+            md["panel_id_source"] = "phase67_segmentation_recovery"
+            orig_r["metadata"] = md
+            # Write crop if possible.
+            if pil_region is not None and crop_dir is not None:
+                try:
+                    crop_dir.mkdir(parents=True, exist_ok=True)
+                    crop = pil_region.crop((x, y, x + w, y + h))
+                    panel_idx = idx + 1
+                    crop_path = crop_dir / f"panel_{panel_idx:02d}.png"
+                    crop.save(str(crop_path), "PNG")
+                    orig_r["panel_path"] = str(crop_path)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "Phase 67 bbox recovery: crop write failed for %s/%s panel=%s: %s",
+                        paper_id,
+                        figure_id,
+                        pid,
+                        exc,
+                    )
+        return results
 
     def _apply_multi_plate_enrichment(
         self,
@@ -4946,6 +5107,19 @@ Rules:
                         caption_pairs=llm_caption_pairs,
                         grobid_sections=grobid_sections,
                         figure_page_index=best_page_index,
+                    )
+                # Phase 67 (2026-08-18): recover real per-panel bboxes
+                # when LLM-first returned rows with no bbox. LLM-first
+                # skips the classical crop writer (pipeline.py:5108),
+                # so without this fallback image-verified F1 collapses
+                # because EasyOCR reads the top-left label on the WHOLE
+                # plate image instead of the named panel.
+                if llm_results:
+                    llm_results = self._recover_bboxes_via_segmentation(
+                        llm_results,
+                        region_img,
+                        paper_id,
+                        figure_id or "",
                     )
                 return llm_results
             logger.debug(
