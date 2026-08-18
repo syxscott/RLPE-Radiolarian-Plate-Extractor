@@ -106,6 +106,40 @@ class PanelSegmenter:
             return self._segment_with_sam2(image, predictor)
         return self._segment_with_opencv(image)
 
+    def unload_sam2(self) -> None:
+        """Drop the SAM2 predictor reference and release CUDA memory.
+
+        Audit 2026-08-02 (N5): on the web server each job constructs a
+        fresh ``RadiolarianPipeline`` → fresh ``PanelSegmenter`` → fresh
+        SAM2 predictor (~900 MB on the GPU). When the job finishes the
+        pipeline object goes out of scope and Python's refcount drops
+        the predictor — but PyTorch's CUDA caching allocator does NOT
+        release the cached blocks back to the driver until
+        ``torch.cuda.empty_cache()`` is called (and even then only
+        optionally). With sequential uploads the GPU footprint grew
+        linearly until OOM on the 5th-6th job.
+
+        Behaviour:
+        - Drops ``self._predictor`` (the SAM2ImagePredictor wrapper
+          plus the underlying model).
+        - Calls ``torch.cuda.empty_cache()`` if torch is importable.
+        - Safe to call when SAM2 was never initialised (no-op).
+        - Thread-safe via ``self._lock`` (predictor was created under it).
+        """
+        with self._lock:
+            if self._predictor is None:
+                return
+            # Drop the reference first so any subsequent
+            # ``_lazy_init_sam2`` rebuilds from scratch.
+            self._predictor = None
+        try:
+            import torch  # local import — torch is optional at runtime
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            # torch missing or CUDA unavailable — nothing to free.
+            pass
+
     def _preprocess_gray(self, image: np.ndarray) -> np.ndarray:
         """Shared grayscale+blur+threshold preprocessing.
 

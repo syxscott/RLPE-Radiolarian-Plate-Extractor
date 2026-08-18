@@ -2485,7 +2485,12 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 entry["progress"] = max(30, min(89, pct))
                 entry["stage"] = message
 
-        rows = RadiolarianPipeline(cfg, progress_callback=_on_progress).run()
+        # Phase 69 (2026-08-18, audit N5): bind the pipeline into a
+        # local so the ``finally`` block below can release the SAM2
+        # predictor's GPU memory even when ``run()`` raises (cancelled,
+        # pipeline failure, OOM during inference).
+        _pipeline = RadiolarianPipeline(cfg, progress_callback=_on_progress)
+        rows = _pipeline.run()
         normalized_rows: list[dict[str, Any]] = []
         job_root = (WORK_DIR / job_id).resolve()
         for row in rows:
@@ -2580,6 +2585,18 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 entry["detail"] = "Pipeline execution failed"
                 entry["progress"] = 0
     finally:
+        # Phase 69 (2026-08-18, audit N5): release the SAM2 predictor's
+        # GPU memory before the next job constructs a new pipeline.
+        # ``_pipeline`` may be unbound if cfg validation failed earlier
+        # — guard the NameError so the cleanup never crashes the
+        # finally block. Best-effort: any exception inside unload_sam2
+        # is swallowed because a hang here would leak a job slot.
+        _pipeline_for_cleanup = locals().get("_pipeline")
+        if _pipeline_for_cleanup is not None:
+            try:
+                _pipeline_for_cleanup.segmenter.unload_sam2()
+            except Exception:
+                logger.exception("SAM2 unload failed for job %s", job_id)
         # Stop the heartbeat thread so it doesn't keep a reference to the
         # job entry in RESULT_CACHE forever.
         # Phase 54 audit: B6 — join the thread instead of just setting
