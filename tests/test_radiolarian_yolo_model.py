@@ -37,6 +37,13 @@ class TestRadiolarianYoloModel:
         if not sample_images:
             pytest.skip("needs training data: no validation image is available")
         model = YOLO(str(_require_model()))
-        results = model.predict(source=str(sample_images[0]), save=False, verbose=False)
+        # Force CPU inference so the test doesn't OOM on shared/limited
+        # GPU memory in dev environments. CI skips this branch entirely
+        # via ``pytest.importorskip("ultralytics")`` (ultralytics isn't
+        # in the test extras), so the device choice only affects local
+        # runs where ultralytics is installed.
+        results = model.predict(
+            source=str(sample_images[0]), save=False, verbose=False, device="cpu"
+        )
         assert results
         assert len(results) == 1

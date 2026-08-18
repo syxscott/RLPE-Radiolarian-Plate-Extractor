@@ -118,9 +118,9 @@ def test_short_codes_not_over_matching():
 def test_short_code_pattern_source_guard():
     """Source guard: converters.py must contain the Boughdiri short-code
     pattern with the locality prefixes (CH, MB, GA, ...)."""
-    src = Path(
-        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "converters.py"
-    ).read_text(encoding="utf-8")
+    src = Path(Path(__file__).resolve().parents[1] / "src" / "rlpe" / "converters.py").read_text(
+        encoding="utf-8"
+    )
     for needle in (
         "CH|MB|GA|RM|HK|JP",
         "specimen\\s+",
@@ -152,9 +152,7 @@ def test_dedup_sample_id_with_id_prefix():
     """``Sample ID-203`` must produce exactly one record."""
     from rlpe.converters import sample_records_from_matches
 
-    matches = [
-        _build_match("p1", "Plate 1. Radiolarians from Sample ID-203, locality X.")
-    ]
+    matches = [_build_match("p1", "Plate 1. Radiolarians from Sample ID-203, locality X.")]
     samples = sample_records_from_matches(matches)
     sids = {s["sample_id"] for s in samples}
     assert len(samples) == 1, f"double-count on Sample ID-203: {sids}"
@@ -169,9 +167,7 @@ def test_dedup_sample_alphanumeric_suffix():
     samples = sample_records_from_matches(matches)
     sids = {s["sample_id"] for s in samples}
     assert len(samples) == 1, f"double-count on Sample 100A: {sids}"
-    assert "X_100A" in sids, (
-        f"helper should capture full 100A (with A suffix); got: {sids}"
-    )
+    assert "X_100A" in sids, f"helper should capture full 100A (with A suffix); got: {sids}"
 
 
 def test_dedup_sample_parenthesized_keeps_specific_pattern():
@@ -205,3 +201,107 @@ def test_bare_parenthesized_still_works():
     sids = {s["sample_id"] for s in samples}
     l_ids = {s for s in sids if s.startswith("L_")}
     assert len(l_ids) >= 1, f"bare (N) parenthesized lost: {sids}"
+
+
+# --- 7) Regression: hyphen-suffix IDs (Audit 2026-08-18) ---------------
+#
+# ``Sample 100-1`` and ``Sample 12-3`` were truncated to ``X_100`` /
+# ``X_12`` because the helper regex's digit-led branch only consumed
+# trailing alphanumerics (``[A-Za-z0-9]*``), not hyphens. Extended to
+# ``[A-Za-z0-9\-]*`` so the helper and legacy regex agree on the value.
+
+
+def test_dedup_sample_hyphen_suffix():
+    """``Sample 100-1`` must produce a single record with the full
+    ``100-1`` id (not the truncated ``100``)."""
+    from rlpe.converters import sample_records_from_matches
+
+    matches = [_build_match("p1", "Sample 100-1 was collected.")]
+    samples = sample_records_from_matches(matches)
+    sids = {s["sample_id"] for s in samples}
+    assert len(samples) == 1, f"double-count on Sample 100-1: {sids}"
+    assert "X_100-1" in sids, f"helper should capture full 100-1: {sids}"
+
+
+def test_dedup_sample_letter_suffix_still_works():
+    """Regression: hyphen extension must not break the ``Sample 100A``
+    case (no hyphen, just letter suffix)."""
+    from rlpe.converters import sample_records_from_matches
+
+    matches = [_build_match("p1", "Sample 100A was collected.")]
+    samples = sample_records_from_matches(matches)
+    sids = {s["sample_id"] for s in samples}
+    assert "X_100A" in sids, f"Sample 100A regression: {sids}"
+
+
+def test_dedup_sample_space_stops_match():
+    """``Sample 100 µm`` must stop at the space — ``µm`` is not part
+    of the sample id."""
+    from rlpe.converters import sample_records_from_matches
+
+    matches = [_build_match("p1", "Sample 100 µm was collected.")]
+    samples = sample_records_from_matches(matches)
+    sids = {s["sample_id"] for s in samples}
+    assert "X_100" in sids, f"space should stop match: {sids}"
+    assert not any("µm" in s for s in sids), f"µm leaked into id: {sids}"
+
+
+# --- 8) Source guard: dedup uses span-overlap, not value compare -------
+#
+# Pins the Audit 2026-08-18 dedup design. A future refactor that
+# reverts to value-based comparison will silently re-introduce the
+# Sample ID-203 / Sample 100A / Sample (12) double-count bugs. The
+# presence of a span-tracking block (``helper_spans`` plus overlap
+# check) is the load-bearing structural signal.
+
+
+def test_sample_records_dedup_uses_span_overlap_not_value_compare():
+    """Source guard: ``sample_records_from_matches`` must track
+    text spans for cross-prefix dedup, not just compare the captured
+    raw values. The helper and the legacy regex normalise the same
+    physical sample text differently (helper strips ``ID-``, captures
+    only the digits branch in ``Sample 100A``), so value-based dedup
+    misses them and silently double-counts.
+
+    Audit 2026-08-18: ``helper_spans`` set + ``any(... < ... and ... <
+    ... for ... in helper_spans)`` is the span-overlap check.
+    ``raw_seen`` set is also kept as a value-based backstop, but it
+    must NOT be the primary dedup mechanism."""
+    src = Path(Path(__file__).resolve().parents[1] / "src" / "rlpe" / "converters.py").read_text(
+        encoding="utf-8"
+    )
+    # Span tracking set
+    assert "helper_spans" in src, (
+        "converters.py must track helper text spans for dedup. "
+        "Value-based dedup alone (the pre-sweep-2 implementation) "
+        "silently double-counts Sample ID-203 / Sample 100A."
+    )
+    # Span-overlap check (uses the half-open interval overlap rule
+    # ``a < d and c < b``)
+    assert "< legacy_end and legacy_start < h_end" in src, (
+        "converters.py must use span-overlap (a<d and c<b) to dedup "
+        "against the helper, not value equality."
+    )
+    # Legacy spans must be added to the covered set AFTER insert so a
+    # subsequent legacy pattern that overlaps (e.g. Sample\s+\(\d+\)
+    # vs \(\d{1,3}\) on "Sample (12)") gets dropped.
+    assert "helper_spans.add((m.paper_id, legacy_start, legacy_end))" in src, (
+        "converters.py must register each legacy match's span in "
+        "helper_spans so the legacy-to-legacy dedup fires."
+    )
+    # Reorder: Sample\s+\(\d+\) must come BEFORE \(\d{1,3}\) so the
+    # more-specific pattern wins. Search for the patterns inside
+    # ``re.compile(r"...")`` to avoid matching the comment text that
+    # mentions both patterns.
+    import re as _re
+
+    pattern_positions: list[tuple[int, str]] = []
+    for _m in _re.finditer(r're\.compile\(r"([^"]+)"\)', src):
+        pattern_positions.append((_m.start(), _m.group(1)))
+    s_par = next((p for p, pat in pattern_positions if r"Sample\s+\(\d+\)" in pat), -1)
+    bare_par = next((p for p, pat in pattern_positions if r"\(\d{1,3}\)" in pat), -1)
+    assert 0 < s_par < bare_par, (
+        f"Sample\\s+\\(\\d+\\) must come BEFORE \\(\\d{{1,3}}\\) in "
+        f"_SAMPLE_PATTERNS so 'Sample (12)' keeps the 'Sample' prefix. "
+        f"Got positions: Sample_par={s_par}, bare_par={bare_par}"
+    )

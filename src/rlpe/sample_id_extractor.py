@@ -85,14 +85,17 @@ _SAMPLE_RE = re.compile(
     #     to avoid matching years like 2024).
     # Audit fix 2026-08-18:
     #   - Allow trailing alphanumeric chars after a digit-led branch
-    #     (``\d{2,}[A-Za-z0-9]*``). Captions like ``Sample 100A`` were
-    #     truncated to ``"100"``, then the legacy ``Sample\s+`` regex
-    #     in the converter would emit a separate ``S_100A`` record
-    #     that the cross-prefix dedup had to drop — silently losing
-    #     the ``A`` suffix. Allowing the helper to consume the
-    #     alphanumeric tail keeps both detectors in agreement.
+    #     (``\d{2,}[A-Za-z0-9\-]*``). Captions like ``Sample 100A``
+    #     were truncated to ``"100"``, then the legacy ``Sample\s+``
+    #     regex in the converter would emit a separate ``S_100A``
+    #     record that the cross-prefix dedup had to drop — silently
+    #     losing the ``A`` suffix. Allowing the helper to consume the
+    #     alphanumeric + hyphen tail keeps both detectors in agreement
+    #     on values like ``100A``, ``100-1``, ``12-3``. Slash is NOT
+    #     included here because ``sample 14/2`` is a separate legacy
+    #     pattern (Round 21 ``N_`` prefix).
     r"(?<![A-Za-z])Samples?\s+(?:ID[-:]\s*)?"
-    r"([A-Za-z]+[-]?[A-Za-z]*\d[A-Za-z0-9\-]*|[A-Za-z]{1,6}|\d{2,}[A-Za-z0-9]*)",
+    r"([A-Za-z]+[-]?[A-Za-z]*\d[A-Za-z0-9\-]*|[A-Za-z]{1,6}|\d{2,}[A-Za-z0-9\-]*)",
     re.IGNORECASE,
 )
 
@@ -207,8 +210,49 @@ _LOCALITY_BLOCKLIST: frozenset[str] = frozenset(
         "fonzaso",
         "sicani",
         "radiolarian chert",
+        # Latin particles that match the preposition+word pattern but
+        # are NOT localities (audit 2026-08-18). ``in situ`` / ``in vivo``
+        # / ``in vitro`` all fire the ``in <X>`` locality regex and would
+        # otherwise emit ``situ`` / ``vivo`` / ``vitro`` as fake
+        # localities.
+        "situ",
+        "vivo",
+        "vitro",
+        # Generic single-word "place" terms that are not actual
+        # localities on their own. ``collected in the field`` /
+        # ``found in the area`` would otherwise emit ``field`` /
+        # ``area`` as fake localities.
+        "field",
+        "area",
+        "region",
+        "site",
     }
 )
+
+# Trailing modifiers that, when stripped from the END of a captured
+# locality phrase, leave the actual locality behind. ``at the Karnezeika
+# section`` -> ``Karnezeika``; ``from the Scaglia formation`` ->
+# ``Scaglia`` (which is then caught by the blocklist substring check).
+_LOCALITY_TRAILING_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "section",
+        "formation",
+        "sample",
+        "locality",
+        "figure",
+        "plate",
+        "area",
+        "field",
+        "region",
+        "site",
+    }
+)
+
+# Leading articles that may be captured as the first word of the phrase
+# (the locality regex's capture group allows ``[A-Za-z]`` as the start,
+# so ``the`` can sneak in). Stripped from the front before the blocklist
+# check.
+_LOCALITY_LEADING_ARTICLES: frozenset[str] = frozenset({"the", "a", "an"})
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +478,59 @@ def extract_sample_ids(caption: str) -> list[SampleID]:
     return out
 
 
+def _normalize_locality_phrase(phrase: str) -> str | None:
+    """Normalize a raw locality capture: strip leading articles, strip
+    trailing stopwords, then check the blocklist (exact + substring).
+
+    Returns the normalized phrase or ``None`` if it should be dropped
+    (blocklisted, too short, or reduced to nothing by stripping).
+
+    Audit 2026-08-18: four false-positive classes were over-matching
+    without normalization:
+
+    * ``Found in situ at the Karnezeika section.`` -> ``situ`` (Latin
+      particle, blocklisted).
+    * ``from the Scaglia formation`` -> ``the Scaglia formation``
+      (Scaglia is blocklisted but the exact phrase wasn't checked;
+      substring check fixes this once ``formation`` is stripped from the
+      end).
+    * ``at the Karnezeika section`` -> ``the Karnezeika section``
+      (leading ``the`` + trailing ``section`` both stripped).
+    * ``Collected in the field.`` -> ``the field`` (leading article
+      stripped, then ``field`` alone is blocklisted).
+    """
+    if not phrase:
+        return None
+
+    # Strip leading articles.
+    words = phrase.split()
+    while words and words[0].casefold() in _LOCALITY_LEADING_ARTICLES:
+        words.pop(0)
+    if not words:
+        return None
+    # Strip trailing stopwords (e.g. ``section``, ``formation``).
+    while words and words[-1].casefold() in _LOCALITY_TRAILING_STOPWORDS:
+        words.pop()
+    if not words:
+        return None
+
+    normalized = " ".join(words)
+    if len(normalized) < 3:
+        return None
+
+    pc = normalized.casefold()
+    # Exact-match blocklist.
+    if pc in _LOCALITY_BLOCKLIST:
+        return None
+    # Substring blocklist (audit 2026-08-18: ``the Scaglia formation``
+    # passed the exact-match check but should be caught because
+    # ``scaglia`` is a substring).
+    for blocked in _LOCALITY_BLOCKLIST:
+        if blocked in pc:
+            return None
+    return normalized
+
+
 def extract_locality(caption: str) -> list[str]:
     """Extract capitalized locality phrases from a caption.
 
@@ -453,12 +550,8 @@ def extract_locality(caption: str) -> list[str]:
         r"(?:,|and)\s+([A-Za-z][A-Za-z\-]+(?:\s+[A-Za-z][A-Za-z\-]+){0,3})", re.IGNORECASE
     )
     for m in _LOCALITY_PHRASE_RE.finditer(caption):
-        phrase = m.group(1).strip()
-        if not phrase:
-            continue
-        if phrase.casefold() in _LOCALITY_BLOCKLIST:
-            continue
-        if len(phrase) < 3:
+        phrase = _normalize_locality_phrase(m.group(1).strip())
+        if phrase is None:
             continue
         raw.append(phrase)
         # Look for a trailing ", X" or "and X" after this match.
@@ -466,10 +559,8 @@ def extract_locality(caption: str) -> list[str]:
         tail_end = min(len(caption), tail_start + 60)
         tail_section = caption[tail_start:tail_end]
         for tm in tail_re.finditer(tail_section):
-            extra = tm.group(1).strip()
-            if not extra or extra.casefold() in _LOCALITY_BLOCKLIST:
-                continue
-            if len(extra) < 3:
+            extra = _normalize_locality_phrase(tm.group(1).strip())
+            if extra is None:
                 continue
             raw.append(extra)
     return _dedupe_preserve(raw)

@@ -141,5 +141,68 @@ class TestExtractAgeTerms:
         assert "Late Cretaceous" in out
 
 
+# --- Audit 2026-08-18: extract_locality over-match fixes ----------------
+#
+# Four false-positive classes were over-matching without leading-article /
+# trailing-stopword / Latin-particle handling:
+#   1. ``Found in situ at the Karnezeika section.`` extracted ``situ``
+#      and ``the Karnezeika section``.
+#   2. ``at the Karnezeika section`` kept ``the Karnezeika section`` (3
+#      trailing words including the leading article).
+#   3. ``from the Scaglia formation`` kept the full phrase; the
+#      blocklist had ``scaglia`` but the exact phrase didn't match.
+#   4. ``in the field`` extracted ``the field`` (generic word that is
+#      not a locality).
+# All four are now caught by ``_normalize_locality_phrase``.
+
+
+class TestExtractLocalityNormalization:
+    def test_in_situ_not_extracted(self):
+        out = extract_locality("Plate 1. Found in situ at the Karnezeika section.")
+        assert "situ" not in out, f"Latin particle 'situ' over-matched: {out}"
+
+    def test_leading_article_stripped(self):
+        out = extract_locality("at the Karnezeika section, sample X")
+        # Leading ``the`` and trailing ``section`` both stripped.
+        assert "Karnezeika" in out, f"Karnezeika lost: {out}"
+        assert "the Karnezeika section" not in out
+
+    def test_blocklist_substring_match(self):
+        """``from the Scaglia formation`` must be caught because
+        ``scaglia`` is blocklisted as a substring."""
+        out = extract_locality("Plate 1. From the Scaglia formation.")
+        assert "Scaglia" not in out and "the Scaglia formation" not in out, (
+            f"Scaglia formation should be blocklisted: {out}"
+        )
+
+    def test_field_not_extracted(self):
+        out = extract_locality("Plate 1. Collected in the field.")
+        assert "field" not in out and "the field" not in out, (
+            f"Generic 'field' should not be a locality: {out}"
+        )
+
+    def test_real_locality_still_extracted(self):
+        out = extract_locality("Plate 1. Radiolarians from Tunisia.")
+        assert "Tunisia" in out
+
+    def test_real_multi_word_locality_still_extracted(self):
+        out = extract_locality("Samples from NW Turkey, locality X.")
+        assert "NW Turkey" in out
+
+    def test_trailing_and_pair_still_extracted(self):
+        """The tail-pass that captures ``, X`` / ``and X`` after the
+        initial match must still pick up both halves of a multi-locality
+        phrase (``from Tunisia and Greece``)."""
+        out = extract_locality("Radiolarians from Tunisia and Greece.")
+        assert "Tunisia" in out
+        assert "Greece" in out
+
+    def test_in_vitro_blocklisted(self):
+        """Other Latin particles (``in vivo``, ``in vitro``) are also
+        blocklisted — invariant must hold."""
+        out = extract_locality("Plate 1. Observed in vitro.")
+        assert "vitro" not in out, f"Latin particle 'vitro' over-matched: {out}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
