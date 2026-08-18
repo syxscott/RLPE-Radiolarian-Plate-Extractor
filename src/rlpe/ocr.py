@@ -242,7 +242,19 @@ class OCRBackend:
                             text=text, confidence=float(conf), bbox=(int(x), int(y), int(w), int(h))
                         )
                     )
-        except Exception:
+        except Exception as exc:
+            # Sweep 8 (audit 2026-08-02 O2): the bare
+            # ``except Exception: return []`` silently swallowed OCR
+            # backend errors (corrupt image, OOM in easyocr, PaddleOCR
+            # version mismatch). Operators saw ``OCR tokens=[]`` with
+            # no idea why. Log with traceback so the failure is
+            # actionable in the run log.
+            logger.warning(
+                "OCRBackend.recognize failed: %s: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             return []
         return tokens
 
@@ -294,48 +306,86 @@ class OCRBackend:
         # Paddleocr 3.x: result is a dict (or list of dicts) with
         # 'rec_texts', 'rec_scores', 'dt_polys' / 'rec_boxes'.
         if isinstance(result, dict):
-            rec_texts = result.get("rec_texts") or result.get("texts") or []
-            rec_scores = result.get("rec_scores") or result.get("scores") or []
-            polys = result.get("dt_polys") or result.get("rec_boxes") or result.get("boxes") or []
-            for i, text in enumerate(rec_texts):
-                if i >= len(polys):
-                    break
-                # Audit 2026-08-01 (Bug C12): paddleocr 3.x can emit
-                # bare ints (or other non-iterable sentinels) in
-                # ``dt_polys`` for some lines; ``polys[i][0]`` would
-                # raise TypeError on those. Skip defensively rather
-                # than blowing up the whole OCR call.
-                if not isinstance(polys[i], (list, tuple)):
-                    continue
-                box = polys[i]
-                # rec_boxes is a 4-corner flat list [x1,y1,x2,y2,...]
-                # dt_polys is a list of 4 points [[x,y], ...].
-                # Normalize to 4-point list-of-lists.
-                if box and isinstance(box[0], (int, float)):
-                    coords = list(box)
-                    if len(coords) == 4:
-                        box = [
-                            [coords[0], coords[1]],
-                            [coords[2], coords[1]],
-                            [coords[2], coords[3]],
-                            [coords[0], coords[3]],
-                        ]
-                    # Phase 54 audit m2: paddleocr 2.x sometimes returns
-                    # 8-element flat lists (the 4 corner coordinates
-                    # in xy order) instead of 4-element [x, y, x+w, y+h]
-                    # bounding boxes. Reassemble into the same 4-point
-                    # shape the rest of the code expects.
-                    elif len(coords) == 8:
-                        box = [[coords[i], coords[i + 1]] for i in (0, 2, 4, 6)]
-                conf = float(rec_scores[i]) if i < len(rec_scores) else 0.0
-                out.append((box, str(text), conf))
-            return out
+            return OCRBackend._normalize_paddle_dict(result, out)
         # List of dicts
+        # Sweep 8 (audit 2026-08-02 C3): previously recursed into
+        # ``_normalize_paddle_result(d)`` for each element. In practice
+        # the recursion was always 1-deep (each ``d`` hit the dict
+        # branch and returned) but it's still bounded-stack code that
+        # a future nested-list shape could blow up. Iterative is
+        # simpler + matches the surrounding control flow.
         if isinstance(result, list):
             for d in result:
                 if isinstance(d, dict):
-                    out.extend(OCRBackend._normalize_paddle_result(d))
+                    OCRBackend._normalize_paddle_dict(d, out)
             return out
+        return out
+
+    @staticmethod
+    def _normalize_paddle_dict(
+        result: dict[str, Any], out: list[tuple[list, str, float]]
+    ) -> list[tuple[list, str, float]]:
+        """Normalise a paddleocr 3.x dict-shaped result.
+
+        Sweep 8 (audit 2026-08-02 C3): extracted from the inline branch
+        in ``_normalize_paddle_result`` so the list-of-dicts branch can
+        call it iteratively without recursion. Returns ``out`` with the
+        new entries appended (same object — mutated in place for parity
+        with the surrounding pattern).
+        """
+        rec_texts = result.get("rec_texts") or result.get("texts") or []
+        rec_scores = result.get("rec_scores") or result.get("scores") or []
+        polys = result.get("dt_polys") or result.get("rec_boxes") or result.get("boxes") or []
+        # Sweep 8 (audit 2026-08-02 N6): paddleocr 3.x can return
+        # ``rec_texts`` longer than ``dt_polys`` when a text line
+        # was recognised but the detector found no box for it.
+        # The previous code ``break``'d silently on the first
+        # orphan, dropping every subsequent text from the output
+        # with no warning. Continue + log so operators can spot
+        # the version mismatch / model bug instead of seeing
+        # mysteriously empty OCR runs.
+        for i, text in enumerate(rec_texts):
+            if i >= len(polys):
+                logger.warning(
+                    "PaddleOCR returned %d rec_texts but only %d "
+                    "dt_polys (text=%r); skipping orphan text to "
+                    "avoid silent drop. This usually indicates a "
+                    "paddleocr version mismatch — pin "
+                    "paddleocr<3.0 or upgrade the bundled model.",
+                    len(rec_texts),
+                    len(polys),
+                    text,
+                )
+                continue
+            # Audit 2026-08-01 (Bug C12): paddleocr 3.x can emit
+            # bare ints (or other non-iterable sentinels) in
+            # ``dt_polys`` for some lines; ``polys[i][0]`` would
+            # raise TypeError on those. Skip defensively rather
+            # than blowing up the whole OCR call.
+            if not isinstance(polys[i], (list, tuple)):
+                continue
+            box = polys[i]
+            # rec_boxes is a 4-corner flat list [x1,y1,x2,y2,...]
+            # dt_polys is a list of 4 points [[x,y], ...].
+            # Normalize to 4-point list-of-lists.
+            if box and isinstance(box[0], (int, float)):
+                coords = list(box)
+                if len(coords) == 4:
+                    box = [
+                        [coords[0], coords[1]],
+                        [coords[2], coords[1]],
+                        [coords[2], coords[3]],
+                        [coords[0], coords[3]],
+                    ]
+                # Phase 54 audit m2: paddleocr 2.x sometimes returns
+                # 8-element flat lists (the 4 corner coordinates
+                # in xy order) instead of 4-element [x, y, x+w, y+h]
+                # bounding boxes. Reassemble into the same 4-point
+                # shape the rest of the code expects.
+                elif len(coords) == 8:
+                    box = [[coords[i], coords[i + 1]] for i in (0, 2, 4, 6)]
+            conf = float(rec_scores[i]) if i < len(rec_scores) else 0.0
+            out.append((box, str(text), conf))
         return out
 
     def recognize_panel(
