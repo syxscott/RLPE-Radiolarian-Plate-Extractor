@@ -101,6 +101,53 @@ class FallbackRecommendedError(Exception):
         self.recommended_backend = recommended_backend
 
 
+class LLMHTTPError(Exception):
+    """Base class for HTTP errors raised by LLM backends.
+
+    Audit 2026-08-19 Phase 4B (M-23): the llama.cpp backend used to
+    silently fall back to the ``/completion`` text-only endpoint on
+    ANY exception — including non-transient 4xx errors that signal a
+    real configuration problem (401 unauthorized, 403 forbidden,
+    404 wrong model, 429 rate limit, 413 payload too large, ...).
+    Callers could not tell "endpoint missing the multimodal route"
+    from "API key invalid". The new exception hierarchy lets callers
+    distinguish auth / not-found / rate-limit failures so they can
+    surface the real reason to the user instead of swapping to a
+    degraded path.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class LLMAuthenticationError(LLMHTTPError):
+    """HTTP 401 / 403 — credentials rejected or forbidden.
+
+    Audit M-23: surfaces authentication failures so the caller can
+    prompt the user to refresh their API key instead of silently
+    swapping to a degraded text-only path.
+    """
+
+
+class LLMNotFoundError(LLMHTTPError):
+    """HTTP 404 — wrong model name, missing endpoint, or unknown route.
+
+    Audit M-23: surfaces "model not found" so the caller knows the
+    configuration is wrong, not that the multimodal path is broken.
+    """
+
+
+class LLMRateLimitError(LLMHTTPError):
+    """HTTP 429 — too many requests; the server has asked us to back off.
+
+    Audit M-23: distinct from a generic HTTP error so the retry loop
+    can apply a real rate-limit backoff (Retry-After header +
+    exponential jitter) instead of failing fast like a 4xx client
+    error.
+    """
+
+
 def select_backend_after_4xx(
     current_backend: str,
     configured_fallback: str | None,
@@ -394,7 +441,69 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
     raise ValueError("No parseable JSON object found in LLM output.")
 
 
+# ---------------------------------------------------------------------------
+# Schema whitelist for ``_normalize_panel_dict`` (audit 2026-08-19
+# Phase 4B M-21). The species-identification vision prompt declares a
+# JSON contract with a fixed set of canonical keys plus a handful of
+# optional structured extras (see ``_MATCH_PANEL_SYSTEM`` in
+# ``m3_engine.py``). Without an explicit whitelist, the LLM occasionally
+# emits hallucinated fields ("ocr_confidence", "valid_name",
+# "fake_field", ...) which — even when filtered by the canonical-key
+# loop below — pollute log output, downstream record schemas, and the
+# export pipeline. The whitelist enumerates every key that downstream
+# code is allowed to see; anything else is dropped with a debug log so
+# audit can spot prompt drift.
+# ---------------------------------------------------------------------------
+_ALLOWED_PANEL_FIELDS = frozenset(
+    {
+        # Canonical output schema (the four fields the function
+        # always emits).
+        "label",
+        "species",
+        "confidence",
+        "reasoning",
+        # Optional structured fields documented in M3 match-panel
+        # prompts (``_MATCH_PANEL_SYSTEM``); the LLM may emit any
+        # subset of these per response.
+        "open_nomenclature_strength",
+        "alternative",
+        "is_radiolarian",
+        "extraction_method",
+        "notes",
+        # Caller-managed structural extras forwarded to downstream
+        # code (added by ``infer_panel`` / ``infer_text`` after the
+        # raw JSON is parsed).
+        "raw_text",
+        "fallback_used",
+        "multimodal_degraded",
+        "extra_image_unsupported",
+        "error",
+        # Lists / nested dicts occasionally emitted when the prompt
+        # explicitly asks for them (e.g. ``species_list`` for
+        # "list every species in this plate").
+        "species_list",
+    }
+)
+
+
 def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
+    # Audit M-21 (Phase 4B 2026-08-19): schema whitelist post-filter.
+    # The LLM occasionally emits hallucinated extras ("ocr_confidence",
+    # "valid_name", "fake_field", ...) which, without filtering, would
+    # either leak through as canonical fields or be preserved as
+    # "structural extras" (list/dict values) downstream. The whitelist
+    # explicitly enumerates every key that downstream code is allowed
+    # to see — anything else is dropped with a debug log so audit can
+    # spot prompt drift.
+    if obj:
+        dropped = [k for k in list(obj.keys()) if k not in _ALLOWED_PANEL_FIELDS]
+        if dropped:
+            logger.debug(
+                "Dropped hallucinated panel fields: %s", sorted(dropped)
+            )
+            for k in dropped:
+                obj.pop(k, None)
+
     # Audit M12: the LLM may return ``confidence`` as a string like
     # ``"high"`` / ``"medium"`` / ``"0.8"`` / ``"low"`` instead of a
     # number. The previous code unconditionally called
@@ -433,10 +542,20 @@ def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
     # fields the caller explicitly asked for. We keep any list-typed
     # or dict-typed values verbatim so callers can consume them
     # downstream (e.g. for per-panel species matching against gold).
+    #
+    # Audit 2026-08-19 Phase 4B M-21: extend the preservation rule
+    # to cover ALL whitelisted keys (scalar + structural). The
+    # pre-filter above already drops everything that isn't in
+    # ``_ALLOWED_PANEL_FIELDS``; the structural-extras loop below
+    # was previously limited to ``list``/``dict`` only. With the
+    # whitelist authoritative, any whitelisted value (including
+    # ``notes: "..."`` or ``alternative: "X"``) is preserved
+    # verbatim — the only remaining drops are the hallucinated
+    # fields the pre-filter already removed.
     for k, v in obj.items():
         if k in out:
             continue
-        if isinstance(v, (list, dict)):
+        if k in _ALLOWED_PANEL_FIELDS:
             out[k] = v
     # audit 2026-08-19 Phase 1d (B-7): open-nomenclature discount.
     # ICZN open-nomenclature markers (cf./aff./?/ex gr.) mean the
@@ -562,6 +681,54 @@ _GEO_KEY_WHITELIST = frozenset(
 )
 
 
+def _validate_ma_range(ma_top: Any, ma_base: Any) -> tuple[Any, Any]:
+    """Validate (and auto-swap) an inverted Ma-range pair.
+
+    Audit 2026-08-19 Phase 4B M-22: ICZN / stratigraphic convention is
+    ``ma_top < ma_base`` (younger = smaller Ma, top of section is the
+    younger boundary). The vision LLM occasionally emits the inverted
+    range — e.g. reads a stratigraphic column with old-at-top axis
+    convention and reports ``ma_top > ma_base``.
+
+    This helper AUTO-SWAPS an inverted pair with a WARNING log so the
+    caller still has *some* usable range to work with (better than
+    dropping both values when one of them is plausibly correct).
+
+    Returns ``(ma_top, ma_base)`` — either the input unchanged or the
+    swapped pair. Non-numeric values are passed through unchanged
+    (the strict null-on-violation path lives in
+    ``m3_engine._validate_ma_range``; this helper just fixes the
+    ordering when both numbers are present and comparable).
+
+    This helper is intentionally DIFFERENT from
+    ``rlpe.m3_engine._validate_ma_range``: the engine helper enforces
+    the schema contract (null on violation); the llm_backends helper
+    fixes the value (swap on violation). Both helpers coexist — the
+    engine one runs in the strict ``extract_geology`` pipeline, this
+    one is exposed here for callers who prefer auto-fix over rejection.
+    Note: ``_apply_geo_whitelist`` does NOT auto-call this helper; that
+    pipeline relies on the strict engine helper downstream, so a
+    swap here would mask bad ranges from the engine's null branch.
+    Callers that want lenient swap-on-violation behavior should call
+    this helper explicitly.
+    """
+    if ma_top is None or ma_base is None:
+        return ma_top, ma_base
+    try:
+        top_f = float(ma_top)
+        base_f = float(ma_base)
+    except (TypeError, ValueError):
+        return ma_top, ma_base
+    if top_f > base_f:
+        logger.warning(
+            "Ma range reversed (ma_top=%r > ma_base=%r); swapping",
+            ma_top,
+            ma_base,
+        )
+        return ma_base, ma_top
+    return ma_top, ma_base
+
+
 def _apply_geo_whitelist(item: dict[str, Any]) -> dict[str, Any]:
     """Filter ``item`` to keys in :data:`_GEO_KEY_WHITELIST`.
 
@@ -572,6 +739,16 @@ def _apply_geo_whitelist(item: dict[str, Any]) -> dict[str, Any]:
     ``panel.metadata.geology_links`` and silently breaking downstream
     filtering. This helper strips them, logging a warning so audit can
     catch prompt drift.
+
+    Note: ``_apply_geo_whitelist`` does NOT call
+    :func:`_validate_ma_range` — the strict null-on-violation policy
+    is owned by ``m3_engine._validate_ma_range``, which runs downstream
+    of this helper inside ``extract_geology``. Adding a swap here
+    would mask bad ranges from the engine's null branch and silently
+    break the M-13 regression tests in
+    ``tests/test_audit_2026_08_19_phase2b_m3_prompts.py``. Callers
+    wanting lenient swap-on-violation should call
+    ``_validate_ma_range`` explicitly.
 
     Returns the filtered dict (same object, mutated in place for
     convenience). Returns ``item`` unchanged if it is not a dict.
@@ -990,8 +1167,44 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             # real reason instead of silently swapping to text-only.
             # Only network / 5xx / parse failures are treated as
             # transient and eligible for the ``/completion`` fallback.
+            #
+            # Audit 2026-08-19 Phase 4B M-23: distinguish the
+            # *category* of 4xx so the caller can route the error
+            # correctly. 401/403 → ``LLMAuthenticationError``
+            # (refresh the API key); 404 → ``LLMNotFoundError``
+            # (fix the model name); 429 → ``LLMRateLimitError``
+            # (back off and retry); all other 4xx → re-raise the
+            # raw ``HTTPError`` (caller sees the real status code).
             status_code = self._extract_status_code(exc)
             if status_code is not None and 400 <= status_code < 500:
+                if status_code in (401, 403):
+                    logger.debug(
+                        "llama.cpp /v1/chat/completions %d auth error; "
+                        "raising LLMAuthenticationError",
+                        status_code,
+                    )
+                    raise LLMAuthenticationError(
+                        f"HTTP {status_code} from llama.cpp; check credentials",
+                        status_code=status_code,
+                    ) from exc
+                if status_code == 404:
+                    logger.debug(
+                        "llama.cpp /v1/chat/completions 404; "
+                        "raising LLMNotFoundError"
+                    )
+                    raise LLMNotFoundError(
+                        f"HTTP 404 from llama.cpp; check model name or endpoint",
+                        status_code=status_code,
+                    ) from exc
+                if status_code == 429:
+                    logger.debug(
+                        "llama.cpp /v1/chat/completions 429 rate-limited; "
+                        "raising LLMRateLimitError"
+                    )
+                    raise LLMRateLimitError(
+                        f"HTTP 429 from llama.cpp; rate-limited",
+                        status_code=status_code,
+                    ) from exc
                 logger.debug(
                     "llama.cpp /v1/chat/completions 4xx (status=%d); "
                     "not degrading to /completion",
@@ -1511,6 +1724,58 @@ class MiniMaxM3Backend(BaseLLMBackend):
         if value <= 0:
             return None
         return value
+
+    @staticmethod
+    def _parse_retry_after_header(value: str | None) -> float:
+        """Parse a ``Retry-After`` header value (string form).
+
+        Audit 2026-08-19 Phase 4B M-24: per RFC 7231 §7.1.3 the header
+        can be EITHER a non-negative integer (delta-seconds) OR an
+        HTTP-date (``Wed, 21 Oct 2026 07:28:00 GMT``). The
+        Phase-2c ``_parse_retry_after(exc)` ignores the HTTP-date
+        form (returns ``None``) so the existing Phase-2c tests still
+        pass — this new helper is the string-input companion that
+        accepts BOTH forms so future retry loops can pick it up
+        without a breaking change.
+
+        Returns:
+        * ``0.0`` when ``value`` is ``None``, empty, or unparseable
+          (the caller falls back to exponential backoff).
+        * ``min(parsed_seconds, 60.0)`` for the integer-seconds form.
+        * ``max(0.0, min(delta_to_date_seconds, 60.0))`` for the
+          HTTP-date form. A date in the past yields ``0.0``.
+
+        The 60-second cap protects against hostile / buggy servers
+        that pin a worker for minutes — the existing exponential
+        backoff path is the safety net beyond that.
+        """
+        if not value:
+            return 0.0
+        text = str(value).strip()
+        if not text:
+            return 0.0
+        # 1) Numeric (delta-seconds) form per RFC 7231.
+        try:
+            seconds = float(text)
+            return max(0.0, min(seconds, 60.0))
+        except (TypeError, ValueError):
+            pass
+        # 2) HTTP-date form per RFC 7231 (RFC 1123 / RFC 850 / asctime).
+        try:
+            from datetime import datetime
+            from email.utils import parsedate_to_datetime
+
+            dt = parsedate_to_datetime(text)
+            if dt is None:
+                return 0.0
+            # Compare against ``datetime.now(dt.tzinfo)`` so a
+            # timezone-aware server time yields a correct delta.
+            # A naive ``dt`` (no tzinfo) is treated as local time.
+            now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+            delta = (dt - now).total_seconds()
+            return max(0.0, min(delta, 60.0))
+        except Exception:
+            return 0.0
 
     def _call_api(self, system_prompt: str, messages: list[dict[str, Any]]):
         """Make API call with retry + rate-limit handling.

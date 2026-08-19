@@ -32,6 +32,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from threading import Condition, RLock, get_ident
 from typing import Any
 
@@ -42,10 +43,74 @@ from .grobid import PipelineCancelledError  # noqa: E402
 # Import FallbackRecommendedError to detect when backend recommends switching
 from .llm_backends import (  # noqa: E402
     FallbackRecommendedError,
+    LLMAuthenticationError,
+    LLMRateLimitError,
     _apply_geo_whitelist,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# LLM error classification (Phase 4E Task 1)
+# ---------------------------------------------------------------------------
+#
+# Before Phase 4E, the engine caught every M3 exception in one bucket
+# (`except Exception`) and only logged "infer_panel failed" — operators
+# had no way to distinguish an auth failure (which requires a key rotation)
+# from a rate-limit (which is transient) from a timeout (which is
+# load-related) from a parse error (which is a model-quality issue).
+# The fix adds a typed ``except`` chain in ``_infer_text`` /
+# ``_infer_vision`` that maps each stub exception class to a short
+# string code stored on ``_telemetry.llm_error``:
+#
+#   * ``"auth"``        → 401 / 403 → key rotation
+#   * ``"rate_limit"``  → 429 → back off
+#   * ``"timeout"``     → call timed out → server load
+#   * ``"parse"``       → JSON decode / schema violation → model quality
+#   * ``"other"``       → unclassified (catch-all)
+#
+# ``LLMAuthenticationError`` / ``LLMRateLimitError`` live in
+# ``llm_backends`` (Phase 4B M-23 introduced them as a hierarchy under
+# ``LLMHTTPError``). ``TimeoutError`` is the Python built-in (covers
+# socket-read timeouts). The engine-specific ``LLMSchemaError`` covers
+# schema violations after a successful JSON parse so audit can tell
+# the two parse-stage failure modes apart.
+
+
+class LLMSchemaError(Exception):
+    """LLM output failed schema validation (after a successful parse).
+
+    Phase 4E Task 1: maps to ``_telemetry.llm_error == "parse"``.
+    Distinguished from a raw JSONDecodeError so the audit can tell the
+    two parse-stage failure modes apart.
+    """
+
+
+def _classify_llm_error(exc: BaseException) -> str:
+    """Map an LLM exception instance to a short string code.
+
+    Returns one of: ``"auth"``, ``"rate_limit"``, ``"timeout"``,
+    ``"parse"``, ``"other"``. Order matters — more specific
+    exception types must be checked before ``Exception`` /
+    ``ValueError`` so a custom subclass of ``ValueError`` for
+    schema validation isn't silently swallowed by the JSON path.
+    """
+    if isinstance(exc, LLMAuthenticationError):
+        return "auth"
+    if isinstance(exc, LLMRateLimitError):
+        return "rate_limit"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, (LLMSchemaError, json.JSONDecodeError)):
+        return "parse"
+    if isinstance(exc, ValueError):
+        # ``_safe_json_loads`` raises ValueError when no JSON object
+        # can be found in the LLM's output; group with the parse
+        # failures so callers can treat the whole parse-class
+        # together.
+        return "parse"
+    return "other"
 
 # ---------------------------------------------------------------------------
 # JSON parsing helpers (more lenient than the backend's default)
@@ -330,7 +395,61 @@ PROMPT_REGISTRY: dict[str, str] = {
         "- ``thickness_m`` is the estimated thickness in metres if printed on "
         "the figure; otherwise null.\n"
         "- Include all visible layers even if unlithified or poorly printed.\n"
-        "- Output JSON only, no markdown fences."
+        "- Output JSON only, no markdown fences.\n\n"
+        # Phase 4A: few-shot example covering the strat_column contract.
+        "Example (Phase 4A):\n"
+        "Input image: Tall stratigraphic column (figure caption: 'Fig. 4. "
+        "Composite measured section of the Sundance Fm. showing five "
+        "lithostratigraphic units; total thickness 27 m; outcrop at Mt. "
+        "Wilmot, Wyoming, USA.'). Three layers visible from top to bottom: "
+        "(L0) thin grey-green shale, ~2 m, age 'Late Jurassic'; (L1) "
+        "yellowish limestone bed, ~8 m, age 'Middle Jurassic (Bajocian)'; "
+        "(L2) red sandstone, ~17 m, age 'Early Jurassic'.\n"
+        "Output:\n"
+        "{\n"
+        '  "geo": [{\n'
+        '    "age": "Middle Jurassic",\n'
+        '    "chronostratigraphy": null,\n'
+        '    "chronostratigraphy_rank": null,\n'
+        '    "ma_top": 170.0,\n'
+        '    "ma_base": 174.0,\n'
+        '    "ma_mid": 172.0,\n'
+        '    "formation": "Sundance Fm",\n'
+        '    "member": null,\n'
+        '    "group": null,\n'
+        '    "lithology": "mixed shale/limestone/sandstone",\n'
+        '    "locality": "Mt. Wilmot",\n'
+        '    "country": "USA",\n'
+        '    "latitude": 44.0,\n'
+        '    "longitude": -107.9,\n'
+        '    "biozone": null,\n'
+        '    "confidence": 0.92\n'
+        "  }],\n"
+        '  "layers": [\n'
+        '    {"layer_index": 0, "y_top_normalized": 0.0, '
+        '"y_base_normalized": 0.08, "lithology": "shale", '
+        '"formation": "Sundance Fm", "member": null, '
+        '"age": "Late Jurassic", "ma_top": 163.0, "ma_base": 168.0, '
+        '"biozone": null, "thickness_m": 2.0, '
+        '"evidence": "greenish shale at top of column", '
+        '"confidence": 0.88},\n'
+        '    {"layer_index": 1, "y_top_normalized": 0.08, '
+        '"y_base_normalized": 0.38, "lithology": "limestone", '
+        '"formation": "Sundance Fm", "member": null, '
+        '"age": "Middle Jurassic", "ma_top": 170.0, "ma_base": 174.0, '
+        '"biozone": null, "thickness_m": 8.0, '
+        '"evidence": "yellowish limestone middle bed", '
+        '"confidence": 0.9},\n'
+        '    {"layer_index": 2, "y_top_normalized": 0.38, '
+        '"y_base_normalized": 1.0, "lithology": "sandstone", '
+        '"formation": "Sundance Fm", "member": null, '
+        '"age": "Early Jurassic", "ma_top": 174.0, "ma_base": 200.0, '
+        '"biozone": null, "thickness_m": 17.0, '
+        '"evidence": "red sandstone at base", '
+        '"confidence": 0.85}\n'
+        "  ]\n"
+        "}\n\n"
+        "Output MUST match the JSON schema exactly. See example below."
     ),
     "litholog_column_geo": (
         "You are a geology assistant reading a lithological log "
@@ -374,7 +493,60 @@ PROMPT_REGISTRY: dict[str, str] = {
         "where 0.0 = top and 1.0 = base of the column.\n"
         "- ``layer_index`` starts at 0 (topmost layer).\n"
         "- Include all visible lithology patterns even if unlabelled.\n"
-        "- Output JSON only, no markdown fences."
+        "- Output JSON only, no markdown fences.\n\n"
+        # Phase 4A: few-shot example covering the litholog_column contract.
+        "Example (Phase 4A):\n"
+        "Input image: Narrow litholog column (figure caption: 'Fig. 7. "
+        "Lithological log of borehole BH-12 from the Lombardy Basin, "
+        "northern Italy; Pleistocene-Holocene fluvial sediments; total "
+        "depth 35 m.'). Three layers visible: (L0) light brown clay, ~5 m; "
+        "(L1) grey silt with sand lenses, ~12 m; (L2) coarse gravel with "
+        "rounded pebbles, ~18 m.\n"
+        "Output:\n"
+        "{\n"
+        '  "geo": [{\n'
+        '    "age": "Pleistocene-Holocene",\n'
+        '    "chronostratigraphy": null,\n'
+        '    "chronostratigraphy_rank": null,\n'
+        '    "ma_top": 0.0,\n'
+        '    "ma_base": 2.58,\n'
+        '    "ma_mid": 1.29,\n'
+        '    "formation": null,\n'
+        '    "member": null,\n'
+        '    "group": null,\n'
+        '    "lithology": "mixed clay/silt/gravel",\n'
+        '    "locality": "Lombardy Basin",\n'
+        '    "country": "Italy",\n'
+        '    "latitude": 45.4,\n'
+        '    "longitude": 9.5,\n'
+        '    "biozone": null,\n'
+        '    "confidence": 0.85\n'
+        "  }],\n"
+        '  "layers": [\n'
+        '    {"layer_index": 0, "y_top_normalized": 0.0, '
+        '"y_base_normalized": 0.14, "lithology": "clay", '
+        '"formation": null, "member": null, '
+        '"age": "Holocene", "ma_top": 0.0, "ma_base": 0.012, '
+        '"biozone": null, "thickness_m": 5.0, '
+        '"evidence": "light brown clay at top", '
+        '"confidence": 0.82},\n'
+        '    {"layer_index": 1, "y_top_normalized": 0.14, '
+        '"y_base_normalized": 0.49, "lithology": "silt with sand lenses", '
+        '"formation": null, "member": null, '
+        '"age": "Late Pleistocene", "ma_top": 0.012, "ma_base": 0.13, '
+        '"biozone": null, "thickness_m": 12.0, '
+        '"evidence": "grey silt middle", '
+        '"confidence": 0.80},\n'
+        '    {"layer_index": 2, "y_top_normalized": 0.49, '
+        '"y_base_normalized": 1.0, "lithology": "gravel", '
+        '"formation": null, "member": null, '
+        '"age": "Middle Pleistocene", "ma_top": 0.13, "ma_base": 0.78, '
+        '"biozone": null, "thickness_m": 18.0, '
+        '"evidence": "coarse gravel at base", '
+        '"confidence": 0.78}\n'
+        "  ]\n"
+        "}\n\n"
+        "Output MUST match the JSON schema exactly. See example below."
     ),
     "paleogeographic_map_geo": (
         "You are a geology assistant reading a paleogeographic map. The "
@@ -426,7 +598,62 @@ PROMPT_REGISTRY: dict[str, str] = {
         "- ``age`` per locality overrides the global ``geo.age`` when different.\n"
         "- ``confidence`` per locality reflects how clearly the species name "
         "is legible (not the taxonomic correctness).\n"
-        "- Output JSON only, no markdown fences."
+        "- Output JSON only, no markdown fences.\n\n"
+        # Phase 4A: few-shot example covering the paleogeographic_map contract.
+        "Example (Phase 4A):\n"
+        "Input image: Paleogeographic map showing the Late Cretaceous "
+        "(Maastrichtian, ~70 Ma) reconstruction of the Western Tethys "
+        "(caption: 'Fig. 9. Late Cretaceous paleogeographic map of the "
+        "Western Tethys region with sampling localities (filled circles) "
+        "of radiolarian-bearing sediments.'). Three labelled localities: "
+        "(1) Italy, ~45.4 N, 12.0 E, species 'Cretaceous radiolarian sp. A'; "
+        "(2) Tunisia, ~34.0 N, 9.0 E, species 'Pseudocrucella sp.'; "
+        "(3) Spain, ~40.0 N, -3.0 E, no species label printed.\n"
+        "Output:\n"
+        "{\n"
+        '  "geo": [{\n'
+        '    "age": "Late Cretaceous",\n'
+        '    "chronostratigraphy": null,\n'
+        '    "chronostratigraphy_rank": null,\n'
+        '    "ma_top": 66.0,\n'
+        '    "ma_base": 72.0,\n'
+        '    "ma_mid": 69.0,\n'
+        '    "formation": null,\n'
+        '    "member": null,\n'
+        '    "group": null,\n'
+        '    "lithology": "marine chalk/limestone",\n'
+        '    "locality": "Western Tethys",\n'
+        '    "country": null,\n'
+        '    "latitude": null,\n'
+        '    "longitude": null,\n'
+        '    "biozone": null,\n'
+        '    "confidence": 0.9\n'
+        "  }],\n"
+        '  "localities": [\n'
+        '    {"species": "Cretaceous radiolarian sp. A", "label": "1", '
+        '"latitude": 45.4, "longitude": 12.0, '
+        '"paleo_latitude": null, "paleo_longitude": null, '
+        '"age": "Late Cretaceous", "ma_top": 66.0, "ma_base": 72.0, '
+        '"formation": null, "lithology": null, "biozone": null, '
+        '"evidence": "filled circle in Italy, label 1", '
+        '"confidence": 0.78},\n'
+        '    {"species": "Pseudocrucella sp.", "label": "2", '
+        '"latitude": 34.0, "longitude": 9.0, '
+        '"paleo_latitude": null, "paleo_longitude": null, '
+        '"age": "Late Cretaceous", "ma_top": 66.0, "ma_base": 72.0, '
+        '"formation": null, "lithology": null, "biozone": null, '
+        '"evidence": "filled circle in Tunisia, label 2", '
+        '"confidence": 0.82},\n'
+        '    {"species": null, "label": "3", '
+        '"latitude": 40.0, "longitude": -3.0, '
+        '"paleo_latitude": null, "paleo_longitude": null, '
+        '"age": null, "ma_top": null, "ma_base": null, '
+        '"formation": null, "lithology": null, "biozone": null, '
+        '"evidence": "filled circle in Spain, label 3, no species", '
+        '"confidence": 0.5}\n'
+        "  ]\n"
+        "}\n\n"
+        "Output MUST match the JSON schema exactly. See example below."
     ),
     # Multi-plate enrichment prompt (Round 7). Fires when the
     # OpenDataLoader caption-image pairing missed a plate (e.g. Bandini
@@ -1833,7 +2060,7 @@ _PARSE_CAPTION_SYSTEM = """你是放射虫古生物学专家，专长是从图�
 7. raw_text: 产生该配对的原文片段；找不到则空串。
 8. open_nomenclature_strength: "none" | "cf." | "aff." | "ex gr." | "subgen." | "?" — ICZN 开放命名强度。species 含 cf./aff./ex gr./? 标记时填相应值，否则填 "none"。**该字段决定下游 confidence 折扣**。
 
-示例输入：
+示例输入（中文图说）：
 "图3 扫描电镜照片。A-D: Tetraspongodiscus stauracanthus n. sp.; E, F: Falcispongus scalaris sp. nov. Scale bars = 50 μm in A, C; 30 μm in B, D-F."
 
 示例输出：
@@ -1847,6 +2074,32 @@ _PARSE_CAPTION_SYSTEM = """你是放射虫古生物学专家，专长是从图�
   {"labels":["2"],"species":"Pessagnoa sp.","modifier":"cf.","confidence":0.55,"notes":"caption 写 cf.，是 ICZN confer 标记","raw_text":"cf. Pessagnoa sp.","open_nomenclature_strength":"cf."},
   {"labels":["3"],"species":"Archaeodictyomitra sp.","modifier":"(?)","confidence":0.55,"notes":"caption 含 (?) 不确定标记","raw_text":"Archaeodictyomitra (?) sp.","open_nomenclature_strength":"?"}
 ]
+
+示例输入（英文图说，Phase 4A 补全）：
+Input: "Figure 3. SEM images of Entactinia sp. from the Late Devonian (Frasnian) of the Canning Basin, Western Australia. Scale bars = 100 μm."
+Output:
+[
+  {"labels":["3"],"species":"Entactinia sp.","modifier":"","confidence":0.85,"notes":"单 panel 英文图说，sp. 标记","raw_text":"Figure 3. SEM images of Entactinia sp.","open_nomenclature_strength":"none"}
+]
+
+示例输入（中文图版含 sp. nov. 列表，Phase 4A 补全）：
+Input: "图版 5. 西藏南部晚三叠世放射虫化石。1-3. Triassocampe deweveri (Nakaseko &amp; Nishimura); 4-6. Archaeosemantis pteropus Haeckel. 比例尺 = 50 μm。"
+Output:
+[
+  {"labels":["1","2","3"],"species":"Triassocampe deweveri","modifier":"","confidence":0.94,"notes":"范围 1-3，作者置于括号","raw_text":"1-3. Triassocampe deweveri (Nakaseko & Nishimura)","open_nomenclature_strength":"none"},
+  {"labels":["4","5","6"],"species":"Archaeosemantis pteropus","modifier":"","confidence":0.94,"notes":"范围 4-6，作者 Haeckel","raw_text":"4-6. Archaeosemantis pteropus Haeckel","open_nomenclature_strength":"none"}
+]
+
+示例输入（含 cf./aff./ex gr. 三种开放命名，Phase 4A 补全）：
+Input: "Plate 2. Various radiolarians from the Lower Jurassic (Pliensbachian) of the Budva zone. 1. cf. Parahsuum sp. A; 2. aff. Hsuum sp.; 3. Praecanadium ex gr. aptum Blome. Sample BB-14."
+Output:
+[
+  {"labels":["1"],"species":"Parahsuum sp. A","modifier":"cf.","confidence":0.5,"notes":"cf. confer 标记，sp. A 标本编号","raw_text":"1. cf. Parahsuum sp. A","open_nomenclature_strength":"cf."},
+  {"labels":["2"],"species":"Hsuum sp.","modifier":"aff.","confidence":0.5,"notes":"aff. affinis 标记","raw_text":"2. aff. Hsuum sp.","open_nomenclature_strength":"aff."},
+  {"labels":["3"],"species":"Praecanadium aptum","modifier":"ex gr.","confidence":0.5,"notes":"ex gr. ex grege 居群标记，作者 Blome","raw_text":"3. Praecanadium ex gr. aptum Blome","open_nomenclature_strength":"ex gr."}
+]
+
+Output MUST match the JSON schema exactly. See examples below.
 
 只输出 JSON 数组，不要任何解释文本。"""
 
@@ -1941,6 +2194,18 @@ Input image: Tall narrow vertical column with stacked colored rectangles (yellow
 Output:
 {"is_radiolarian_plate":false,"image_type":"diagram","panel_count_estimate":null,"specimen_count_estimate":null,"quality":"good","dominant_taxa":[],"reasoning":"图是柱状地层剖面，含岩性色块和地层名，没有任何放射虫标本 panel。"}
 
+Example 4 (野外露头照片 — NOT a plate，Phase 4A 补全):
+Input image: 横版彩色照片（1600x900 px），中央是一处山地露头，可见灰色层状灰岩夹泥岩，地表有稀疏植被；右下角有指南针和地质锤作为比例参考；左下角贴有红色样本袋标注 "Loc-14"。无任何 SEM 标本。
+Output:
+{"is_radiolarian_plate":false,"image_type":"photo","panel_count_estimate":null,"specimen_count_estimate":null,"quality":"good","dominant_taxa":[],"reasoning":"是野外露头照片，含岩层 + 比例物（锤子/罗盘）+ 样本袋标注；无显微标本 panel。判定为非放射虫图版。"}
+
+Example 5 (中文图说 + SEM 标本，Phase 4A 补全):
+Input image: 中文图版，2x2 共 4 个 panel，标签 "1"、"2"、"3"、"4" 在每个 panel 左上角；每个 panel 内有一颗钟形放射虫（campanulate），可见顶角和胸腹节；比例尺 "30 μm" 在右下角；高对比度 SEM 图。
+Output:
+{"is_radiolarian_plate":true,"image_type":"SEM","panel_count_estimate":4,"specimen_count_estimate":4,"quality":"good","dominant_taxa":["Archaeodictyomitra"],"reasoning":"看到 4 个带 1-4 数字标签的 SEM 标本 panel；钟形壳 + 顶角形态指向 Archaeodictyomitra 类群；中文期刊常见此类版式。"}
+
+Output MUST match the JSON schema exactly. See examples below.
+
 只输出严格 JSON，不要解释。"""
 
 
@@ -1976,6 +2241,19 @@ Output:
 [
   {"panel_id":"P1","bbox":[50,50,924,924],"visible_label":null,"morphology":"钟形壳，顶端有小孔，底部 3 根细刺","confidence":0.88}
 ]
+
+Example 3 (不规则布局，Phase 4A 补全):
+Input image: 不规则 SEM 图版（1600x1200 px），共 5 个 panel，布局如下：(1) 大 panel A 在左侧中央（约 40,200,720,720），含一个特写标本；(2) 中 panel B 在右上（约 800,40,420,420）；(3) 小 panel C 在右下（约 1280,40,300,300）；(4) 中 panel D 在左下（约 40,1000,700,180，含 2 个并列标本视图，被一个细色带分开为 D-left 和 D-right，但整体仍属 panel D 的一个 bbox，标注写在最左）；(5) 微 panel E 在 panel D 右侧（约 760,1000,180,180）。每个 panel 都有清晰字母标签。
+Output:
+[
+  {"panel_id":"A","bbox":[40,200,720,720],"visible_label":"A","morphology":"大特写单标本，球形壳 + 6 根对称主刺 + 格状壁孔","confidence":0.96},
+  {"panel_id":"B","bbox":[800,40,420,420],"visible_label":"B","morphology":"椭球形壳，壁孔小而密，无主刺","confidence":0.93},
+  {"panel_id":"C","bbox":[1280,40,300,300],"visible_label":"C","morphology":"钟形壳，顶端有明显顶角","confidence":0.91},
+  {"panel_id":"D","bbox":[40,1000,700,180],"visible_label":"D","morphology":"水平并列两枚标本（左：球形，右：椭球），中间色带分隔","confidence":0.85},
+  {"panel_id":"E","bbox":[760,1000,180,180],"visible_label":"E","morphology":"微型 panel，1 根主刺局部","confidence":0.80}
+]
+
+Output MUST match the JSON schema exactly. See examples below.
 
 只输出 JSON 数组，不要解释。"""
 
@@ -2062,6 +2340,16 @@ Caption: "(caption not extracted)"
 Output:
 {"label":null,"species":null,"open_nomenclature_strength":"none","confidence":0.2,"reasoning":"候选配对为空且图像模糊无法鉴定；降低 confidence 反映高度不确定性。","alternative":null,"is_radiolarian":false}
 
+Example 4 (英文 caption + 多候选，Phase 4A 补全):
+Panel image: nassellarian with 4 segments, distinct apical horn, thorax pores arranged in rows.
+Candidate pairs (from caption): [{"labels":["1","2"],"species":"Parahsuum sp.","modifier":"cf."},{"labels":["3","4","5"],"species":"Hsuum sp.","modifier":""},{"labels":["6"],"species":"Lamptonium sp.","modifier":"aff."}]
+Visible label hint: "3"
+Caption: "Figs. 1, 2. cf. Parahsuum sp.; 3-5. Hsuum sp.; 6. aff. Lamptonium sp."
+Output:
+{"label":"3","species":"Hsuum sp.","open_nomenclature_strength":"none","confidence":0.93,"reasoning":"图上可见标签 3，落在 caption 范围 3-5 → Hsuum sp.；多节 nassellarian 形态与 Hsuum 一致。","alternative":null,"is_radiolarian":true}
+
+Output MUST match the JSON schema exactly. See examples below.
+
 只输出严格 JSON。"""
 
 
@@ -2116,7 +2404,101 @@ Output:
   {"panel_id":"F","verdict":"uncertain","suggested_species":"GenusB sp.","open_nomenclature_strength":"none","confidence":0.45,"reasoning":"图像模糊且 caption 同时列两个候选；形态不足判别，建议 GenusB 作为第二可能。"}
 ]
 
+Example 4 (低 confidence 整体审查，Phase 4A 补全):
+Plate image: 6-panel SEM plate; panels A-F each with one specimen; however the SEM stage drift left all panels slightly blurred, scale bars barely readable.
+Existing pairings: [{panel_id:"A",label:"A",species:"GenusA sp.",confidence:0.62},{panel_id:"B",label:"B",species:"GenusB sp.",confidence:0.58},{panel_id:"C",label:"C",species:"GenusA sp.",confidence:0.61}]
+Caption: "A, C, E: GenusA sp.; B, D, F: GenusB sp."
+Output:
+[
+  {"panel_id":"A","verdict":"agree","suggested_species":null,"open_nomenclature_strength":"none","confidence":0.4,"reasoning":"caption 配 GenusA sp. 一致；图像模糊仅依 caption 验证；confidence 反映图像质量折扣。"},
+  {"panel_id":"B","verdict":"agree","suggested_species":null,"open_nomenclature_strength":"none","confidence":0.4,"reasoning":"caption 配 GenusB sp. 一致；图像模糊仅依 caption 验证；confidence 反映图像质量折扣。"},
+  {"panel_id":"C","verdict":"agree","suggested_species":null,"open_nomenclature_strength":"none","confidence":0.4,"reasoning":"caption 配 GenusA sp. 一致；图像模糊仅依 caption 验证；confidence 反映图像质量折扣。"}
+]
+
+Output MUST match the JSON schema exactly. See examples below.
+
 只输出严格 JSON 数组。"""
+
+
+# ---------------------------------------------------------------------------
+# Prompt registry (audit 2026-08-19 Phase 4C)
+# ---------------------------------------------------------------------------
+#
+# The 5 stage system prompts above are the canonical sources of truth
+# for the JSON contract each stage emits. Historically
+# ``gemma_postprocess.py`` re-defined its own copies of the per-panel
+# prompt and would silently drift when M3 prompts were updated — a
+# real bug (audit 2026-08-19 Bug M-10) because after M3 fails the
+# Gemma fallback would use a STALE prompt that no longer matches the
+# format M3 actually emits.
+#
+# ``get_prompt_registry()`` aggregates the 5 stage system prompts
+# (plus the Japanese variant of ``parse_caption``) into a single
+# dict keyed by stage name so other modules can pull the canonical
+# prompt instead of re-implementing it. Tests import this function
+# to verify Gemma really uses M3's prompt (audit Bug M-12).
+#
+# Note: callers should treat the returned dict as read-only. We
+# deliberately return a NEW dict each call so a caller can mutate it
+# locally without poisoning the cached prompts inside ``m3_engine``.
+
+
+# Audit 2026-08-19 Phase 4E (Task 3): version stamp on the prompt
+# registry. Every change to ``_PARSE_CAPTION_SYSTEM`` /
+# ``_CLASSIFY_PLATE_SYSTEM`` / ``_SEGMENT_PANELS_SYSTEM`` /
+# ``_MATCH_PANEL_SYSTEM`` / ``_MATCH_PANEL_SYSTEM_VISUAL_ONLY`` /
+# ``_CRITIQUE_SYSTEM`` MUST bump this string so downstream audit can
+# correlate schema drift / quality regressions with a known prompt
+# revision. The convention is ``"vMAJOR.MINOR.PATCH"``; major for any
+# change that alters the JSON output schema, minor for wording changes
+# that don't change the schema, patch for typo / formatting fixes.
+PROMPT_REGISTRY_VERSION: str = "v1.3.0"
+
+
+def get_prompt_registry() -> tuple[dict[str, str], str]:
+    """Return ``(prompt_registry_dict, version)`` for the M3 stage prompts.
+
+    Audit 2026-08-19 Phase 4E: the function now returns a 2-tuple so
+    callers can pin a result to a known prompt version. The first
+    element is the prompt map (a NEW dict on every call, so callers
+    can mutate it locally without poisoning the module cache); the
+    second element is the registry's version stamp.
+
+    Keys (audit 2026-08-19 Phase 4C):
+      - ``parse_caption``            : Stage 1 (text-only, ZH)
+      - ``parse_caption_ja``         : Stage 1 (text-only, JA)
+      - ``classify_plate``           : Stage 2 (vision)
+      - ``segment_panels``           : Stage 3 (vision)
+      - ``match_panel_visual_only``  : Stage 4 fallback (vision)
+      - ``match_panel``              : Stage 4 (vision + text)
+      - ``critique_matches``         : Stage 5 (vision + text)
+
+    Other modules (notably ``gemma_postprocess``) MUST call this
+    function rather than re-define the prompt inline.
+    """
+    return (
+        {
+            "parse_caption": _PARSE_CAPTION_SYSTEM,
+            "parse_caption_ja": _PARSE_CAPTION_SYSTEM_JA,
+            "classify_plate": _CLASSIFY_PLATE_SYSTEM,
+            "segment_panels": _SEGMENT_PANELS_SYSTEM,
+            "match_panel_visual_only": _MATCH_PANEL_SYSTEM_VISUAL_ONLY,
+            "match_panel": _MATCH_PANEL_SYSTEM,
+            "critique_matches": _CRITIQUE_SYSTEM,
+        },
+        PROMPT_REGISTRY_VERSION,
+    )
+
+
+def get_prompt_registry_version() -> str:
+    """Return just the version string of the M3 prompt registry.
+
+    Convenience accessor so callers (e.g. ``_make_telemetry``) don't
+    have to unpack the full tuple when they only need the version.
+    Equivalent to ``get_prompt_registry()[1]`` but avoids building
+    the prompt dict when only the version is wanted.
+    """
+    return PROMPT_REGISTRY_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -3031,9 +3413,56 @@ class M3Engine:
     def _stage_enabled(self, n: int) -> bool:
         return bool(self.config.get(f"m3_stage_{n}", True))
 
+    def _make_telemetry(
+        self,
+        *,
+        start: float,
+        llm_error: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the ``_telemetry`` dict for an M3 call result.
+
+        Phase 4E Task 2 (audit 2026-08-19): every M3 result now carries
+        a ``_telemetry`` sub-dict with:
+
+        * ``model``         - ``backend.model`` string (the model that
+                              produced the response).
+        * ``prompt_version``- the ``PROMPT_REGISTRY_VERSION`` string
+                              so audit can correlate output drift with
+                              a known prompt revision.
+        * ``latency_ms``    - wall-clock milliseconds since ``start``
+                              was sampled, rounded to int.
+        * ``timestamp``     - ISO-8601 UTC time the call completed.
+        * ``llm_error``     - OPTIONAL short code for the failure
+                              reason (``"auth"`` / ``"rate_limit"`` /
+                              ``"timeout"`` / ``"parse"`` / ``"other"``);
+                              only present when the call did NOT
+                              return a usable response.
+
+        This helper centralises the field shape so success and failure
+        paths in ``_infer_text`` / ``_infer_vision`` always stamp the
+        same keys — including the ones downstream consumers expect
+        (e.g. ``/system/llm-status`` dashboards).
+        """
+        tel: dict[str, Any] = {
+            "model": getattr(self.backend, "model", None) if self.backend is not None else None,
+            "prompt_version": get_prompt_registry_version(),
+            "latency_ms": int(max(0, (time.time() - float(start)) * 1000)),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if llm_error is not None:
+            tel["llm_error"] = llm_error
+        return tel
+
     def _infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         if self.backend is None:
-            return {"fallback_used": True, "error": "no backend"}
+            return {
+                "fallback_used": True,
+                "error": "no backend",
+                "_telemetry": self._make_telemetry(
+                    start=time.time(),
+                    llm_error="other",
+                ),
+            }
         # Phase 55 audit CRITICAL-1 fix: snapshot enable_thinking BEFORE any
         # concurrent worker can mutate it. The previous code read
         # ``self.backend.enable_thinking`` inside the retry condition below,
@@ -3050,6 +3479,7 @@ class M3Engine:
         # concurrent retry's flip window.
         with self._thinking_gate.read():
             enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
+            start = time.time()
             try:
                 res = self.backend.infer_text(system_prompt=system_prompt, user_prompt=user_prompt)
             except FallbackRecommendedError:
@@ -3058,9 +3488,55 @@ class M3Engine:
                 # it here meant the pipeline never saw the recommendation
                 # and the fallback feature stayed dead.
                 raise
+            except LLMAuthenticationError as exc:
+                # Phase 4E Task 1: 401/403 — operator must rotate the API
+                # key. Surface as error-level so dashboards flag it
+                # immediately.
+                logger.error("LLM auth failed: %s", exc)
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="auth"),
+                }
+            except LLMRateLimitError as exc:
+                # Phase 4E Task 1: 429 — transient, may succeed on retry.
+                logger.warning("LLM rate limited: %s", exc)
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="rate_limit"),
+                }
+            except TimeoutError as exc:
+                # Phase 4E Task 1: socket / upstream timeout — load-related.
+                logger.warning("LLM timeout: %s", exc)
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="timeout"),
+                }
+            except (LLMSchemaError, json.JSONDecodeError, ValueError) as exc:
+                # Phase 4E Task 1: JSONDecodeError + ValueError come
+                # from _safe_json_loads when the response body isn't
+                # parseable; LLMSchemaError covers schema violations
+                # after a successful parse.
+                logger.warning("LLM parse error: %s", exc)
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="parse"),
+                }
             except Exception as exc:
                 logger.exception("M3 text inference failed")
-                return {"fallback_used": True, "error": str(exc)}
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="other"),
+                }
+        # Stamp telemetry on the successful first-attempt response so
+        # downstream code can see model / prompt_version / latency /
+        # timestamp without re-walking the raw dict.
+        res = dict(res)  # copy so we don't mutate the backend's dict
+        res["_telemetry"] = self._make_telemetry(start=start)
         # Retry without thinking if the response is empty.
         if (
             self.config.get("m3_retry_without_thinking", True)
@@ -3082,7 +3558,10 @@ class M3Engine:
                 finally:
                     self.backend.enable_thinking = saved
             if (res2.get("raw_text") or "").strip():
-                res = res2
+                res = dict(res2)
+                # Phase 4E: re-stamp telemetry to reflect the total
+                # wall-clock (first attempt + retry sleep + retry).
+                res["_telemetry"] = self._make_telemetry(start=start)
         return res
 
     def _infer_vision(
@@ -3110,7 +3589,14 @@ class M3Engine:
             second image after recording an explanatory prompt note.
         """
         if self.backend is None:
-            return {"fallback_used": True, "error": "no backend"}
+            return {
+                "fallback_used": True,
+                "error": "no backend",
+                "_telemetry": self._make_telemetry(
+                    start=time.time(),
+                    llm_error="other",
+                ),
+            }
         # Phase 55 audit CRITICAL-1 fix: snapshot enable_thinking BEFORE any
         # concurrent worker can mutate it (same pattern as _infer_text).
         # The snapshot is used for both the first-call decision (pass to
@@ -3122,6 +3608,7 @@ class M3Engine:
         # retry window, where ``enable_thinking`` is flipped off.
         with self._thinking_gate.read():
             enable_thinking_snapshot = getattr(self.backend, "enable_thinking", False)
+            start = time.time()
             # First attempt — with thinking enabled (the default).
             try:
                 res = self.backend.infer_panel(
@@ -3137,9 +3624,48 @@ class M3Engine:
                 # ``recommended_backend`` - let it propagate to the pipeline
                 # so it can switch to the configured fallback backend.
                 raise
+            except LLMAuthenticationError as exc:
+                # Phase 4E Task 1: 401/403 — operator must rotate the
+                # API key.
+                logger.error("LLM auth failed: %s", exc)
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="auth"),
+                }
+            except LLMRateLimitError as exc:
+                logger.warning("LLM rate limited: %s", exc)
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="rate_limit"),
+                }
+            except TimeoutError as exc:
+                logger.warning("LLM timeout: %s", exc)
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="timeout"),
+                }
+            except (LLMSchemaError, json.JSONDecodeError, ValueError) as exc:
+                logger.warning("LLM parse error: %s", exc)
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="parse"),
+                }
             except Exception as exc:
                 logger.exception("M3 vision inference failed")
-                return {"fallback_used": True, "error": str(exc)}
+                return {
+                    "fallback_used": True,
+                    "error": str(exc),
+                    "_telemetry": self._make_telemetry(start=start, llm_error="other"),
+                }
+        # Stamp telemetry on the first-attempt success path so callers
+        # see model / prompt_version / latency / timestamp without
+        # re-walking the raw dict. Phase 4E Task 2.
+        res = dict(res)  # don't mutate the backend's returned dict
+        res["_telemetry"] = self._make_telemetry(start=start)
         self._maybe_dump_diagnostic(image, system_prompt, user_prompt, res)
         # Retry without thinking if the first attempt produced no text
         # (known M3 issue when thinking exhausts the output budget).
@@ -3182,7 +3708,10 @@ class M3Engine:
                 finally:
                     self.backend.enable_thinking = saved
             if (res2.get("raw_text") or "").strip():
-                res = res2
+                res = dict(res2)
+                # Phase 4E: re-stamp telemetry to reflect the total
+                # wall-clock (first attempt + retry sleep + retry).
+                res["_telemetry"] = self._make_telemetry(start=start)
         return res
 
     # ------------------------------------------------------------- stage 6 (geo)
@@ -3768,32 +4297,55 @@ class M3Engine:
     def cross_figure_visual_inference(
         self,
         plate_image: Image.Image,
-        strat_image: Image.Image,
-        plate_caption: str,
-        strat_caption: str,
+        strat_image: Image.Image | None = None,
+        plate_caption: str = "",
+        strat_caption: str = "",
+        *,
+        litholog_image: Image.Image | None = None,
+        paleogeographic_image: Image.Image | None = None,
+        litholog_caption: str = "",
+        paleogeographic_caption: str = "",
     ) -> dict[str, Any]:
         """VISION-based cross-figure inference (Phase 66 Plan C.1).
 
         Given an SEM plate image AND a strat column / paleogeographic
-        map image (with their captions), ask MiniMax-M3 to identify
-        which plate panels correspond to which strat layers /
-        formations / ages. This is the precision-refinement counterpart
-        to ``infer_species_age_formation`` (text-only, confidence
-        0.3-0.6): vision grounding is intrinsically more reliable, so
-        the caller trusts the returned confidence (0.0-1.0) without
-        clamping.
+        map / litholog column image (with their captions), ask
+        MiniMax-M3 to identify which plate panels correspond to which
+        strat layers / formations / ages. This is the precision-
+        refinement counterpart to ``infer_species_age_formation``
+        (text-only, confidence 0.3-0.6): vision grounding is
+        intrinsically more reliable, so the caller trusts the returned
+        confidence (0.0-1.0) without clamping.
 
         Parameters
         ----------
         plate_image : PIL.Image.Image
             The SEM plate figure image (RGB or convertible).
-        strat_image : PIL.Image.Image
-            The strat column / paleogeographic map figure image from
-            the same paper.
+        strat_image : PIL.Image.Image | None, default ``None``
+            The strat column / paleogeographic map / litholog column
+            figure image from the same paper (the legacy single-
+            secondary-image entry point). When supplied, takes
+            priority over the keyword-only ``litholog_image`` and
+            ``paleogeographic_image`` parameters so existing callers
+            keep working unchanged.
         plate_caption : str
             Caption text for the plate.
         strat_caption : str
-            Caption text for the strat column / map.
+            Caption text for the strat column / map (legacy).
+        litholog_image : PIL.Image.Image | None, default ``None``
+            Optional litholog column image. Used as the secondary
+            image only when ``strat_image`` is ``None``.
+        paleogeographic_image : PIL.Image.Image | None, default ``None``
+            Optional paleogeographic map image. Used as the secondary
+            image only when BOTH ``strat_image`` and ``litholog_image``
+            are ``None`` (lowest priority of the three).
+        litholog_caption : str, default ``""
+            Caption for the litholog column. Folded into the user
+            prompt when ``litholog_image`` is the selected secondary.
+        paleogeographic_caption : str, default ``""
+            Caption for the paleogeographic map. Folded into the user
+            prompt when ``paleogeographic_image`` is the selected
+            secondary.
 
         Returns
         -------
@@ -3822,15 +4374,23 @@ class M3Engine:
 
         Notes
         -----
-        * BOTH images (``plate_image`` AND ``strat_image``) are
-          forwarded to the backend when the backend supports it. The
-          Anthropic-backed ``MiniMaxM3Backend`` accepts multiple
-          image blocks in a single Messages API call — it receives
-          both images as separate content blocks so the model can
-          ground plate panels against strat-column layers directly.
-          Local backends (llama.cpp) are single-image and only see
-          the plate image; ``infer_panel`` injects a prompt note that
-          the strat column image was dropped. (Audit M-14.)
+        * The BOTH images (``plate_image`` AND the selected
+          secondary) are forwarded to the backend when the backend
+          supports it. The Anthropic-backed ``MiniMaxM3Backend``
+          accepts multiple image blocks in a single Messages API call
+          — it receives both images as separate content blocks so
+          the model can ground plate panels against strat-column
+          layers directly. Local backends (llama.cpp) are single-
+          image and only see the plate image; ``infer_panel``
+          injects a prompt note that the secondary image was
+          dropped. (Audit M-14 / Phase 4D.)
+        * Selection priority for the secondary image (Phase 4D):
+          ``strat_image`` > ``litholog_image`` >
+          ``paleogeographic_image``. The first non-``None`` value
+          (with width/height ``>= 32``) wins. Callers that only
+          have one figure type can pass it positionally; callers
+          that have all three can use the keyword arguments so
+          future multi-image backends can use them all.
         * Panel entries missing ``cell_label`` OR ``species`` are
           dropped before returning; the linker requires both keys to
           attach a visual link to a specific panel.
@@ -3847,11 +4407,42 @@ class M3Engine:
             if (
                 plate_image.width < 32
                 or plate_image.height < 32
-                or strat_image.width < 32
-                or strat_image.height < 32
             ):
                 return empty
         except (AttributeError, TypeError):
+            return empty
+
+        # Phase 4D: pick the first usable secondary image. ``_infer_vision``
+        # today only forwards ONE extra_image, so we materialise the
+        # priority chain (strat > litholog > paleo) into the existing
+        # ``extra_image`` slot. When a future multi-extra-image backend
+        # lands, callers can still pass all three and the engine will
+        # at least surface them as prompt text via the captions below.
+        candidates: list[tuple[str, Image.Image | None, str]] = [
+            ("strat", strat_image, strat_caption),
+            ("litholog", litholog_image, litholog_caption),
+            ("paleogeographic", paleogeographic_image, paleogeographic_caption),
+        ]
+        chosen_label = ""
+        chosen_image: Image.Image | None = None
+        chosen_caption = ""
+        for label, img, cap in candidates:
+            if img is None:
+                continue
+            try:
+                if img.width < 32 or img.height < 32:  # type: ignore[attr-defined]
+                    continue
+            except (AttributeError, TypeError):
+                continue
+            chosen_label = label
+            chosen_image = img
+            chosen_caption = cap or ""
+            break
+        if chosen_image is None:
+            # No usable secondary image → silently bail with empty
+            # result. The visual cross-figure contract requires both
+            # images to be present; the trigger check is enforced
+            # upstream (see ``cross_figure_linker._has_plate_and_anchor``).
             return empty
 
         system_prompt = PROMPT_REGISTRY["cross_figure_visual"]
@@ -3860,13 +4451,18 @@ class M3Engine:
         plate_blob = (plate_caption or "").strip()
         if len(plate_blob) > 600:
             plate_blob = plate_blob[:600] + "..."
-        strat_blob = (strat_caption or "").strip()
-        if len(strat_blob) > 600:
-            strat_blob = strat_blob[:600] + "..."
+        secondary_blob = (chosen_caption or "").strip()
+        if len(secondary_blob) > 600:
+            secondary_blob = secondary_blob[:600] + "..."
+        secondary_kind = {
+            "strat": "Strat column / map",
+            "litholog": "Litholog column",
+            "paleogeographic": "Paleogeographic map",
+        }.get(chosen_label, "Secondary figure")
 
         user_prompt = (
             f"Plate caption:\n{plate_blob or '(no caption)'}\n\n"
-            f"Strat column / map caption:\n{strat_blob or '(no caption)'}\n\n"
+            f"{secondary_kind} caption:\n{secondary_blob or '(no caption)'}\n\n"
             "Return strict JSON only, no markdown fences."
         )
 
@@ -3877,7 +4473,7 @@ class M3Engine:
         # the second image was dropped.
         try:
             res = self._infer_vision(
-                system_prompt, user_prompt, plate_image, extra_image=strat_image
+                system_prompt, user_prompt, plate_image, extra_image=chosen_image
             )
         except Exception:
             logger.exception("cross_figure_visual_inference: backend call failed")

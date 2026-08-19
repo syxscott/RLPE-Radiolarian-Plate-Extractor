@@ -22,34 +22,144 @@ from .llm_backends import (
 )
 from .types import MatchResult
 
-GEMMA_SYSTEM_PROMPT_ZH = """
-你是古生物分类学与放射虫图版解析专家，服务于RLPE项目。
-任务：给定单个panel图像、图版说明（caption）、OCR标签候选，判断该panel对应的标签与拉丁学名（属/种）。
-场景特点：老文献、扫描噪声、跨页说明、多个 specimen、箭头指向、视角混合（apical/lateral等）。
-请遵循：
-1) 先内部分析证据（不要输出冗长思维过程），只输出结构化JSON。
-2) 优先依据：panel可见标签 > caption中label-物种对子句 > 形态/语义一致性。
-3) 若信息不足，给出最可能候选并降低confidence。
-4) 必须输出字段：label, species, confidence, reasoning。
-5) confidence范围[0,1]，保留两位小数。
-输出格式（严格JSON）：
-{"label":"A","species":"Actinomma leptodermum","confidence":0.87,"reasoning":"依据caption中(A)...与图中标签A一致"}
-""".strip()
+# Audit 2026-08-19 Phase 4C (Bug M-10): historically Gemma hard-coded its
+# own copy of the per-panel system prompt here. When M3's prompt was
+# updated upstream, this copy drifted — silently invalidating the Gemma
+# fallback path. The canonical prompts now live in ``m3_engine`` and
+# Gemma pulls them via ``get_prompt_registry()``.
+try:
+    from .m3_engine import get_prompt_registry
+except Exception:  # pragma: no cover - tolerate missing m3_engine in envs
+    def get_prompt_registry() -> tuple[dict[str, str], str]:  # type: ignore[no-redef]
+        """Stub fallback so this module imports without m3_engine.
+
+        In normal install paths, ``rlpe.m3_engine`` is always available;
+        the stub exists only for sparse test/dev environments that
+        exclude the M3 module. Phase 4E: mirrors the real signature
+        ``(dict, version_str)`` so callers that unpack the tuple
+        don't break in offline test environments.
+        """
+        return {}, "v0.0.0-stub"
 
 
-GEMMA_SYSTEM_PROMPT_EN = """
-You are an expert in radiolarian paleontology and taxonomic plate interpretation for RLPE.
-Task: Given one panel image, caption context, and OCR label candidates, infer the best label-to-Latin-taxon match.
-Challenges: noisy scans, cross-page captions, multi-specimen panels, arrow annotations, mixed views.
-Rules:
-1) Think internally but DO NOT reveal long chain-of-thought; return concise evidence in JSON only.
-2) Prioritize: visible panel label > caption label-taxon clause > morphology/semantic consistency.
-3) If uncertain, provide best candidate with lower confidence.
-4) Required keys: label, species, confidence, reasoning.
-5) confidence in [0,1], rounded to 2 decimals.
-Strict output JSON:
-{"label":"A","species":"Actinomma leptodermum","confidence":0.87,"reasoning":"caption clause (A) agrees with visible label A"}
-""".strip()
+# Cache the M3 prompts at import time. Stale once per process is fine
+# because the prompts are constants — re-reading on every call would
+# just re-import the dict.
+_PROMPTS_CACHE: dict[str, str] | None = None
+_PROMPTS_VERSION: str | None = None
+
+
+def _get_m3_prompts() -> dict[str, str]:
+    """Lazily load (and cache) the M3 prompt registry.
+
+    Returns the dict from ``m3_engine.get_prompt_registry()``. If M3
+    is unavailable (stub used above), returns an empty dict; the
+    helpers below detect that and fall back to legacy inline prompts.
+
+    Phase 4E (audit 2026-08-19): ``get_prompt_registry()`` now returns
+    a 2-tuple ``(dict, version)``; this helper unpacks and caches only
+    the dict side. ``_get_m3_prompt_version()`` exposes the version.
+    """
+    global _PROMPTS_CACHE, _PROMPTS_VERSION
+    if _PROMPTS_CACHE is None:
+        try:
+            result = get_prompt_registry()
+        except Exception:
+            _PROMPTS_CACHE = {}
+            _PROMPTS_VERSION = "v0.0.0-stub"
+        else:
+            # Phase 4E: handle both old (dict) and new (tuple) shapes
+            # for forward / backward compatibility during the migration.
+            if isinstance(result, tuple) and len(result) == 2:
+                _PROMPTS_CACHE, _PROMPTS_VERSION = result
+            elif isinstance(result, dict):
+                _PROMPTS_CACHE = result
+                _PROMPTS_VERSION = "v0.0.0-unknown"
+            else:
+                _PROMPTS_CACHE = {}
+                _PROMPTS_VERSION = "v0.0.0-unknown"
+    return _PROMPTS_CACHE
+
+
+def _get_m3_prompt_version() -> str:
+    """Return the cached prompt-registry version string.
+
+    Audit 2026-08-19 Phase 4E: complements ``_get_m3_prompts()`` so
+    callers can stamp a result with the prompt revision used to
+    produce it. Returns ``"v0.0.0-unknown"`` if the registry was
+    never loaded (e.g. m3_engine unavailable).
+    """
+    if _PROMPTS_VERSION is None:
+        # Trigger the lazy load (may set _PROMPTS_VERSION or leave it
+        # as a stub string).
+        _get_m3_prompts()
+    return _PROMPTS_VERSION or "v0.0.0-unknown"
+
+
+# Convenience accessors. Each ``_get_system_prompt(stage)`` returns the
+# canonical M3 prompt for ``stage`` so the API surface matches what
+# the tests expect (``gemma._get_system_prompt(stage)``).
+_STAGE_ALIASES = {
+    "match_panel": "match_panel",
+    "match_panel_visual_only": "match_panel_visual_only",
+    "match": "match_panel",
+    "zh": "match_panel",
+    "en": "match_panel_visual_only",
+}
+
+
+def _get_system_prompt(stage: str = "match_panel") -> str | None:
+    """Return the M3 system prompt for ``stage``, or None if missing.
+
+    ``stage`` is one of the keys in ``m3_engine.get_prompt_registry()``
+    (``match_panel``, ``match_panel_visual_only``,
+    ``classify_plate``, etc.). Aliases ``zh`` / ``en`` / ``match``
+    resolve to ``match_panel`` / ``match_panel_visual_only`` /
+    ``match_panel`` respectively for legacy call sites.
+    """
+    prompts = _get_m3_prompts()
+    if not prompts:
+        return None
+    resolved = _STAGE_ALIASES.get(stage, stage)
+    return prompts.get(resolved)
+
+
+# Audit 2026-08-19 Phase 4C (Bug M-12): M3 emits different field-name
+# variants across stages and migration cycles. ``confidence`` was
+# renamed to ``conf_score`` in some prompts and to ``c_score`` in
+# downstream layout/YOLO paths; ``verbatim_name`` is a recent
+# schema (2026-08-19) that replaced ``raw_name`` / ``name`` / ``taxon``
+# in earlier prompts. Gemma post-processing used to assume the M3
+# names directly, leading to silent zero-confidence fallbacks when
+# the names drifted.
+_CONFIDENCE_FIELD_FALLBACK = (
+    "confidence",
+    "conf_score",
+    "c_score",
+    "score",
+)
+_NAME_FIELD_FALLBACK = (
+    "verbatim_name",
+    "raw_name",
+    "name",
+    "taxon",
+)
+
+
+def _pick_field(payload: dict[str, Any], candidates: tuple[str, ...]) -> Any:
+    """Return the first present key from ``candidates`` in ``payload``.
+
+    Used for forward-compatibility when M3 renames a field across
+    prompt updates: ``_pick_field(out, _CONFIDENCE_FIELD_FALLBACK)``
+    returns ``payload.get("conf_score")`` if the M3 prompt emits
+    ``conf_score`` and only that name.
+    """
+    if not isinstance(payload, dict):
+        return None
+    for key in candidates:
+        if key in payload and payload[key] is not None:
+            return payload[key]
+    return None
 
 
 @dataclass(slots=True)
@@ -208,7 +318,19 @@ def gemma_match_panel(
     temperature: float = 0.10,
     top_p: float = 0.90,
 ) -> dict[str, Any]:
-    prompt = system_prompt or GEMMA_SYSTEM_PROMPT_ZH
+    # Audit 2026-08-19 Phase 4C (Bug M-10): prefer the M3 ``match_panel``
+    # prompt over the legacy ``GEMMA_SYSTEM_PROMPT_ZH`` so the Gemma
+    # fallback after an M3 failure uses the SAME JSON contract M3 was
+    # emitting. We still honour an explicit ``system_prompt`` arg so
+    # callers that need a custom instruction (e.g. tests, ablations)
+    # retain the override. Audit guard: when M3 is unavailable we fall
+    # back to the legacy hard-coded ZH prompt so existing single-env
+    # installs without ``m3_engine`` keep working.
+    if system_prompt is None:
+        m3_prompt = _get_system_prompt("match_panel")
+        prompt = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_ZH
+    else:
+        prompt = system_prompt
     user_prompt = (
         "[Caption]\n"
         f"{caption_text}\n\n"
@@ -240,9 +362,20 @@ def apply_gemma_to_matches(
     conf_threshold: float = 0.70,
     prompt_lang: str = "zh",
 ) -> list[MatchResult]:
-    prompt = (
-        GEMMA_SYSTEM_PROMPT_ZH if prompt_lang.lower().startswith("zh") else GEMMA_SYSTEM_PROMPT_EN
-    )
+    # Audit 2026-08-19 Phase 4C (Bug M-10): prefer M3's ``match_panel``
+    # prompt so the fallback path uses the SAME JSON contract M3 was
+    # emitting (single source of truth for prompts). The two legacy
+    # ZH / EN inline prompts remain as a last-resort fallback only
+    # when M3 is unavailable.
+    is_zh = prompt_lang.lower().startswith("zh")
+    if is_zh:
+        m3_prompt = _get_system_prompt("match_panel")
+        prompt: str = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_ZH
+    else:
+        # English pipeline: M3 doesn't ship a dedicated EN match_panel
+        # prompt, so fall back to the legacy inline English prompt.
+        m3_prompt = _get_system_prompt("match_panel_visual_only")
+        prompt = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_EN
     for match in matches:
         if not match.panel_path:
             continue
@@ -267,7 +400,20 @@ def apply_gemma_to_matches(
             match.metadata["gemma_error"] = str(exc)
             continue
 
-        gemma_conf = float(out.get("confidence", 0.0))
+        # Audit 2026-08-19 Phase 4C (Bug M-11): field-name fallback for
+        # confidence / species. M3 emits ``confidence`` today but
+        # earlier prompts shipped ``conf_score`` / ``c_score``; the
+        # verbatim/raw-name field was renamed ``verbatim_name`` (2026-
+        # 08-19 schema) but older payloads carried ``raw_name`` /
+        # ``name`` / ``taxon``. Without the fallback a successful M3
+        # call that emitted ``conf_score`` would have been silently
+        # mapped to ``gemma_conf = 0.0`` and the row marked fallback.
+        conf_raw = _pick_field(out, _CONFIDENCE_FIELD_FALLBACK)
+        try:
+            gemma_conf = float(conf_raw) if conf_raw is not None else 0.0
+        except (TypeError, ValueError):
+            gemma_conf = 0.0
+        species_raw = _pick_field(out, _NAME_FIELD_FALLBACK)
         match.metadata["gemma_confidence"] = gemma_conf
         # Always provide a reasoning string. Empty reasoning leaves the
         # frontend's "why was this overridden?" tooltip blank, which
@@ -305,7 +451,10 @@ def apply_gemma_to_matches(
 
         if gemma_conf >= conf_threshold and not out.get("fallback_used"):
             match.panel_id = out.get("label") or match.panel_id
-            match.species = out.get("species") or match.species
+            # Prefer the resolved species (confidence-aware fallback);
+            # only fall back to ``label`` if the new code path somehow
+            # produced nothing.
+            match.species = species_raw or out.get("species") or match.species
             match.label_text = out.get("label") or match.label_text
             match.confidence = max(match.confidence, gemma_conf)
             match.metadata["gemma_used"] = True
@@ -335,9 +484,16 @@ def batch_gemma_postprocess_rows(
 
     Returns a new list of dicts; the input *rows* are not modified.
     """
-    prompt = (
-        GEMMA_SYSTEM_PROMPT_ZH if prompt_lang.lower().startswith("zh") else GEMMA_SYSTEM_PROMPT_EN
-    )
+    # Audit 2026-08-19 Phase 4C (Bug M-10): prefer M3 ``match_panel``
+    # prompt so the batch fallback uses the same JSON contract M3 was
+    # emitting.
+    is_zh = prompt_lang.lower().startswith("zh")
+    if is_zh:
+        m3_prompt = _get_system_prompt("match_panel")
+        prompt: str = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_ZH
+    else:
+        m3_prompt = _get_system_prompt("match_panel_visual_only")
+        prompt = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_EN
     out_rows: list[dict[str, Any]] = []
     for row in tqdm(rows, desc="Gemma postprocess"):
         new_row = dict(row)
@@ -365,7 +521,14 @@ def batch_gemma_postprocess_rows(
             out_rows.append(new_row)
             continue
 
-        new_row["gemma_confidence"] = float(result.get("confidence", 0.0))
+        # Audit 2026-08-19 Phase 4C (Bug M-11): field-name fallback for
+        # confidence (same rationale as ``apply_gemma_to_matches``).
+        conf_raw = _pick_field(result, _CONFIDENCE_FIELD_FALLBACK)
+        try:
+            new_row["gemma_confidence"] = float(conf_raw) if conf_raw is not None else 0.0
+        except (TypeError, ValueError):
+            new_row["gemma_confidence"] = 0.0
+        species_raw = _pick_field(result, _NAME_FIELD_FALLBACK)
         new_row["gemma_reasoning"] = result.get("reasoning", "")
         # Propagate error info from MiniMax / Ollama / Transformers backends
         # so downstream tools (e.g. FallbackHandler) can see the real reason.
@@ -388,7 +551,10 @@ def batch_gemma_postprocess_rows(
             new_row["MiniMax_usage"] = dict(result["usage"])
         if new_row["gemma_confidence"] >= conf_threshold:
             new_row["panel_id"] = result.get("label") or new_row.get("panel_id")
-            new_row["species"] = result.get("species") or new_row.get("species")
+            # Audit 2026-08-19 Phase 4C (Bug M-11): prefer the
+            # fallback-aware species resolution (verbatim_name /
+            # raw_name / name / taxon) before the bare ``species`` key.
+            new_row["species"] = species_raw or result.get("species") or new_row.get("species")
             new_row["label_text"] = result.get("label") or new_row.get("label_text")
             new_row["gemma_used"] = True
         else:
