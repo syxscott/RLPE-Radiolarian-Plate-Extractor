@@ -126,7 +126,9 @@ class TestCenozoicStages:
             "Gelasian",
             "Calabrian",
             "Chibanian",
-            "Late Pleistocene",
+            # Phase 3B 2026-08-19: ICS 2024-09 renamed the final
+            # Pleistocene stage to "Tarantian".
+            "Tarantian",
         ]
         for name in new_stages:
             row = self._find_stage(name)

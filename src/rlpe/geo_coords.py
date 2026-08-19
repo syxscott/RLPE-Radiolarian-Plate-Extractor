@@ -57,13 +57,21 @@ class Coordinate:
 # distinct false positives:
 #   * "-35.7, -110.3" was parsed as +35.7, -110.3 (south → north flip)
 #   * "Plate 1, figs 3, 5 are shown" was parsed as (3.0, 5.0)
+# Phase 3D (audit 2026-08-19 Bug M5): wrap the whole match in an
+# optional ``（?）?`` / ``\(?\)?`` pair so the module's
+# documented "bracket tuple" form ``"(35.7 N, 110.3 E)"`` (and
+# the CJK full-width variant ``"（35.7N, 110.3E）"``) actually
+# parses. The bracket chars are excluded from the named groups
+# so the float-conversion path downstream is unchanged.
 _DECIMAL_RE = re.compile(
     r"""
     (?=.*(?:\.\d|\b[NSEW]\b))
     (?<!\w)
+    [\(（]?\s*
     (?P<lat>-?\d{1,3}(?:\.\d{1,10})?)\s*°?\s*(?P<lat_h>[NSns])?
     \s*[,;\s]\s*
     (?P<lon>-?\d{1,3}(?:\.\d{1,10})?)\s*°?\s*(?P<lon_h>[EWew])?
+    \s*[)）]?
     """,
     re.VERBOSE,
 )
@@ -78,12 +86,18 @@ _DECIMAL_RE = re.compile(
 # preceding word (e.g. "fig35°" should not parse). The seconds group
 # is now optional (paired quote-and-digits), so abbreviated DMS forms
 # like ``35°42'S, 110°18'W`` (no seconds) also parse.
+# Phase 3D (audit 2026-08-19 Bug M5): also wrap the DMS form in
+# optional ASCII / CJK brackets so a full-width parenthesised
+# tuple like ``"（35°42'12"N, 110°18'00"E）"`` parses. Same
+# downstream code path, just relaxed boundary chars.
 _DMS_RE = re.compile(
     r"""
     (?<!\w)
+    [\(（]?\s*
     (?P<lat_d>-?\d{1,3})[°]\s*(?P<lat_m>\d{1,2})['′]\s*(?:(?P<lat_s>\d{1,2}(?:\.\d+)?)["″])?\s*(?P<lat_h>[NSns])?
     \s*[,;\s]\s*
     (?P<lon_d>-?\d{1,3})[°]\s*(?P<lon_m>\d{1,2})['′]\s*(?:(?P<lon_s>\d{1,2}(?:\.\d+)?)["″])?\s*(?P<lon_h>[EWew])?
+    \s*[)）]?
     """,
     re.VERBOSE,
 )

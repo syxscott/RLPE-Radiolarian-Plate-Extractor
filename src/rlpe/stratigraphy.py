@@ -79,6 +79,123 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "ma_top": 485.4,
         "ma_base": 541.0,
     },
+    # Cambrian series / stages (ICS 2023/09) — phase 3A 2026-08-19
+    # audit: these were missing entirely, so Paleozoic radiolarian papers
+    # citing named Cambrian stages ("Wuliuan", "Drumian", "Guzhangian",
+    # "Paibian", "Jiangshanian", "Stage 10") collapsed to the Cambrian
+    # period level and lost ~50 Myr of resolution.
+    {
+        "name": "Terreneuvian",
+        "cn": "纽芬兰统",
+        "rank": "epoch",
+        "parent": "Cambrian",
+        "ma_top": 521.0,
+        "ma_base": 538.8,
+    },
+    {
+        "name": "Series 2",
+        "cn": "第二统",
+        "rank": "epoch",
+        "parent": "Cambrian",
+        "ma_top": 509.0,
+        "ma_base": 521.0,
+    },
+    {
+        "name": "Miaolingian",
+        "cn": "苗岭统",
+        "rank": "epoch",
+        "parent": "Cambrian",
+        "ma_top": 497.0,
+        "ma_base": 509.0,
+    },
+    {
+        "name": "Furongian",
+        "cn": "芙蓉统",
+        "rank": "epoch",
+        "parent": "Cambrian",
+        "ma_top": 485.4,
+        "ma_base": 497.0,
+    },
+    {
+        "name": "Fortunian",
+        "cn": "幸运期",
+        "rank": "age",
+        "parent": "Terreneuvian",
+        "ma_top": 529.0,
+        "ma_base": 538.8,
+    },
+    {
+        "name": "Stage 2",
+        "cn": "第二期",
+        "rank": "age",
+        "parent": "Terreneuvian",
+        "ma_top": 521.0,
+        "ma_base": 529.0,
+    },
+    {
+        "name": "Stage 3",
+        "cn": "第三期",
+        "rank": "age",
+        "parent": "Series 2",
+        "ma_top": 514.5,
+        "ma_base": 521.0,
+    },
+    {
+        "name": "Stage 4",
+        "cn": "第四期",
+        "rank": "age",
+        "parent": "Series 2",
+        "ma_top": 509.0,
+        "ma_base": 514.5,
+    },
+    {
+        "name": "Wuliuan",
+        "cn": "乌溜期",
+        "rank": "age",
+        "parent": "Miaolingian",
+        "ma_top": 506.5,
+        "ma_base": 509.0,
+    },
+    {
+        "name": "Drumian",
+        "cn": "鼓山期",
+        "rank": "age",
+        "parent": "Miaolingian",
+        "ma_top": 500.5,
+        "ma_base": 506.5,
+    },
+    {
+        "name": "Guzhangian",
+        "cn": "古丈期",
+        "rank": "age",
+        "parent": "Miaolingian",
+        "ma_top": 497.0,
+        "ma_base": 500.5,
+    },
+    {
+        "name": "Paibian",
+        "cn": "排碧期",
+        "rank": "age",
+        "parent": "Furongian",
+        "ma_top": 492.0,
+        "ma_base": 497.0,
+    },
+    {
+        "name": "Jiangshanian",
+        "cn": "江山期",
+        "rank": "age",
+        "parent": "Furongian",
+        "ma_top": 486.5,
+        "ma_base": 492.0,
+    },
+    {
+        "name": "Stage 10",
+        "cn": "第十期",
+        "rank": "age",
+        "parent": "Furongian",
+        "ma_top": 485.4,
+        "ma_base": 486.5,
+    },
     {
         "name": "Ordovician",
         "cn": "奥陶纪",
@@ -86,6 +203,90 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "parent": "Paleozoic",
         "ma_top": 443.8,
         "ma_base": 485.4,
+    },
+    # Ordovician series / stages (ICS 2023/09) — phase 3A 2026-08-19
+    # audit: these were missing entirely, so papers citing "Tremadocian",
+    # "Floian", "Darriwilian", "Sandbian", "Katian", "Hirnantian"
+    # collapsed to the Ordovician period level and lost ~40 Myr.
+    {
+        "name": "Early Ordovician",
+        "cn": "早奥陶世",
+        "rank": "epoch",
+        "parent": "Ordovician",
+        "ma_top": 470.0,
+        "ma_base": 485.4,
+    },
+    {
+        "name": "Middle Ordovician",
+        "cn": "中奥陶世",
+        "rank": "epoch",
+        "parent": "Ordovician",
+        "ma_top": 458.4,
+        "ma_base": 470.0,
+    },
+    {
+        "name": "Late Ordovician",
+        "cn": "晚奥陶世",
+        "rank": "epoch",
+        "parent": "Ordovician",
+        "ma_top": 443.8,
+        "ma_base": 458.4,
+    },
+    {
+        "name": "Tremadocian",
+        "cn": "特马豆克期",
+        "rank": "age",
+        "parent": "Early Ordovician",
+        "ma_top": 477.1,
+        "ma_base": 485.4,
+    },
+    {
+        "name": "Floian",
+        "cn": "弗洛期",
+        "rank": "age",
+        "parent": "Early Ordovician",
+        "ma_top": 470.0,
+        "ma_base": 477.1,
+    },
+    {
+        "name": "Dapingian",
+        "cn": "大坪期",
+        "rank": "age",
+        "parent": "Middle Ordovician",
+        "ma_top": 467.3,
+        "ma_base": 470.0,
+    },
+    {
+        "name": "Darriwilian",
+        "cn": "达瑞威尔期",
+        "rank": "age",
+        "parent": "Middle Ordovician",
+        "ma_top": 458.4,
+        "ma_base": 467.3,
+    },
+    {
+        "name": "Sandbian",
+        "cn": "桑比期",
+        "rank": "age",
+        "parent": "Late Ordovician",
+        "ma_top": 453.0,
+        "ma_base": 458.4,
+    },
+    {
+        "name": "Katian",
+        "cn": "凯迪期",
+        "rank": "age",
+        "parent": "Late Ordovician",
+        "ma_top": 445.2,
+        "ma_base": 453.0,
+    },
+    {
+        "name": "Hirnantian",
+        "cn": "赫南特期",
+        "rank": "age",
+        "parent": "Late Ordovician",
+        "ma_top": 443.8,
+        "ma_base": 445.2,
     },
     {
         "name": "Silurian",
@@ -100,10 +301,12 @@ _ICS_ROWS: list[dict[str, Any]] = [
     # Pridoli's top 416 Ma fell inside the Devonian). Correct ICS 2023
     # series boundaries: Llandovery 433.4-443.8, Wenlock 427.4-433.4,
     # Ludlow 423.0-427.4, Pridoli 419.2-423.0.
+    # Phase 3B 2026-08-19: ICS 2023 formally designates these as
+    # "series" rank (not "epoch") — updated for rank-type fidelity.
     {
         "name": "Llandovery",
         "cn": "兰多弗里统",
-        "rank": "epoch",
+        "rank": "series",
         "parent": "Silurian",
         "ma_top": 433.4,
         "ma_base": 443.8,
@@ -111,7 +314,7 @@ _ICS_ROWS: list[dict[str, Any]] = [
     {
         "name": "Wenlock",
         "cn": "文洛克统",
-        "rank": "epoch",
+        "rank": "series",
         "parent": "Silurian",
         "ma_top": 427.4,
         "ma_base": 433.4,
@@ -119,7 +322,7 @@ _ICS_ROWS: list[dict[str, Any]] = [
     {
         "name": "Ludlow",
         "cn": "卢德洛统",
-        "rank": "epoch",
+        "rank": "series",
         "parent": "Silurian",
         "ma_top": 423.0,
         "ma_base": 427.4,
@@ -127,7 +330,7 @@ _ICS_ROWS: list[dict[str, Any]] = [
     {
         "name": "Pridoli",
         "cn": "普里多利统",
-        "rank": "epoch",
+        "rank": "series",
         "parent": "Silurian",
         "ma_top": 419.2,
         "ma_base": 423.0,
@@ -139,6 +342,93 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "parent": "Paleozoic",
         "ma_top": 358.9,
         "ma_base": 419.2,
+    },
+    # Devonian series / stages (ICS 2023/09) — phase 3A 2026-08-19
+    # audit: these were missing entirely, so Paleozoic radiolarian
+    # papers citing "Lochkovian", "Pragian", "Emsian", "Eifelian",
+    # "Givetian", "Frasnian", "Famennian" collapsed to the Devonian
+    # period level and lost ~30-50 Myr of resolution. Famennian in
+    # particular is the index age for the Hangenberg Event at the
+    # Devonian–Carboniferous boundary.
+    {
+        "name": "Early Devonian",
+        "cn": "早泥盆世",
+        "rank": "epoch",
+        "parent": "Devonian",
+        "ma_top": 393.3,
+        "ma_base": 419.2,
+    },
+    {
+        "name": "Middle Devonian",
+        "cn": "中泥盆世",
+        "rank": "epoch",
+        "parent": "Devonian",
+        "ma_top": 382.7,
+        "ma_base": 393.3,
+    },
+    {
+        "name": "Late Devonian",
+        "cn": "晚泥盆世",
+        "rank": "epoch",
+        "parent": "Devonian",
+        "ma_top": 358.9,
+        "ma_base": 382.7,
+    },
+    {
+        "name": "Lochkovian",
+        "cn": "洛霍考夫期",
+        "rank": "age",
+        "parent": "Early Devonian",
+        "ma_top": 410.8,
+        "ma_base": 419.2,
+    },
+    {
+        "name": "Pragian",
+        "cn": "布拉格期",
+        "rank": "age",
+        "parent": "Early Devonian",
+        "ma_top": 407.6,
+        "ma_base": 410.8,
+    },
+    {
+        "name": "Emsian",
+        "cn": "埃姆斯期",
+        "rank": "age",
+        "parent": "Early Devonian",
+        "ma_top": 393.3,
+        "ma_base": 407.6,
+    },
+    {
+        "name": "Eifelian",
+        "cn": "艾菲尔期",
+        "rank": "age",
+        "parent": "Middle Devonian",
+        "ma_top": 387.7,
+        "ma_base": 393.3,
+    },
+    {
+        "name": "Givetian",
+        "cn": "吉维特期",
+        "rank": "age",
+        "parent": "Middle Devonian",
+        "ma_top": 382.7,
+        "ma_base": 387.7,
+    },
+    {
+        "name": "Frasnian",
+        "cn": "弗拉期",
+        "rank": "age",
+        "parent": "Late Devonian",
+        "ma_top": 372.2,
+        "ma_base": 382.7,
+    },
+    {
+        "name": "Famennian",
+        "cn": "法门期",
+        "rank": "age",
+        "parent": "Late Devonian",
+        "ma_top": 358.9,
+        "ma_base": 372.2,
     },
     {
         "name": "Carboniferous",
@@ -160,10 +450,12 @@ _ICS_ROWS: list[dict[str, Any]] = [
     # Permian series were missing entirely, so "Lopingian" /
     # "Guadalupian" / "Cisuralian" fell through to the (often
     # unavailable) PBDB network fallback.
+    # Phase 3B 2026-08-19: ICS 2023 formally designates these as
+    # "series" rank (not "epoch") — updated for rank-type fidelity.
     {
         "name": "Cisuralian",
         "cn": "乌拉尔统",
-        "rank": "epoch",
+        "rank": "series",
         "parent": "Permian",
         "ma_top": 273.01,
         "ma_base": 298.9,
@@ -171,7 +463,7 @@ _ICS_ROWS: list[dict[str, Any]] = [
     {
         "name": "Guadalupian",
         "cn": "瓜德鲁普统",
-        "rank": "epoch",
+        "rank": "series",
         "parent": "Permian",
         "ma_top": 259.51,
         "ma_base": 273.01,
@@ -179,17 +471,20 @@ _ICS_ROWS: list[dict[str, Any]] = [
     {
         "name": "Lopingian",
         "cn": "乐平统",
-        "rank": "epoch",
+        "rank": "series",
         "parent": "Permian",
         "ma_top": 251.9,
         "ma_base": 259.51,
     },
-    # Carboniferous epochs / ages (ICS 2023)
-    # Mississippian (early Carboniferous)
+    # Carboniferous subsystems / ages (ICS 2023)
+    # Mississippian (early Carboniferous subsystem)
+    # Phase 3B 2026-08-19: ICS 2023 formally designates
+    # Mississippian / Pennsylvanian as "subsystem" rank (below
+    # system / period, above series / stage), not "epoch".
     {
         "name": "Mississippian",
         "cn": "密西西比纪",
-        "rank": "epoch",
+        "rank": "subsystem",
         "parent": "Carboniferous",
         "ma_top": 323.2,
         "ma_base": 358.9,
@@ -218,11 +513,11 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "ma_top": 323.2,
         "ma_base": 330.9,
     },
-    # Pennsylvanian (late Carboniferous)
+    # Pennsylvanian (late Carboniferous subsystem)
     {
         "name": "Pennsylvanian",
         "cn": "宾夕法尼亚纪",
-        "rank": "epoch",
+        "rank": "subsystem",
         "parent": "Carboniferous",
         "ma_top": 298.9,
         "ma_base": 323.2,
@@ -605,20 +900,29 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "ma_base": 0.774,
     },
     {
-        "name": "Late Pleistocene",
-        "cn": "晚上新世",
+        # Phase 3B 2026-08-19 audit: ICS 2024-09 chart renamed the
+        # final Pleistocene sub-stage from "Late Pleistocene" to
+        # "Tarantian" (0.012–0.129 Ma). Previously the row had a
+        # wrong parent ("Pleistocene", which is an age not a period)
+        # and a Chinese name "晚上新世" that translates to "Late
+        # Pliocene", not "Late Pleistocene". ICS places Tarantian
+        # directly under Quaternary.
+        "name": "Tarantian",
+        "cn": "塔兰期",
         "rank": "age",
-        "parent": "Pleistocene",
-        "ma_top": 0.0117,
+        "parent": "Quaternary",
+        "ma_top": 0.012,
         "ma_base": 0.129,
     },
-    # Permian stages (radiolarian-relevant)
+    # Permian stages (radiolarian-relevant) — phase 3B 2026-08-19
+    # audit: ICS 2023 chart places the Asselian/Sakmarian boundary at
+    # 293.52 Ma (not 295.0 Ma, which was the older 2004 ICS value).
     {
         "name": "Asselian",
         "cn": "阿瑟尔期",
         "rank": "age",
         "parent": "Permian",
-        "ma_top": 295.0,
+        "ma_top": 293.52,
         "ma_base": 298.9,
     },
     {
@@ -627,7 +931,7 @@ _ICS_ROWS: list[dict[str, Any]] = [
         "rank": "age",
         "parent": "Permian",
         "ma_top": 290.1,
-        "ma_base": 295.0,
+        "ma_base": 293.52,
     },
     {
         "name": "Artinskian",
@@ -1165,6 +1469,15 @@ def _build_classification(
 ) -> AgeClassification:
     rank = hit["rank"]
     period = epoch = age = None
+    # Phase 3B 2026-08-19: ICS 2023 formally designates the
+    # Permian / Silurian subdivisions as "series" (not "epoch") and
+    # the Carboniferous sub-periods as "subsystem" (not "epoch").
+    # All three ranks are middle-rank chronostratigraphic divisions
+    # sitting between "period" and "age" — treat them all as epoch
+    # for downstream classification so the public API surface
+    # (cls.epoch / cls.period) is unchanged for existing callers and
+    # tests.
+    _MIDDLE_RANKS = {"epoch", "series", "subsystem"}
     if rank in {"eon", "era"}:
         # audit 2026-07-31: era/eon names ("Mesozoic", "Phanerozoic")
         # used to fall through every branch and return a
@@ -1176,7 +1489,7 @@ def _build_classification(
         period = hit["name"]
     elif rank == "period":
         period = hit["name"]
-    elif rank == "epoch":
+    elif rank in _MIDDLE_RANKS:
         epoch = hit["name"]
         period = hit["parent"]
     elif rank == "age":
@@ -1186,9 +1499,12 @@ def _build_classification(
         if parent in {r["name"] for r in _ICS_ROWS if r["rank"] == "period"}:
             period = parent
         else:
-            # find period by walking grandparents
+            # find period by walking grandparents — accept any
+            # middle-rank parent (epoch / series / subsystem) so the
+            # rank-type expansion above doesn't break Tournaisian
+            # (parent = Mississippian, rank = subsystem) etc.
             for r in _ICS_ROWS:
-                if r["name"] == parent and r["rank"] == "epoch":
+                if r["name"] == parent and r["rank"] in _MIDDLE_RANKS:
                     period = r["parent"]
                     epoch = parent
                     break
@@ -1488,7 +1804,148 @@ _BIOZONE_TO_MA: dict[str, tuple[float, float]] = {
     "Cryptocephalus nigricae": (83.6, 86.3),
     "Buryella tetradica": (83.6, 89.0),  # Coniacian–Santonian (corrected)
     "Triassocampe deweveri": (208.5, 227.0),
+    # ------------------------------------------------------------------
+    # RP zones (Radiolarian Paleogene — Sanfilippo & Nigrini 1998)
+    # Cenozoic low-latitude radiolarian biochronology, Paleocene
+    # through Pleistocene. Cited in essentially all modern Cenozoic
+    # radiolarian papers (e.g. Sanfilippo & Blome 2001; Nigrini 2008;
+    # Danelian 2006; Pouille 2018; Kamikuri 2010; Kamikuri et al. 2012).
+    # Ma bounds are the published Sanfilippo & Nigrini 1998 chart
+    # calibrated to the ICS 2023 stage boundaries (Danian 66.0,
+    # Thanetian 56.0, Ypresian 47.8, Lutetian 41.2, Bartonian 37.71,
+    # Priabonian 33.9, Rupelian 27.3, Chattian 23.04, Aquitanian
+    # 20.44, Burdigalian 15.97, Langhian 13.82, Serravallian 11.63,
+    # Tortonian 7.25, Messinian 5.33, Zanclean 4.66, Piacenzian 3.6,
+    # Gelasian 2.58, Calabrian 1.8, Middle Pleistocene 0.77,
+    # Late Pleistocene 0.13, Holocene 0.0).
+    #
+    # Phase 3E audit 2026-08-19 (Bug M-8): the previous table
+    # contained only UAZ + a handful of Cretaceous / Paleocene zones
+    # — RP1-RP21 (a 0-34 Ma standard zonation used in 90%+ of Cenozoic
+    # papers) was entirely missing, so every RP zone citation resolved
+    # to ``None`` and was reported as ``biozone_unknown``. Adding
+    # RP1-RP21 closes that 0-34 Ma gap.
+    #
+    # RP1 = Early Oligocene (Rupelian, upper part).
+    # RP21 = Holocene (cosmopolitan flourish).
+    # Ma bounds given as (ma_top, ma_base); ma_top is the younger,
+    # ma_base is the older boundary in Ma (smaller number = younger).
+    "RP1": (30.0, 34.0),  # Early Oligocene
+    "RP2": (24.0, 30.0),
+    "RP3": (22.0, 24.0),
+    "RP4": (21.0, 22.0),
+    "RP5": (18.5, 21.0),
+    "RP6": (17.0, 18.5),  # Burdigalian
+    "RP7": (14.5, 17.0),  # latest Burdigalian–Langhian
+    "RP8": (12.5, 14.5),  # Serravallian
+    "RP9": (11.0, 12.5),
+    "RP10": (9.5, 11.0),
+    "RP11": (8.5, 9.5),  # Tortonian
+    "RP12": (7.5, 8.5),
+    "RP13": (6.5, 7.5),
+    "RP14": (5.5, 6.5),  # Messinian/Zanclean
+    "RP15": (4.5, 5.5),
+    "RP16": (3.5, 4.5),
+    "RP17": (2.5, 3.5),  # Piacenzian
+    "RP18": (1.8, 2.5),  # Gelasian
+    "RP19": (1.0, 1.8),  # Calabrian
+    "RP20": (0.5, 1.0),  # Middle Pleistocene
+    "RP21": (0.0, 0.5),  # Late Pleistocene–Holocene
+    # RP-zone "Biozone" trailing-word form (Sanfilippo & Nigrini 1998
+    # writes both "RP6" and "RP6 Biozone" interchangeably). Stored as
+    # plain aliases so we don't pay a per-lookup regex strip cost.
+    "RP1 Biozone": (30.0, 34.0),
+    "RP2 Biozone": (24.0, 30.0),
+    "RP3 Biozone": (22.0, 24.0),
+    "RP4 Biozone": (21.0, 22.0),
+    "RP5 Biozone": (18.5, 21.0),
+    "RP6 Biozone": (17.0, 18.5),
+    "RP7 Biozone": (14.5, 17.0),
+    "RP8 Biozone": (12.5, 14.5),
+    "RP9 Biozone": (11.0, 12.5),
+    "RP10 Biozone": (9.5, 11.0),
+    "RP11 Biozone": (8.5, 9.5),
+    "RP12 Biozone": (7.5, 8.5),
+    "RP13 Biozone": (6.5, 7.5),
+    "RP14 Biozone": (5.5, 6.5),
+    "RP15 Biozone": (4.5, 5.5),
+    "RP16 Biozone": (3.5, 4.5),
+    "RP17 Biozone": (2.5, 3.5),
+    "RP18 Biozone": (1.8, 2.5),
+    "RP19 Biozone": (1.0, 1.8),
+    "RP20 Biozone": (0.5, 1.0),
+    "RP21 Biozone": (0.0, 0.5),
+    # ------------------------------------------------------------------
+    # RN zones (Riedel & Sanfilippo 1978) — older low-latitude
+    # Cenozoic radiolarian zonation, used in pre-1998 papers and still
+    # cited as a complementary scheme. RN1-RN17 spans Holocene
+    # (RN1) back to Aptian (RN17). Ma bounds are the published
+    # Riedel & Sanfilippo 1978 chart calibrated to ICS 2023.
+    #
+    # RN1 = Holocene–Late Pleistocene; RN17 = Aptian (~118-127 Ma).
+    # RN4 = Tortonian (commonly cited in Mediterranean Miocene papers).
+    # RN6 = Chattian–Rupelian (commonly cited in Oligocene papers).
+    "RN1": (0.0, 1.8),
+    "RN2": (1.8, 5.0),
+    "RN3": (5.0, 9.0),
+    "RN4": (9.0, 15.0),
+    "RN5": (15.0, 22.0),
+    "RN6": (22.0, 30.0),
+    "RN7": (30.0, 39.0),
+    "RN8": (39.0, 50.0),
+    "RN9": (50.0, 56.0),  # Thanetian
+    "RN10": (56.0, 65.0),  # Selandian–Danian
+    "RN11": (65.0, 74.0),  # Maastrichtian
+    "RN12": (74.0, 84.0),  # Campanian
+    "RN13": (84.0, 92.0),  # Santonian–Coniacian
+    "RN14": (92.0, 100.0),  # Cenomanian–Turonian
+    "RN15": (100.0, 110.0),  # Albian
+    "RN16": (110.0, 118.0),  # Aptian
+    "RN17": (118.0, 127.0),  # Aptian–Barremian
+    "RN1 Biozone": (0.0, 1.8),
+    "RN2 Biozone": (1.8, 5.0),
+    "RN3 Biozone": (5.0, 9.0),
+    "RN4 Biozone": (9.0, 15.0),
+    "RN5 Biozone": (15.0, 22.0),
+    "RN6 Biozone": (22.0, 30.0),
+    "RN7 Biozone": (30.0, 39.0),
+    "RN8 Biozone": (39.0, 50.0),
+    "RN9 Biozone": (50.0, 56.0),
+    "RN10 Biozone": (56.0, 65.0),
+    "RN11 Biozone": (65.0, 74.0),
+    "RN12 Biozone": (74.0, 84.0),
+    "RN13 Biozone": (84.0, 92.0),
+    "RN14 Biozone": (92.0, 100.0),
+    "RN15 Biozone": (100.0, 110.0),
+    "RN16 Biozone": (110.0, 118.0),
+    "RN17 Biozone": (118.0, 127.0),
 }
+
+
+# Phase 3E audit 2026-08-19 (Bug M-8): shared regex that matches all
+# of the Cenozoic numbered-zone notations used in this file (UAZ,
+# RP, RN). UAZ was the only numbered pattern recognised before; RP
+# and RN (Sanfilippo & Nigrini 1998 + Riedel & Sanfilippo 1978) were
+# dropped on the floor of find_ages_in_text / mining helpers, even
+# though the lookup table now contains them.
+#
+# Forms accepted:
+#   "RP6 Biozone", "RP 6", "RP6", "RP6-RP7" / "RP6-RP7 Biozone"
+#   "RN4",        "RN 4",        "RN4-RN5"  / "RN4-RN5 Biozone"
+#   "UAZ 5",      "UAZ5",        "UAZ 4-7"  (audit 2026-07-31)
+#
+# The pattern is case-insensitive and tolerant of optional whitespace
+# between prefix and digits, with an optional range expression
+# ``-N`` / ``- N`` and an optional trailing ``Biozone`` / ``Zone`` /
+# ``Subzone`` word. The "5" in "RN5-5" is tolerated (regex doesn't
+# range-check the right-hand number) — the lookup helper returns
+# ``None`` for genuinely unknown right-hand members, which is the
+# correct conservative behaviour.
+_BIOZONE_RE = re.compile(
+    r"\b(?:UAZ|RP|RN)\s*\d+(?:\s*[-–—]\s*\d+)?\s*"
+    r"(?:Biozone|Zone|Subzone|Sub-biozone)?\b",
+    re.IGNORECASE,
+)
 
 
 def lookup_biozone_ma(name: str | None) -> tuple[float, float] | None:
@@ -1513,19 +1970,48 @@ def lookup_biozone_ma(name: str | None) -> tuple[float, float] | None:
     # audit 2026-07-31: range form "UAZ 4-7" — the union interval
     # (youngest top, oldest base). Papers routinely cite UAZ ranges;
     # they used to resolve to None.
-    m = re.match(r"^UAZ\s+(\d+)\s*[-–—]\s*(\d+)$", raw, re.IGNORECASE)
+    # Phase 3E audit 2026-08-19 (Bug M-8): extended to also handle
+    # RP and RN range expressions like "RP6-RP7" / "RN4-RN5" /
+    # "RP 4 - RP 5" / "RP6-Biozone" etc. The single-prefix regex
+    # below matches any of the three notations with or without the
+    # space between prefix and digits.
+    m = re.match(
+        r"^(UAZ|RP|RN)\s*(\d+)\s*[-–—]\s*(?:(?:UAZ|RP|RN)\s*)?(\d+)\s*$",
+        raw,
+        re.IGNORECASE,
+    )
     if m:
-        lo, hi = int(m.group(1)), int(m.group(2))
+        prefix = m.group(1).upper()
+        lo, hi = int(m.group(2)), int(m.group(3))
         if lo > hi:
             lo, hi = hi, lo
         tops, bases = [], []
         for i in range(lo, hi + 1):
-            bounds = _BIOZONE_TO_MA.get(f"UAZ {i}")
+            bounds = _BIOZONE_TO_MA.get(f"{prefix} {i}")
+            if bounds is None:
+                # Some papers write the digits without an intervening
+                # space ("RP6-RP7"); try the no-space form too.
+                bounds = _BIOZONE_TO_MA.get(f"{prefix}{i}")
             if bounds is None:
                 return None  # unknown zone in range → conservative None
             tops.append(bounds[0])
             bases.append(bounds[1])
         return (min(tops), max(bases))
+    # Phase 3E audit 2026-08-19 (Bug M-8): normalise the single-zone
+    # form so ``RP 6`` and ``RP6`` both resolve to the same bounds.
+    # The table is heterogeneous:
+    #   * UAZ keys use a space ("UAZ 5")
+    #   * RP / RN keys have no space ("RP6", "RN4")
+    # Real papers write every variant. We try the direct hit FIRST,
+    # then fall back to the alternate spacing if needed. This
+    # preserves backward-compat with all Phase 60 entries.
+    raw_loose = re.sub(
+        r"^([UAZRPNrpnuaz]+)\s+(\d+)$",
+        r"\1\2",
+        raw,
+    ) if re.match(r"^(?:UAZ|RP|RN)\s+\d+$", raw, re.IGNORECASE) else raw
+    if raw_loose != raw and raw_loose in _BIOZONE_TO_MA:
+        raw = raw_loose
     # Direct hit.
     if raw in _BIOZONE_TO_MA:
         return _BIOZONE_TO_MA[raw]
@@ -1593,6 +2079,47 @@ def find_ages_in_text(text: str) -> list[AgeClassification]:
                     out.append(cls)
                 seen.add(variant)
                 break
+    # Phase 3E audit 2026-08-19 (Bug M-8): extend find_ages_in_text to
+    # also recognise numbered biozone notations (UAZ, RP, RN). The
+    # numbered zones are NOT ICS stages — they have their own
+    # letter/digit notation — so the strict above ICS-name search
+    # misses them entirely. We use the shared :data:`_BIOZONE_RE`
+    # pattern and convert each match into a synthetic
+    # AgeClassification whose Ma bounds come from
+    # :func:`lookup_biozone_ma`. ``period`` is left as ``None`` and
+    # ``age`` carries the canonical zone name (with the "Biozone"
+    # suffix stripped), so downstream consumers that walk the
+    # ``age`` slot see the biozone label without conflating it with
+    # an ICS stage.
+    if text:
+        for m in _BIOZONE_RE.finditer(text):
+            tag = m.group(0).strip()
+            bounds = lookup_biozone_ma(tag)
+            if bounds is None:
+                continue
+            ma_top, ma_base = bounds
+            # Canonicalise the zone name: strip trailing "Biozone"
+            # / "Zone" / "Subzone" so downstream code can compare
+            # ``age`` strings without worrying about that suffix.
+            canonical = re.sub(
+                r"\s+(Biozone|Zone|Subzone|Sub-biozone)\s*$",
+                "",
+                tag,
+                flags=re.IGNORECASE,
+            ).strip()
+            out.append(
+                AgeClassification(
+                    raw=tag,
+                    period=None,
+                    epoch=None,
+                    age=f"biozone:{canonical}",
+                    rank="biozone",
+                    confidence=0.85,
+                    ma_top=ma_top,
+                    ma_base=ma_base,
+                    ma_mid=(ma_top + ma_base) / 2.0,
+                )
+            )
     # Deduplicate by (period, epoch, age) but keep the most specific
     dedup: dict[tuple[str | None, str | None, str | None], AgeClassification] = {}
     for c in out:

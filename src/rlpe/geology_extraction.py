@@ -368,6 +368,7 @@ _COUNTRIES = (
     "Canada",
     "USA",
     "United States",
+    "United Kingdom",  # Phase 3B 2026-08-19 — added for radiolarian papers from Scotland/England/Wales
     "Mexico",
     "Argentina",
     "Chile",
@@ -393,9 +394,10 @@ _COUNTRIES = (
     "Hungary",
     "Romania",
     "Bulgaria",
-    "Greece",
-    "Turkey",
+    "Slovenia",  # Phase 3B 2026-08-19 — added (Tethyan radiolarian localities)
+    "Croatia",  # Phase 3B 2026-08-19 — added (Dinaric / Adriatic papers)
     "Cyprus",
+    "Tibet",  # Phase 3B 2026-08-19 — added (common in Chinese radiolarian papers)
 )
 
 # Round 21: country centroid fallback table. When a paper mentions
@@ -432,6 +434,7 @@ _COUNTRY_CENTROIDS: dict[str, tuple[float, float]] = {
     "Canada": (60.0, -95.0),
     "USA": (40.0, -100.0),
     "United States": (40.0, -100.0),
+    "United Kingdom": (54.0, -2.0),  # Phase 3B 2026-08-19 — UK centroid
     "Mexico": (23.0, -102.0),
     "Argentina": (-34.0, -64.0),
     "Chile": (-35.0, -71.0),
@@ -457,7 +460,10 @@ _COUNTRY_CENTROIDS: dict[str, tuple[float, float]] = {
     "Hungary": (47.0, 19.5),
     "Romania": (46.0, 25.0),
     "Bulgaria": (43.0, 25.0),
+    "Slovenia": (46.15, 14.995),  # Phase 3B 2026-08-19 — Slovenia centroid
+    "Croatia": (45.1, 16.0),  # Phase 3B 2026-08-19 — Croatia centroid
     "Cyprus": (35.0, 33.0),
+    "Tibet": (29.0, 88.0),  # Phase 3B 2026-08-19 — Tibet (Xizang) centroid
 }
 # Region -> country override. Lets "Western Sicily" or "Sicilian
 # sections" map to "Italy" without listing Sicily (a region, not a
@@ -644,8 +650,8 @@ _MODERN_KEYWORDS_RE = re.compile(
 
 def _classify_coordinate_age(text: str, match_start: int, match_end: int) -> str | None:
     """Return ``"paleo"``, ``"modern"``, or ``None`` based on
-    keywords within ~400 chars BEFORE the coordinate match
-    (line-level scan of the preceding lines within the window).
+    keywords within ~400 chars BEFORE OR AFTER the coordinate
+    match (line-level scan of the lines overlapping the windows).
 
     Audit 2026-08-01 (Bug M4 / M5):
       * Window widened from 120 to 400 chars so an age label
@@ -664,15 +670,26 @@ def _classify_coordinate_age(text: str, match_start: int, match_end: int) -> str
       * Keyword matching uses pre-compiled word-boundary
         regexes so ``paleogeneously`` / ``subpaleogene``
         don't match the bare substring ``paleogene``.
+
+    Audit 2026-08-19 (Phase 3D Bug M4): the previous version
+    only looked at the 400 chars BEFORE the coord. Real captions
+    frequently put the age AFTER the coord — e.g. "at 38°N, 14°E
+    during the Late Triassic" or "Locality 35.7 N, 110.3 E
+    (Middle Jurassic)" — so the post-coord tail is now also
+    scanned with the same 400-char window + line-level split.
+    Both windows are checked; paleo from either side wins.
     """
-    ctx = text[max(0, match_start - 400) : match_start]
+    before = text[max(0, match_start - 400) : match_start]
+    after = text[match_end : min(len(text), match_end + 400)]
     # Line-level scan: search each line separately so header lines
     # like "Tertiary" or "Pleistocene" are searchable regardless of
-    # their position within the 400-char window. The window covers
-    # the 400 chars BEFORE the coordinate; if a header keyword sits
-    # inside that window it's found; if it sits BEFORE the window
-    # we'd need a separate header-pass (out of scope here).
-    for line in ctx.split("\n"):
+    # their position within the 400-char window. Phase 3D
+    # (audit 2026-08-19 Bug M4): both the BEFORE window and the
+    # AFTER window are scanned so an age label sitting AFTER the
+    # coord ("at 38°N, 14°E during the Late Triassic") is
+    # detected. Either side hitting ``paleo`` wins; otherwise
+    # ``modern``; otherwise None.
+    for line in (before + "\n" + after).split("\n"):
         if _PALEO_KEYWORDS_RE.search(line):
             return "paleo"
         if _MODERN_KEYWORDS_RE.search(line):

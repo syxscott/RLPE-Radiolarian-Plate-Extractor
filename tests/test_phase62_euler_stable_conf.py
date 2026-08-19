@@ -1,14 +1,12 @@
 """Phase 62 Plan 5 (Bug 5.16): stable plates return low confidence
 for old ages.
 
-``EULER_POLES`` for stable plates (Eurasia, North America,
-Sundaland, East Gondwana, Mokoiwi, Siberia, Iran) have only a
-single non-zero entry near age=0 and a ``(0,0,0,0)`` identity
-rotation at the modern (0 Ma) end. The previous
-``_interpolate_euler`` linearly interpolated between adjacent
-timesteps and returned the closest pole to the requested age —
-which for ages far in the past (say, 200 Ma) was effectively the
-(0,0,0,0) identity pole.
+``EULER_POLES`` for stable plates (Sundaland, Siberia) have only a
+``(0,0,0,0)`` identity rotation at both ends of their sparse
+reconstruction timeline. The previous ``_interpolate_euler``
+linearly interpolated between adjacent timesteps and returned the
+closest pole to the requested age — which for ages far in the
+past (say, 200 Ma) was effectively the (0,0,0,0) identity pole.
 
 This silently returned ``modern_lat / modern_lon`` for a
 200 Ma-old plate whose actual paleocoords should be far
@@ -19,13 +17,17 @@ plausible-looking but incorrect answer.
 The fix: mark known-stable plates with a low-confidence score
 when the requested age is far from present. Stable plates are
 defined here as those whose Euler pole table covers < 4
-reconstruction timesteps AND whose oldest timestep is <= 200 Ma
-AND whose most-recent pole has rotation_deg <= 5°.
+reconstruction timesteps AND whose oldest timestep is <= 250 Ma
+AND whose most-recent pole has rotation_deg <= 1.0°.
 
-For ages > 100 Ma on a stable plate, return the modern coords
-unchanged but stamp confidence < 0.3 so the consumer can tell
-"plate didn't move enough to reconstruct reliably" from "plate
-moved a lot and we have a high-confidence paleo position".
+Phase 3C (audit 2026-08-19) B-12 fix: "East Gondwana" and
+"Mokoiwi" were renamed to "Indo-Australian" and "New_Zealand"
+respectively, and the renamed plates now ship with real Seton
+2012 rotation data (no longer sparse identity). They are
+therefore no longer in the "stable plate" set tested here — the
+new names have non-identity rotations and SHOULD reconstruct
+normally at age=200 Ma (see ``test_audit_2026_08_19_phase3c_euler``
+for the new-plate reconstruction tests).
 """
 
 from __future__ import annotations
@@ -36,15 +38,17 @@ from rlpe.paleo_reconstruction import (
 )
 
 # Plates whose Euler pole table is short and whose rotations are
-# small — these are the "stable" plates the fix targets.
-_STABLE_PLATES = ("Sundaland", "East Gondwana", "Mokoiwi", "Siberia")
+# small — these are the "stable" plates the fix targets. Phase 3C
+# B-12 fix removed ``East Gondwana`` and ``Mokoiwi`` (renamed to
+# ``Indo-Australian`` / ``New_Zealand`` and given real data).
+_STABLE_PLATES = ("Sundaland", "Siberia")
 
 
 def test_stable_plate_low_conf_for_old_ages():
     """Stable plates must report low confidence for ages > 100 Ma."""
     for plate in _STABLE_PLATES:
-        # Modern coords in Indonesia (Sundaland) / Australia
-        # (East Gondwana) / etc. — pick something representative.
+        # Modern coords in Indonesia (Sundaland) / Siberia —
+        # pick something representative.
         paleo_lat, paleo_lon = reconstruct_paleo_position(
             modern_lat=0.0,
             modern_lon=120.0,

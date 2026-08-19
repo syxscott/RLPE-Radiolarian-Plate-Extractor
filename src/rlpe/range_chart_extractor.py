@@ -391,6 +391,18 @@ class SpeciesRange:
     section: str = ""
     range_top: str = ""  # free-text bed/level name (e.g. "Bed 9")
     range_base: str = ""
+    # Phase 3E audit 2026-08-19 (Bug M-11): the previous fields were
+    # both free-text strings like "Bed 9" — unreadable for
+    # biostratigraphy FAD/LAD analysis without a section-specific
+    # legend. The new ``range_top_ma`` / ``range_base_ma`` carry the
+    # numeric Ma values derived from a chart's Ma axis (if any);
+    # ``None`` when the chart has no Ma axis or the model could not
+    # read it. These are populated from the M3 prompt JSON
+    # ``"range_top_ma"`` / ``"range_base_ma"`` fields (see the
+    # extract_range_chart PROMPT) and never re-derived from bed
+    # numbers.
+    range_top_ma: float | None = None
+    range_base_ma: float | None = None
     biozone: str = ""
     # Phase 62 Plan 5 (Bug 5.7): per-species confidence (0..1).
     # Distinct from the chart-wide ``RangeChartResult.confidence``:
@@ -411,6 +423,24 @@ class BiozoneRecord:
     name: str = ""
     age: str = ""
     thickness_m: str = ""
+    # Phase 3E audit 2026-08-19 (Bug M-10): the previous fields were
+    # zone-name-only. Real biostratigraphy distinguishes zone TYPES:
+    #   * taxon-range zone ("N. optima Range Zone") — total range of
+    #     a single marker taxon
+    #   * concurrent-range zone ("N. optima – F. prisca Concurrent
+    #     Range Zone") — overlap of two marker taxa
+    #   * interval zone — bounded by two FAD/LAD events
+    #   * assemblage zone — defined by an assemblage of species, no
+    #     strict FAD/LAD
+    # These four types govern how the zone is plotted on the Ma axis
+    # (range zones plot at the FAD–LAD span; interval zones plot at
+    # the boundary FADs; assemblage zones plot at the assemblage
+    # span). The free-text ``name`` already encodes the type via
+    # the "Range Zone" / "Concurrent Range Zone" / "Interval Zone" /
+    # "Assemblage Zone" suffix, but downstream consumers want a
+    # structured field. ``None`` when the chart label is ambiguous
+    # or the model cannot determine the type.
+    zone_type: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -555,6 +585,11 @@ Extract every piece of geological information visible in the chart as strict JSO
       "section": "Pingdingshan" (string, must match a section.name),
       "range_top": "Bed 9 (Yinkeng Fm base)" (string, the YOUNG/upper limit),
       "range_base": "Bed 7 (top Talung Fm)" (string, the OLD/lower limit),
+      "range_top_ma": 251.9 (number, optional — if the chart has a Ma
+        axis and you can read the top boundary, give the Ma here;
+        null/omit when no Ma axis or unreadable),
+      "range_base_ma": 252.5 (number, optional — old/lower limit in Ma,
+        null/omit when no Ma axis or unreadable),
       "biozone": "N. optima Zone (latest Changhsingian)" (string, optional),
       "confidence": 0.0-1.0 reflecting your certainty in THIS ROW specifically
         (species identity + chart position). Distinct from the chart-wide
@@ -565,7 +600,10 @@ Extract every piece of geological information visible in the chart as strict JSO
     {
       "name": "Neoalbaillella optima Zone" (string),
       "age": "Latest Changhsingian (Late Permian)" (string),
-      "thickness_m": "Pingdingshan: ~3 m" (string)
+      "thickness_m": "Pingdingshan: ~3 m" (string),
+      "zone_type": "range" (string, optional — one of
+        "range" / "concurrent range" / "interval" / "assemblage";
+        pick the closest match to the chart label, or null if unclear)
     }
   ],
   "other_fossils": [
@@ -805,12 +843,36 @@ def _parse_extraction_response(
             raw_sp_conf = float(sp.get("confidence", 0.0))
         except (TypeError, ValueError):
             raw_sp_conf = 0.0
+        # Phase 3E audit 2026-08-19 (Bug M-11): numeric Ma bounds
+        # parsed from the JSON's ``range_top_ma`` / ``range_base_ma``
+        # fields. These default to ``None`` when the chart has no Ma
+        # axis, the model omitted the field, or the value is not
+        # finite. We do NOT silently derive Ma from bed numbers —
+        # "Bed 9" without a section-specific legend is unreadable,
+        # and pretending otherwise would corrupt the biostratigraphy
+        # column on the Web UI / xlsx export.
+        try:
+            raw_top_ma = sp.get("range_top_ma")
+            raw_top_ma = float(raw_top_ma) if raw_top_ma is not None else None
+            if raw_top_ma is not None and not math.isfinite(raw_top_ma):
+                raw_top_ma = None
+        except (TypeError, ValueError):
+            raw_top_ma = None
+        try:
+            raw_base_ma = sp.get("range_base_ma")
+            raw_base_ma = float(raw_base_ma) if raw_base_ma is not None else None
+            if raw_base_ma is not None and not math.isfinite(raw_base_ma):
+                raw_base_ma = None
+        except (TypeError, ValueError):
+            raw_base_ma = None
         result.species_ranges.append(
             SpeciesRange(
                 species=str(sp.get("species", "")),
                 section=str(sp.get("section", "")),
                 range_top=str(sp.get("range_top", "")),
                 range_base=str(sp.get("range_base", "")),
+                range_top_ma=raw_top_ma,
+                range_base_ma=raw_base_ma,
                 biozone=str(sp.get("biozone", "")),
                 confidence=raw_sp_conf,
             )
@@ -818,11 +880,25 @@ def _parse_extraction_response(
     for bz in parsed.get("biozones") or []:
         if not isinstance(bz, dict):
             continue
+        # Phase 3E audit 2026-08-19 (Bug M-10): parse the optional
+        # ``zone_type`` from the JSON. Accepted values mirror the
+        # standard ICS / Salvador biozone typology: "range",
+        # "concurrent range", "interval", "assemblage". Any other
+        # value is stored verbatim (forward compat) so unusual
+        # labels from an LLM are not silently dropped. ``None`` when
+        # the JSON omitted the field — downstream code can then fall
+        # back to parsing the ``name`` suffix.
+        zt_raw = bz.get("zone_type")
+        if isinstance(zt_raw, str) and zt_raw.strip():
+            zone_type = zt_raw.strip()
+        else:
+            zone_type = None
         result.biozones.append(
             BiozoneRecord(
                 name=str(bz.get("name", "")),
                 age=str(bz.get("age", "")),
                 thickness_m=str(bz.get("thickness_m", "")),
+                zone_type=zone_type,
             )
         )
     of = parsed.get("other_fossils") or []
