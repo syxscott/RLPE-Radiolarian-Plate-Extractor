@@ -812,7 +812,7 @@ class RunTab(QWidget):
             )
         else:
             self._progress.setRange(0, 0)
-        self._show_live_progress(message or "Working…")
+        self._show_live_progress(message or i18n._tr("runtab.progress.working"))
         if self._current_job_id:
             self.job_progress.emit(self._current_job_id, current, total, message)
 

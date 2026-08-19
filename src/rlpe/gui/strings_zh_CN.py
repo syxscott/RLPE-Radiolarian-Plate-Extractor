@@ -252,6 +252,7 @@ STRINGS = {
     "runtab.save_intermediate": "保存中间 panel (占用大量磁盘)",
     "runtab.start": "▶  开始提取",
     "runtab.status.cancelling": "取消中…",
+    "runtab.status.cancelled": "已取消",
     "runtab.status.done": "完成",
     "runtab.status.failed": "失败",
     "runtab.status.idle": "空闲",

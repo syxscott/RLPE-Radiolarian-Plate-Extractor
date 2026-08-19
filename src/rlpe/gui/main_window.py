@@ -970,7 +970,7 @@ class MainWindow(QMainWindow):
         default_name = f"rlpe_batch_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         path, _ = QFileDialog.getSaveFileName(
             self,
-            i18n._tr("restab.export.xlsx.title"),
+            i18n._tr("restab.export.xlsx_title"),
             str(Path(default_dir) / default_name),
             "Excel files (*.xlsx)",
         )

@@ -8,6 +8,8 @@ Web Server Launcher for RLPE
   RLPE_PORT  - 监听端口 (默认 8000)
   RLPE_WORKERS - uvicorn worker 数量 (默认 1)
   RLPE_LOG_LEVEL - log level (默认 info)
+  RLPE_API_KEY - 设置后敏感 endpoint 需要 X-API-Key header 验证 (audit 2026-08-19 phase 5b)
+  RLPE_MAX_UPLOAD_MB - 单个 PDF 上传大小上限 MB (默认 100, audit 2026-08-19 phase 5b)
 """
 
 import os

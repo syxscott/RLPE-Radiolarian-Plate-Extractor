@@ -1,6 +1,39 @@
 from __future__ import annotations
 
 import argparse
+import io
+import logging
+import sys
+
+# -----------------------------------------------------------------------
+# Audit 2026-08-19 Phase 5C (M-7): UTF-8 stdout/stderr on Windows.
+#
+# Default cp1252 encoding mojibakes Chinese / Japanese species names
+# when the pipeline prints progress lines or error messages on a
+# stock Windows console. Rewrapping stdout / stderr in a TextIOWrapper
+# with ``encoding='utf-8'`` fixes the rendering without forcing the
+# user to ``set PYTHONIOENCODING=utf-8`` themselves.  The wrap is a
+# no-op on POSIX (sys.platform != 'win32') where UTF-8 is already the
+# console default. ``line_buffering=True`` keeps the existing print-
+# every-line UX so progress output is still flushed promptly.
+# -----------------------------------------------------------------------
+if sys.platform == "win32":
+    for _stream_name in ("stdout", "stderr"):
+        _stream = getattr(sys, _stream_name, None)
+        _buf = getattr(_stream, "buffer", None)
+        if _buf is None:
+            continue
+        try:
+            setattr(
+                sys,
+                _stream_name,
+                io.TextIOWrapper(_buf, encoding="utf-8", line_buffering=True),
+            )
+        except Exception:  # pragma: no cover — defensive, never crash CLI
+            # If rewrap fails (rare: redirected pipe, embedded Python),
+            # fall back to the original stream and let the OS encoding
+            # decide. The argparse / user-facing error path still works.
+            pass
 
 # Load .env from the project root so MiniMax API keys, model names, etc.
 # are available without exporting manually.  No-op if python-dotenv is
@@ -37,9 +70,83 @@ from .config import PipelineConfig
 from .pipeline import RadiolarianPipeline
 from .utils import ensure_dir
 
+__all__ = [
+    "UserError",
+    "FloatRange",
+    "build_parser",
+    "main",
+    "VERSION",
+]
+
+
+# -----------------------------------------------------------------------
+# Audit 2026-08-19 Phase 5C (M-6): distinguish user errors from runtime
+# errors in the exit code.
+#
+#   exit 0  : pipeline ran and produced output
+#   exit 1  : runtime / unexpected exception (logged with traceback)
+#   exit 2  : usage error (bad CLI args, missing PDF, invalid config)
+#
+# Without this distinction, a shell wrapper (Makefile, GitHub Actions)
+# cannot tell "the user passed --pdf-dir /does/not/exist" apart from
+# "PaddleOCR crashed mid-run" — both printed an error and exited 1, so
+# the wrapper either retry-bombed on a typo or silently dropped a real
+# failure. POSIX shells treat exit 2 as the canonical "misuse" code.
+# -----------------------------------------------------------------------
+
+
+class UserError(Exception):
+    """Raised when the CLI is invoked with bad input — bad path, wrong
+    type, missing PDF, etc. Caught in :func:`main` to exit with code 2
+    and a clean one-line message (no traceback).
+    """
+
+
+VERSION = "1.1.0"
+
+
+def FloatRange(lo: float, hi: float):
+    """Return an argparse ``type=`` validator that rejects values
+    outside ``[lo, hi]``.
+
+    Used for ``--yolo-conf`` / ``--yolo-iou`` so a typo like
+    ``--yolo-conf 2.0`` (above the legal YOLO range) fails at parse
+    time with a clear message, instead of silently being clamped or
+    forwarded to Ultralytics which then raises a much less helpful
+    ``AssertionError``.
+    """
+
+    def _validator(s: str) -> float:
+        try:
+            v = float(s)
+        except (TypeError, ValueError):
+            raise argparse.ArgumentTypeError(
+                f"expected a number, got {s!r} (must be between {lo} and {hi})"
+            )
+        if not (lo <= v <= hi):
+            raise argparse.ArgumentTypeError(
+                f"value {v} out of range [{lo}, {hi}]"
+            )
+        return v
+
+    return _validator
+
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Radiolarian plate extraction pipeline")
+    p = argparse.ArgumentParser(
+        prog="rlpe",
+        description="Radiolarian plate extraction pipeline",
+    )
+    # Audit 2026-08-19 Phase 5C (M-8): ``--version`` action wired to
+    # the package ``__version__`` so ``python -m rlpe.cli --version``
+    # prints ``RLPE 1.1.0`` and exits 0 without trying to launch the
+    # pipeline. Without this, ops scripts have to grep ``pyproject.toml``
+    # to discover the version.
+    p.add_argument(
+        "--version",
+        action="version",
+        version=f"RLPE {VERSION}",
+    )
     p.add_argument("--pdf-dir", type=Path, required=True)
     p.add_argument("--work-dir", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, default=None)
@@ -85,7 +192,20 @@ def build_parser() -> argparse.ArgumentParser:
         "the first lang only and maps internal names → engine-native "
         "(ja → japan, ch_sim → ch). Default 'en'.",
     )
-    p.add_argument("--taxon-model", type=str, default="en_eco")
+    # Audit 2026-08-19 Phase 5C (M-9): ``--taxon-model`` accepts a small
+    # allow-list. TaxoNERD ships exactly two ecology models (en_eco /
+    # en_plus); spaCy-style core models are also valid for the legacy
+    # regex fallback. Anything else is almost certainly a typo and
+    # would crash mid-pipeline with a much less helpful error.
+    p.add_argument(
+        "--taxon-model",
+        type=str,
+        default="en_eco",
+        choices=["en_eco", "en_plus", "en_core_web_sm", "en_core_sci_sm"],
+        help="TaxoNERD / spaCy model name for the taxon recognizer "
+        "(default en_eco). Must be one of the four values; anything "
+        "else raises ValueError at parse time.",
+    )
     p.add_argument(
         "--use-gpu",
         action="store_true",
@@ -135,8 +255,24 @@ def build_parser() -> argparse.ArgumentParser:
     # requirements.txt but never wired into the CLI.
     p.add_argument("--use-yolo-figures", action="store_true")
     p.add_argument("--yolo-model-path", type=str, default=None)
-    p.add_argument("--yolo-conf", type=float, default=None)
-    p.add_argument("--yolo-iou", type=float, default=None)
+    # Audit 2026-08-19 Phase 5C (M-9): ``--yolo-conf`` / ``--yolo-iou``
+    # must reject values outside [0, 1] at parse time. A typo like
+    # ``--yolo-conf 2.0`` previously slipped through to Ultralytics,
+    # which then raised ``AssertionError: conf < 0 or conf > 1`` with
+    # a stack trace that buried the user-facing message. ``FloatRange``
+    # surfaces the constraint as a clean ``argparse`` error.
+    p.add_argument(
+        "--yolo-conf",
+        type=FloatRange(0.0, 1.0),
+        default=None,
+        help="YOLO confidence threshold (0.0-1.0, default 0.25).",
+    )
+    p.add_argument(
+        "--yolo-iou",
+        type=FloatRange(0.0, 1.0),
+        default=None,
+        help="YOLO IoU threshold (0.0-1.0, default 0.45).",
+    )
     p.add_argument("--sam2-checkpoint", type=str, default=None)
     p.add_argument("--sam2-model-cfg", type=str, default=None)
     p.add_argument("--sam2-grid-size", type=int, default=6)
@@ -436,8 +572,86 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _validate_args(args: argparse.Namespace) -> None:
+    """Pre-flight checks for arguments argparse can't enforce.
+
+    Raises :class:`UserError` (caught in :func:`main` → exit 2) when
+    the caller supplied paths that don't exist or values that the
+    parser's ``type=`` couldn't catch (e.g. an existing-but-empty
+    PDF directory).
+    """
+    # --pdf-dir must exist; a typo shouldn't silently produce zero
+    # rows and an exit-0 that looks like success.
+    if not args.pdf_dir.exists():
+        raise UserError(
+            f"--pdf-dir does not exist: {args.pdf_dir}"
+        )
+    if not args.pdf_dir.is_dir():
+        raise UserError(
+            f"--pdf-dir is not a directory: {args.pdf_dir}"
+        )
+    if not any(args.pdf_dir.glob("*.pdf")):
+        # Non-fatal by itself — the user might be running a re-import
+        # where the PDFs have already been moved to work/. We only
+        # warn; do not raise.
+        print(
+            f"WARNING: --pdf-dir {args.pdf_dir} contains no .pdf files"
+        )
+    # --work-dir parent must be writable. ``ensure_dir`` will create
+    # the leaf, but if the parent doesn't exist and we lack permission
+    # we want a clean UserError, not a PermissionError traceback.
+    if args.work_dir.parent and not args.work_dir.parent.exists():
+        raise UserError(
+            f"--work-dir parent does not exist: {args.work_dir.parent}"
+        )
+
+
 def main() -> int:
-    args = build_parser().parse_args()
+    # ------------------------------------------------------------------
+    # Audit 2026-08-19 Phase 5C (M-6): three-state exit code.
+    #
+    #   0 = success
+    #   1 = runtime / unexpected exception (logged with traceback)
+    #   2 = user / usage error (bad path, bad type) — clean message
+    #
+    # argparse already exits with code 2 for bad CLI flags; we keep
+    # that contract for "pre-flight" failures too.
+    # ------------------------------------------------------------------
+    logger = logging.getLogger("rlpe.cli")
+    try:
+        args = build_parser().parse_args()
+        _validate_args(args)
+    except UserError as exc:
+        # Usage error → exit 2, single clean line, NO traceback.
+        print(f"USER ERROR: {exc}", file=sys.stderr)
+        return 2
+    except SystemExit as exc:
+        # argparse calls sys.exit(2) on bad CLI args; let it propagate
+        # so the shell sees the same code.
+        raise
+    except Exception as exc:  # pragma: no cover — defensive top-level
+        logger.exception("CLI argument parsing failed unexpectedly")
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        return _run_pipeline(args)
+    except UserError as exc:
+        print(f"USER ERROR: {exc}", file=sys.stderr)
+        return 2
+    except SystemExit:
+        raise
+    except Exception as exc:
+        logger.exception("Pipeline failed")
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+def _run_pipeline(args: argparse.Namespace) -> int:
+    """Inner pipeline body. Kept separate from :func:`main` so the
+    three-state exit wrapper around it is small and obvious. Anything
+    raised here is re-raised; ``main`` decides how to exit.
+    """
     # Clamp --num-workers to a sane range. ThreadPoolExecutor requires
     # ``max_workers >= 1``; values above ~32 saturate the OCR / SAM2 /
     # GROBID stack long before they help throughput. A user typo (e.g.

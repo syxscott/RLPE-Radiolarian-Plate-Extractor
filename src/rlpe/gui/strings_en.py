@@ -105,6 +105,7 @@ STRINGS = {
     "runtab.status.starting": "Starting…",
     "runtab.status.running": "Running",
     "runtab.status.cancelling": "Cancelling…",
+    "runtab.status.cancelled": "Cancelled",
     "runtab.status.done": "Done",
     "runtab.status.failed": "Failed",
     "runtab.progress.idle": "Idle  (%v / %m)",

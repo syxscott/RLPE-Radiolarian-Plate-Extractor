@@ -1,5 +1,11 @@
 """RLPE: Radiolarian Literature Plate Extractor."""
 
+# Single source of truth for the package version. Mirrored in
+# ``pyproject.toml`` (``version = "1.1.0"``) and exposed here so the
+# CLI's ``--version`` flag, GUI ``APP_VERSION`` and FastAPI
+# ``info.version`` all read the same string without circular imports.
+__version__: str = "1.1.0"
+
 from .config import PipelineConfig
 
 
@@ -16,4 +22,4 @@ def __getattr__(name):
     raise AttributeError(f"module 'rlpe' has no attribute {name!r}")
 
 
-__all__ = ["PipelineConfig", "RadiolarianPipeline"]
+__all__ = ["PipelineConfig", "RadiolarianPipeline", "__version__"]

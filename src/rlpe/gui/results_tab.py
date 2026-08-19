@@ -224,6 +224,115 @@ class _FlipVerifiedWorker(QThread):
             self.error.emit(f"{type(exc).__name__}: {exc}")
 
 
+# ----------------------------------------------------------------------
+# Audit 2026-08-19 (Phase 5A, M-15): "export" buttons wrote 50k+ rows
+# synchronously on the GUI thread, freezing the event loop for 5–30 s
+# on large jobs. We now do the actual write on a ``QThread`` worker
+# (mirroring the B-14 ``_FlipVerifiedWorker`` approach). The worker
+# carries the serialised run_output dict + the destination path so the
+# GUI thread is free to keep the table responsive during the write.
+# ----------------------------------------------------------------------
+class _ExportWorker(QThread):
+    """Background worker that writes one export file.
+
+    Four formats share this worker (xlsx, json, csv, dwca). The format
+    is selected via ``fmt`` which routes to the right exporter inside
+    ``run()``. ``run_output`` is captured by ``_build_run_output()``
+    *on the GUI thread before the worker starts* — this keeps the
+    worker side-effect-free and ensures any future row mutations on
+    the GUI thread (filter typing, search-as-you-type) are not racy
+    with the write.
+
+    Signals
+    -------
+    finished_with_success(str) — destination path on success.
+    error(str) — ``{Type}: {message}`` on failure; the worker NEVER
+        re-raises because a Qt slot that lets an exception bubble out
+        of ``run()`` will crash the host process.
+    """
+
+    finished_with_success = Signal(str)
+    error = Signal(str)
+
+    _VALID_FMTS: frozenset[str] = frozenset({"xlsx", "json", "csv", "dwca"})
+
+    def __init__(
+        self,
+        fmt: str,
+        run_output: dict[str, Any],
+        path: str,
+        rows: list[dict[str, Any]],
+        use_utf8_sig: bool = False,
+    ) -> None:
+        super().__init__()
+        if fmt not in self._VALID_FMTS:
+            raise ValueError(
+                f"unknown export format {fmt!r} "
+                f"(must be one of {sorted(self._VALID_FMTS)})"
+            )
+        self._fmt = fmt
+        self._run_output = run_output
+        self._path = path
+        self._rows = rows
+        # Phase 63 Plan 6.10: GUI CSV must be written with a UTF-8 BOM
+        # so Excel on Windows doesn't mangle Greek / CJK. Other formats
+        # (xlsx, json, dwca) don't need the BOM, so we keep it opt-in
+        # rather than baking it in.
+        self._use_utf8_sig = bool(use_utf8_sig)
+
+    def run(self) -> None:  # noqa: D401 - QThread contract
+        try:
+            if self._fmt == "xlsx":
+                from ..exporters.xlsx import write_xlsx
+
+                write_xlsx(self._run_output, self._path)
+            elif self._fmt == "json":
+                with open(self._path, "w", encoding="utf-8") as fh:
+                    json.dump(
+                        self._run_output,
+                        fh,
+                        indent=2,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+            elif self._fmt == "csv":
+                # The GUI thread (in ``_export_csv``) has already
+                # snapshotted the rows + applied Phase 63 Plan 6.5
+                # (formula sanitisation) and 6.8 (NaN/Inf → "") so the
+                # worker is pure IO + serialisation. We just write the
+                # rows out, honouring the ``use_utf8_sig`` flag (Phase
+                # 63 Plan 6.10: UTF-8 BOM for Excel-on-Windows).
+                import csv
+
+                encoding = "utf-8-sig" if self._use_utf8_sig else "utf-8"
+                if not self._rows:
+                    # No rows: still write an empty file with the BOM
+                    # header (or just an empty file if no BOM). We
+                    # use the first row's keys if any, else an empty
+                    # header. Either way the file exists so the operator
+                    # sees a successful save.
+                    keys = list(self._rows[0].keys()) if self._rows else []
+                else:
+                    keys = list(self._rows[0].keys())
+                with open(self._path, "w", newline="", encoding=encoding) as fh:
+                    w = csv.DictWriter(fh, fieldnames=keys)
+                    w.writeheader()
+                    for r in self._rows:
+                        w.writerow(r)
+            elif self._fmt == "dwca":
+                from ..exporters.archive import write_dwca_zip
+
+                write_dwca_zip(self._run_output, self._path)
+            else:
+                # Defensive: _VALID_FMTS already rejected this in __init__,
+                # but keep an explicit branch so a future refactor can't
+                # silently fall through.
+                raise ValueError(f"unknown export format: {self._fmt!r}")
+            self.finished_with_success.emit(self._path)
+        except Exception as exc:
+            self.error.emit(f"{type(exc).__name__}: {exc}")
+
+
 class ResultsTab(QWidget):
     """Row-by-row results browser with image preview + detail panel."""
 
@@ -396,22 +505,27 @@ class ResultsTab(QWidget):
         # language switch. Use ``setProperty("class", ...)`` rather
         # than ``setObjectName`` for the primary button so the
         # i18n registry's objectName key isn't clobbered.
-        export_xlsx_btn = tr_button("restab.export.xlsx")
-        export_xlsx_btn.setProperty("class", "primary")
-        export_xlsx_btn.clicked.connect(self._export_xlsx)
-        footer.addWidget(export_xlsx_btn)
+        # Audit 2026-08-19 (Phase 5A, M-15): keep references to the
+        # export buttons on the instance so the export worker can
+        # disable / re-enable them while the IO is in flight. Without
+        # these references the buttons were local-only, which made
+        # double-click protection impossible.
+        self._btn_export_xlsx = tr_button("restab.export.xlsx")
+        self._btn_export_xlsx.setProperty("class", "primary")
+        self._btn_export_xlsx.clicked.connect(self._export_xlsx)
+        footer.addWidget(self._btn_export_xlsx)
 
-        export_json_btn = tr_button("restab.export.json")
-        export_json_btn.clicked.connect(self._export_json)
-        footer.addWidget(export_json_btn)
+        self._btn_export_json = tr_button("restab.export.json")
+        self._btn_export_json.clicked.connect(self._export_json)
+        footer.addWidget(self._btn_export_json)
 
-        export_csv_btn = tr_button("restab.export.csv")
-        export_csv_btn.clicked.connect(self._export_csv)
-        footer.addWidget(export_csv_btn)
+        self._btn_export_csv = tr_button("restab.export.csv")
+        self._btn_export_csv.clicked.connect(self._export_csv)
+        footer.addWidget(self._btn_export_csv)
 
-        export_dwca_btn = tr_button("restab.export.dwca")
-        export_dwca_btn.clicked.connect(self._export_dwca)
-        footer.addWidget(export_dwca_btn)
+        self._btn_export_dwca = tr_button("restab.export.dwca")
+        self._btn_export_dwca.clicked.connect(self._export_dwca)
+        footer.addWidget(self._btn_export_dwca)
 
         # audit 2026-08-17 (GUI-A4): "Mark verified" / "Mark
         # unverified" buttons. POST the (paper_id, figure_id,
@@ -1327,18 +1441,27 @@ class ResultsTab(QWidget):
         self._detail_browser.setHtml("\n".join(html))
 
     # ------------------------------------------------------------------
-    # Exports
+    # Exports — Audit 2026-08-19 (M-15) initialised this section with
+    # the minimum viable log-and-warn patch. Audit 2026-08-19 (Phase
+    # 5A, M-15) supersedes that with the proper QThread worker rewrite
+    # (mirroring B-14 ``_FlipVerifiedWorker``). See ``_ExportWorker``
+    # below and ``_run_export_worker`` for the async path.
     # ------------------------------------------------------------------
-    # Audit 2026-08-19 (M-15): the 4 export functions below write 50k+
-    # rows synchronously on the GUI thread, freezing the UI for 5–30 s
-    # on large jobs. The full fix is to move the actual write to a
-    # ``QThread`` worker (mirroring the B-14 approach for the
-    # mark-verified button). This sweep lands the minimum viable
-    # improvement: every export now logs the failure through the GUI
-    # logger at ERROR level with ``exc_info=True`` so the operator can
-    # grab a stack trace from the troubleshooting log, instead of
-    # having to re-run + reproduce the silent failure. The button
-    # disable + QThread worker rewrite is scheduled for the next sweep.
+    # Audit 2026-08-19 (Phase 5A, M-15): the 4 export functions below
+    # used to write 50k+ rows synchronously on the GUI thread, freezing
+    # the UI for 5–30 s on large jobs. Phase 1F added ERROR-level
+    # logging so silent failures were at least visible; this sweep
+    # moves the actual write to a :class:`_ExportWorker` ``QThread``
+    # (mirroring the B-14 ``_FlipVerifiedWorker`` approach). The slot
+    # now only does:
+    #   1. validation (rows + file dialog),
+    #   2. snapshot of the run_output dict on the GUI thread (so the
+    #      worker can't race against subsequent filter / search edits),
+    #   3. construct + start the worker,
+    #   4. wire success / error signals back to UI updates.
+    # The buttons are disabled while the worker is in flight and
+    # re-enabled from a single ``_re_enable_export_buttons()`` helper
+    # so success / failure paths agree.
     def _export_xlsx(self) -> None:
         if not self._filtered_rows:
             QMessageBox.information(
@@ -1359,31 +1482,19 @@ class ResultsTab(QWidget):
         if not path:
             return
         try:
-            from ..exporters.xlsx import write_xlsx
-
             run_output = self._build_run_output()
-            write_xlsx(run_output, path)
-            self._set_status(
-                i18n._tr("jobstab.export.saved").format(
-                    count=len(self._filtered_rows),
-                    path=Path(path).name,
-                )
-            )
+            self._run_export_worker("xlsx", run_output, path)
         except Exception as exc:
-            # Audit 2026-08-19 (M-15): log + traceback so the silent
-            # failure is at least visible in the troubleshooting log.
+            # Defensive net: if worker construction / dispatch fails
+            # synchronously (e.g. unknown fmt from a future refactor),
+            # we still want the operator to see a stack trace in the
+            # troubleshooting log. The async path's failure is
+            # handled separately in ``_run_export_worker._on_error``.
             self._log.error(
                 "Export failed (xlsx → %s): %s",
                 path,
                 exc,
                 exc_info=True,
-            )
-            QMessageBox.warning(
-                self,
-                i18n._tr("restab.export.xlsx"),
-                i18n._tr("jobstab.export.failed").format(
-                    error=f"{type(exc).__name__}: {exc}",
-                ),
             )
 
     def _export_json(self) -> None:
@@ -1404,22 +1515,14 @@ class ResultsTab(QWidget):
         if not path:
             return
         try:
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump(self._build_run_output(), fh, indent=2, ensure_ascii=False, default=str)
-            self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
+            run_output = self._build_run_output()
+            self._run_export_worker("json", run_output, path)
         except Exception as exc:
-            # Audit 2026-08-19 (M-15): log + traceback so the silent
-            # failure is at least visible in the troubleshooting log.
             self._log.error(
                 "Export failed (json → %s): %s",
                 path,
                 exc,
                 exc_info=True,
-            )
-            QMessageBox.warning(
-                self,
-                i18n._tr("restab.export.json"),
-                i18n._tr("jobstab.export.failed").format(error=str(exc)),
             )
 
     def _export_csv(self) -> None:
@@ -1439,63 +1542,56 @@ class ResultsTab(QWidget):
         )
         if not path:
             return
+        # Audit 2026-08-19 (Phase 5A, M-15): snapshot the row list
+        # before handing it off to the worker. The worker can't safely
+        # call ``_extract_column`` on the live ``self._filtered_rows``
+        # because the GUI thread may mutate the list as the operator
+        # edits the search / filter box. We snapshot the *visible*
+        # column values into a plain list of dicts so the worker is
+        # decoupled from any subsequent GUI mutations.
+        #
+        # We also do the Phase 63 Plan 6.5 / 6.8 / 6.10 sanitisation
+        # HERE (formula-injection, NaN/Inf, ``_csv_cell`` wrapper) so
+        # the worker only does the disk IO. The sanitiser code path
+        # stays in the slot — Phase 63's source-guard tests on
+        # ``_export_csv`` keep passing without the worker re-implementing
+        # the sanitiser.
+        from math import isinf, isnan
+
+        from ..export import _csv_cell
+        from ..exporters.analysis import _sanitise_csv_cell
+        from .constants import RESULT_COLUMNS
+
+        column_keys = [c.key for c in RESULT_COLUMNS]
+        snapshot: list[dict[str, Any]] = []
+        for r in self._filtered_rows:
+            out: dict[str, Any] = {}
+            for k in column_keys:
+                v = self._extract_column(r, k)
+                # NaN/Inf → empty string first (Phase 63 Plan 6.8)
+                if isinstance(v, float) and (isnan(v) or isinf(v)):
+                    v = ""
+                # Then formula-injection sanitisation (Phase 63 Plan 6.5)
+                v = _csv_cell(_sanitise_csv_cell(v))
+                out[k] = v
+            snapshot.append(out)
+        # Worker writes the file with utf-8-sig BOM (Phase 63 Plan 6.10).
+        # The sanitised snapshot above is already safe to write.
         try:
-            # Phase 63 Plan 6.5 (Bug 6.5): route through analysis-level
-            # CSV helpers instead of the bare csv.DictWriter call we had
-            # here. The bare call produced three problems downstream:
-            #   1) No formula-injection sanitisation (CWE-1236) —
-            #      Excel/LibreOffice would treat a paper caption
-            #      starting with ``=``, ``+``, ``-``, ``@`` or TAB as
-            #      a formula and execute ``=cmd|'/c calc'!A1`` on open.
-            #   2) No UTF-8 BOM (Phase 63 Plan 6.10) — Excel on
-            #      Windows defaults to ANSI code page and mangles Greek
-            #      / CJK.
-            #   3) No NaN/Inf sanitisation — scale-bar or geo coord
-            #      paths occasionally produced ``float("nan")`` which
-            #      csv writes as the string "nan" instead of an empty
-            #      cell.
-            # The fix imports ``_sanitise_csv_cell`` from
-            # ``rlpe.exporters.analysis`` (the same helper
-            # ``analysis.write_csv`` uses), reads NaN/Inf handler from
-            # ``rlpe.export._csv_cell`` (Task 6.8/6.10), and writes the
-            # file with a UTF-8 BOM. The displayed column ordering
-            # (RESULT_COLUMNS) is preserved so what the user sees on
-            # screen is what they get in the export.
-            import csv
-            from math import isinf, isnan
-
-            from ..export import _csv_cell
-            from ..exporters.analysis import _sanitise_csv_cell
-
-            column_keys = [c.key for c in RESULT_COLUMNS]
-            with open(path, "w", newline="", encoding="utf-8-sig") as fh:
-                w = csv.DictWriter(fh, fieldnames=column_keys)
-                w.writeheader()
-                for r in self._filtered_rows:
-                    out: dict[str, Any] = {}
-                    for k in column_keys:
-                        v = self._extract_column(r, k)
-                        # NaN/Inf → empty string first (Phase 63 Plan 6.8)
-                        if isinstance(v, float) and (isnan(v) or isinf(v)):
-                            v = ""
-                        # Then formula-injection sanitisation (Phase 63 Plan 6.5)
-                        v = _csv_cell(_sanitise_csv_cell(v))
-                        out[k] = v
-                    w.writerow(out)
-            self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
+            run_output = self._build_run_output()
+            self._run_export_worker(
+                "csv",
+                run_output,
+                path,
+                rows=snapshot,
+                use_utf8_sig=True,
+            )
         except Exception as exc:
-            # Audit 2026-08-19 (M-15): log + traceback so the silent
-            # failure is at least visible in the troubleshooting log.
             self._log.error(
                 "Export failed (csv → %s): %s",
                 path,
                 exc,
                 exc_info=True,
-            )
-            QMessageBox.warning(
-                self,
-                i18n._tr("restab.export.csv"),
-                i18n._tr("jobstab.export.failed").format(error=str(exc)),
             )
 
     def _export_dwca(self) -> None:
@@ -1516,27 +1612,135 @@ class ResultsTab(QWidget):
         if not path:
             return
         try:
-            from ..exporters.archive import write_dwca_zip
-
             run_output = self._build_run_output()
-            write_dwca_zip(run_output, path)
-            self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
+            self._run_export_worker("dwca", run_output, path)
         except Exception as exc:
-            # Audit 2026-08-19 (M-15): log + traceback so the silent
-            # failure is at least visible in the troubleshooting log.
             self._log.error(
                 "Export failed (dwca → %s): %s",
                 path,
                 exc,
                 exc_info=True,
             )
+
+    def _run_export_worker(
+        self,
+        fmt: str,
+        run_output: dict[str, Any],
+        path: str,
+        rows: list[dict[str, Any]] | None = None,
+        use_utf8_sig: bool = False,
+    ) -> None:
+        """Spin up an :class:`_ExportWorker` for ``fmt`` and wire it up.
+
+        The ``fmt`` argument picks one of ``"xlsx"``, ``"json"``,
+        ``"csv"`` or ``"dwca"``. ``run_output`` is the snapshot of
+        :meth:`_build_run_output` taken on the GUI thread (so the
+        worker doesn't race with subsequent filter edits). ``rows`` is
+        optional; only the CSV export uses it (the worker reads
+        ``r.get(k, "")`` directly, so the GUI thread pre-extracts the
+        column values into a plain dict for each row). ``use_utf8_sig``
+        is the Phase 63 Plan 6.10 BOM flag — CSV passes it as
+        ``True``, other formats pass ``False``.
+
+        Audit 2026-08-19 (Phase 5A, M-15): the export buttons are
+        disabled while the worker is in flight (double-click guard,
+        same idea as B-14 mark-verified) and re-enabled from a
+        single helper so success / failure paths agree.
+        """
+        if rows is None:
+            rows = self._filtered_rows
+        worker = _ExportWorker(fmt, run_output, path, rows, use_utf8_sig=use_utf8_sig)
+        # Capture the worker on the instance so the QThread isn't
+        # garbage-collected mid-flight (a known PySide6 footgun).
+        self._export_worker = worker
+
+        # Disable every export button so a single click can't kick
+        # off two concurrent writers to the same destination path.
+        self._disable_export_buttons()
+
+        def _on_success(saved_path: str) -> None:
+            self._re_enable_export_buttons()
+            # Friendly status message — match the previous sync
+            # implementation's wording so the user's muscle memory
+            # still works.
+            count = len(self._filtered_rows)
+            basename = Path(saved_path).name
+            if fmt == "xlsx":
+                self._set_status(
+                    i18n._tr("jobstab.export.saved").format(count=count, path=basename)
+                )
+            else:
+                self._set_status(
+                    i18n._tr("jobstab.export.saved_short").format(path=basename)
+                )
+
+        def _on_error(msg: str) -> None:
+            self._re_enable_export_buttons()
+            # Audit 2026-08-19 (Phase 5A, M-15): log the failure at
+            # ERROR with exc_info-style detail so a missing module or
+            # disk-full still shows up in the troubleshooting log.
+            # The worker already formatted the exception as
+            # ``{Type}: {msg}``; we keep it as-is for the log but
+            # also surface a popup so the operator knows immediately.
+            self._log.error(
+                "Export failed (%s → %s): %s",
+                fmt,
+                path,
+                msg,
+            )
+            label_key = f"restab.export.{fmt}"
             QMessageBox.warning(
                 self,
-                i18n._tr("restab.export.dwca"),
-                i18n._tr("jobstab.export.failed").format(
-                    error=f"{type(exc).__name__}: {exc}",
-                ),
+                i18n._tr(label_key),
+                i18n._tr("jobstab.export.failed").format(error=msg),
             )
+
+        worker.finished_with_success.connect(_on_success)
+        worker.error.connect(_on_error)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _disable_export_buttons(self) -> None:
+        """Disable every export button while a worker is in flight.
+
+        Audit 2026-08-19 (Phase 5A, M-15): extracted helper so the
+        success and error callbacks agree on the disable / re-enable
+        policy. Failures re-enable so the operator can retry; the
+        success path re-enables so the next export works immediately.
+        """
+        for attr in (
+            "_btn_export_xlsx",
+            "_btn_export_json",
+            "_btn_export_csv",
+            "_btn_export_dwca",
+        ):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                try:
+                    btn.setEnabled(False)
+                except Exception:
+                    pass
+
+    def _re_enable_export_buttons(self) -> None:
+        """Re-enable the export buttons after a worker finishes.
+
+        Audit 2026-08-19 (Phase 5A, M-15): companion to
+        :meth:`_disable_export_buttons`. Called from both the success
+        and error callbacks so a network / IO failure still leaves the
+        buttons clickable for the next attempt.
+        """
+        for attr in (
+            "_btn_export_xlsx",
+            "_btn_export_json",
+            "_btn_export_csv",
+            "_btn_export_dwca",
+        ):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                try:
+                    btn.setEnabled(True)
+                except Exception:
+                    pass
 
     def _build_run_output(self) -> dict[str, Any]:
         panels = self._filtered_rows
