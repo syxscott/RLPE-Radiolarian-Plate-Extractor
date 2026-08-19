@@ -2509,6 +2509,18 @@
           "title": "Confidence",
           "type": "number"
         },
+        "extraction_method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Extraction Method"
+        },
         "family": {
           "anyOf": [
             {

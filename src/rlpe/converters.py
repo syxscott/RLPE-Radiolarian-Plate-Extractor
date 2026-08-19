@@ -539,6 +539,31 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
             "generic_name": None,
         }
 
+    # Audit 2026-08-19 M-2: merge the ICZN "ex grege" open-naming
+    # group marker ("ex gr." / "ex group" / "ex gr") into a single
+    # qualifier token.  ICZN uses the construction "Genus ex gr.
+    # species" to mean "Genus species, of the species group of
+    # species" — the species belongs to a named group whose type is
+    # ``species``.  Without this merge, ``_taxon_parts`` would treat
+    # "ex" as a stray lower-case epithet (or, depending on the loop
+    # path, drop the species) and emit qualifier="gr." instead of
+    # the canonical "ex gr.".
+    merged: list[str] = []
+    i = 0
+    while i < len(tokens):
+        cur = tokens[i]
+        if (
+            cur.lower() == "ex"
+            and i + 1 < len(tokens)
+            and tokens[i + 1].lower() in ("gr.", "group", "gr")
+        ):
+            merged.append("ex gr.")
+            i += 2
+            continue
+        merged.append(cur)
+        i += 1
+    tokens = merged
+
     # Genus heuristic: only accept the first token if it starts with an
     # upper-case letter. Strip a trailing ``?`` so "Theocorys?" produces
     # genus "Theocorys" with the ``?`` carried separately as an
@@ -637,6 +662,13 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
     epithet: str | None = None
     qualifier: str | None = None
     qualifier_idx: int | None = None
+    # Audit 2026-08-19 M-2: when "ex gr." is the qualifier marker, the
+    # epithet that FOLLOWS it must remain in ``specific_epithet`` (it is
+    # the species name assigned to the group, not a continuation of the
+    # qualifier).  We track this with a sentinel value so the post-loop
+    # branch can emit just "ex gr." as the qualifier string instead of
+    # joining every token from ``qualifier_idx`` onward.
+    ex_gr_qualifier = False
     for i, token in enumerate(tokens[1:], start=1):
         # audit 2026-07-31: parenthesised tokens are subgenus /
         # uncertainty markers — "Podocyrtis (Podocyrtites) amphora",
@@ -646,6 +678,19 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
         if token.startswith("(") and token.endswith(")"):
             if qualifier_idx is None:
                 qualifier_idx = i
+            continue
+        # Audit 2026-08-19 M-2: the merged "ex gr." marker is a
+        # multi-word qualifier that PRECEDES the epithet rather than
+        # replacing it.  Treat it as a qualifier boundary (so the
+        # pre/post-loop branch knows where the qualifier starts) but
+        # KEEP scanning for the epithet instead of breaking.  The
+        # ``ex_gr_qualifier`` flag tells the post-loop branch to emit
+        # only the "ex gr." string, not join everything from
+        # ``qualifier_idx`` onward (which would otherwise eat the
+        # species name into the qualifier).
+        if token == "ex gr.":
+            qualifier_idx = i
+            ex_gr_qualifier = True
             continue
         if _is_qualifier_token(token) or _is_author_initial(token):
             qualifier_idx = i
@@ -668,7 +713,12 @@ def _taxon_parts(species: str | None) -> dict[str, str | None]:
         # binomial/trinomial shape and we should not invent one.
         break
 
-    if qualifier_idx is not None:
+    if ex_gr_qualifier and qualifier_idx is not None:
+        # Audit 2026-08-19 M-2: emit only the merged "ex gr." marker,
+        # not the species that follows.  The species is already in
+        # ``epithet`` (it was captured during the continue branch).
+        qualifier = "ex gr."
+    elif qualifier_idx is not None:
         if tokens[qualifier_idx].startswith("("):
             # audit 2026-07-31: parenthesised subgenus/uncertainty
             # markers are qualifiers that END at the closing paren —
@@ -1332,6 +1382,17 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         pbdb_provided_taxonomy = bool(
             pbdb_tax.get("family") or pbdb_tax.get("order") or pbdb_tax.get("class")
         )
+        # Audit 2026-08-19 M-3: ``source`` now means the **taxonomic
+        # data source** in the Darwin Core sense — where the higher-rank
+        # classification (family / order / class) and authority came
+        # from.  Values: ``"paleodb"`` when PBDB populated the
+        # taxonomy, ``"none"`` otherwise.  The pipeline-side
+        # extraction method (regex | llm_first | hybrid) is now a
+        # separate structured field — see the ``extraction_method``
+        # argument below.  Previously these two concepts were
+        # conflated, which made DwC downstream consumers unable to
+        # filter by data source.
+        taxonomic_source = "paleodb" if pbdb_provided_taxonomy else "none"
         rec = TaxonRecord(
             taxon_id=taxon_id,
             verbatim_name=verbatim_name_raw,
@@ -1350,7 +1411,14 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             family=pbdb_tax.get("family"),
             order=pbdb_tax.get("order"),
             class_name=pbdb_tax.get("class"),
-            source="paleodb" if pbdb_provided_taxonomy else (meta.get("extraction_method") or None),
+            # Audit 2026-08-19 M-3: split the legacy "source" conflation.
+            # ``source`` now = taxonomic data source; ``extraction_method``
+            # is the structured pipeline provenance.  ``taxon_remarks``
+            # below still carries the same ``"extraction_method=..."``
+            # string for backwards-compat with the Phase 63 Plan 6.19
+            # field contract.
+            source=taxonomic_source,
+            extraction_method=extraction_method or None,
             confidence=float(m.confidence),
             needs_review=bool(meta.get("needs_review", False)),
             review_reasons=list(meta.get("review_reasons", []) or []),

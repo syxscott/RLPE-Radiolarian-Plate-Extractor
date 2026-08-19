@@ -251,7 +251,27 @@ class TaxonRecord(BaseModel):
     family: str | None = None
     order: str | None = None
     class_name: str | None = None
+    # Audit 2026-08-19 M-3: ``source`` now means the **taxonomic
+    # data source** in the Darwin Core sense — where the family /
+    # order / class_name / authority fields came from.  The legacy
+    # mixed semantics (paleodb | extraction_method) was a DwC
+    # ambiguity bug; the structured ``extraction_method`` field below
+    # carries the pipeline-side provenance (regex | llm_first |
+    # hybrid).  Valid values: ``"paleodb"`` | ``"none"`` | ``None``.
+    # Kept for backwards compatibility with downstream consumers
+    # that already read ``source``; new code should consult both
+    # ``source`` and ``extraction_method`` separately.
     source: str | None = None
+    # Audit 2026-08-19 M-3: structured pipeline-side provenance.
+    # ``extraction_method`` is the same string previously embedded
+    # inside ``taxon_remarks`` as ``"extraction_method=..."``.  Carrying
+    # it as a structured field (rather than only in free-text remarks)
+    # lets downstream consumers (GBIF, the xlsx exporter, the audit
+    # dashboard) filter / group rows by extraction strategy without
+    # parsing the remarks string.  Valid values mirror the pipeline:
+    # ``"regex"`` | ``"llm_first"`` | ``"hybrid"`` | ``""`` (legacy
+    # empty default).
+    extraction_method: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     needs_review: bool = False
     review_reasons: list[str] = Field(default_factory=list)

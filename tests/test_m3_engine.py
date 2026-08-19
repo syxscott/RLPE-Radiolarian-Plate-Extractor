@@ -233,6 +233,8 @@ def test_match_panel_carries_MiniMax_telemetry_in_raw():
             ocr_labels,
             system_prompt,
             user_prompt,
+            extra_image=None,
+            **_extra_kwargs,
         ):
             captured["called"] = True
             return {

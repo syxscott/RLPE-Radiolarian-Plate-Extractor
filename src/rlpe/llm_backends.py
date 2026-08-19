@@ -503,6 +503,92 @@ def _apply_open_nomen_discount(out: dict[str, Any]) -> None:
         out["confidence"] = min(out["confidence"], _OPEN_NOMEN_CF_AFF_CAP)
 
 
+# ---------------------------------------------------------------------------
+# Schema whitelist for ``extract_geology`` vision outputs (audit 2026-08-19
+# M-12). The geology vision prompt declares a JSON contract with ~14
+# well-known keys (age/formation/ma_top/...). Without a whitelist, the LLM
+# occasionally emits hallucinated extras ("habitat", "depositional_environment",
+# "paleoclimate", ...) which become formal fields in panel.metadata.geology_links
+# and pollute downstream filtering/scoring. Whitelist filters the dict
+# *in place* and logs a warning listing the dropped keys so audit can spot
+# prompt drift.
+# ---------------------------------------------------------------------------
+_GEO_KEY_WHITELIST = frozenset(
+    {
+        # Identification / chronostratigraphy
+        "age",
+        "chronostratigraphy",
+        "chronostratigraphy_rank",
+        "ma_top",
+        "ma_base",
+        "ma_mid",
+        "biozone",
+        "stage",
+        # Lithostratigraphy
+        "formation",
+        "member",
+        "group",
+        "lithology",
+        "thickness",
+        "thickness_m",
+        # Geography / locality
+        "locality",
+        "country",
+        "latitude",
+        "longitude",
+        "paleo_latitude",
+        "paleo_longitude",
+        # Species linkage
+        "species",
+        # Provenance / quality
+        "confidence",
+        "source",
+        "notes",
+        "evidence",
+        "evidence_text",
+        "section_type",
+        "link_source",
+        "figure_id",
+        # Layer index fields (for strat_column / litholog_column)
+        "layer_index",
+        "y_top_normalized",
+        "y_base_normalized",
+        # Internal markers stamped by extract_geology post-processing
+        "_layer_index",
+        "_y_top_normalized",
+        "_y_base_normalized",
+        "_thickness_m",
+    }
+)
+
+
+def _apply_geo_whitelist(item: dict[str, Any]) -> dict[str, Any]:
+    """Filter ``item`` to keys in :data:`_GEO_KEY_WHITELIST`.
+
+    Audit 2026-08-19 M-12: the geology vision prompt asks for a fixed
+    schema, but LLMs occasionally invent extras ("habitat",
+    "depositional_environment", "paleoclimate", ...). Those extras were
+    being persisted as first-class fields in
+    ``panel.metadata.geology_links`` and silently breaking downstream
+    filtering. This helper strips them, logging a warning so audit can
+    catch prompt drift.
+
+    Returns the filtered dict (same object, mutated in place for
+    convenience). Returns ``item`` unchanged if it is not a dict.
+    """
+    if not isinstance(item, dict):
+        return item
+    extras = set(item.keys()) - _GEO_KEY_WHITELIST
+    if extras:
+        logger.warning(
+            "LLM output dropped non-whitelisted geology fields: %s",
+            sorted(extras),
+        )
+        for k in extras:
+            item.pop(k, None)
+    return item
+
+
 class BaseLLMBackend:
     backend_name = "base"
 
@@ -737,10 +823,36 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
         ocr_labels: list[str],
         system_prompt: str,
         user_prompt: str,
+        extra_image: Any = None,
     ) -> dict[str, Any]:
+        """Run the llama.cpp backend on a vision request.
+
+        Parameters
+        ----------
+        panel_image : PIL.Image.Image | None
+            Primary image (e.g. SEM plate). ``None`` means text-only.
+        caption_text : str
+            Optional caption text (unused by llama.cpp but kept for
+            backend signature parity with ``MiniMaxM3Backend``).
+        ocr_labels : list[str]
+            Optional OCR-detected panel labels (also kept for parity).
+        system_prompt : str
+            System prompt.
+        user_prompt : str
+            User prompt.
+        extra_image : PIL.Image.Image | None, default ``None``
+            Audit M-14: optional SECOND image. llama.cpp's
+            ``/v1/chat/completions`` endpoint accepts only ONE image
+            per request (OpenAI-compatible single-image contract), so
+            we cannot pass both. We therefore inject a clear prompt
+            note that the second image is NOT used by this backend and
+            the caller must rely on the strat-column caption text. The
+            primary image is still passed to the multimodal endpoint
+            so the model sees at least ONE image.
+        """
         try:
             text, multimodal_degraded = self._chat_completion(
-                panel_image, system_prompt, user_prompt
+                panel_image, system_prompt, user_prompt, extra_image=extra_image
             )
             parsed = parse_json_from_text(text)
             parsed["raw_text"] = text
@@ -752,6 +864,11 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             # the model's confidence is necessarily lower and the
             # caller may want to mark the result as "vision-fallback".
             parsed["multimodal_degraded"] = multimodal_degraded
+            # Audit M-14: flag when a second image was supplied but
+            # could not be forwarded (single-image backend) so the
+            # caller knows the strat column visual signal is missing.
+            if extra_image is not None:
+                parsed["extra_image_unsupported"] = True
             return parsed
         except Exception as exc:
             return {
@@ -785,7 +902,11 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             }
 
     def _chat_completion(
-        self, panel_image, system_prompt: str, user_prompt: str
+        self,
+        panel_image,
+        system_prompt: str,
+        user_prompt: str,
+        extra_image: Any = None,
     ) -> tuple[str, bool]:
         """Return ``(text, multimodal_degraded)``.
 
@@ -795,7 +916,34 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
         call, successful multimodal call, fallback when no image was
         provided). The caller can use this to flag the result so
         downstream code knows the model only saw text.
+
+        Audit B-4: only TRANSIENT errors (5xx, connection failures,
+        schema mismatches) are allowed to fall back to the text-only
+        ``/completion`` endpoint. NON-TRANSIENT 4xx errors (401/403
+        auth, 402 quota, 404 wrong model, 413 payload too large, etc.)
+        are RE-RAISED so the caller sees the real failure instead of
+        silently swapping to a degraded path. Silently degrading on
+        auth failure hides a misconfigured API key for the lifetime of
+        the session.
+
+        Audit M-14: when ``extra_image`` is provided, llama.cpp's
+        single-image multimodal contract means we cannot send BOTH
+        images. We inject a clear note in the user prompt that the
+        second image is not used by this backend — the caller is then
+        responsible for relying on the strat-column caption text.
         """
+        # Audit M-14: if a secondary image is supplied, inject a clear
+        # note into the user prompt so the model knows the strat
+        # column image is NOT being forwarded. We do this BEFORE the
+        # text-only short-circuit because text-only callers also
+        # benefit from the explicit note (so the model's response can
+        # mention it in ``reasoning`` for downstream observability).
+        if extra_image is not None and "strat column image not used by this backend" not in user_prompt:
+            user_prompt = (
+                "[Note: strat column image not used by this backend — caption-only path]\n\n"
+                + user_prompt
+            )
+
         # Text-only calls never attempt the multimodal path.
         if panel_image is None:
             prompt = self._build_text_prompt(system_prompt, user_prompt)
@@ -833,13 +981,30 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             resp.raise_for_status()
             data = resp.json()
             return self._clean_response_text(self._extract_chat_text(data)), False
-        except Exception:
+        except Exception as exc:
+            # Audit B-4: NON-TRANSIENT 4xx errors (401/403 auth,
+            # 402 quota, 404 wrong model, 413 payload too large, etc.)
+            # are NOT a sign of "multimodal degraded" — they're real
+            # client / configuration failures. Re-raise so the
+            # caller's ``infer_panel`` exception path surfaces the
+            # real reason instead of silently swapping to text-only.
+            # Only network / 5xx / parse failures are treated as
+            # transient and eligible for the ``/completion`` fallback.
+            status_code = self._extract_status_code(exc)
+            if status_code is not None and 400 <= status_code < 500:
+                logger.debug(
+                    "llama.cpp /v1/chat/completions 4xx (status=%d); "
+                    "not degrading to /completion",
+                    status_code,
+                )
+                raise
             # 2) 回退到 llama.cpp /completion 接口（纯文本）
             # Audit M7: signal the degraded mode so callers can tell
             # "model saw the image" apart from "image was dropped
             # silently".
             logger.debug(
-                "llama.cpp /v1/chat/completions failed; falling back to /completion (text-only)"
+                "llama.cpp /v1/chat/completions failed; falling back to /completion (text-only): %s",
+                type(exc).__name__,
             )
             prompt = self._build_text_prompt(system_prompt, user_prompt)
             completion_payload = {
@@ -859,6 +1024,33 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             data = resp.json()
             raw = str(data.get("content") or data.get("response") or "")
             return self._clean_response_text(raw), True
+
+    @staticmethod
+    def _extract_status_code(exc: BaseException) -> int | None:
+        """Extract an HTTP status code from a ``requests`` /
+        ``HTTPError`` exception if present.
+
+        Returns ``None`` when the exception has no recognizable
+        status code (connection errors, schema mismatches, etc.) so
+        the caller treats the failure as transient and eligible for
+        the ``/completion`` fallback.
+
+        Audit B-4: this helper exists so the 4xx-not-degrade logic
+        works for both ``requests.exceptions.HTTPError`` (which
+        attaches ``response.status_code``) and exceptions that expose
+        a top-level ``status_code`` attribute (some SDKs do).
+        """
+        # requests.HTTPError path: ``exc.response.status_code``.
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            code = getattr(resp, "status_code", None)
+            if isinstance(code, int):
+                return code
+        # Top-level ``status_code`` (some custom error wrappers).
+        code = getattr(exc, "status_code", None)
+        if isinstance(code, int):
+            return code
+        return None
 
     def _system_message(self, system_prompt: str) -> dict[str, Any]:
         return {"role": "system", "content": system_prompt}
@@ -1164,10 +1356,44 @@ class MiniMaxM3Backend(BaseLLMBackend):
 
     # ------------------------------------------------------------------ helpers
 
-    def _build_user_content(self, panel_image, user_prompt: str) -> list[dict[str, Any]]:
+    def _build_user_content(
+        self,
+        panel_image,
+        user_prompt: str,
+        extra_image: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Build the Anthropic multimodal user-content block.
+
+        Parameters
+        ----------
+        panel_image : PIL.Image.Image | None
+            The primary image (e.g. SEM plate). When ``None``, no image
+            block is emitted.
+        user_prompt : str
+            Text prompt from the caller.
+        extra_image : PIL.Image.Image | None, default ``None``
+            Optional secondary image (e.g. strat column /
+            paleogeographic map). When provided AND ``panel_image`` is
+            not ``None``, the secondary image is appended as a SECOND
+            image block so the model sees BOTH images together. Used
+            by ``cross_figure_visual_inference`` for plate ↔ strat
+            column cross-modal grounding (Phase C.1 / audit M-14).
+
+        Notes
+        -----
+        * If ``extra_image`` is provided but ``panel_image`` is None,
+          ``extra_image`` is still passed as the single image — this
+          keeps the contract symmetric.
+        """
         content: list[dict[str, Any]] = []
         if panel_image is not None:
             content.append(_encode_image_anthropic_block(panel_image))
+        # audit M-14: support dual-image vision calls. When ``extra_image``
+        # is provided we append a SECOND image block so the model can
+        # reason over BOTH images (e.g. SEM plate + strat column) in a
+        # single API request.
+        if extra_image is not None:
+            content.append(_encode_image_anthropic_block(extra_image))
         # P2-9 fix (Plan B): prepend OCR-detected panel labels and figure
         # caption to the user prompt when available. This enriches the LLM's
         # context with text that was detected independently of the user_prompt
@@ -1186,8 +1412,31 @@ class MiniMaxM3Backend(BaseLLMBackend):
         content.append({"type": "text", "text": user_prompt})
         return content
 
-    def _build_messages(self, panel_image, user_prompt: str) -> list[dict[str, Any]]:
-        return [{"role": "user", "content": self._build_user_content(panel_image, user_prompt)}]
+    def _build_messages(
+        self,
+        panel_image,
+        user_prompt: str,
+        extra_image: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Build messages list for the Anthropic Messages API.
+
+        Parameters
+        ----------
+        panel_image : PIL.Image.Image | None
+            Primary image (e.g. SEM plate).
+        user_prompt : str
+            User text prompt.
+        extra_image : PIL.Image.Image | None, default ``None``
+            Optional secondary image (e.g. strat column). When
+            provided, BOTH images are included as content blocks so
+            the model can reason across them — see audit M-14.
+        """
+        return [
+            {
+                "role": "user",
+                "content": self._build_user_content(panel_image, user_prompt, extra_image),
+            }
+        ]
 
     def _build_text_messages(self, user_prompt: str) -> list[dict[str, Any]]:
         return [{"role": "user", "content": user_prompt}]
@@ -1219,6 +1468,49 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 "budget_tokens": self.thinking_budget_tokens,
             }
         return kwargs
+
+    @staticmethod
+    def _parse_retry_after(exc: BaseException) -> float | None:
+        """Extract the ``Retry-After`` header value (seconds) from an
+        Anthropic SDK exception, if present.
+
+        Per RFC 7231 §7.1.3, ``Retry-After`` may be either a number of
+        seconds (decimal integer) OR an HTTP-date. This helper accepts
+        the numeric form only — the date form is rare in practice for
+        rate-limit responses and harder to parse safely, so we ignore it
+        and let the regular backoff take over.
+
+        Returns ``None`` when:
+        * the exception has no ``response`` attribute,
+        * the response has no ``headers`` attribute,
+        * the header is missing or empty,
+        * the value cannot be coerced to a positive float.
+
+        Audit M-4: the previous retry loop ignored ``Retry-After`` and
+        always used exponential backoff, which can prolong the
+        rate-limit window and contribute to a thundering herd. Honoring
+        the header is the canonical fix; we cap the wait at 60s so a
+        hostile or buggy server can't pin a worker for minutes.
+        """
+        resp = getattr(exc, "response", None)
+        if resp is None:
+            return None
+        headers = getattr(resp, "headers", None)
+        if headers is None:
+            return None
+        try:
+            raw = headers.get("Retry-After")  # type: ignore[union-attr]
+        except Exception:
+            return None
+        if raw is None:
+            return None
+        try:
+            value = float(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        if value <= 0:
+            return None
+        return value
 
     def _call_api(self, system_prompt: str, messages: list[dict[str, Any]]):
         """Make API call with retry + rate-limit handling.
@@ -1268,14 +1560,30 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 # exponential backoff so concurrent workers don't all
                 # retry at the same instant after a 429 (thundering
                 # herd against the rate-limited endpoint).
-                wait = min(2**attempt, 30) + random.uniform(0, 1)
-                logger.warning(
-                    "MiniMax rate-limited (attempt %d), sleeping %ds: %s",
-                    attempt + 1,
-                    wait,
-                    # M11: redact API keys that may appear in exception text.
-                    _redact_api_keys(str(exc)),
-                )
+                # Audit M4: respect the ``Retry-After`` header sent by
+                # the server when present — it overrides the
+                # exponential backoff so we don't hammer the endpoint
+                # before the rate-limit window closes.
+                retry_after = self._parse_retry_after(exc)
+                if retry_after is not None:
+                    wait = min(retry_after + random.uniform(0, 1), 60.0)
+                    logger.warning(
+                        "MiniMax rate-limited (attempt %d); Retry-After=%ss, sleeping %ds: %s",
+                        attempt + 1,
+                        retry_after,
+                        wait,
+                        # M11: redact API keys that may appear in exception text.
+                        _redact_api_keys(str(exc)),
+                    )
+                else:
+                    wait = min(2**attempt, 30) + random.uniform(0, 1)
+                    logger.warning(
+                        "MiniMax rate-limited (attempt %d), sleeping %ds: %s",
+                        attempt + 1,
+                        wait,
+                        # M11: redact API keys that may appear in exception text.
+                        _redact_api_keys(str(exc)),
+                    )
                 time.sleep(wait)
             except anthropic_mod.APIConnectionError as exc:
                 last_exc = exc
@@ -1301,15 +1609,34 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 #     request is malformed or the resource doesn't
                 #     exist and retrying won't help.
                 if status >= 500 or status == 429:
-                    wait = min(2**attempt, 30) + random.uniform(0, 1)
-                    logger.warning(
-                        "MiniMax %d (attempt %d), sleeping %ds: %s",
-                        status,
-                        attempt + 1,
-                        wait,
-                        # M11: redact API keys that may appear in exception text.
-                        _redact_api_keys(str(exc)),
-                    )
+                    # Audit M4: prefer ``Retry-After`` from the
+                    # response headers when present. 429 + Retry-After
+                    # is the canonical signal "wait N seconds before
+                    # retrying" — ignoring it and using exponential
+                    # backoff instead leads to a thundering herd that
+                    # can extend the rate-limit window.
+                    retry_after = self._parse_retry_after(exc)
+                    if retry_after is not None:
+                        wait = min(retry_after + random.uniform(0, 1), 60.0)
+                        logger.warning(
+                            "MiniMax %d (attempt %d); Retry-After=%ss, sleeping %ds: %s",
+                            status,
+                            attempt + 1,
+                            retry_after,
+                            wait,
+                            # M11: redact API keys that may appear in exception text.
+                            _redact_api_keys(str(exc)),
+                        )
+                    else:
+                        wait = min(2**attempt, 30) + random.uniform(0, 1)
+                        logger.warning(
+                            "MiniMax %d (attempt %d), sleeping %ds: %s",
+                            status,
+                            attempt + 1,
+                            wait,
+                            # M11: redact API keys that may appear in exception text.
+                            _redact_api_keys(str(exc)),
+                        )
                     time.sleep(wait)
                 elif status in (401, 403):
                     # M10: auth errors (401/403) are not transient — retrying
@@ -1583,7 +1910,31 @@ class MiniMaxM3Backend(BaseLLMBackend):
         ocr_labels: list[str],
         system_prompt: str,
         user_prompt: str,
+        extra_image: Any = None,
     ) -> dict[str, Any]:
+        """Run the Anthropic Messages API on a vision request.
+
+        Parameters
+        ----------
+        panel_image : PIL.Image.Image | None
+            Primary image (e.g. SEM plate panel). ``None`` is allowed
+            (text-only mode) and matches the previous contract.
+        caption_text : str
+            Optional caption text associated with ``panel_image``.
+        ocr_labels : list[str]
+            Optional OCR-detected panel labels.
+        system_prompt : str
+            System prompt for the model.
+        user_prompt : str
+            User prompt text.
+        extra_image : PIL.Image.Image | None, default ``None``
+            Audit M-14: optional SECOND image (e.g. strat column /
+            paleogeographic map). When provided AND ``panel_image`` is
+            not ``None``, BOTH images are sent as separate image blocks
+            so the model can ground one against the other in a single
+            API call. Backward-compatible: existing callers that pass
+            no extra image behave exactly as before.
+        """
         if self.data_outbound_policy == "local_only":
             return self._local_only_noop("MiniMax disabled (data_outbound_policy=local_only)")
         # P2-9 fix (Plan B): store caption_text / ocr_labels so _build_user_content
@@ -1596,7 +1947,14 @@ class MiniMaxM3Backend(BaseLLMBackend):
             img, up = self._apply_outbound_policy(
                 panel_image, caption_text, ocr_labels, user_prompt
             )
-            messages = self._build_messages(img, up)
+            # Audit M-14: redact the secondary image under the
+            # ``api_redacted`` / ``local_only`` policies too, so a
+            # caller asking for "extra image" never leaks the strat
+            # column when the user opted out of outbound image data.
+            extra = extra_image
+            if self.data_outbound_policy in ("api_redacted", "local_only"):
+                extra = self._redact_image(extra) if extra is not None else None
+            messages = self._build_messages(img, up, extra_image=extra)
             resp = self._call_api(system_prompt, messages)
             return self._make_result(resp)
         except FallbackRecommendedError:

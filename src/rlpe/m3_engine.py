@@ -40,7 +40,10 @@ from PIL import Image
 from .grobid import PipelineCancelledError  # noqa: E402
 
 # Import FallbackRecommendedError to detect when backend recommends switching
-from .llm_backends import FallbackRecommendedError  # noqa: E402
+from .llm_backends import (  # noqa: E402
+    FallbackRecommendedError,
+    _apply_geo_whitelist,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1923,11 +1926,20 @@ _CLASSIFY_PLATE_SYSTEM = """你是放射虫图版审查员。请判断一张给�
 6. dominant_taxa: 若可识别，列出 1-3 个最可能的属名（识别不出则空数组）。
 7. reasoning: 1-2 句解释你为什么这么判断。
 
-输出示例（是放射虫图版）：
-{"is_radiolarian_plate":true,"image_type":"SEM","panel_count_estimate":6,"specimen_count_estimate":8,"quality":"good","dominant_taxa":["Tetraspongodiscus"],"reasoning":"看到 6 个带 A-F 标签的 SEM 标本 panel，对比度高。"}
+Example 1 (radiolarian SEM plate):
+Input image: SEM micrograph arranged in a 2x3 grid of 6 panels labeled "A" through "F" in the lower-left of each panel; spherical to subspherical radiolarian specimens with latticed walls; scale bar "50 μm" visible in panel A; high contrast, black background.
+Output:
+{"is_radiolarian_plate":true,"image_type":"SEM","panel_count_estimate":6,"specimen_count_estimate":6,"quality":"good","dominant_taxa":["Tetraspongodiscus"],"reasoning":"看到 6 个带 A-F 标签的 SEM 标本 panel，对比度高，壳壁格状结构清晰。"}
 
-输出示例（非图版）：
+Example 2 (text-only page — NOT a plate):
+Input image: Single-column black-on-white text page with the centered bold heading "Applications of Radiolarian Studies in Biostratigraphy" at the top; below are three paragraphs of running text; no figures, no SEM imagery.
+Output:
 {"is_radiolarian_plate":false,"image_type":"other","panel_count_estimate":null,"specimen_count_estimate":null,"quality":"ok","dominant_taxa":[],"reasoning":"这是一段正文的标题页，'Applications' 字样，无标本图像。"}
+
+Example 3 (stratigraphic column figure — NOT a plate):
+Input image: Tall narrow vertical column with stacked colored rectangles (yellow = sandstone, grey = shale, blue = limestone), depth scale in meters on left, formation labels on right ("Sundance Fm", "Morrison Fm"), 5 numbered beds; no radiolarian specimens.
+Output:
+{"is_radiolarian_plate":false,"image_type":"diagram","panel_count_estimate":null,"specimen_count_estimate":null,"quality":"good","dominant_taxa":[],"reasoning":"图是柱状地层剖面，含岩性色块和地层名，没有任何放射虫标本 panel。"}
 
 只输出严格 JSON，不要解释。"""
 
@@ -1947,6 +1959,23 @@ _SEGMENT_PANELS_SYSTEM = """你是放射虫图版版面分析专家。任务：�
 - 如果整图就一个 panel，输出单元素数组覆盖整图（bbox=[0,0,W,H]）。
 - 若图版里有箭头、字母标签、scale bar，把它们一起包进对应 panel 框内。
 - 不要包含图说文字（caption 文字在图版外面）。
+
+Example 1 (multi-panel SEM plate):
+Input image: SEM plate, 1200x900 px. 4 panels in a 2x2 grid: "A" (top-left, ~30,30,540,400), "B" (top-right, ~620,30,540,400), "C" (bottom-left, ~30,470,540,400), "D" (bottom-right, ~620,470,540,400). Each panel shows one spherical radiolarian specimen with scale bar "50 μm" in the lower-right of the panel.
+Output:
+[
+  {"panel_id":"A","bbox":[30,30,540,400],"visible_label":"A","morphology":"球形壳，约 250 μm 直径，壁孔呈规则六边形排列","confidence":0.95},
+  {"panel_id":"B","bbox":[620,30,540,400],"visible_label":"B","morphology":"球形壳，三根对称主刺从极点伸出，格状壁孔","confidence":0.93},
+  {"panel_id":"C","bbox":[30,470,540,400],"visible_label":"C","morphology":"椭球形壳，两极略尖，壁孔小而密","confidence":0.92},
+  {"panel_id":"D","bbox":[620,470,540,400],"visible_label":"D","morphology":"球形壳，外壁薄，内骨架可见","confidence":0.90}
+]
+
+Example 2 (single-panel figure with no visible letter label):
+Input image: Single high-resolution SEM photo of one radiolarian specimen filling 90% of the frame (1024x1024 px), no letter labels visible, white background margin ~50 px on each side.
+Output:
+[
+  {"panel_id":"P1","bbox":[50,50,924,924],"visible_label":null,"morphology":"钟形壳，顶端有小孔，底部 3 根细刺","confidence":0.88}
+]
 
 只输出 JSON 数组，不要解释。"""
 
@@ -2009,6 +2038,30 @@ _MATCH_PANEL_SYSTEM = """你是放射虫古生物学专家，负责为单个 pan
 - 候选配对为空时，species 设为 null 并降低 confidence。
 - 不要凭空编造从未在 caption 出现过的物种名。
 
+Example 1 (clear caption match, label visible):
+Panel image: spherical radiolarian with 3 polar spines, latticed cortical shell, ~250 μm diameter, label "B" visible in lower-left.
+Candidate pairs (from caption): [{"labels":["A","B"],"species":"Tetraspongodiscus stauracanthus","modifier":"n. sp."},{"labels":["C","D"],"species":"Falcispongus scalaris","modifier":"sp. nov."}]
+Visible label hint: "B"
+Caption: "A, B: Tetraspongodiscus stauracanthus n. sp.; C, D: Falcispongus scalaris sp. nov."
+Output:
+{"label":"B","species":"Tetraspongodiscus stauracanthus","open_nomenclature_strength":"none","confidence":0.97,"reasoning":"图上可见字母标签 B；caption 中 A-B 配 Tetraspongodiscus stauracanthus；球形壳+3 主刺形态一致。","alternative":null,"is_radiolarian":true}
+
+Example 2 (open-nomenclature match — confidence must be lower):
+Panel image: subspherical radiolarian, cortical shell with small regular pores, no visible label.
+Candidate pairs (from caption): [{"labels":["1"],"species":"Pessagnoa sp.","modifier":"cf."},{"labels":["2"],"species":"Archaeodictyomitra sp.","modifier":"(?)"}]
+Visible label hint: null
+Caption: "1, cf. Pessagnoa sp.; 2, Archaeodictyomitra (?) sp."
+Output:
+{"label":"1","species":"Pessagnoa sp.","open_nomenclature_strength":"cf.","confidence":0.55,"reasoning":"caption 写 cf.，是 ICZN confer 标记；形态亚球形+小孔与 Pessagnoa 一致；open-nomen 上限 0.55。","alternative":"Archaeodictyomitra sp.","is_radiolarian":true}
+
+Example 3 (no candidate, species = null):
+Panel image: blurry object, cannot determine if radiolarian.
+Candidate pairs (from caption): []
+Visible label hint: null
+Caption: "(caption not extracted)"
+Output:
+{"label":null,"species":null,"open_nomenclature_strength":"none","confidence":0.2,"reasoning":"候选配对为空且图像模糊无法鉴定；降低 confidence 反映高度不确定性。","alternative":null,"is_radiolarian":false}
+
 只输出严格 JSON。"""
 
 
@@ -2032,6 +2085,36 @@ _CRITIQUE_SYSTEM = """你是放射虫分类学审查员。任务：交叉验证�
 - 如果 caption 中该 label 应是 X，但你看到图上形态明显属于 Y（如球形 vs 钟形）→ disagree 并给 Y。
 - 如果信息不足判断 → uncertain，suggested_species 可给一个第二可能。
 - 若 panel 不是放射虫（is_radiolarian=false）→ 直接 agree 不要改。
+
+Example 1 (agree — caption + morphology both consistent):
+Plate image: 4-panel SEM, panels A-D each showing one spherical radiolarian with 3 polar spines.
+Existing pairings: [{panel_id:"A",label:"A",species:"Tetraspongodiscus stauracanthus",confidence:0.95}, {panel_id:"B",label:"B",species:"Tetraspongodiscus stauracanthus",confidence:0.94}, {panel_id:"C",label:"C",species:"Falcispongus scalaris",confidence:0.92}, {panel_id:"D",label:"D",species:"Falcispongus scalaris",confidence:0.91}]
+Caption: "A, B: Tetraspongodiscus stauracanthus n. sp.; C, D: Falcispongus scalaris sp. nov."
+Output:
+[
+  {"panel_id":"A","verdict":"agree","suggested_species":null,"open_nomenclature_strength":"none","confidence":0.97,"reasoning":"caption A 配 Tetraspongodiscus，图上球形+3 主刺形态一致。"},
+  {"panel_id":"B","verdict":"agree","suggested_species":null,"open_nomenclature_strength":"none","confidence":0.97,"reasoning":"同 A，形态与 caption 一致。"},
+  {"panel_id":"C","verdict":"agree","suggested_species":null,"open_nomenclature_strength":"none","confidence":0.95,"reasoning":"caption C 配 Falcispongus；图上椭球形壳无主刺，与 Falcispongus 形态一致。"},
+  {"panel_id":"D","verdict":"agree","suggested_species":null,"open_nomenclature_strength":"none","confidence":0.95,"reasoning":"同 C，形态与 caption 一致。"}
+]
+
+Example 2 (disagree — morphology contradicts caption assignment):
+Plate image: panel E shows a clear bell-shaped (campanulate) radiolarian with apical horn.
+Existing pairings: [{panel_id:"E",label:"E",species:"Cenosphaera sp.",confidence:0.88}]
+Caption: "E: Archaocenosphaera campanula n. sp."
+Output:
+[
+  {"panel_id":"E","verdict":"disagree","suggested_species":"Archaocenosphaera campanula","open_nomenclature_strength":"none","confidence":0.92,"reasoning":"caption 明确配 Archaocenosphaera campanula，图上钟形壳+顶角形态也支持钟形属；原配对 Cenosphaera（球形属）与形态矛盾。"}
+]
+
+Example 3 (uncertain — info insufficient):
+Plate image: panel F is partially out of focus, shows a fragment.
+Existing pairings: [{panel_id:"F",label:"F",species:"GenusA sp.",confidence:0.55}]
+Caption: "F: GenusA sp. or GenusB sp."
+Output:
+[
+  {"panel_id":"F","verdict":"uncertain","suggested_species":"GenusB sp.","open_nomenclature_strength":"none","confidence":0.45,"reasoning":"图像模糊且 caption 同时列两个候选；形态不足判别，建议 GenusB 作为第二可能。"}
+]
 
 只输出严格 JSON 数组。"""
 
@@ -2119,6 +2202,44 @@ class _ThinkingFlagGate:
                 if self._writer_depth == 0:
                     self._writer_thread = None
                 self._cond.notify_all()
+
+
+def _validate_ma_range(record: dict[str, Any]) -> dict[str, Any]:
+    """Validate that ``ma_top < ma_base`` (younger = smaller Ma).
+
+    Audit 2026-08-19 Phase 2b M-13: Ma conventions in stratigraphy
+    follow *younger-up*: ma_top (top of section) is the younger
+    boundary, ma_base is the older boundary, so numerically
+    ``ma_top < ma_base``. The vision LLM occasionally flips this
+    (e.g. reads a chart with old-at-top axis convention and emits
+    ``ma_top > ma_base``) — but our schema contract is fixed. We
+    can't auto-fix (we don't know which number is the truth), so we
+    null out both fields and warn so the caller can fall back to
+    caption-text regex or PBDB lookup.
+
+    Mutates ``record`` in place; returns the same object for chaining.
+    """
+    top = record.get("ma_top")
+    base = record.get("ma_base")
+    if top is None or base is None:
+        return record
+    try:
+        top_f = float(top)
+        base_f = float(base)
+    except (TypeError, ValueError):
+        return record
+    if top_f > base_f:
+        logger.warning(
+            "Invalid Ma range in biozone: ma_top=%s > ma_base=%s; setting both to null",
+            top,
+            base,
+        )
+        record["ma_top"] = None
+        record["ma_base"] = None
+        # ma_mid is meaningless when the range is invalid — clear it
+        # too so callers don't carry a phantom midpoint.
+        record.pop("ma_mid", None)
+    return record
 
 
 class M3Engine:
@@ -2965,8 +3086,29 @@ class M3Engine:
         return res
 
     def _infer_vision(
-        self, system_prompt: str, user_prompt: str, image: Image.Image
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: Image.Image,
+        extra_image: Image.Image | None = None,
     ) -> dict[str, Any]:
+        """Vision inference helper with retry-without-thinking.
+
+        Parameters
+        ----------
+        system_prompt : str
+        user_prompt : str
+        image : PIL.Image.Image
+            The primary image (e.g. SEM plate).
+        extra_image : PIL.Image.Image | None, default ``None``
+            Audit M-14: optional SECOND image (e.g. strat column /
+            paleogeographic map). Forwarded to ``backend.infer_panel``
+            via the ``extra_image`` keyword argument. Backends that
+            support multi-image (e.g. ``MiniMaxM3Backend``) receive
+            BOTH images as separate content blocks; single-image
+            backends (e.g. ``LlamaCppGemmaBackend``) silently drop the
+            second image after recording an explanatory prompt note.
+        """
         if self.backend is None:
             return {"fallback_used": True, "error": "no backend"}
         # Phase 55 audit CRITICAL-1 fix: snapshot enable_thinking BEFORE any
@@ -2988,6 +3130,7 @@ class M3Engine:
                     ocr_labels=[],
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
+                    extra_image=extra_image,
                 )
             except FallbackRecommendedError:
                 # Phase 61 Plan 4 (Bug 4.10): FallbackRecommendedError carries
@@ -3031,6 +3174,7 @@ class M3Engine:
                         ocr_labels=[],
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
+                        extra_image=extra_image,
                     )
                 except Exception as exc:
                     logger.warning("M3 retry without thinking failed: %s", exc)
@@ -3137,6 +3281,11 @@ class M3Engine:
             if not isinstance(item, dict):
                 continue
             item = dict(item)
+            # Audit 2026-08-19 Phase 2b M-12: strip LLM-hallucinated
+            # extras so they never reach panel.metadata.geology_links.
+            _apply_geo_whitelist(item)
+            # Audit 2026-08-19 Phase 2b M-13: enforce ma_top < ma_base.
+            _validate_ma_range(item)
             item.setdefault("section_type", section_type)
             # Stamp provenance into evidence_text for audit. Only override
             # if not already set by the model.
@@ -3157,6 +3306,9 @@ class M3Engine:
                     if not isinstance(loc, dict):
                         continue
                     loc = dict(loc)
+                    # Audit 2026-08-19 Phase 2b M-12/M-13
+                    _apply_geo_whitelist(loc)
+                    _validate_ma_range(loc)
                     species = loc.get("species")
                     if not species:
                         # Skip entries without a species name — no useful link.
@@ -3198,6 +3350,9 @@ class M3Engine:
                     if not isinstance(layer, dict):
                         continue
                     layer = dict(layer)
+                    # Audit 2026-08-19 Phase 2b M-12/M-13
+                    _apply_geo_whitelist(layer)
+                    _validate_ma_range(layer)
                     evidence = (
                         layer.get("evidence")
                         or f"{figure_type}_vision[{figure_id}] "
@@ -3667,12 +3822,15 @@ class M3Engine:
 
         Notes
         -----
-        * Only the FIRST image argument (``plate_image``) is sent to
-          the vision backend — the public vision contract is single-
-          image. The strat column caption is included in the user
-          prompt so the model has full text context. Multi-image
-          inference is a future enhancement (Phase C+); for now the
-          captions carry the strat column semantics.
+        * BOTH images (``plate_image`` AND ``strat_image``) are
+          forwarded to the backend when the backend supports it. The
+          Anthropic-backed ``MiniMaxM3Backend`` accepts multiple
+          image blocks in a single Messages API call — it receives
+          both images as separate content blocks so the model can
+          ground plate panels against strat-column layers directly.
+          Local backends (llama.cpp) are single-image and only see
+          the plate image; ``infer_panel`` injects a prompt note that
+          the strat column image was dropped. (Audit M-14.)
         * Panel entries missing ``cell_label`` OR ``species`` are
           dropped before returning; the linker requires both keys to
           attach a visual link to a specific panel.
@@ -3712,8 +3870,15 @@ class M3Engine:
             "Return strict JSON only, no markdown fences."
         )
 
+        # Audit M-14: forward BOTH images to the backend. The Anthropic
+        # backend natively supports multi-image content blocks; local
+        # backends (llama.cpp / Ollama) accept only one and the
+        # ``infer_panel`` implementations inject a prompt note that
+        # the second image was dropped.
         try:
-            res = self._infer_vision(system_prompt, user_prompt, plate_image)
+            res = self._infer_vision(
+                system_prompt, user_prompt, plate_image, extra_image=strat_image
+            )
         except Exception:
             logger.exception("cross_figure_visual_inference: backend call failed")
             return empty
