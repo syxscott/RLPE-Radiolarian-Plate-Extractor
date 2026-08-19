@@ -1056,7 +1056,7 @@ class RadiolarianPipeline:
         return True
 
     def _exit_od_grobid_guard(self) -> None:
-        depth = getattr(self._od_grobid_depth, "depth", 1)
+        depth = getattr(self._od_grobid_depth, "depth", 0)
         self._od_grobid_depth.depth = max(depth - 1, 0)
 
     def _make_od_grobid_cycle_stub(
@@ -2267,8 +2267,12 @@ class RadiolarianPipeline:
             raw = self.config.extra.get("MiniMax_max_concurrent", 8)
             if isinstance(raw, int) and raw > 0:
                 max_conc = raw
-        except Exception:
-            pass
+        except Exception as exc:
+            # Audit 2026-08-19 (M-1): config access used to swallow
+            # every error. Log at debug so a misconfigured
+            # ``MiniMax_max_concurrent`` is at least visible in the
+            # troubleshooting log.
+            logger.debug("MiniMax_max_concurrent read failed: %s", exc)
         executor = ThreadPoolExecutor(max_workers=max_conc)
 
         def _one(
@@ -2574,22 +2578,23 @@ class RadiolarianPipeline:
 
         # Apply by original position so we don't reorder rows the
         # caller already arranged.
-        sorted_results_by_pid: dict[Any, dict[str, Any]] = {
-            r.get("panel_id"): r for r in sorted_results
-        }
-        for orig_r in results:
-            pid = orig_r.get("panel_id")
-            sorted_r = sorted_results_by_pid.get(pid)
-            if sorted_r is None:
+        # Map each panel_id to the queue of original row indices
+        # that share it. Duplicates are preserved in order so every
+        # row gets its own bbox instead of every duplicate sharing
+        # the last one (audit 2026-08-19 B-5).
+        orig_panel_positions: dict[Any, list[int]] = {}
+        for i, r in enumerate(results):
+            pid = r.get("panel_id")
+            orig_panel_positions.setdefault(pid, []).append(i)
+
+        for idx in range(n_paired):
+            sorted_r = sorted_results[idx]
+            pid = sorted_r.get("panel_id")
+            queue = orig_panel_positions.get(pid)
+            if not queue:
                 continue
-            # Find the index of sorted_r in the sorted list — that's
-            # the position we pair with.
-            try:
-                idx = [id(x) for x in sorted_results].index(id(sorted_r))
-            except ValueError:
-                continue
-            if idx >= n_paired:
-                continue  # keep placeholder
+            orig_i = queue.pop(0)
+            orig_r = results[orig_i]
             seg = segmented[idx]
             x, y, w, h = seg.bbox
             # Clip to image bounds defensively.
@@ -3018,7 +3023,7 @@ class RadiolarianPipeline:
             or [
                 "plate",
                 "range_chart",
-                "stratigraphic_column",
+                "strat_column",
                 "litholog_column",
                 "paleogeographic_map",
             ]
@@ -5325,8 +5330,16 @@ Rules:
                     panel.metadata = panel.metadata or {}
                     panel.metadata["panel_ocr_text"] = " ".join(t.text for t in panel_tokens)
                     panel.metadata["panel_ocr_token_count"] = len(panel_tokens)
-            except Exception:
-                pass
+            except Exception as exc:
+                # Audit 2026-08-19 (M-1): OCR backend failures used to
+                # vanish silently. Log at debug so operators can see
+                # backend drift in the troubleshooting log, but keep
+                # the fallback to region-level OCR tokens intact.
+                logger.debug(
+                    "per-panel OCR failed for %s: %s",
+                    panel_path,
+                    exc,
+                )
             # Label-region re-read: plate labels ("1", "2a", "Fig. 3")
             # live in a corner of the panel. OCR'ing the full panel
             # dilutes that signal with the specimen's body. Crop the
@@ -5380,8 +5393,16 @@ Rules:
                             panel.metadata["printed_panel_id"] = norm
                             panel.metadata["panel_id_source"] = "image_ocr"
                             panel.metadata["label_region_picked"] = best.text
-            except Exception:
-                pass
+            except Exception as exc:
+                # Audit 2026-08-19 (M-1): label-region OCR used to crash
+                # silently. Log at debug so the symptom is visible in
+                # the troubleshooting log; the panel's positional /
+                # SAM2-derived panel_id stays in place as the fallback.
+                logger.debug(
+                    "label-region OCR failed for %s: %s",
+                    panel_path,
+                    exc,
+                )
 
         matches = match_panels(
             paper_id,
@@ -6086,13 +6107,23 @@ Rules:
         endpoint = self.config.extra.get("paleodb_endpoint")
         cache_dir = self.config.extra.get("paleodb_cache_dir")
         offline = bool(self.config.extra.get("paleodb_offline", False))
+        # ``paleodb_min_interval`` is opt-in for operators who want to push
+        # the rate above 30 req/min (NOT recommended — risks IP ban).
+        # When the key is absent we pass nothing, so :class:`PaleoDB`
+        # falls back to its own safe 2.0 s default (= 30 req/min, matching
+        # PBDB's published public-API ToS). Previously a hard-coded
+        # ``min_interval=0.2`` here allowed 300 req/min, which repeatedly
+        # tripped PBDB's anti-abuse threshold (B-4 fix, 2026-08-19).
+        min_interval_cfg = self.config.extra.get("paleodb_min_interval", None)
+        paleo_kwargs: dict[str, Any] = {
+            "endpoint": endpoint,
+            "cache_dir": cache_dir,
+            "offline": offline,
+        }
+        if min_interval_cfg is not None:
+            paleo_kwargs["min_interval"] = float(min_interval_cfg)
         try:
-            client = PaleoDB(
-                endpoint=endpoint,
-                cache_dir=cache_dir,
-                min_interval=0.2,
-                offline=offline,
-            )
+            client = PaleoDB(**paleo_kwargs)
         except Exception as exc:
             logger.warning("PaleoDB init failed: %s", exc)
             for m in matches:

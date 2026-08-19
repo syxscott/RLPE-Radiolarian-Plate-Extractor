@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -164,6 +164,64 @@ _OCR_CLASSES: dict[str, str] = {
     "positional": "badge-warn",
     "no_image": "badge-muted",
 }
+
+
+# ----------------------------------------------------------------------
+# Audit 2026-08-19 (B-14): "mark verified" button used to call
+# ``requests.post`` SYNCHRONOUSLY on the GUI thread, blocking the event
+# loop for up to 10 s (the request timeout). We now do the POST on a
+# QThread and emit success/failure back to the main thread.
+# ----------------------------------------------------------------------
+class _FlipVerifiedWorker(QThread):
+    """Background worker that POSTs a single ``/review/correction`` flip.
+
+    The previous implementation blocked the main event loop for the
+    full ``timeout=10`` s on a slow / unreachable API. Operators clicking
+    "Mark verified" saw a frozen UI with no way to cancel. The worker
+    pattern lets the UI stay responsive: the button is disabled, the
+    employee can read other panels, and a single signal reports the
+    outcome once the request (or its timeout) finishes.
+    """
+
+    finished_with_success = Signal(bool)
+    error = Signal(str)
+
+    def __init__(self, url: str, body: dict[str, Any]) -> None:
+        super().__init__()
+        self._url = url
+        self._body = body
+
+    def run(self) -> None:  # noqa: D401 - QThread contract
+        try:
+            # Prefer requests (the rest of the project already uses it)
+            # but fall back to urllib so the button still works on a slim
+            # install that lacks requests. We rebuild the import inside
+            # ``run()`` to keep the worker self-contained — the GUI
+            # thread already verified the import path during the prep
+            # step, so the secondary copy is a no-op in practice.
+            try:
+                import requests  # type: ignore
+
+            except Exception:
+                requests = None  # type: ignore
+            if requests is not None:
+                resp = requests.post(self._url, json=self._body, timeout=10)
+                resp.raise_for_status()
+            else:
+                import json as _json
+                import urllib.request
+
+                req = urllib.request.Request(
+                    self._url,
+                    data=_json.dumps(self._body).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=10) as fh:  # noqa: S310
+                    fh.read()
+            self.finished_with_success.emit(True)
+        except Exception as exc:
+            self.error.emit(f"{type(exc).__name__}: {exc}")
 
 
 class ResultsTab(QWidget):
@@ -1271,6 +1329,16 @@ class ResultsTab(QWidget):
     # ------------------------------------------------------------------
     # Exports
     # ------------------------------------------------------------------
+    # Audit 2026-08-19 (M-15): the 4 export functions below write 50k+
+    # rows synchronously on the GUI thread, freezing the UI for 5–30 s
+    # on large jobs. The full fix is to move the actual write to a
+    # ``QThread`` worker (mirroring the B-14 approach for the
+    # mark-verified button). This sweep lands the minimum viable
+    # improvement: every export now logs the failure through the GUI
+    # logger at ERROR level with ``exc_info=True`` so the operator can
+    # grab a stack trace from the troubleshooting log, instead of
+    # having to re-run + reproduce the silent failure. The button
+    # disable + QThread worker rewrite is scheduled for the next sweep.
     def _export_xlsx(self) -> None:
         if not self._filtered_rows:
             QMessageBox.information(
@@ -1302,6 +1370,14 @@ class ResultsTab(QWidget):
                 )
             )
         except Exception as exc:
+            # Audit 2026-08-19 (M-15): log + traceback so the silent
+            # failure is at least visible in the troubleshooting log.
+            self._log.error(
+                "Export failed (xlsx → %s): %s",
+                path,
+                exc,
+                exc_info=True,
+            )
             QMessageBox.warning(
                 self,
                 i18n._tr("restab.export.xlsx"),
@@ -1332,6 +1408,14 @@ class ResultsTab(QWidget):
                 json.dump(self._build_run_output(), fh, indent=2, ensure_ascii=False, default=str)
             self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
         except Exception as exc:
+            # Audit 2026-08-19 (M-15): log + traceback so the silent
+            # failure is at least visible in the troubleshooting log.
+            self._log.error(
+                "Export failed (json → %s): %s",
+                path,
+                exc,
+                exc_info=True,
+            )
             QMessageBox.warning(
                 self,
                 i18n._tr("restab.export.json"),
@@ -1400,6 +1484,14 @@ class ResultsTab(QWidget):
                     w.writerow(out)
             self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
         except Exception as exc:
+            # Audit 2026-08-19 (M-15): log + traceback so the silent
+            # failure is at least visible in the troubleshooting log.
+            self._log.error(
+                "Export failed (csv → %s): %s",
+                path,
+                exc,
+                exc_info=True,
+            )
             QMessageBox.warning(
                 self,
                 i18n._tr("restab.export.csv"),
@@ -1430,6 +1522,14 @@ class ResultsTab(QWidget):
             write_dwca_zip(run_output, path)
             self._set_status(i18n._tr("jobstab.export.saved_short").format(path=Path(path).name))
         except Exception as exc:
+            # Audit 2026-08-19 (M-15): log + traceback so the silent
+            # failure is at least visible in the troubleshooting log.
+            self._log.error(
+                "Export failed (dwca → %s): %s",
+                path,
+                exc,
+                exc_info=True,
+            )
             QMessageBox.warning(
                 self,
                 i18n._tr("restab.export.dwca"),
@@ -1477,6 +1577,15 @@ class ResultsTab(QWidget):
         update the in-memory row in ``self._all_rows`` /
         ``self._filtered_rows`` so the detail panel + table row
         reflect the new state without needing a full reload.
+
+        Audit 2026-08-19 (B-14): the POST used to run SYNCHRONOUSLY on
+        the GUI thread, blocking the event loop for up to the full
+        request timeout (10 s). We now spin up a
+        :class:`_FlipVerifiedWorker` ``QThread`` to do the POST off
+        the main thread and emit success / failure back to the GUI
+        via Qt signals. The triggering button is disabled while the
+        request is in flight so the operator can never double-fire a
+        flip.
 
         Errors are surfaced via ``QMessageBox.warning``; we never
         crash the GUI on a network failure.
@@ -1536,84 +1645,96 @@ class ResultsTab(QWidget):
             "panel_path": panel_path or None,
             "image_verified": bool(verified),
         }
-        # POST. Use ``requests`` when available (the most common
-        # research-stack dependency) and fall back to ``urllib`` so
-        # the button still works on a slim install that lacks
-        # requests. The fallback path uses stdlib only.
-        try:
-            try:
-                import requests  # type: ignore
-            except Exception:
-                requests = None  # type: ignore
-            if requests is not None:
-                resp = requests.post(
-                    endpoint,
-                    json=payload,
-                    timeout=10,
-                )
-                resp.raise_for_status()
-            else:
-                import json as _json
-                import urllib.error
-                import urllib.request
 
-                req = urllib.request.Request(
-                    endpoint,
-                    data=_json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=10) as fh:  # noqa: S310
-                    fh.read()
-        except Exception as exc:
-            self._log.warning(
-                "image_verified flip failed: %s",
-                exc,
+        # Audit 2026-08-19 (B-14): disable the mark-verified buttons
+        # while the worker is in flight so the operator can never
+        # double-click a flip, and the UI stays responsive.
+        for btn in (
+            getattr(self, "_btn_mark_verified", None),
+            getattr(self, "_btn_mark_unverified", None),
+        ):
+            if btn is not None:
+                try:
+                    btn.setEnabled(False)
+                except Exception:
+                    pass
+
+        # Capture the worker on the instance so the QThread isn't
+        # garbage-collected mid-flight (a known PySide6 footgun).
+        worker = _FlipVerifiedWorker(endpoint, payload)
+        self._flip_worker = worker
+
+        def _on_success(_ok: bool) -> None:
+            # Mutate the in-memory rows so the table + detail panel
+            # refresh without a full reload.
+            n = 0
+            for r in self._all_rows:
+                if (
+                    r.get("paper_id") == paper_id
+                    and r.get("figure_id") == figure_id
+                    and (not panel_path or r.get("panel_path") == panel_path)
+                ):
+                    r["image_verified"] = bool(verified)
+                    n += 1
+            for r in self._filtered_rows:
+                if (
+                    r.get("paper_id") == paper_id
+                    and r.get("figure_id") == figure_id
+                    and (not panel_path or r.get("panel_path") == panel_path)
+                ):
+                    r["image_verified"] = bool(verified)
+            # Re-render the detail panel so the badge updates.
+            try:
+                self._render_detail(row)
+            except Exception:
+                pass
+            state_label = (
+                i18n._tr("restab.detail.image_verified")
+                if verified
+                else i18n._tr("restab.detail.image_unverified")
             )
+            self._set_status(
+                i18n._tr("restab.detail.verify_success").format(
+                    n=n,
+                    state=state_label,
+                )
+            )
+            self._re_enable_flip_buttons()
+
+        def _on_error(msg: str) -> None:
+            self._log.warning("image_verified flip failed: %s", msg)
             QMessageBox.warning(
                 self,
                 i18n._tr("restab.detail.mark_verified"),
                 i18n._tr("restab.detail.verify_failed").format(
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=msg,
                 ),
             )
-            return
+            self._re_enable_flip_buttons()
 
-        # Mutate the in-memory rows so the table + detail panel
-        # refresh without a full reload.
-        n = 0
-        for r in self._all_rows:
-            if (
-                r.get("paper_id") == paper_id
-                and r.get("figure_id") == figure_id
-                and (not panel_path or r.get("panel_path") == panel_path)
-            ):
-                r["image_verified"] = bool(verified)
-                n += 1
-        for r in self._filtered_rows:
-            if (
-                r.get("paper_id") == paper_id
-                and r.get("figure_id") == figure_id
-                and (not panel_path or r.get("panel_path") == panel_path)
-            ):
-                r["image_verified"] = bool(verified)
-        # Re-render the detail panel so the badge updates.
-        try:
-            self._render_detail(row)
-        except Exception:
-            pass
+        worker.finished_with_success.connect(_on_success)
+        worker.error.connect(_on_error)
+        # Make sure the worker is released once it finishes.
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
-        state_label = (
-            i18n._tr("restab.detail.image_verified")
-            if verified
-            else i18n._tr("restab.detail.image_unverified")
-        )
-        self._set_status(
-            i18n._tr("restab.detail.verify_success").format(
-                n=n,
-                state=state_label,
-            )
-        )
+    def _re_enable_flip_buttons(self) -> None:
+        """Re-enable the mark-verified buttons after a flip completes.
+
+        Audit 2026-08-19 (B-14): helper extracted from the worker
+        callbacks so success / failure paths agree on the re-enable
+        policy. Failures (network errors) must also re-enable so the
+        operator can retry.
+        """
+        for btn in (
+            getattr(self, "_btn_mark_verified", None),
+            getattr(self, "_btn_mark_unverified", None),
+        ):
+            if btn is not None:
+                try:
+                    btn.setEnabled(True)
+                except Exception:
+                    pass
 
 
 def _format_bbox(bbox) -> str:
