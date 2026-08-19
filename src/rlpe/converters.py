@@ -342,6 +342,64 @@ def _normalise_species_name(species: str | None) -> str | None:
     return " ".join(str(species).split()).strip(" .,;") or None
 
 
+def _normalize_dwc_name(species: str | None) -> str | None:
+    """DwC-friendly normalized name for ``TaxonRecord.normalized_name``.
+
+    Audit 2026-08-19 B-2 fix: separate ``verbatim_name`` (raw OCR
+    string, preserves ``?`` / ``cf.`` / OCR capitalisation errors)
+    from ``normalized_name`` (cleaned form used for entity linking).
+
+    Differentiates from :func:`_normalise_species_name` by:
+
+    * Stripping the ICZN open-nomenclature uncertainty marker
+      ``?`` (a reviewer's flag, not part of the scientific name).
+    * Lower-casing the trailing characters of the genus token so
+      common OCR case errors like ``pHractus`` → ``Phractus`` are
+      corrected while valid mixed-case forms are preserved.
+    * Preserving ICZN qualifier markers (``cf.``, ``aff.``,
+      ``sp.``, ``spp.``, ``n. sp.``).
+
+    Returns ``None`` when the input is empty / whitespace-only.
+    """
+    base = _normalise_species_name(species)
+    if not base:
+        return None
+    # Strip the ICZN open-nomenclature ``?`` marker on the genus
+    # (e.g. ``Theocorys? phyzella`` → ``Theocorys phyzella``).  The
+    # marker is preserved in ``verbatim_name`` so reviewers can see
+    # the original OCR.
+    base = base.replace("?", "").strip()
+    if not base:
+        return None
+    # Fix common OCR case errors on the leading genus token: only
+    # adjust when the token has uppercase letters in the trailing
+    # positions (e.g. ``pHractus`` or ``ACTINOMMA``).  Leave
+    # well-formed names like ``Phractus`` untouched.
+    tokens = base.split()
+    if tokens and len(tokens[0]) > 1:
+        first = tokens[0]
+        if first[0].isalpha() and any(c.isupper() for c in first[1:]):
+            tokens[0] = first[0].upper() + first[1:].lower()
+            base = " ".join(tokens)
+    return base or None
+
+
+def _verbatim_species_name(species: str | None) -> str | None:
+    """Build the literal OCR string for ``TaxonRecord.verbatim_name``.
+
+    Audit 2026-08-19 B-2 fix: verbatim_name must preserve the raw
+    source text (including ``?``, ``cf.``, OCR case errors, and
+    surrounding whitespace patterns) so reviewers can round-trip
+    back to the caption.  We only collapse internal whitespace and
+    strip leading/trailing whitespace — punctuation (``?``, ``.``
+    in ``sp.``) and case are left untouched.
+    """
+    if not species:
+        return None
+    s = " ".join(str(species).split()).strip()
+    return s or None
+
+
 def _resolve_modern_coord(modern: Any, legacy: Any) -> Any:
     """Pick the modern coordinate value with explicit None handling.
 
@@ -654,17 +712,49 @@ def _extract_authorship(species: str | None) -> tuple[str | None, str | None, st
     if not name:
         return None, None, None
 
-    # Look for an authorship block in parentheses ``(Smith, 1900)``
-    # or as a trailing Smith, 1900. We scan from the right.
+    # Look for an authorship block in parentheses ``(Smith, 1900)`` or
+    # ``(Haeckel)`` (no year — common for 19th-century ICZN citations
+    # where the original work is the canonical reference), or as a
+    # trailing Smith, 1900. We scan from the right.
     authorship: str | None = None
     subgenus: str | None = None
     rest = name
 
+    # 0. Audit 2026-08-19 B-3: parenthesised authority WITHOUT a year
+    # e.g. ``(Haeckel)``, ``(Ehrenberg)``, ``(Smith)``.  19th-century
+    # ICZN citations routinely omit the year when the original work
+    # is the canonical reference (Haeckel 1887, Ehrenberg 1838).
+    #
+    # Disambiguation from the postfix-subgenus shape
+    # (``Podocyrtis amphora (Podocyrtites)``) relies on the
+    # parenthesised word being a likely surname.  In practice the
+    # postfix subgenus is a derivative of the genus name (e.g.
+    # ``Podocyrtis`` → ``Podocyrtites``) — when the parenthetical
+    # shares a meaningful prefix with the genus, we skip this branch
+    # and let branch 4 (postfix subgenus) handle it.  Otherwise we
+    # treat the parenthetical as an authority citation.
+    paren_bare = re.search(r"\(([A-Z][a-z]{2,})\)\s*$", name)
+    if paren_bare:
+        candidate = paren_bare.group(1)
+        # Heuristic: if the candidate looks like a subgenus (shares
+        # at least 4 leading characters with the genus, and is longer
+        # than the genus), prefer branch 4.
+        first_word = name.split(" ", 1)[0] if name else ""
+        looks_like_subgenus = (
+            len(first_word) >= 4
+            and len(candidate) > len(first_word)
+            and candidate.lower().startswith(first_word[:4].lower())
+        )
+        if not looks_like_subgenus:
+            authorship = paren_bare.group(0).strip()
+            rest = name[: paren_bare.start()].strip()
+
     # 1. Parenthesised authority e.g. ``(Smith, 1900)``
-    m = re.search(r"\(([^()]+(?:,\s*\d{4}[a-z]?))\)\s*$", name)
-    if m:
-        authorship = m.group(1).strip()
-        rest = name[: m.start()].strip()
+    if authorship is None:
+        m = re.search(r"\(([^()]+(?:,\s*\d{4}[a-z]?))\)\s*$", name)
+        if m:
+            authorship = m.group(1).strip()
+            rest = name[: m.start()].strip()
 
     # 2. Trailing ``, 1900`` style (Smith, 1900) without parens — only
     # when there's no parenthesised match above.
@@ -1197,6 +1287,13 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         sp = _normalise_species_name(m.species)
         if not sp:
             continue
+        # Audit 2026-08-19 B-2: split verbatim_name (raw OCR) from
+        # normalized_name (cleaned form for entity linking). DwC
+        # requires the two fields to remain distinct — verbatim
+        # round-trips back to the caption while normalized drives
+        # downstream taxonomy linking.
+        verbatim_name_raw = _verbatim_species_name(m.species)
+        normalized_name = _normalize_dwc_name(m.species) or sp
         taxon_id = _stable_id("taxon", sp)
         if taxon_id in seen:
             continue
@@ -1237,8 +1334,8 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
         )
         rec = TaxonRecord(
             taxon_id=taxon_id,
-            verbatim_name=sp,
-            normalized_name=sp,
+            verbatim_name=verbatim_name_raw,
+            normalized_name=normalized_name,
             genus=parts["genus"],
             specific_epithet=parts["specific_epithet"],
             qualifier=parts["qualifier"],

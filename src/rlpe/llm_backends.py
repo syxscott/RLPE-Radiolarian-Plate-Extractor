@@ -438,7 +438,69 @@ def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
             continue
         if isinstance(v, (list, dict)):
             out[k] = v
+    # audit 2026-08-19 Phase 1d (B-7): open-nomenclature discount.
+    # ICZN open-nomenclature markers (cf./aff./?/ex gr.) mean the
+    # identification is *not* at species level. Previously the LLM
+    # could return confidence=0.9 for "Triactoma cf. kamoensis" and
+    # the F1 would credit a gold match against "Triactoma kamoensis"
+    # as a true positive even though the LLM explicitly said
+    # "compare-with" the species. Discount the confidence here so
+    # downstream scoring treats open-nomenclature rows as lower-trust.
+    if isinstance(out.get("species"), str) and out["species"]:
+        _apply_open_nomen_discount(out)
     return out
+
+
+# Confidence caps for open-nomenclature markers. Mirrors the
+# ``open_nomenclature_strength`` field we ask the LLM to emit on
+# match_panel output (audit 2026-08-19 Phase 1d). The discount is
+# applied as a *post-filter* on the normalized species string so it
+# works regardless of whether the LLM returns the
+# ``open_nomenclature_strength`` field or not.
+_OPEN_NOMEN_CF_AFF_CAP = 0.55  # cf. / aff. / ?
+_OPEN_NOMEN_EX_GR_CAP = 0.50   # ex gr. (group)
+
+
+def _apply_open_nomen_discount(out: dict[str, Any]) -> None:
+    """Discount ``out['confidence']`` when the species carries ICZN
+    open-nomenclature markers.
+
+    audit 2026-08-19 Phase 1d (B-7): cf./aff./? -> cap at 0.55,
+    ex gr. -> cap at 0.50. Detection is regex-based on the
+    already-normalized species string (catches both with-period
+    and bare-word forms). Detection runs *after* the species has
+    been str-stripped but *before* any further normalization, so a
+    literal "cf" / "aff" without trailing period still triggers.
+
+    Mutates ``out`` in place; no return value.
+    """
+    species = out.get("species") or ""
+    if not species:
+        return
+    # "cf." / "aff." / "cf" / "aff" as standalone tokens. The
+    # leading/trailing boundary guard avoids matching the
+    # substring inside longer words (e.g. "pacificus" doesn't
+    # match "cf"). Case-insensitive — gold uses lowercase but
+    # OCR-derived text sometimes uppercases.
+    has_cf_aff = bool(
+        re.search(r"\b(?:cf|aff)\.?\b", species, flags=re.IGNORECASE)
+    )
+    # "?" literal — gold/caption convention is "(?)" before sp.
+    # but raw LLM output may emit "?" anywhere. Only treat as
+    # open-nomen when "?" appears between the genus and the
+    # epithet/sp. marker (i.e. the question-mark-in-binomial
+    # convention). A bare "?" at end of "Genus?" without sp. is
+    # also valid (genus uncertain).
+    has_question = "?" in species
+    # "ex gr." — ICZN group marker. Match "ex gr." with optional
+    # whitespace; also catch the rarer "ex.gr." abbreviation.
+    has_ex_gr = bool(
+        re.search(r"\bex\.?\s*gr\.?\b", species, flags=re.IGNORECASE)
+    )
+    if has_ex_gr:
+        out["confidence"] = min(out["confidence"], _OPEN_NOMEN_EX_GR_CAP)
+    elif has_cf_aff or has_question:
+        out["confidence"] = min(out["confidence"], _OPEN_NOMEN_CF_AFF_CAP)
 
 
 class BaseLLMBackend:

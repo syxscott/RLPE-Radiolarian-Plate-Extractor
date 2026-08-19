@@ -55,9 +55,46 @@ _SECTION_HEAD_RE = re.compile(
 
 # Strict species regex: ``Genus species`` with both words >= 4 letters.
 # Optional ``gen. et sp. nov.`` / ``sp. nov.`` / ``cf.`` / ``aff.`` suffix.
+#
+# Audit 2026-08-19 B-6: extended to recognise the open-nomenclature
+# shapes that dominate radiolarian systematics chapters:
+#   * ``Genus sp.`` / ``Genus spp.`` (undetermined species, single or many)
+#   * ``Genus sp. nov.`` / ``Genus n. sp.`` (new species, full or abbreviated)
+#   * ``Genus n. gen. n. sp.`` (new genus + new species)
+#   * ``Genus cf. species`` / ``Genus aff. species`` (comparison / affinity)
+#   * ``Genus ex gr. species`` (open-naming group)
+# The previous regex required a full binomial (genus + epithet, both
+# >= 4 characters) and only allowed the qualifier as a trailing
+# suffix — so the most common radiolarian shape (``Genus sp.``) was
+# silently dropped from caption entities.
 _SPECIES_RE = re.compile(
-    r"\b([A-Z][a-z]{3,}\s+[a-z][a-zA-Z\-]{3,})"
+    r"\b([A-Z][a-z]{3,}\s+(?:"
+    # Full binomial: Genus species (both >= 4 chars).
+    r"[a-z][a-zA-Z\-]{3,}"
+    # Undetermined species: Genus sp. / Genus spp. / Genus sp. nov.
+    r"|spp?\.(?:\s*nov\.?)?"
+    # New species abbreviation: Genus n. sp. / Genus n. sp. nov.
+    r"|n\.\s*sp\.(?:\s*nov\.?)?"
+    # New genus + new species: Genus n. gen. n. sp.
+    r"|n\.\s*gen\.\s*n\.\s*sp\.(?:\s*nov\.?)?"
+    # Comparison species: Genus cf. species
+    r"|cf\.\s+[a-z][a-zA-Z\-]{3,}"
+    # Affinity species: Genus aff. species
+    r"|aff\.\s+[a-z][a-zA-Z\-]{3,}"
+    # Open-naming group: Genus ex gr. species
+    r"|ex\s+gr\.\s+[a-z][a-zA-Z\-]{3,}"
+    r"))"
+    # Optional trailing qualifier (retained from the original regex
+    # so older captions like ``Genus species cf.`` still match).
     r"(?:\s+(?:sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|gen\.\s*et\s*sp\.\s*nov\.))?"
+)
+
+# ICZN open-nomenclature markers that may appear as the second token
+# of a ``_SPECIES_RE`` match.  When the second token is one of these
+# stems, the parser skips the >= 4-char epithet length check because
+# the species is intentionally unspecified.
+_SPECIES_OPEN_NOMEN_STARTS: frozenset[str] = frozenset(
+    {"sp", "spp", "nov", "n", "cf", "aff", "ex", "gr"}
 )
 
 # Common false positives to filter out after species extraction.
@@ -354,7 +391,16 @@ def _parse_captions(pages: list[dict[str, Any]], paper_id: str) -> list[CaptionR
                 if tok in _SPECIES_DENYLIST:
                     continue
                 parts = tok.split()
-                if len(parts) < 2 or len(parts[1]) < 4:
+                if len(parts) < 2:
+                    continue
+                # Audit 2026-08-19 B-6: skip the ≥ 4-char epithet
+                # length check when the match is an open-nomenclature
+                # shape like ``Genus sp.`` / ``Genus n. sp.`` /
+                # ``Genus n. gen. n. sp.`` / ``Genus ex gr. species``
+                # — the species is intentionally unspecified so the
+                # "epithet" is a short qualifier token.
+                second_bare = parts[1].rstrip(".,").lower()
+                if second_bare not in _SPECIES_OPEN_NOMEN_STARTS and len(parts[1]) < 4:
                     continue
                 entities.append(
                     CaptionEntity(

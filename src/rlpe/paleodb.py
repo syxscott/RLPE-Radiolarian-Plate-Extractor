@@ -3,7 +3,8 @@
 This module looks up species names against the PBDB taxonomy and occurrence
 endpoints, returning structured :class:`TaxonomyMatch` and
 :class:`OccurrenceSummary` records. All HTTP calls are cached on disk and
-rate-limited to <=5 requests per second.
+rate-limited to at most 30 requests per minute (PBDB's published public-API
+Terms of Service limit).
 
 The module is **opt-in**: nothing in the pipeline calls it unless the user
 explicitly enables ``use_paleodb`` in :class:`JobOptions` (CLI:
@@ -19,7 +20,10 @@ Endpoints used
 Default rate limit
 ------------------
 
-At most 1 request per 200ms (configurable via ``min_interval``).
+At most 0.5 requests per second (one request every ``min_interval`` seconds,
+default ``2.0`` s → 30 req/min) to comply with PBDB's public endpoint ToS.
+Operators who need a faster throughput should set a custom ``min_interval``
+explicitly (and accept that PBDB may rate-limit or IP-ban the caller).
 """
 
 from __future__ import annotations
@@ -54,7 +58,14 @@ def _stable_cache_key(s: str) -> str:
 
 @dataclass(slots=True)
 class _RateLimiter:
-    min_interval: float = 0.2
+    # Block 1c (audit 2026-08-19): PBDB's public endpoint is documented to
+    # allow at most 30 requests per minute. 0.2 s (= 5 req/sec ≈ 300 req/min)
+    # would repeatedly trip that limit and risk the operator's IP being
+    # temporarily or permanently banned. Default to 2.0 s (= 0.5 req/sec =
+    # 30 req/min), matching ``PaleoDB.__init__`` and the
+    # ``30 req/min on the public endpoint`` comment in
+    # ``rlpe.converters.taxon_records_from_matches``.
+    min_interval: float = 2.0
     last_call: float = 0.0
 
     def wait(self) -> None:
@@ -178,7 +189,9 @@ class PaleoDB:
         Directory to write JSON cache files.  Defaults to
         ``~/.cache/rlpe/paleodb``.  Pass an empty path-like to disable caching.
     min_interval : float
-        Minimum seconds between HTTP requests.  Default 0.2s.
+        Minimum seconds between HTTP requests.  Default ``2.0`` (30 req/min),
+        matching the published PBDB public-endpoint ToS. Anything tighter
+        risks the operator's IP being rate-limited or banned.
     timeout : float
         HTTP request timeout in seconds.  Default 20.
     offline : bool
@@ -189,7 +202,7 @@ class PaleoDB:
         self,
         endpoint: str | None = None,
         cache_dir: str | Path | None = None,
-        min_interval: float = 0.2,
+        min_interval: float = 2.0,
         timeout: float = 20.0,
         offline: bool = False,
     ) -> None:

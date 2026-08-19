@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import threading
@@ -754,21 +755,44 @@ async def upload_pdf(
     # audit 2026-07-31: pre-check Content-Length BEFORE reading the
     # body into memory — a 2 GB upload used to be fully buffered
     # (2 GB RAM) before the 413 was raised.
+    # audit 2026-08-19 phase 1e (B-13): also reject malformed
+    # Content-Length headers (400) instead of silently falling
+    # through, and stream the body in 1 MB chunks so 4 concurrent
+    # uploads at 256 MB peak stay under 1 GB RAM.
+    max_size = MAX_UPLOAD_SIZE_MB * 1024 * 1024
     content_length = request.headers.get("content-length")
     if content_length:
         try:
-            if int(content_length) > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File exceeds {MAX_UPLOAD_SIZE_MB} MB limit.",
-                )
+            cl = int(content_length)
         except ValueError:
-            pass  # malformed header — fall through to the read+check below
-    # Read content to check size before writing.
-    content = await file.read()
-    size_mb = len(content) / (1024 * 1024)
-    if size_mb > MAX_UPLOAD_SIZE_MB:
-        raise HTTPException(status_code=413, detail=f"File exceeds {MAX_UPLOAD_SIZE_MB} MB limit.")
+            raise HTTPException(
+                status_code=400, detail="Invalid Content-Length header."
+            )
+        if cl < 0 or cl > max_size:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds {MAX_UPLOAD_SIZE_MB} MB limit.",
+            )
+    # Stream the upload in 1 MB chunks with a hard size cap. The
+    # chunked read+accumulate pattern keeps peak RAM at ~1 MB per
+    # upload instead of buffering the whole body (256 MB) into a
+    # single bytes object. 4 concurrent uploads therefore cap at
+    # ~4 MB of working memory, not 1 GB.
+    chunks: list[bytes] = []
+    total = 0
+    chunk_size = 1024 * 1024  # 1 MB
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_size:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds {MAX_UPLOAD_SIZE_MB} MB limit.",
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
     job_id = str(uuid.uuid4())
     save_path = UPLOAD_DIR / f"{job_id}_{safe_filename}"
     with save_path.open("wb") as f:
@@ -1072,7 +1096,13 @@ def export_job_xlsx(
     # Round 24: use the paper_id + job_id for the filename so
     # multiple exports land in different files.
     paper_id = (job.get("result", [{}])[0] or {}).get("paper_id", job_id[:8])
-    filename = f"rlpe_{paper_id}_{job_id[:8]}.xlsx"
+    # audit 2026-08-19 phase 1e (M-3): whitelist paper_id before
+    # splicing it into a Content-Disposition header. Without this
+    # a malicious paper_id (CR/LF, path-traversal, quotes) lets
+    # the caller inject arbitrary response headers or coerce the
+    # browser to write to a sensitive path.
+    safe_paper_id = re.sub(r"[^\w.\-]", "_", str(paper_id)) or "job"
+    filename = f"rlpe_{safe_paper_id}_{job_id[:8]}.xlsx"
 
     # ``media_type`` for .xlsx is the OOXML spec:
     # application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
@@ -2607,6 +2637,12 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 entry["detail"] = "Cancelled by user"
                 entry["progress"] = entry.get("progress", 0)
     except Exception as exc:
+        # audit 2026-08-19 phase 1e: do NOT stash the Python
+        # traceback in the per-job entry — that data is returned
+        # verbatim to the SPA and leaks site-packages absolute
+        # paths, the Python version, and dependency module names.
+        # Log it server-side for ops, but only ship a sanitized
+        # ``error`` string to the client.
         tb = traceback.format_exc(limit=8)
         err = str(exc)
         if "object has no attribute 'route'" in err and "Starlette" in err:
@@ -2614,12 +2650,12 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 f"{err}. Possible PyMuPDF/fitz package conflict. "
                 "Install `pymupdf` and uninstall non-PyMuPDF `fitz`."
             )
+        logger.error("Pipeline failed for %s: %s\n%s", job_id, exc, tb)
         with RESULT_LOCK:
             entry = RESULT_CACHE.get(job_id)
             if entry is not None:
                 entry["status"] = "failed"
                 entry["error"] = err
-                entry["error_trace"] = tb
                 entry["detail"] = "Pipeline execution failed"
                 entry["progress"] = 0
     finally:

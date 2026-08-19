@@ -1828,12 +1828,22 @@ _PARSE_CAPTION_SYSTEM = """你是放射虫古生物学专家，专长是从图�
 5. confidence: 0-1，反映你对自己解析的把握。
 6. notes: 简短的解析说明（"括注=scale 50μm, 忽略"等），没有则空串。
 7. raw_text: 产生该配对的原文片段；找不到则空串。
+8. open_nomenclature_strength: "none" | "cf." | "aff." | "ex gr." | "subgen." | "?" — ICZN 开放命名强度。species 含 cf./aff./ex gr./? 标记时填相应值，否则填 "none"。**该字段决定下游 confidence 折扣**。
 
 示例输入：
 "图3 扫描电镜照片。A-D: Tetraspongodiscus stauracanthus n. sp.; E, F: Falcispongus scalaris sp. nov. Scale bars = 50 μm in A, C; 30 μm in B, D-F."
 
 示例输出：
-[{"labels":["A","B","C","D"],"species":"Tetraspongodiscus stauracanthus","modifier":"n. sp.","confidence":0.97,"notes":"","raw_text":"A-D: Tetraspongodiscus stauracanthus n. sp."},{"labels":["E","F"],"species":"Falcispongus scalaris","modifier":"sp. nov.","confidence":0.95,"notes":"","raw_text":"E, F: Falcispongus scalaris sp. nov."}]
+[{"labels":["A","B","C","D"],"species":"Tetraspongodiscus stauracanthus","modifier":"n. sp.","confidence":0.97,"notes":"","raw_text":"A-D: Tetraspongodiscus stauracanthus n. sp.","open_nomenclature_strength":"none"},{"labels":["E","F"],"species":"Falcispongus scalaris","modifier":"sp. nov.","confidence":0.95,"notes":"","raw_text":"E, F: Falcispongus scalaris sp. nov.","open_nomenclature_strength":"none"}]
+
+完整输入→输出示例（含开放命名）：
+输入：Fig. 1. 1, Triactoma kamoensis; 2, cf. Pessagnoa sp.; 3, Archaeodictyomitra (?) sp.
+输出：
+[
+  {"labels":["1"],"species":"Triactoma kamoensis","modifier":"","confidence":0.95,"notes":"","raw_text":"1, Triactoma kamoensis","open_nomenclature_strength":"none"},
+  {"labels":["2"],"species":"Pessagnoa sp.","modifier":"cf.","confidence":0.55,"notes":"caption 写 cf.，是 ICZN confer 标记","raw_text":"cf. Pessagnoa sp.","open_nomenclature_strength":"cf."},
+  {"labels":["3"],"species":"Archaeodictyomitra sp.","modifier":"(?)","confidence":0.55,"notes":"caption 含 (?) 不确定标记","raw_text":"Archaeodictyomitra (?) sp.","open_nomenclature_strength":"?"}
+]
 
 只输出 JSON 数组，不要任何解释文本。"""
 
@@ -1976,10 +1986,18 @@ _MATCH_PANEL_SYSTEM = """你是放射虫古生物学专家，负责为单个 pan
 输出（严格 JSON）：
 1. label: 你判定的 panel 对应的字母（A/B/C...）；若该 panel 不属于任何候选配对，给出最可能的字母或 null。
 2. species: 拉丁学名。
-3. confidence: 0-1，反映判定的把握。
-4. reasoning: 1-2 句解释（"caption 中 A-B 配 X；图上标签为 A；形态与 X 一致" 等）。
-5. alternative: 第二可能的物种；无则 null。
-6. is_radiolarian: true/false — 这真的是放射虫吗？若 false 则 species 设为 null。
+3. open_nomenclature_strength: "none" | "cf." | "aff." | "ex gr." | "subgen." | "?" — ICZN 开放命名的强度：
+   - "none" = 完全鉴定到种（默认）。
+   - "cf." = 形态相似，可能但不确认是该种（confer）。
+   - "aff." = 形态接近但有差异（affinis）。
+   - "ex gr." = 属于某一 group / 居群（ex grege，bandini 2011 的 subgenus-group 标记）。
+   - "subgen." = 亚属标记。
+   - "?" = 鉴定不确定（caption 里的 "(?)" 标记）。
+   当 species 含 cf./aff./ex gr./? 任一标记时必须填，否则填 "none"。
+4. confidence: 0-1，反映判定的把握。**注意：open_nomenclature_strength 不为 "none" 时，confidence 上限自动折扣为 0.55（cf./aff./?）或 0.50（ex gr.）；请你在 confidence 上自行反映这种不确定性**。
+5. reasoning: 1-2 句解释（"caption 中 A-B 配 X；图上标签为 A；形态与 X 一致" 等）。
+6. alternative: 第二可能的物种；无则 null。
+7. is_radiolarian: true/false — 这真的是放射虫吗？若 false 则 species 设为 null。
 
 判定优先级：
 1) 图上可见字母标签（最高）。
@@ -2005,8 +2023,9 @@ _CRITIQUE_SYSTEM = """你是放射虫分类学审查员。任务：交叉验证�
 1. panel_id: 字符串（与输入一致）。
 2. verdict: "agree" / "disagree" / "uncertain"。
 3. suggested_species: 若 disagree/uncertain 且有更合理候选，给出拉丁名；否则 null。
-4. confidence: 0-1，反映你的判断把握。
-5. reasoning: 1 句解释。
+4. open_nomenclature_strength: "none" | "cf." | "aff." | "ex gr." | "subgen." | "?" — suggested_species 含 cf./aff./ex gr./? 标记时填相应值，否则 "none"。**该字段用于在 F1 评分时折扣开放命名匹配**。
+6. confidence: 0-1，反映你的判断把握。
+7. reasoning: 1 句解释。
 
 判定规则：
 - 如果原配对 species 与 caption 中同一 label 的候选一致 → agree。
@@ -2373,11 +2392,35 @@ class M3Engine:
                 conf = float(item.get("confidence", 0.5))
             except Exception:
                 conf = 0.5
+            # audit 2026-08-19 Phase 1d (B-8): the LLM may emit
+            # species without a trailing period on cf./aff. ("Triactoma
+            # cf kamoense") or with the "(?)" uncertainty marker
+            # ("Archaeodictyomitra (?) sp."). The regex fallback path
+            # already calls _normalize_species before emitting
+            # CaptionPair, but the LLM path was leaving the species
+            # string verbatim — causing mismatches against gold.
+            # Normalize both species and modifier so the LLM path
+            # behaves consistently with the regex fallback.
+            normalized_species = _normalize_species(species)
+            if normalized_species:
+                species = normalized_species
+            modifier_raw = str(item.get("modifier") or "").strip()
+            # ``_normalize_species`` returns ``None`` when the input
+            # reduces to whitespace-only (e.g. literal "(?)" — the
+            # "(?)" uncertainty marker is stripped entirely). Map
+            # that to an empty modifier so the LLM path behaves
+            # consistently with the regex fallback (which never
+            # emits a modifier containing "(?)").
+            normalized_modifier = _normalize_species(modifier_raw)
+            if normalized_modifier is None:
+                modifier_raw = ""
+            else:
+                modifier_raw = normalized_modifier
             pairs.append(
                 CaptionPair(
                     labels=labels,
                     species=species,
-                    modifier=str(item.get("modifier") or "").strip(),
+                    modifier=modifier_raw,
                     confidence=max(0.0, min(1.0, conf)),
                     notes=str(item.get("notes") or "").strip(),
                     raw_text=str(item.get("raw_text") or "").strip(),
