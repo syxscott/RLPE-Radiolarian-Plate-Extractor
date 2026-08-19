@@ -147,6 +147,7 @@ STRINGS = {
     "jobstab.loaded_from_disk": "Loaded from disk",
     "jobstab.export.saved": "Saved {count} rows → {path}",
     "jobstab.export.saved_short": "Saved → {path}",
+    "jobstab.partial_no_complete_flag": "manifest exists but no complete.flag (possibly interrupted)",
     # ============================================================
     # Results tab
     # ============================================================
@@ -404,6 +405,11 @@ STRINGS = {
     "restab.export.json_title": "Export JSON",
     "restab.export.csv_title": "Export CSV",
     "restab.export.dwca_title": "Export DwCA",
+    # Phase F-1 (2026-08-20, M-5): API URL validation warning shown
+    # in the status bar when an operator-supplied / QSettings-supplied
+    # override is rejected by _validate_api_url (file:/// javascript:
+    # loopback without allow_local, etc.).
+    "restab.api_url.invalid": "Invalid API URL; using default",
     # Jobs tab summary
     "jobstab.summary.count": "{total} jobs · running {running} · done {done} · failed {failed}",
     "jobstab.summary.count_label": "{total} jobs  ·  running {running}  ·  done {done}  ·  failed {failed}",

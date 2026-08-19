@@ -65,6 +65,7 @@ STRINGS = {
     "jobstab.loaded_from_disk": "从磁盘加载",
     "jobstab.export.saved": "已保存 {count} 行 → {path}",
     "jobstab.export.saved_short": "已保存 → {path}",
+    "jobstab.partial_no_complete_flag": "manifest 存在但缺少 complete.flag（可能被中断）",
     "jobstab.menu.export_json": "📤  导出 JSON",
     "jobstab.menu.export_xlsx": "📤  导出 xlsx",
     "jobstab.menu.open_out": "📁  打开输出目录",
@@ -353,6 +354,10 @@ STRINGS = {
     "restab.export.json_title": "导出 JSON",
     "restab.export.csv_title": "导出 CSV",
     "restab.export.dwca_title": "导出 DwCA",
+    # Phase F-1 (2026-08-20, M-5): API URL validation warning shown
+    # in the status bar when an operator-supplied / QSettings-supplied
+    # override is rejected by _validate_api_url.
+    "restab.api_url.invalid": "API URL 无效；已使用默认值",
     # Jobs tab summary
     "jobstab.summary.count": "{total} 个任务 · 运行中 {running} · 已完成 {done} · 失败 {failed}",
     "jobstab.summary.count_label": "{total} 个任务  ·  运行中 {running}  ·  已完成 {done}  ·  失败 {failed}",

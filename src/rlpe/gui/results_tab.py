@@ -17,8 +17,10 @@ scientist verify the extraction without leaving the app.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -93,6 +95,71 @@ def _fmt_float(v: Any, fmt: str) -> str | None:
         return fmt.format(float(v))
     except (TypeError, ValueError):
         return None
+
+
+# Audit 2026-08-20 (M-5): API URL injection guard. The API URL was
+# previously taken from QSettings (operator-editable via the Settings
+# tab) and used verbatim to build the /review/correction endpoint —
+# which means an attacker who can edit QSettings could redirect the
+# bearer-equivalent POST to an arbitrary host. We now validate the
+# URL via :func:`urllib.parse.urlparse` before using it; only ``http``
+# and ``https`` schemes with a non-empty host are accepted.
+#
+# The deny-list covers loopback variants. The dev workflow hits
+# ``http://127.0.0.1:8000`` so loopback has to be allowed somewhere;
+# callers pass ``allow_local=True`` from the dev defaults path. Any
+# URL loaded from QSettings is rejected on loopback unless the
+# caller explicitly opts in.
+_LOOPBACK_HOSTS: frozenset[str] = frozenset(
+    {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
+)
+
+
+def _validate_api_url(url: str, *, allow_local: bool = False) -> str | None:
+    """Validate an API URL — return the URL or ``None`` on rejection.
+
+    Audit 2026-08-20 (M-5). The endpoint URL builder used to do raw
+    string concatenation with whatever sat in ``QSettings`` (or any
+    future text input). This helper enforces:
+
+    1. Non-empty after stripping.
+    2. ``scheme in {"http", "https"}`` — rejects ``file:///etc/passwd``,
+       ``javascript:alert(1)``, ``data:...`` and friends.
+    3. Non-empty ``netloc`` (host part).
+    4. Host is not in the loopback deny-list unless ``allow_local=True``
+       is set explicitly. The default API URL is loopback so the dev
+       path must opt in.
+
+    The returned value is the cleaned URL (stripped whitespace, no
+    trailing slash tweaks — caller decides how to mount the path).
+    """
+    if url is None:
+        return None
+    if not isinstance(url, str):
+        return None
+    s = url.strip()
+    if not s:
+        return None
+    try:
+        parsed = urlparse(s)
+    except Exception:
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    host = (parsed.netloc or "").strip()
+    # IPv6 hosts come out bracketed — strip the brackets so the
+    # deny-list comparison works for ``[::1]``.
+    if host.startswith("[") and host.endswith("]"):
+        bare_host = host[1:-1]
+    else:
+        bare_host = host
+    # Split off the port so "127.0.0.1:8000" still matches the deny-list.
+    bare_host_no_port = bare_host.split(":", 1)[0]
+    if not bare_host_no_port:
+        return None
+    if not allow_local and bare_host_no_port.lower() in _LOOPBACK_HOSTS:
+        return None
+    return s
 
 
 def _emit_link_source_badge(html: list[str], coord_source: str) -> None:
@@ -181,6 +248,11 @@ class _FlipVerifiedWorker(QThread):
     pattern lets the UI stay responsive: the button is disabled, the
     employee can read other panels, and a single signal reports the
     outcome once the request (or its timeout) finishes.
+
+    Audit 2026-08-20 (B-2): the worker now honours a ``_cancelled``
+    flag set by :meth:`cancel`. ``ResultsTab.shutdown`` flips the flag
+    before ``wait(30000)`` so the GUI close path doesn't segfault on
+    a still-running POST.
     """
 
     finished_with_success = Signal(bool)
@@ -190,9 +262,26 @@ class _FlipVerifiedWorker(QThread):
         super().__init__()
         self._url = url
         self._body = body
+        # Audit 2026-08-20 (B-2): cancellation flag. ``run()`` checks
+        # this before issuing the POST and exits early if set. The
+        # flag is plain Python (not a Qt signal) so the assignment
+        # from the GUI thread is safe as long as it's set *before*
+        # ``wait()`` is called — ``run()`` reads it once per request.
+        self._cancelled: bool = False
+
+    def cancel(self) -> None:
+        """Ask :meth:`run` to bail out at the next checkpoint.
+
+        Audit 2026-08-20 (B-2). Called from :meth:`ResultsTab.shutdown`
+        before ``QThread.wait``. The flag is sticky: once set it stays
+        set so even if the QThread was about to retry, it exits.
+        """
+        self._cancelled = True
 
     def run(self) -> None:  # noqa: D401 - QThread contract
         try:
+            if self._cancelled:
+                return
             # Prefer requests (the rest of the project already uses it)
             # but fall back to urllib so the button still works on a slim
             # install that lacks requests. We rebuild the import inside
@@ -204,6 +293,8 @@ class _FlipVerifiedWorker(QThread):
 
             except Exception:
                 requests = None  # type: ignore
+            if self._cancelled:
+                return
             if requests is not None:
                 resp = requests.post(self._url, json=self._body, timeout=10)
                 resp.raise_for_status()
@@ -219,6 +310,8 @@ class _FlipVerifiedWorker(QThread):
                 )
                 with urllib.request.urlopen(req, timeout=10) as fh:  # noqa: S310
                     fh.read()
+            if self._cancelled:
+                return
             self.finished_with_success.emit(True)
         except Exception as exc:
             self.error.emit(f"{type(exc).__name__}: {exc}")
@@ -249,6 +342,11 @@ class _ExportWorker(QThread):
     error(str) — ``{Type}: {message}`` on failure; the worker NEVER
         re-raises because a Qt slot that lets an exception bubble out
         of ``run()`` will crash the host process.
+
+    Audit 2026-08-20 (B-2): the worker now honours a ``_cancelled``
+    flag set by :meth:`cancel`. :meth:`ResultsTab.shutdown` flips the
+    flag before ``QThread.wait(30000)`` so the GUI close path doesn't
+    segfault on a 50k-row xlsx export still being written.
     """
 
     finished_with_success = Signal(str)
@@ -279,9 +377,25 @@ class _ExportWorker(QThread):
         # (xlsx, json, dwca) don't need the BOM, so we keep it opt-in
         # rather than baking it in.
         self._use_utf8_sig = bool(use_utf8_sig)
+        # Audit 2026-08-20 (B-2): cancellation flag. ``run()`` checks
+        # this before opening the destination file and between every
+        # CSV row write so a ``cancel()`` from
+        # :meth:`ResultsTab.shutdown` stops a 50k-row write mid-loop
+        # rather than letting it race against the GUI destructor.
+        self._cancelled: bool = False
+
+    def cancel(self) -> None:
+        """Ask :meth:`run` to bail out at the next checkpoint.
+
+        Audit 2026-08-20 (B-2). Called from :meth:`ResultsTab.shutdown`
+        before ``QThread.wait``. The flag is sticky.
+        """
+        self._cancelled = True
 
     def run(self) -> None:  # noqa: D401 - QThread contract
         try:
+            if self._cancelled:
+                return
             if self._fmt == "xlsx":
                 from ..exporters.xlsx import write_xlsx
 
@@ -318,6 +432,12 @@ class _ExportWorker(QThread):
                     w = csv.DictWriter(fh, fieldnames=keys)
                     w.writeheader()
                     for r in self._rows:
+                        # Audit 2026-08-20 (B-2): bail mid-loop if a
+                        # shutdown raced in. Returning early skips the
+                        # success signal — the caller is in shutdown so
+                        # no UI update would be useful anyway.
+                        if self._cancelled:
+                            return
                         w.writerow(r)
             elif self._fmt == "dwca":
                 from ..exporters.archive import write_dwca_zip
@@ -328,6 +448,8 @@ class _ExportWorker(QThread):
                 # but keep an explicit branch so a future refactor can't
                 # silently fall through.
                 raise ValueError(f"unknown export format: {self._fmt!r}")
+            if self._cancelled:
+                return
             self.finished_with_success.emit(self._path)
         except Exception as exc:
             self.error.emit(f"{type(exc).__name__}: {exc}")
@@ -659,9 +781,106 @@ class ResultsTab(QWidget):
                 pass
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        """Phase 56 audit: remove i18n listener on widget destruction."""
+        """Phase 56 audit: remove i18n listener on widget destruction.
+
+        Audit 2026-08-20 (B-2): also call :meth:`shutdown` so any
+        in-flight ``_FlipVerifiedWorker`` / ``_ExportWorker`` QThread
+        gets a chance to exit before the Qt destructor walks the
+        children list. Without this the GUI close path raised
+        ``QThread: Destroyed while thread is still running`` (exit
+        code 134) on every close after a mark-verified click or an
+        export.
+        """
+        self.shutdown()
         self._remove_i18n_listener()
         super().closeEvent(event)
+
+    def shutdown(self) -> None:
+        """Cancel and wait for any background workers to drain.
+
+        Audit 2026-08-20 (B-2). Both the ``_FlipVerifiedWorker`` and
+        the ``_ExportWorker`` are :class:`QThread` instances captured
+        on ``self`` so the GC can't reap them mid-flight (PySide6
+        footgun). They must be cancelled and ``wait()``ed for before
+        the host widget is destroyed, otherwise Qt raises
+        ``QThread: Destroyed while thread is still running`` and the
+        process exits with code 134.
+
+        For each worker we:
+
+        1. No-op if the attribute is missing or ``None``.
+        2. Skip if ``isRunning()`` is False (worker already finished).
+        3. Flip the worker's ``_cancelled`` flag via ``cancel()`` so
+           ``run()`` exits at the next checkpoint instead of being
+           forcibly killed (``QThread.terminate()`` orphans
+           subprocesses and is forbidden by the 2026-08-01 D20
+           contract).
+        4. ``wait(30000)`` with a finite timeout — a 30s cap matches
+           the rest of the GUI shutdown paths. We swallow the
+           ``RuntimeError`` that Qt raises if the QThread C++ object
+           has already been deleted under us; that's a no-op race.
+        5. Log a WARNING if ``wait`` timed out — the OS will reclaim
+           the thread on process exit but we want it visible in the
+           troubleshooting log.
+        6. Drop the reference (``self._flip_worker = None`` /
+           ``self._export_worker = None``) so a subsequent start
+           rebuilds a fresh worker rather than racing with the
+           deleted one.
+
+        The method is idempotent — repeated calls after the workers
+        have already drained are a no-op.
+        """
+        for attr in ("_flip_worker", "_export_worker"):
+            worker = getattr(self, attr, None)
+            if worker is None:
+                continue
+            try:
+                running = bool(worker.isRunning())
+            except Exception:
+                # QThread C++ object already deleted under us —
+                # nothing we can wait on.
+                setattr(self, attr, None)
+                continue
+            if not running:
+                # Already finished. Drop the reference so the next
+                # export / flip constructs a fresh worker.
+                setattr(self, attr, None)
+                continue
+            try:
+                worker.cancel()
+            except Exception as exc:
+                self._log.warning(
+                    "ResultsTab.shutdown: cancel() raised on %s: %s",
+                    attr,
+                    exc,
+                )
+            try:
+                finished = worker.wait(30000)
+            except RuntimeError:
+                # Qt: "QThread: Destroyed while thread is still
+                # running" — the C++ object is gone already. We can
+                # only drop our reference and hope.
+                setattr(self, attr, None)
+                continue
+            except Exception as exc:
+                self._log.warning(
+                    "ResultsTab.shutdown: wait() raised on %s: %s",
+                    attr,
+                    exc,
+                )
+                setattr(self, attr, None)
+                continue
+            if not finished:
+                # 30s wasn't enough. We refuse to call ``terminate()``
+                # (D20 contract); the OS will reclaim the thread on
+                # process exit. Surface a warning so the operator
+                # sees why the GUI close path took longer than usual.
+                self._log.warning(
+                    "ResultsTab.shutdown: %s did not finish within 30s; "
+                    "letting the OS reclaim on process exit",
+                    attr,
+                )
+            setattr(self, attr, None)
 
     def clear(self) -> None:
         self._all_rows = []
@@ -827,6 +1046,48 @@ class ResultsTab(QWidget):
     # ------------------------------------------------------------------
     # Row selection → detail panel
     # ------------------------------------------------------------------
+    @staticmethod
+    def _resolve_figure_image_path(row: dict[str, Any]) -> Path | None:
+        """Pick the figure-level image path for a row, preferring top-level.
+
+        Audit 2026-08-20 (M-3): the previous lookup only checked
+        ``row["metadata"]["figure_image_path"]``. :class:`PanelRecord`
+        and :class:`PipelineWorker` (Phase 5D / 6A) emit
+        ``figure_image_path`` at the row top-level too — a real-data
+        regression: 100% of post-Phase-5D rows had the field at the
+        top level only, so the preview silently rendered nothing.
+
+        Resolution order:
+
+        1. ``row["figure_image_path"]`` — top-level (canonical in v1.1.0).
+        2. ``row["metadata"]["figure_image_path"]`` — pre-v1.1.0 fallback.
+        3. ``row["metadata"]["primary_image"]`` — older fallback.
+        4. ``row["metadata"]["image_path"]`` — legacy schema field.
+
+        Returns the first path whose ``Path(...).exists()`` is True,
+        or ``None`` if none of the candidates point at a real file.
+        """
+        if not isinstance(row, dict):
+            return None
+        md = row.get("metadata") or {}
+        candidates: list[Any] = [
+            row.get("figure_image_path"),
+            md.get("figure_image_path"),
+            md.get("primary_image"),
+            md.get("image_path"),
+        ]
+        for v in candidates:
+            if v is None:
+                continue
+            if isinstance(v, (str, os.PathLike)):
+                try:
+                    p = Path(str(v))
+                except Exception:
+                    continue
+                if p.exists():
+                    return p
+        return None
+
     def _on_row_selected(self) -> None:
         items = self._table.selectedItems()
         if not items:
@@ -841,13 +1102,11 @@ class ResultsTab(QWidget):
         # outside the image (real data: 4/5 rows invisible). Prefer
         # the figure-level image for bbox overlays; a crop is shown
         # without overlays.
-        md = row.get("metadata") or {}
-        figure_img = None
-        for key in ("figure_image_path", "primary_image", "image_path"):
-            v = md.get(key)
-            if v and Path(str(v)).exists():
-                figure_img = Path(str(v))
-                break
+        #
+        # Audit 2026-08-20 (M-3): delegate to the helper which also
+        # honours the top-level ``figure_image_path`` key the pipeline
+        # emits (the metadata-only lookup missed those rows).
+        figure_img = self._resolve_figure_image_path(row)
         if figure_img is not None:
             self._preview.set_image(figure_img)
             self._preview.set_bboxes([row])  # bbox is figure-level
@@ -1769,6 +2028,59 @@ class ResultsTab(QWidget):
         self._status.setText(text)
 
     # ------------------------------------------------------------------
+    # API URL setter (Audit 2026-08-20, M-5)
+    # ------------------------------------------------------------------
+    def _set_api_url(self, url: str) -> bool:
+        """Validate ``url`` and persist to QSettings on success.
+
+        Audit 2026-08-20 (M-5). This is the single write path for
+        ``io/api_url`` so any future caller (Settings tab, command-line
+        flag, etc.) can update the override safely:
+
+        * ``file:///...``, ``javascript:...``, ``data:...`` and
+          missing-scheme URLs are rejected at the door.
+        * Loopback hosts (``localhost`` / ``127.0.0.1`` / ``0.0.0.0``
+          / ``::1``) are rejected when ``allow_local=False`` (the
+          default) because a hostile override would otherwise be
+          able to redirect the POST to the operator's machine. The
+          dev default uses :data:`constants.DEFAULT_API_URL` which
+          is itself loopback — that's fine because the default
+          bypasses QSettings entirely.
+        * On rejection the QSettings key is left untouched, the
+          status bar surfaces a translated error, and the bearer
+          token is never logged.
+
+        Returns ``True`` iff the URL was accepted and persisted.
+        """
+        validated = _validate_api_url(url)
+        if validated is None:
+            self._log.warning(
+                "ResultsTab._set_api_url rejected %r (M-5)", url
+            )
+            self._set_status(
+                i18n._tr(
+                    "restab.api_url.invalid",
+                    "Invalid API URL; using default",
+                )
+            )
+            return False
+        try:
+            from PySide6.QtCore import QSettings
+
+            from .constants import APP_AUTHOR, APP_NAME, QS_KEY_API_URL
+
+            settings = QSettings(APP_AUTHOR, APP_NAME)
+            settings.setValue(QS_KEY_API_URL, validated)
+        except Exception as exc:
+            self._log.warning(
+                "ResultsTab._set_api_url could not persist %r: %s",
+                validated,
+                exc,
+            )
+            return False
+        return True
+
+    # ------------------------------------------------------------------
     # Image-verified flip (GUI-A4)
     # ------------------------------------------------------------------
     def _flip_image_verified(self, verified: bool) -> None:
@@ -1829,6 +2141,15 @@ class ResultsTab(QWidget):
         # back to the local-loopback default. Using QSettings keeps
         # operators on a remote API box happy without us needing to
         # add a new GUI tab.
+        #
+        # Audit 2026-08-20 (M-5): validate the URL via
+        # :func:`_validate_api_url` before using it. The previous
+        # code accepted any string from QSettings, so a hostile /
+        # corrupt override (``file:///etc/passwd``,
+        # ``javascript:...``, etc.) could redirect the POST and
+        # leak the request body. On rejection we fall back to the
+        # default and surface a status-bar warning so the operator
+        # can fix the override.
         api_url = DEFAULT_API_URL
         try:
             from PySide6.QtCore import QSettings
@@ -1838,7 +2159,22 @@ class ResultsTab(QWidget):
             settings = QSettings(APP_AUTHOR, APP_NAME)
             v = settings.value(QS_KEY_API_URL, DEFAULT_API_URL)
             if isinstance(v, str) and v.strip():
-                api_url = v.strip()
+                validated = _validate_api_url(v, allow_local=True)
+                if validated is not None:
+                    api_url = validated
+                else:
+                    self._log.warning(
+                        "ignoring invalid API URL override %r (M-5); "
+                        "falling back to %s",
+                        v,
+                        DEFAULT_API_URL,
+                    )
+                    self._set_status(
+                        i18n._tr(
+                            "restab.api_url.invalid",
+                            "Invalid API URL; using default",
+                        )
+                    )
         except Exception:
             pass
         endpoint = f"{api_url.rstrip('/')}/review/correction"

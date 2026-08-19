@@ -18,7 +18,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices
@@ -82,6 +82,19 @@ from .utils import (
 # ``len(self._jobs)`` later, which is what the GUI already does.
 # ============================================================
 
+# ============================================================
+# Audit 2026-08-20 (Phase F-1, M-4): JSONL DoS protection
+# ============================================================
+# ``matches.jsonl`` files come from the pipeline's own writers and are
+# trusted under normal use, but a corrupted / attacker-supplied file
+# (10 GB JSONL, or a single 2 GB line with no newline) used to OOM
+# the GUI thread inside ``_parse_one``. We cap the file at 100 MB
+# and truncate any individual line longer than 1 MB before parsing.
+# Anything larger is logged and skipped; the rest of the scan keeps
+# running.
+MAX_JSONL_SIZE: Final[int] = 100 * 1024 * 1024  # 100 MB
+MAX_LINE_SIZE: Final[int] = 1 * 1024 * 1024     # 1 MB
+
 
 class _PendingDiskScan:
     """One ``matches.jsonl`` found during the synchronous directory scan.
@@ -109,12 +122,19 @@ class _DiskScanWorker(QThread):
 
     Emits ``job_loaded(JobRecord)`` for every successfully parsed job
     so the GUI thread can fold them into ``_jobs`` one at a time, and
-    a final ``finished_ok(int)`` carrying the total parsed count for
-    status-bar reporting.
+    a final ``completed(list[JobRecord])`` carrying the records
+    produced by the scan (so callers can await the final loaded set
+    via the ``JobsTab.scan_finished`` signal). ``failed(str)`` is
+    emitted if the whole scan aborts with an unrecoverable error.
+
+    Phase F-1 (B-1 / B-3): ``completed`` replaces the previous
+    ``finished_ok`` count-only signal so callers no longer have to
+    re-walk ``_jobs`` to know when the scan truly finished.
     """
 
     job_loaded = Signal(object)  # carries a JobRecord
-    finished_ok = Signal(int)  # total parsed count
+    completed = Signal(list)  # list[JobRecord]; fired when run() returns
+    failed = Signal(str)  # error reason; fired when run() raises
 
     def __init__(self, pending: list[_PendingDiskScan]) -> None:
         super().__init__()
@@ -124,22 +144,41 @@ class _DiskScanWorker(QThread):
         self._log = get_gui_logger()
 
     def run(self) -> None:  # noqa: D401 - QThread contract
-        loaded = 0
-        for entry in self._pending:
-            try:
-                job = self._parse_one(entry)
-            except Exception as exc:
-                # Defensive: never let one bad job kill the whole scan.
-                self._log.warning(
-                    "load_recent_jobs: failed to parse %s: %s",
-                    entry.matches_path,
-                    exc,
-                )
-                continue
-            if job is not None:
-                self.job_loaded.emit(job)
-                loaded += 1
-        self.finished_ok.emit(loaded)
+        loaded: list[JobRecord] = []
+        try:
+            for entry in self._pending:
+                # Phase F-1 (B-1): honour shutdown requests between
+                # entries so a closing GUI doesn't keep scanning
+                # another 149 jobs. The worker still emits
+                # ``completed`` with whatever it had loaded so the
+                # caller can release the thread cleanly.
+                if self.isInterruptionRequested():
+                    self._log.info(
+                        "load_recent_jobs: disk scan interrupted "
+                        "after %d entries",
+                        len(loaded),
+                    )
+                    self.completed.emit(loaded)
+                    return
+                try:
+                    job = self._parse_one(entry)
+                except Exception as exc:
+                    # Defensive: never let one bad job kill the whole scan.
+                    self._log.warning(
+                        "load_recent_jobs: failed to parse %s: %s",
+                        entry.matches_path,
+                        exc,
+                    )
+                    continue
+                if job is not None:
+                    self.job_loaded.emit(job)
+                    loaded.append(job)
+            self.completed.emit(loaded)
+        except Exception as exc:
+            # Top-level guard: if the loop itself blows up (e.g. an
+            # OS error before we entered the for), surface the
+            # reason so JobsTab.scan_failed can forward it.
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
 
     def _parse_one(self, entry: _PendingDiskScan) -> JobRecord | None:
         """Parse a single ``matches.jsonl`` into a :class:`JobRecord`.
@@ -148,10 +187,30 @@ class _DiskScanWorker(QThread):
         worker can skip it without the caller crashing.
         """
         mp = entry.matches_path
+        # Phase F-1 (M-4): DoS guard. A 10 GB JSONL would OOM the GUI
+        # thread if we tried to read it; bail out cheaply via stat().
+        try:
+            mp_size = mp.stat().st_size
+        except OSError:
+            return None
+        if mp_size > MAX_JSONL_SIZE:
+            self._log.warning(
+                "load_recent_jobs: skipping %s (matches.jsonl exceeds "
+                "%d MB; %d bytes)",
+                mp,
+                MAX_JSONL_SIZE // (1024 * 1024),
+                mp_size,
+            )
+            return None
+
         rows: list[dict[str, Any]] = []
         try:
             with mp.open(encoding="utf-8", errors="replace") as fh:
                 for line in fh:
+                    # Phase F-1 (M-4): truncate any pathological line
+                    # (e.g. a 2 GB single line with no newline) before
+                    # json.loads so we don't allocate gigabytes.
+                    line = line[:MAX_LINE_SIZE]
                     line = line.strip()
                     if not line:
                         continue
@@ -203,20 +262,33 @@ class _DiskScanWorker(QThread):
         # STATUS_DONE regardless, so the operator saw a green
         # "done" row in the Jobs tab for jobs that needed a
         # retry. Honour the same flag the API uses (see
-        # api/app.py:570 / 2546) and fall back to "matches.jsonl
-        # size > 0" when the flag is missing (legacy runs).
+        # api/app.py:775-798) and only fall back to STATUS_DONE
+        # if no ``manifests/`` directory exists at all (legacy
+        # pre-flag runs in ad-hoc CLI scratch dirs).
+        manifests_dir = entry.root / "output" / "manifests"
         try:
             if entry.complete_flag.exists():
                 job_status = STATUS_DONE
-            elif mp.stat().st_size > 0:
-                # Legacy run without complete.flag but with rows:
-                # treat as done so old CLI runs don't all show as
-                # red "failed" rows. New runs always write the flag.
-                job_status = STATUS_DONE
-            else:
+                progress_msg = i18n._tr("jobstab.loaded_from_disk")
+            elif manifests_dir.exists():
+                # Phase F-1 (M-partial): a ``manifests/`` directory
+                # with rows but no ``complete.flag`` means the run
+                # was interrupted (OOM/ctrl-C/segfault) before the
+                # pipeline could finish. Mark as FAILED so the
+                # operator sees a red row instead of a misleading
+                # green "done" row that needs a retry anyway.
+                # The API uses the same ``"partial"`` label in
+                # ``api/app.py:_load_existing_jobs_from_disk``.
                 job_status = STATUS_FAILED
+                progress_msg = i18n._tr("jobstab.partial_no_complete_flag")
+            else:
+                # Legacy CLI run outside the standard manifests/ tree;
+                # treat as done so old runs don't all show as red.
+                job_status = STATUS_DONE
+                progress_msg = i18n._tr("jobstab.loaded_from_disk")
         except OSError:
             job_status = STATUS_FAILED
+            progress_msg = i18n._tr("jobstab.loaded_from_disk")
         return JobRecord(
             job_id=entry.jid,
             pdf_path=pdf_path,
@@ -224,7 +296,7 @@ class _DiskScanWorker(QThread):
             status=job_status,
             progress_current=1,
             progress_total=1,
-            progress_msg=i18n._tr("jobstab.loaded_from_disk"),
+            progress_msg=progress_msg,
             rows=rows,
             started_at=finished_at,
             finished_at=finished_at,
@@ -315,12 +387,30 @@ class JobsTab(QWidget):
 
     open_results_requested = Signal(str)  # job_id
     retry_requested = Signal(str, dict)  # job_id, settings
+    # Phase F-1 (B-3): ``scan_finished`` carries the final list of
+    # ``JobRecord`` instances produced by the async disk scan (empty
+    # if no candidates were found, or after a graceful shutdown
+    # interrupt). ``scan_failed`` carries the error reason when the
+    # whole scan aborts. ``MainWindow`` connects ``scan_finished``
+    # to the auto-open-on-startup logic so it can decide whether
+    # there's actually something to show.
+    #
+    # PySide6 requires ``Signal`` to be declared at the class level,
+    # not in ``__init__`` (the instance-level form silently breaks
+    # ``connect()``). We follow that convention here even though the
+    # spec suggested ``__init__`` placement.
+    scan_finished = Signal(list)  # list[JobRecord]
+    scan_failed = Signal(str)  # error reason
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._log = get_gui_logger()
         self._jobs: dict[str, JobRecord] = {}
         self._ctx_actions: list[tuple[QAction, str]] = []
+        # Phase F-1 (B-1): keep a strong ref to the disk-scan worker
+        # so it doesn't get GC'd mid-flight; ``shutdown()`` clears it
+        # after a graceful interrupt + wait.
+        self._disk_scan_worker: _DiskScanWorker | None = None
         self._build_ui()
         # Register as an i18n listener so column headers, context menus,
         # and status labels auto-translate on language switch. Using a bound
@@ -478,6 +568,18 @@ class JobsTab(QWidget):
                 )
 
         if not pending:
+            # Phase F-1 (B-3): emit scan_finished([]) so callers
+            # awaiting the async load know the scan truly finished
+            # with zero results (and not just "hasn't started yet").
+            # We use ``QTimer.singleShot(0, ...)`` so the emit happens
+            # after the current synchronous setup round returns,
+            # matching the async-worker scheduling below.
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(
+                0,
+                lambda: self.scan_finished.emit([]),
+            )
             return 0
 
         # Capture the worker on the instance so the QThread isn't
@@ -495,15 +597,28 @@ class JobsTab(QWidget):
                     exc,
                 )
 
-        def _on_done(_count: int) -> None:
+        def _on_completed(records: list[JobRecord]) -> None:
             # Re-show the welcome state now that the async load is in.
             try:
                 self._update_summary()
             except Exception:
                 pass
+            # Phase F-1 (B-3): forward the worker's completion
+            # notification to the public ``scan_finished`` signal so
+            # external callers (MainWindow auto-open-on-startup,
+            # tests) can await the real loaded set.
+            self.scan_finished.emit(records)
+
+        def _on_failed(reason: str) -> None:
+            self._log.warning(
+                "load_recent_jobs: async scan failed: %s",
+                reason,
+            )
+            self.scan_failed.emit(reason)
 
         worker.job_loaded.connect(_on_job)
-        worker.finished_ok.connect(_on_done)
+        worker.completed.connect(_on_completed)
+        worker.failed.connect(_on_failed)
         worker.finished.connect(worker.deleteLater)
         # Audit 2026-08-19 (B-15): kick the worker off via a 0-delay
         # timer so the caller (MainWindow.__init__) finishes its own
@@ -974,7 +1089,83 @@ class JobsTab(QWidget):
             except Exception:
                 pass
 
+    def shutdown(self) -> None:
+        """Interrupt and wait for the disk-scan worker (if any).
+
+        Phase F-1 (B-1): closing the GUI mid-scan used to leave the
+        ``_DiskScanWorker`` QThread running; the Python interpreter
+        then tried to GC the wrapped C++ object and crashed with
+        exit code 134 (SIGABRT). We now:
+
+        1. Call ``requestInterruption()`` on the worker so its
+           ``run()`` loop breaks at the next entry boundary.
+        2. ``wait(30000)`` for it to exit gracefully (30 s matches
+           the pipeline-worker's shutdown budget in ``main_window``).
+        3. Log a warning if the wait timed out — we deliberately
+           do NOT ``terminate()`` because the worker only reads
+           files; letting the process exit reclaim it is fine.
+
+        The strong reference is then cleared so the worker can be
+        collected normally. We never ``del`` a still-running QThread
+        (a known PySide6 footgun), so we leave ``None``-ing it as
+        the only safe disposal.
+
+        Safe to call multiple times; safe to call when the worker
+        has already finished and been ``deleteLater()``-d (a
+        ``RuntimeError`` from the deleted C++ object is treated as
+        "already gone" and the ref is dropped).
+        """
+        worker = getattr(self, "_disk_scan_worker", None)
+        if worker is None:
+            return
+        try:
+            running = worker.isRunning()
+        except RuntimeError as exc:
+            # The worker's ``finished`` signal has already fired and
+            # its ``deleteLater`` has executed — the C++ object is
+            # gone but the Python ref lingers. Just drop the ref.
+            self._log.debug(
+                "shutdown: worker C++ already deleted (%s); dropping ref",
+                exc,
+            )
+            self._disk_scan_worker = None
+            return
+        if not running:
+            # Already finished but the C++ object is still around.
+            # Just drop the ref.
+            self._disk_scan_worker = None
+            return
+        try:
+            worker.requestInterruption()
+        except RuntimeError as exc:
+            # Already finished between the isRunning() check and now.
+            self._log.debug(
+                "shutdown: requestInterruption failed (race): %s",
+                exc,
+            )
+            self._disk_scan_worker = None
+            return
+        try:
+            if not worker.wait(30000):  # 30 s timeout (matches main_window)
+                self._log.warning(
+                    "shutdown: _DiskScanWorker did not exit within 30s; "
+                    "leaving thread alive (process exit will reclaim it)"
+                )
+            else:
+                self._log.debug("shutdown: disk scan worker stopped cleanly")
+        except RuntimeError as exc:
+            # wait() raised if the underlying QThread is already destroyed.
+            self._log.debug("shutdown: worker.wait() raised: %s", exc)
+        # Drop the strong reference so Qt can free it. Never call
+        # ``del`` here — a still-running QThread raises on destruction.
+        self._disk_scan_worker = None
+
     def closeEvent(self, event) -> None:  # noqa: N802
-        """Phase 56 audit: remove i18n listener on widget destruction."""
+        """Phase 56 audit: remove i18n listener on widget destruction.
+
+        Phase F-1 (B-1): also call ``shutdown()`` to interrupt the
+        disk-scan QThread so we don't crash on GUI close (exit 134).
+        """
         self._remove_i18n_listener()
+        self.shutdown()
         super().closeEvent(event)

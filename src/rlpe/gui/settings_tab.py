@@ -13,7 +13,9 @@ Layout:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
@@ -54,6 +56,7 @@ from .constants import (
     DEFAULT_YOLO_CONF,
     DEFAULT_YOLO_IOU,
     DEFAULT_YOLO_MODEL_PATH,
+    OCR_LANGUAGE_OPTIONS,
     QS_KEY_LAST_DIR,
     QS_KEY_LAST_EXPORT_DIR,
     QS_KEY_THEME,
@@ -83,6 +86,108 @@ from .i18n_widgets import (
 )
 from .styles import SPACE_L, SPACE_M, SPACE_S, apply_theme
 from .utils import get_gui_logger
+
+
+# ============================================================
+# Module-level validators
+# ============================================================
+# Phase F-1 (frontend audit 2026-08-20): the previous design relied on
+# ``QRegularExpressionValidator`` set on the QLineEdit, which only
+# affects typing (and only checks the regex syntax, not the URL
+# structure). Save() didn't call ``hasAcceptableInput()`` so users
+# could save ``"not-a-url"`` as a GROBID URL, or save
+# ``"/tmp/foo.abc"`` as a YOLO model path and later trigger an
+# attacker-controlled pickle deserialise. The helpers below are
+# callable both from the text-changed slots (visual feedback) and
+# from ``_save()`` (refuse to persist invalid input).
+
+
+# Supported YOLO weight extensions. ``.pt`` and ``.pth`` are PyTorch
+# checkpoints (ultralytics + torchvision) — both serialise via pickle,
+# so the path MUST be validated before reaching ``torch.load``. ``.onnx``
+# is a portable ONNX model and ``.weights`` is the legacy Darknet
+# format used by YOLOv3 / YOLOv4 (also still loaded by ultralytics).
+_YOLO_ALLOWED_EXTS: tuple[str, ...] = (".pt", ".pth", ".onnx", ".weights")
+
+
+def _validate_yolo_model_path(path: str) -> str | None:
+    """Return the validated absolute YOLO model path, or None.
+
+    Returns:
+      * ``None`` if ``path`` is empty (YOLO is optional — an empty
+        string means "don't use YOLO"; not an error).
+      * ``None`` if the file doesn't exist on disk (so a future
+        ``torch.load()`` can't deserialise an attacker-controlled
+        pickle from /tmp).
+      * ``None`` if the file extension is not in the supported set
+        (so the user can't accidentally point YOLO at a config
+        file or some random binary).
+      * Otherwise the absolute, resolved path string.
+    """
+    text = (path or "").strip()
+    if not text:
+        # Empty == "don't use YOLO" — not a validation error.
+        return None
+    p = Path(text)
+    if not p.is_file():
+        # File genuinely doesn't exist. This catches both typos
+        # and paths that the user intended to add later (a partial
+        # download, etc.).
+        return None
+    if p.suffix.lower() not in _YOLO_ALLOWED_EXTS:
+        return None
+    return str(p.resolve())
+
+
+def _validate_api_url(url: str, *, allow_empty: bool = False) -> str | None:
+    """Return the cleaned-up URL string, or None if invalid.
+
+    A URL is considered valid if ``urlparse`` recognises ``scheme``
+    (e.g. ``http`` or ``https``) and a ``netloc`` (e.g. ``example.com``).
+    Empty strings are allowed only when ``allow_empty=True`` (e.g. the
+    PBDB endpoint, which has a sane default and is genuinely optional).
+
+    Returns None on any failure so callers can ``if not _validate_api_url(...):``
+    instead of catching exceptions.
+    """
+    text = (url or "").strip()
+    if not text:
+        return "" if allow_empty else None
+    try:
+        parsed = urlparse(text)
+    except (ValueError, AttributeError):
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if not parsed.netloc:
+        return None
+    return text
+
+
+# Permit only known OCR language ISO codes (Phase 46 friendly names).
+# Free-form ``"en,ja,fr"`` is rejected by the regex on the QLineEdit,
+# but ``_save()`` re-checks to be safe.
+_ALLOWED_OCR_LANGS: frozenset[str] = frozenset(
+    code for code, _en, _zh in OCR_LANGUAGE_OPTIONS
+)
+
+
+def _validate_ocr_lang(text: str) -> str | None:
+    """Return the cleaned OCR lang string, or None if invalid.
+
+    The regex validator on the QLineEdit only enforces shape — this
+    helper enforces *content* (each comma-separated token must be one
+    of the known ISO codes).
+    """
+    text = (text or "").strip()
+    if not text:
+        # Empty is technically OK — the worker will fall back to en.
+        return ""
+    parts = [p.strip() for p in text.split(",")]
+    for p in parts:
+        if p not in _ALLOWED_OCR_LANGS:
+            return None
+    return ",".join(parts)
 
 
 class SettingsTab(QWidget):
@@ -243,6 +348,10 @@ class SettingsTab(QWidget):
                 self._grobid_url,
             )
         )
+        # Phase F-1 (audit 2026-08-20): live-validate on every keystroke
+        # so the user sees a red border when the GROBID URL is malformed.
+        # Save() also re-checks via ``hasAcceptableInput``.
+        self._grobid_url.textChanged.connect(self._on_grobid_url_changed)
         glayout.addRow(tr_label("settab.grobid.url"), self._grobid_url)
 
         self._grobid_retries = QSpinBox()
@@ -289,6 +398,10 @@ class SettingsTab(QWidget):
             QRegularExpression(ocr_lang_rx.pattern), self._ocr_lang
         )
         self._ocr_lang.setValidator(validator)
+        # Phase F-1 (audit 2026-08-20): live-validate against the allow-list
+        # (the regex only checks shape; the save handler additionally
+        # checks each token against OCR_LANGUAGE_OPTIONS).
+        self._ocr_lang.textChanged.connect(self._on_ocr_lang_changed)
         olayout.addRow(tr_label("settab.ocr.lang"), self._ocr_lang)
 
         self._caption_window = QSpinBox()
@@ -379,6 +492,9 @@ class SettingsTab(QWidget):
                 self._pbdb_endpoint,
             )
         )
+        # Phase F-1 (audit 2026-08-20): live-validate. Empty is OK
+        # (uses built-in default), but a non-empty non-URL is flagged.
+        self._pbdb_endpoint.textChanged.connect(self._on_pbdb_endpoint_changed)
         playout.addRow(tr_label("settab.pbdb.endpoint"), self._pbdb_endpoint)
 
         body_layout.addWidget(pbdb)
@@ -419,6 +535,10 @@ class SettingsTab(QWidget):
 
         self._yolo_model_path = QLineEdit(DEFAULT_YOLO_MODEL_PATH)
         self._yolo_model_path.setPlaceholderText("models/yolo11x.pt")
+        # Phase F-1 (audit 2026-08-20): live-validate the path on every
+        # keystroke so the user sees a red border + warning tooltip when
+        # they type a bad path. Save() also re-validates defensively.
+        self._yolo_model_path.textChanged.connect(self._on_yolo_model_path_changed)
         yolo_row = QHBoxLayout()
         yolo_row.setSpacing(SPACE_S)
         yolo_row.addWidget(self._yolo_model_path, 1)
@@ -568,6 +688,90 @@ class SettingsTab(QWidget):
         ):
             w.setEnabled(bool(checked))
 
+    # ------------------------------------------------------------------
+    # Phase F-1 (audit 2026-08-20): live field-level validation feedback
+    # ------------------------------------------------------------------
+    # These slots fire on every keystroke. They set a visual indicator
+    # (red border + tooltip) when the value is invalid so the user
+    # sees the failure mode immediately, instead of only after they
+    # click Save. The actual *enforcement* lives in ``_save()``; these
+    # slots only paint the UI.
+
+    _INVALID_BORDER_QSS = "QLineEdit { border: 2px solid #dc3545; border-radius: 3px; }"
+    _VALID_BORDER_QSS = "QLineEdit {}"
+
+    def _mark_lineedit_invalid(self, le: QLineEdit, message: str) -> None:
+        """Apply the invalid-red QSS + tooltip to a QLineEdit."""
+        le.setStyleSheet(self._INVALID_BORDER_QSS)
+        le.setToolTip(message)
+
+    def _mark_lineedit_valid(self, le: QLineEdit) -> None:
+        """Reset the QLineEdit to the default QSS (clears the red border)."""
+        le.setStyleSheet(self._VALID_BORDER_QSS)
+        le.setToolTip("")
+
+    def _on_yolo_model_path_changed(self, text: str) -> None:
+        """Live-validate the YOLO model path on every keystroke.
+
+        Empty is treated as valid (YOLO is optional). Any non-empty
+        value must pass ``_validate_yolo_model_path`` — otherwise we
+        paint a red border so the user knows before clicking Save.
+        """
+        if not text.strip():
+            self._mark_lineedit_valid(self._yolo_model_path)
+            return
+        if _validate_yolo_model_path(text) is None:
+            self._mark_lineedit_invalid(
+                self._yolo_model_path,
+                "YOLO model file does not exist or has an unsupported "
+                "extension. Allowed: .pt, .pth, .onnx, .weights",
+            )
+        else:
+            self._mark_lineedit_valid(self._yolo_model_path)
+
+    def _on_grobid_url_changed(self, text: str) -> None:
+        """Live-validate the GROBID URL on every keystroke."""
+        if _validate_api_url(text, allow_empty=False) is None:
+            self._mark_lineedit_invalid(
+                self._grobid_url,
+                "GROBID URL must be a valid http(s) URL.",
+            )
+        else:
+            self._mark_lineedit_valid(self._grobid_url)
+
+    def _on_pbdb_endpoint_changed(self, text: str) -> None:
+        """Live-validate the PBDB endpoint on every keystroke.
+
+        Empty is OK (uses built-in default); a non-empty value must
+        be a valid http(s) URL.
+        """
+        if not text.strip():
+            self._mark_lineedit_valid(self._pbdb_endpoint)
+            return
+        if _validate_api_url(text, allow_empty=True) is None:
+            self._mark_lineedit_invalid(
+                self._pbdb_endpoint,
+                "PBDB endpoint must be empty (uses default) or a valid http(s) URL.",
+            )
+        else:
+            self._mark_lineedit_valid(self._pbdb_endpoint)
+
+    def _on_ocr_lang_changed(self, text: str) -> None:
+        """Live-validate OCR language list against the allow-list.
+
+        The shape regex is enforced by the QValidator on the
+        QLineEdit; this handler enforces *content*.
+        """
+        if _validate_ocr_lang(text) is None:
+            self._mark_lineedit_invalid(
+                self._ocr_lang,
+                "OCR language list contains an unknown code. "
+                "Expected comma-separated ISO codes (en, ch_sim, ch_tra, "
+                "ja, ko, fr, de, ru).",
+            )
+        else:
+            self._mark_lineedit_valid(self._ocr_lang)
+
     def _load(self) -> None:
         """Load settings from QSettings + in-memory cache."""
         # Theme — Phase 47: the combo stores friendly names as text
@@ -679,6 +883,15 @@ class SettingsTab(QWidget):
         # setValue — the YOLO check used to sit mid-sequence, so a
         # failed validation left 20+ already-written keys un-synced
         # (looked saved, wasn't).
+        #
+        # Phase F-1 (audit 2026-08-20): the URL/text validators only
+        # type-check on keystroke. Save() used to persist without
+        # re-checking, so a user could type ``"not-a-url"`` in the
+        # GROBID field, hit Save, and it stuck. Now we re-validate
+        # every text-validated field here and refuse to persist on
+        # failure (with a warning popup + a GUI logger entry so the
+        # failure is diagnosable in the wild).
+        # YOLO: enable-without-path is the original pre-audit check.
         if self._yolo_enable.isChecked() and not self._yolo_model_path.text().strip():
             QMessageBox.warning(
                 self,
@@ -687,6 +900,86 @@ class SettingsTab(QWidget):
                     "settab.yolo.warn.body",
                     "Please select a YOLO model file (.pt) before enabling YOLO detection.",
                 ),
+            )
+            return
+        # YOLO: if the user *does* supply a path, it must point at an
+        # existing file with a supported extension (.pt/.pth/.onnx/
+        # .weights). Saving ``/tmp/foo.abc`` would later trigger a
+        # ``torch.load`` on an attacker-controlled pickle (RCE risk).
+        yolo_text = self._yolo_model_path.text().strip()
+        if yolo_text:
+            yolo_validated = _validate_yolo_model_path(yolo_text)
+            if yolo_validated is None:
+                msg = (
+                    "YOLO model path is invalid. The path must point to "
+                    "an existing file with one of these extensions: "
+                    ".pt, .pth, .onnx, .weights. "
+                    f"Got: {yolo_text!r}"
+                )
+                self._log.warning(msg)
+                QMessageBox.warning(
+                    self,
+                    i18n._tr("settab.yolo.warn.title", "YOLO Model Required"),
+                    msg,
+                )
+                return
+        # GROBID URL: must be a parseable http(s) URL.
+        if not self._grobid_url.hasAcceptableInput():
+            msg = (
+                "GROBID URL is invalid. Expected an http(s) URL like "
+                "'http://localhost:8070'."
+            )
+            self._log.warning(msg)
+            QMessageBox.warning(
+                self,
+                i18n._tr("settab.save"),
+                msg,
+            )
+            return
+        # Defence in depth: even though the regex validator passes,
+        # run the strict urlparse-based check.
+        if _validate_api_url(self._grobid_url.text(), allow_empty=False) is None:
+            msg = f"GROBID URL failed structural validation: {self._grobid_url.text()!r}"
+            self._log.warning(msg)
+            QMessageBox.warning(self, i18n._tr("settab.save"), msg)
+            return
+        # PBDB endpoint: empty is allowed (uses built-in default); a
+        # non-empty value must be a valid http(s) URL. Same regex as
+        # GROBID, but allow_empty is True.
+        pbdb_text = self._pbdb_endpoint.text().strip()
+        if pbdb_text:
+            # ``hasAcceptableInput`` returns True for empty too — we
+            # already checked empty above, so this only fires for the
+            # non-empty branch.
+            if not self._pbdb_endpoint.hasAcceptableInput() or _validate_api_url(
+                pbdb_text, allow_empty=True
+            ) is None:
+                msg = (
+                    "PBDB endpoint is invalid. Expected an empty value "
+                    "(uses default) or an http(s) URL like "
+                    "'https://paleobiodb.org/data1.2'."
+                )
+                self._log.warning(msg)
+                QMessageBox.warning(
+                    self,
+                    i18n._tr("settab.save"),
+                    msg,
+                )
+                return
+        # OCR lang: regex enforces shape (``en,ja,fr``); we additionally
+        # require each token to be in OCR_LANGUAGE_OPTIONS so the OCR
+        # backend never receives a typo.
+        if _validate_ocr_lang(self._ocr_lang.text()) is None:
+            msg = (
+                "OCR language list is invalid. Expected a comma-separated "
+                "list of ISO codes drawn from the supported set "
+                "(en, ch_sim, ch_tra, ja, ko, fr, de, ru)."
+            )
+            self._log.warning(msg)
+            QMessageBox.warning(
+                self,
+                i18n._tr("settab.save"),
+                msg,
             )
             return
         # Theme — Phase 47: use the ISO code, not the friendly name.
@@ -733,9 +1026,15 @@ class SettingsTab(QWidget):
         self._qsettings.setValue("render_dpi", self._dpi.value())
         self._qsettings.setValue("save_intermediate", self._save_intermediate.isChecked())
 
-        # YOLO (validation moved to the top of _save — see above)
+        # YOLO (validation moved to the top of _save — see above).
+        # Persist the *validated absolute* path when one was supplied
+        # so the worker never sees the raw user-typed text (relative
+        # paths could resolve differently between GUI and CLI).
         self._qsettings.setValue("use_yolo_figures", self._yolo_enable.isChecked())
-        self._qsettings.setValue("yolo_model_path", self._yolo_model_path.text())
+        if yolo_text:
+            self._qsettings.setValue("yolo_model_path", yolo_validated)
+        else:
+            self._qsettings.setValue("yolo_model_path", "")
         self._qsettings.setValue("yolo_conf_threshold", self._yolo_conf.value())
         self._qsettings.setValue("yolo_iou_threshold", self._yolo_iou.value())
 

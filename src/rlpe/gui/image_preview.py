@@ -52,6 +52,22 @@ from .utils import get_gui_logger
 
 
 # ============================================================
+# Memory guards (audit 2026-08-20 B-4 / M-20)
+# ============================================================
+# A raw SEM plate scan can be 10000x10000 RGB — 300 MB as a numpy
+# array, another 300 MB as a QImage, plus the cv2.imread intermediate.
+# Clicking one such image in the results table used to OOM the GUI.
+# We downsample anything above MAX_IMAGE_PIXELS to MAX_PREVIEW_LONG_EDGE
+# before handing it to Qt; the preview is display-only so the loss of
+# resolution is not user-visible at typical zoom levels.
+MAX_IMAGE_PIXELS = 50_000_000  # ~50 megapixels (e.g. 7000x7000 RGB ~ 147MB)
+MAX_PREVIEW_LONG_EDGE = 4096  # downsample to this for in-memory preview
+# Pure warning threshold — we still have to open the file, but a
+# 200 MB+ image is worth a log line so a slow/heavy load is explainable.
+LARGE_FILE_WARN_BYTES = 200 * 1024 * 1024
+
+
+# ============================================================
 # Image preview widget
 # ============================================================
 class ImagePreviewWidget(QWidget):
@@ -205,25 +221,67 @@ class ImagePreviewWidget(QWidget):
         self._overlay_bboxes()
 
     def clear(self) -> None:
+        # audit 2026-08-20 B-4: drop the QPixmap reference FIRST. The
+        # old code only cleared the scene, so a 300 MB SEM pixmap
+        # stayed alive in ``self._pixmap`` (and the path in
+        # ``self._current_path``) long after the user cleared the
+        # preview — clear() looked like it freed memory but did not.
+        self._pixmap = None
+        self._current_path = None
         # Phase 54 audit m3: also drop the tracked QGraphicsRectItem
         # and QGraphicsTextItem references. The old code only called
         # ``self._scene.clear()`` (which detaches them from the scene
         # but keeps the Python refs), so the next ``_overlay_bboxes``
         # call would ``try/except RuntimeError``-swallow stale items
         # and the user-visible overlays would briefly pile up.
+        for item in (*self._bbox_items, *self._text_items):
+            try:
+                self._scene.removeItem(item)
+            except RuntimeError:
+                # Item may have been deleted by Qt already
+                pass
         self._bbox_items.clear()
         self._text_items.clear()
         self._scene.clear()
+        # Reset the scene rect too, otherwise _fit_window / double-click
+        # still fits to the *old* image's bounds after a clear().
+        self._scene.setSceneRect(QRectF())
         self._bboxes = []
+        # audit 2026-08-20 B-4: reset the view's drag state to a known
+        # good baseline. If clear() lands mid-drag (e.g. the job
+        # finishes while the user is panning) the view would otherwise
+        # keep _drag_mode=True and a closed-hand cursor forever.
+        self._view._drag_mode = False
+        self._view._drag_start = None
+        self._view.setCursor(Qt.ArrowCursor)
         self._path_label.setText(i18n._tr("preview.no_image"))
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
     def _load_pixmap(self, path: Path) -> QPixmap | None:
-        """Load image via cv2 (BGR → RGB) or PIL fallback."""
+        """Load image via cv2 (BGR → RGB) or PIL fallback.
+
+        audit 2026-08-20 B-4: oversized SEM scans are downsampled to
+        ``MAX_PREVIEW_LONG_EDGE`` before the QImage conversion so a
+        single click can't OOM the GUI.
+        """
         try:
             import cv2
+
+            # File-size pre-check — purely informational, but a 200 MB+
+            # image explains a multi-second freeze during load.
+            try:
+                size_bytes = path.stat().st_size
+                if size_bytes > LARGE_FILE_WARN_BYTES:
+                    self._log.warning(
+                        "Large image file %s (%.1f MB); load may be slow",
+                        path,
+                        size_bytes / (1024 * 1024),
+                    )
+            except OSError:
+                # stat() failure is non-fatal — imread below will report it
+                pass
 
             arr = cv2.imread(str(path), cv2.IMREAD_COLOR)
             if arr is None:
@@ -238,7 +296,23 @@ class ImagePreviewWidget(QWidget):
             else:
                 arr = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
             h, w = arr.shape[:2]
+            if h * w > MAX_IMAGE_PIXELS:
+                self._log.warning(
+                    "Image too large (%dx%d); downsampling to fit %d long edge",
+                    h,
+                    w,
+                    MAX_PREVIEW_LONG_EDGE,
+                )
+                scale = MAX_PREVIEW_LONG_EDGE / max(h, w)
+                new_w = max(1, int(w * scale))
+                new_h = max(1, int(h * scale))
+                # INTER_AREA is the correct interpolation for downsampling
+                # (it averages source pixels instead of point-sampling).
+                arr = cv2.resize(arr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                h, w = arr.shape[:2]
+                self._log.warning("Downsampled preview to %dx%d", h, w)
             # Phase 56 audit: copy the numpy array first so QImage owns its buffer.
+            arr = np.ascontiguousarray(arr)
             qimg = QImage(arr, w, h, w * 3, QImage.Format_RGB888)
             return QPixmap.fromImage(qimg)
         except Exception as exc:
@@ -356,6 +430,7 @@ class _PreviewGraphicsView(QGraphicsView):
     def __init__(self, scene: QGraphicsScene, parent: QWidget | None = None) -> None:
         super().__init__(scene, parent)
         self._drag_mode = False
+        self._drag_start = None  # audit 2026-08-20 B-4: known-good baseline
         self.setDragMode(QGraphicsView.NoDrag)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)

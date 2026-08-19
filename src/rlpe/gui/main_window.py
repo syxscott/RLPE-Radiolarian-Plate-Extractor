@@ -179,15 +179,27 @@ class MainWindow(QMainWindow):
         return default
 
     def _load_recent_jobs(self) -> None:
-        """Phase 49: scan service_work/ and work/ for completed jobs.
+        """Phase 49: kick off the async disk scan for completed jobs.
+
+        The actual JSONL parse runs on a :class:`_DiskScanWorker`
+        ``QThread`` (Phase F-1 / B-15) so the GUI event loop is never
+        blocked. The number returned here is the *candidate* count
+        (how many ``matches.jsonl`` files the synchronous directory
+        walk found). The actual rows arrive via the worker's
+        ``job_loaded`` signal; the final list arrives via
+        ``JobsTab.scan_finished`` which is connected to
+        :meth:`_on_disk_scan_done` in :meth:`__init__`.
+
+        Phase 51: the auto-open-to-Results-tab logic used to live
+        here synchronously. That stopped working once B-15 made the
+        scan async — by the time this function returned, the worker
+        hadn't emitted any ``job_loaded`` signals yet, so
+        ``self._jobs_tab._jobs`` was empty and the auto-open never
+        fired. The fix moves the auto-open to
+        :meth:`_on_disk_scan_done`, which runs after the scan
+        truly completes.
 
         Logs a status-bar message summarising how many were loaded.
-
-        Phase 51: if at least one job was loaded, auto-select the most
-        recently finished one in the Results tab and switch to it. This
-        matches user expectations — when they open the GUI to "see the
-        data I extracted", the Run tab (which is the default empty tab)
-        is the wrong place to start. They want to see results.
         """
         try:
             n = self._jobs_tab.load_recent_jobs_from_disk()
@@ -199,23 +211,57 @@ class MainWindow(QMainWindow):
         self._log.info("Loaded %d recent job(s) from disk", n)
         # Show a transient status bar message in the user's language.
         self.statusBar().showMessage(i18n._tr("main.recent_loaded").format(n=n), 5000)
-        # audit 2026-07-31: restore the Phase 51 auto-open — opening
-        # the GUI after a restart dumped the user on the empty Run
-        # tab while their completed work sat unlisted. Auto-select the
-        # most recently finished job into the Results tab.
+
+    def _on_disk_scan_done(self, records: list[JobRecord]) -> None:
+        """Phase F-1 (B-3): auto-open the latest done job in Results.
+
+        Connected to :attr:`JobsTab.scan_finished` (which fires AFTER
+        every ``job_loaded`` signal has been dispatched and the worker
+        has finished). The previous synchronous auto-open logic in
+        :meth:`_load_recent_jobs` was a no-op once B-15 moved the parse
+        to a ``QThread`` because the worker hadn't finished yet by the
+        time the function returned.
+
+        Behaviour:
+          * ``len(records) == 0`` (no candidates, or shutdown
+            interrupt) → keep the current tab (Run on a fresh install).
+          * Otherwise → pick the most recent ``STATUS_DONE`` job with
+            a non-empty ``rows`` list, load it into the Results tab,
+            and switch to the Results tab.
+
+        Defensive: every step is wrapped in try/except so a misformatted
+        JobRecord can never crash the GUI startup path.
+        """
         try:
-            jobs = getattr(self._jobs_tab, "_jobs", {})
+            if not records:
+                # No candidates / graceful shutdown — keep the default tab.
+                return
             finished = [
                 j
-                for j in jobs.values()
+                for j in records
                 if getattr(j, "status", None) == STATUS_DONE and getattr(j, "rows", None)
             ]
-            if finished:
-                latest = max(finished, key=lambda j: getattr(j, "finished_at", 0) or 0)
-                self._results_tab.load_job(latest.job_id, latest.rows, latest.output_dir)
-                self._tabs.setCurrentIndex(TAB_RESULTS)
+            if not finished:
+                return
+            latest = max(finished, key=lambda j: getattr(j, "finished_at", 0) or 0)
+            self._results_tab.load_job(
+                latest.job_id, latest.rows, latest.output_dir
+            )
+            self._tabs.setCurrentIndex(TAB_RESULTS)
         except Exception as exc:  # pragma: no cover — defensive
-            self._log.warning("Phase 51 auto-open failed: %s", exc)
+            self._log.warning("Phase F-1 B-3 auto-open failed: %s", exc)
+
+    def _on_disk_scan_failed(self, reason: str) -> None:
+        """Phase F-1 (B-3): log (do not crash) when the async scan fails.
+
+        The scan worker is best-effort: a corrupt manifest, a defunct
+        path, or a transient race should never block the GUI from
+        starting. We log at WARNING so the operator can see it in the
+        log file, then leave the ``_jobs`` state as-is (whatever the
+        scan did manage to load before it failed). The default tab
+        (Run) stays selected.
+        """
+        self._log.warning("Phase F-1 B-3: disk scan failed: %s", reason)
 
     # ------------------------------------------------------------------
     # Settings cache
@@ -502,6 +548,16 @@ class MainWindow(QMainWindow):
         # Jobs tab → Results tab (open in results, retry, etc.)
         self._jobs_tab.open_results_requested.connect(self._open_results)
         self._jobs_tab.retry_requested.connect(self._on_retry)
+        # Phase F-1 (B-3): the asynchronous disk scan completes off
+        # the GUI thread; the synchronous auto-open-on-startup logic
+        # in ``_load_recent_jobs`` used to read ``_jobs`` before the
+        # worker had emitted anything, so the auto-open never fired.
+        # Connect the new ``scan_finished(records)`` signal so we
+        # auto-open the latest done job AFTER the real load completes.
+        # ``scan_failed`` is logged but otherwise ignored — the GUI
+        # still starts with whatever the in-memory ``_jobs`` state was.
+        self._jobs_tab.scan_finished.connect(self._on_disk_scan_done)
+        self._jobs_tab.scan_failed.connect(self._on_disk_scan_failed)
 
         # Settings tab → live apply to Run tab
         self._settings_tab.settings_changed.connect(self._on_settings_changed)
@@ -528,6 +584,20 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._remove_i18n_listeners()
         self._save_window_state()
+        # Phase F-1 (B-1): the Jobs tab's ``_DiskScanWorker`` is a
+        # QThread that runs the async JSONL parse. Closing the GUI
+        # mid-scan used to leave the thread running; when the Python
+        # interpreter tried to GC the wrapped C++ object on window
+        # destroy, it crashed with exit code 134 (SIGABRT) and the
+        # ``QThread: Destroyed while thread is still running``
+        # warning. Ask the Jobs tab to shut the worker down BEFORE we
+        # try to stop the heavier pipeline worker below — the disk
+        # scan completes in <100 ms on a typical install and is the
+        # faster of the two to release.
+        try:
+            self._jobs_tab.shutdown()
+        except Exception as exc:  # pragma: no cover — defensive
+            self._log.warning("Phase F-1 B-1: jobs_tab shutdown failed: %s", exc)
         self._stop_pipeline_worker()
         self._flush_settings()
         event.accept()
