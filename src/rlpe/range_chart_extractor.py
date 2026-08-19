@@ -441,6 +441,19 @@ class BiozoneRecord:
     # structured field. ``None`` when the chart label is ambiguous
     # or the model cannot determine the type.
     zone_type: str | None = None
+    # Phase 6D audit 2026-08-19 NIT-2: structured citation for the
+    # zone definition. Many published biozone names are ambiguous
+    # without provenance — e.g. "N. optima Zone" was first defined
+    # by Ishiga & Imoto (1982) but has been re-defined (and re-used
+    # for different FAD/LAD pairs) by at least 4 subsequent authors.
+    # Embed an optional ``zone_authority`` (surname string, e.g.
+    # "Ishiga & Imoto") and ``zone_publication_year`` (4-digit int)
+    # so downstream consumers can disambiguate when the same zone
+    # name appears in two papers with different Ma bounds. Both
+    # default to ``None`` for backward compatibility with existing
+    # callers and gold-annotation files that only carry the name.
+    zone_authority: str | None = None
+    zone_publication_year: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -603,7 +616,16 @@ Extract every piece of geological information visible in the chart as strict JSO
       "thickness_m": "Pingdingshan: ~3 m" (string),
       "zone_type": "range" (string, optional — one of
         "range" / "concurrent range" / "interval" / "assemblage";
-        pick the closest match to the chart label, or null if unclear)
+        pick the closest match to the chart label, or null if unclear),
+      "zone_authority": "Ishiga & Imoto" (string, optional — the
+        surname(s) of the author(s) who first defined the zone, e.g.
+        "Ishiga & Imoto", "Sanfilippo & Nigrini", "Riedel"; only
+        emit when the chart label or legend explicitly names the
+        defining authority; null if unclear),
+      "zone_publication_year": 1982 (int, optional — 4-digit year
+        of the original defining publication; matches the
+        ``zone_authority``; null if no authority was named or the
+        year is not visible in the chart)
     }
   ],
   "other_fossils": [
@@ -893,12 +915,35 @@ def _parse_extraction_response(
             zone_type = zt_raw.strip()
         else:
             zone_type = None
+        # Phase 6D audit 2026-08-19 NIT-2: parse the optional
+        # ``zone_authority`` and ``zone_publication_year``. Both
+        # fields default to ``None`` when omitted / non-string /
+        # non-integer. The year is clamped to a 4-digit positive
+        # int (1700-2100) to defend against LLM hallucinations like
+        # 198 (truncated), 0, or 99999 that would otherwise reach
+        # the GBIF / Darwin Core export.
+        za_raw = bz.get("zone_authority")
+        if isinstance(za_raw, str) and za_raw.strip():
+            zone_authority: str | None = za_raw.strip()
+        else:
+            zone_authority = None
+        zy_raw = bz.get("zone_publication_year")
+        zone_publication_year: int | None = None
+        if zy_raw is not None:
+            try:
+                zy_int = int(zy_raw)
+                if 1700 <= zy_int <= 2100:
+                    zone_publication_year = zy_int
+            except (TypeError, ValueError):
+                zone_publication_year = None
         result.biozones.append(
             BiozoneRecord(
                 name=str(bz.get("name", "")),
                 age=str(bz.get("age", "")),
                 thickness_m=str(bz.get("thickness_m", "")),
                 zone_type=zone_type,
+                zone_authority=zone_authority,
+                zone_publication_year=zone_publication_year,
             )
         )
     of = parsed.get("other_fossils") or []

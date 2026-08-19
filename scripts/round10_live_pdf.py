@@ -19,8 +19,14 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
+# Phase 6e NIT-2: walk up from CWD to find the closest .env first
+# (so the operator can override by creating ``.env`` in their working
+# directory), then fall back to the project-root one below.
+_env_path = find_dotenv(usecwd=True)
+if _env_path:
+    load_dotenv(_env_path, override=False)
 load_dotenv(_REPO / ".env", override=False)
 
 from rlpe.config import PipelineConfig

@@ -1,5 +1,9 @@
 """RLPE: Radiolarian Literature Plate Extractor."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 # Single source of truth for the package version. Mirrored in
 # ``pyproject.toml`` (``version = "1.1.0"``) and exposed here so the
 # CLI's ``--version`` flag, GUI ``APP_VERSION`` and FastAPI
@@ -8,13 +12,16 @@ __version__: str = "1.1.0"
 
 from .config import PipelineConfig
 
+if TYPE_CHECKING:
+    from .pipeline import RadiolarianPipeline
+
 
 # Defer the heavy ``pipeline`` import until the caller actually asks
 # for ``RadiolarianPipeline``. The full pipeline pulls in torch /
 # gemma / paddleocr, none of which are needed by the lightweight
 # helpers (config, evaluation, opendataloader_extractor, segmentation)
 # that ``scripts/evaluate.py`` and the eval-only entry points use.
-def __getattr__(name):
+def __getattr__(name: str) -> Any:
     if name == "RadiolarianPipeline":
         from .pipeline import RadiolarianPipeline
 

@@ -497,23 +497,32 @@ def _emit_bbox_clicked(view: QGraphicsView, bbox_data: dict[str, Any]) -> None:
 
 def _bbox_tooltip(bbox: dict[str, Any]) -> str:
     """Render a bbox dict as a multi-line tooltip."""
+    # Phase 6A (NIT-5): i18n-wrap the field labels so the tooltip
+    # translates on language switch. Species and numeric values are
+    # not translated (they're data, not chrome).
     parts = []
     species = bbox.get("species")
     if species:
         parts.append(f"<b>{species}</b>")
     confidence = bbox.get("confidence")
     if isinstance(confidence, (int, float)):
-        parts.append(f"confidence: {confidence:.2f}")
+        parts.append(
+            i18n._tr("preview.tooltip.confidence").format(value=f"{confidence:.2f}")
+        )
     coords = bbox.get("bbox") or bbox.get("bounding_box")
     if coords and len(coords) == 4:
         x, y, w, h = coords
-        parts.append(f"x: {x:.0f}  y: {y:.0f}")
-        parts.append(f"w: {w:.0f}  h: {h:.0f}")
+        parts.append(
+            i18n._tr("preview.tooltip.coords_xy").format(x=f"{x:.0f}", y=f"{y:.0f}")
+        )
+        parts.append(
+            i18n._tr("preview.tooltip.coords_wh").format(w=f"{w:.0f}", h=f"{h:.0f}")
+        )
     family = (
         (bbox.get("metadata") or {}).get("paleodb", {}).get("taxonomy", {}).get("family")
         if bbox.get("metadata")
         else None
     )
     if family:
-        parts.append(f"family: {family}")
+        parts.append(i18n._tr("preview.tooltip.family").format(name=family))
     return "<br>".join(parts) if parts else ""

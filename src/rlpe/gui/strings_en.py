@@ -340,6 +340,11 @@ STRINGS = {
     "preview.no_image": "(no image)",
     "preview.missing": "(missing) {name}",
     "preview.failed": "(failed to load) {name}",
+    # Phase 6A (NIT-5): bbox hover-tooltip field labels
+    "preview.tooltip.confidence": "confidence: {value}",
+    "preview.tooltip.coords_xy": "x: {x}  y: {y}",
+    "preview.tooltip.coords_wh": "w: {w}  h: {h}",
+    "preview.tooltip.family": "family: {name}",
     # ============================================================
     # Main window status / metrics
     # ============================================================

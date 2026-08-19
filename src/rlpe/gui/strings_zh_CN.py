@@ -109,6 +109,11 @@ STRINGS = {
     "preview.no_image": "(无图像)",
     "preview.zoom_in": "🔍+",
     "preview.zoom_out": "🔍−",
+    # Phase 6A (NIT-5): bbox hover-tooltip field labels
+    "preview.tooltip.confidence": "置信度：{value}",
+    "preview.tooltip.coords_xy": "x：{x}  y：{y}",
+    "preview.tooltip.coords_wh": "宽：{w}  高：{h}",
+    "preview.tooltip.family": "科：{name}",
     "restab.col.biozone": "生物带",
     # Phase 55 audit fix: key renamed from caption_snip → caption_snippet
     # to match the pipeline's field name (constants.py:66).

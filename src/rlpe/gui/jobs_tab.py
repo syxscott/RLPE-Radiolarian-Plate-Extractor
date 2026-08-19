@@ -723,11 +723,18 @@ class JobsTab(QWidget):
         job = self._selected_job()
         if job is None:
             return
-        menu = QMenu(self)
+        # Phase 6A (NIT-4): parent the menu to ``None`` (not ``self``) so
+        # the QMenu + its QAction children don't accumulate as dangling
+        # children of the JobsTab across repeated right-clicks. The old
+        # ``QMenu(self)`` kept every previously-shown menu alive because
+        # Qt's parent-child ownership transfers to the parent widget.
+        # We ``deleteLater()`` after ``exec_`` returns so the next event
+        # loop tick actually frees the widgets.
+        menu = QMenu()
         self._ctx_actions.clear()
 
         def _add_action(key: str) -> QAction:
-            act = QAction(i18n._tr(key), self)
+            act = QAction(i18n._tr(key), menu)
             i18n.register_widget_text(f"jobstab.action.{key}", "text", key)
             self._ctx_actions.append((act, key))
             menu.addAction(act)
@@ -754,7 +761,19 @@ class JobsTab(QWidget):
         act_remove = _add_action("jobstab.menu.remove")
         act_remove.triggered.connect(lambda: self._remove_job(job.job_id))
 
-        menu.exec(self._table.viewport().mapToGlobal(pos))
+        try:
+            # Phase 6A (NIT-4): use ``exec_`` (the Python-friendly alias)
+            # rather than ``exec`` — the latter is a C++-bound builtin that
+            # shadows the Python builtin and is not monkey-patchable from
+            # tests. ``exec_`` resolves to the same Qt modal-popup call.
+            menu.exec_(self._table.viewport().mapToGlobal(pos))
+        finally:
+            # Drop both the actions list and the menu object so Qt can
+            # free them. ``deleteLater`` queues a deletion on the next
+            # event loop tick, which is safe because ``exec_`` already
+            # returned (no nested event loop active).
+            self._ctx_actions.clear()
+            menu.deleteLater()
 
     def _on_row_double_clicked(self, index) -> None:
         item = self._table.item(index.row(), 0)

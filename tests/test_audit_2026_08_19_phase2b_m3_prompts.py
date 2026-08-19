@@ -617,7 +617,13 @@ class TestM13ExtractGeologyIntegration:
 
         return M3Engine(_FakeBackend())
 
-    def test_inverted_geo_entry_range_is_nulled(self):
+    def test_inverted_geo_entry_range_is_swapped(self):
+        """Phase 6D NIT-3: the helper ``_normalize_ma_pair`` auto-swaps
+        inverted ma_top / ma_base so the schema contract
+        ``ma_top < ma_base`` is preserved with no information loss.
+        The previous Phase 2b M-13 behavior nulled both fields;
+        this is now upgraded to swap-then-validate.
+        """
         from PIL import Image
 
         payload = {
@@ -634,8 +640,9 @@ class TestM13ExtractGeologyIntegration:
         img = Image.new("RGB", (64, 64), "white")
         result = engine.extract_geology(img, "caption", "plate", "p1", "f1")
         assert len(result) == 1
-        assert result[0]["ma_top"] is None
-        assert result[0]["ma_base"] is None
+        # NIT-3: swap (ma_top was 140, ma_base was 120 → swap to 120 / 140).
+        assert result[0]["ma_top"] == 120
+        assert result[0]["ma_base"] == 140
 
     def test_valid_geo_entry_range_is_preserved(self):
         from PIL import Image
@@ -656,7 +663,9 @@ class TestM13ExtractGeologyIntegration:
         assert result[0]["ma_top"] == 220
         assert result[0]["ma_base"] == 230
 
-    def test_inverted_locality_range_is_nulled(self):
+    def test_inverted_locality_range_is_swapped(self):
+        """Phase 6D NIT-3: localities go through the same
+        normalize-then-validate chain as global geo entries."""
         from PIL import Image
 
         payload = {
@@ -673,10 +682,11 @@ class TestM13ExtractGeologyIntegration:
         img = Image.new("RGB", (64, 64), "white")
         result = engine.extract_geology(img, "caption", "paleogeographic_map", "p1", "f1")
         assert len(result) == 1
-        assert result[0]["ma_top"] is None
-        assert result[0]["ma_base"] is None
+        assert result[0]["ma_top"] == 180
+        assert result[0]["ma_base"] == 200
 
-    def test_inverted_layer_range_is_nulled(self):
+    def test_inverted_layer_range_is_swapped(self):
+        """Phase 6D NIT-3: per-layer entries also get the auto-swap."""
         from PIL import Image
 
         payload = {
@@ -693,8 +703,8 @@ class TestM13ExtractGeologyIntegration:
         img = Image.new("RGB", (64, 64), "white")
         result = engine.extract_geology(img, "caption", "strat_column", "p1", "f1")
         assert len(result) == 1
-        assert result[0]["ma_top"] is None
-        assert result[0]["ma_base"] is None
+        assert result[0]["ma_top"] == 95
+        assert result[0]["ma_base"] == 105
 
 
 # ===========================================================================

@@ -607,6 +607,18 @@ async def _security_headers_middleware(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
+    # Phase 6b NIT-4: HSTS tells browsers to only use HTTPS for the
+    # next year. The API runs on loopback in dev, so this is a
+    # no-op for dev users; it activates once the operator fronts the
+    # app with a TLS-terminating proxy.
+    response.headers.setdefault(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains",
+    )
+    # Phase 6b NIT-4: CSP locks down what the API's responses can be
+    # used for in a browser context — none of the API endpoints are
+    # meant to be embedded in a third-party page.
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'")
     return response
 
 
@@ -651,6 +663,10 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
             "X-Content-Type-Options": "nosniff",
             "X-Frame-Options": "DENY",
             "Referrer-Policy": "no-referrer",
+            # Phase 6b NIT-4: HSTS + CSP — see security middleware
+            # comment for rationale.
+            "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+            "Content-Security-Policy": "default-src 'self'",
         },
     )
 
@@ -901,6 +917,28 @@ def favicon():
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {"status": "ok"}
+
+
+# Phase 6b NIT-5: CORS preflight fallback for paths that don't have
+# their own OPTIONS handler. Without this, browsers see ``405 Method
+# Not Allowed`` from the FastAPI router for cross-origin requests to
+# any path that doesn't define OPTIONS explicitly — which breaks
+# ``fetch(..., {method: 'GET'})`` from the LAN SPA in some preflight
+# edge cases (e.g. custom headers that the SPA occasionally sends).
+# Returning ``204`` with the full security-header set lets the browser
+# proceed with the actual request.
+@app.options("/{path:path}", include_in_schema=False)
+def options_preflight(path: str) -> Response:  # noqa: ARG001  (path consumed by route)
+    return Response(
+        status_code=204,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+            "Content-Security-Policy": "default-src 'self'",
+        },
+    )
 
 
 @app.post("/jobs/upload", response_model=JobStatus)
@@ -1459,16 +1497,35 @@ def export_job_xlsx(
     )
 
 
-def _split_csv(raw: str | None) -> list[str]:
+def _split_csv(
+    raw: str | None,
+    *,
+    max_items: int = 1000,
+    field_name: str = "csv",
+) -> list[str]:
     """Split a comma-separated query parameter into a clean list.
 
     audit 2026-08-17 (WEB-B5): trim whitespace, drop empties, return
     an empty list for ``None`` so callers can do
     ``if my_list and ...`` without an extra None-check.
+
+    audit 2026-08-19 phase 6b (NIT-1): ``max_items`` caps the result to
+    prevent DoS via attacker-controlled huge CSV (e.g. ``?paper_ids=a,b,c,...
+    with 10**6 entries``); ``field_name`` is included in the 400 detail
+    so the operator can tell which query parameter was rejected.
     """
     if not raw:
         return []
-    return [tok.strip() for tok in raw.split(",") if tok.strip()]
+    out = [tok.strip() for tok in raw.split(",") if tok.strip()]
+    if len(out) > max_items:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{field_name} has {len(out)} items; max is {max_items}. "
+                "Narrow your query or split the request."
+            ),
+        )
+    return out
 
 
 @app.post("/jobs/{job_id}/cancel")
@@ -1948,12 +2005,31 @@ def get_results(
     the frontend asks for the next page until an empty page is
     returned (length 0) — implicit pagination.
     """
-    # Round 23 audit: clamp limit/offset to safe ranges. Negative
-    # offset returns the last ``limit`` rows; ``limit > 5000`` is
-    # treated as ``5000``. Empty page (``limit=0``) is allowed for
-    # callers that want to query "is there a next page?".
-    limit = max(0, min(int(limit), 5000))
-    offset = max(0, int(offset))
+    # Round 23 audit: clamp limit/offset to safe ranges.
+    # Phase 6b NIT-2: replaced silent clamp with strict validation —
+    # negative / zero / over-cap values are 400s so the caller learns
+    # about the bad input instead of getting a quietly-truncated
+    # response. ``limit=0`` was a no-op (returned []) so it is rejected.
+    try:
+        limit_i = int(limit)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"limit must be an integer, got {limit!r}")
+    try:
+        offset_i = int(offset)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"offset must be an integer, got {offset!r}")
+    if limit_i < 1 or limit_i > 5000:
+        raise HTTPException(
+            status_code=400,
+            detail=f"limit must be between 1 and 5000, got {limit_i}",
+        )
+    if offset_i < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"offset must be >= 0, got {offset_i}",
+        )
+    limit = limit_i
+    offset = offset_i
     results: list[ResultRecord] = []
     skipped = 0  # rows skipped before reaching the offset window
     with RESULT_LOCK:

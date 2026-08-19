@@ -33,10 +33,14 @@ if str(SRC) not in sys.path:
 # Claude Code set ANTHROPIC_BASE_URL globally for their own backend, so
 # we must override the project's MiniMax keys explicitly.
 try:
-    from dotenv import dotenv_values, load_dotenv
+    from dotenv import dotenv_values, find_dotenv, load_dotenv
 
-    _env_file = ROOT / ".env"
-    if _env_file.exists():
+    # Phase 6e NIT-2: walk up from CWD first so the operator can
+    # override project-root keys by placing a .env in their CWD.
+    _env_file = find_dotenv(usecwd=True)
+    if not _env_file:
+        _env_file = str(ROOT / ".env")
+    if Path(_env_file).exists():
         load_dotenv(_env_file, override=False)
         _force = os.environ.get("RLPE_FORCE_ENV_OVERRIDE") == "1"
         _project_keys = {

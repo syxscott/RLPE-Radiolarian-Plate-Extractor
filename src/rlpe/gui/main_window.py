@@ -156,12 +156,27 @@ class MainWindow(QMainWindow):
 
         QSettings stores bools as strings ("true"/"false"). Wrapping in
         bool() is wrong because bool("false") == True (non-empty string).
-        The correct approach is to use type=bool OR compare lowercase.
+
+        Phase 6A (NIT-1): DO NOT use ``type=bool`` as the converter —
+        Qt's QVariant-to-bool coerces every non-empty string (including
+        ``"no"``, ``"off"``, ``"false"``) to ``True`` (the
+        "any-non-empty-string-is-truthy" pitfall wrapped in Qt). Read
+        the raw value, lower-case + strip it, and accept the standard
+        truthy spellings (``true``, ``yes``, ``1``, ``on``) and the
+        standard falsy ones (``false``, ``no``, ``0``, ``off``).
+        Anything else falls back to ``default``.
         """
-        val = qsettings.value(key, default, type=bool)
+        val = qsettings.value(key, default)
         if isinstance(val, bool):
             return val
-        return str(val).lower() in ("true", "1", "yes")
+        if isinstance(val, (int, float)):
+            return bool(val)
+        s = str(val).strip().lower()
+        if s in ("true", "1", "yes", "on", "y", "t"):
+            return True
+        if s in ("false", "0", "no", "off", "n", "f", ""):
+            return False
+        return default
 
     def _load_recent_jobs(self) -> None:
         """Phase 49: scan service_work/ and work/ for completed jobs.
@@ -659,6 +674,12 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, theme: str) -> None:
         apply_theme(QApplication.instance(), theme)
         self._qsettings.setValue(QS_KEY_THEME, theme)
+        # Phase 6A (NIT-3): explicitly sync() so the theme choice
+        # survives a hard GUI close. Without sync(), QSettings may
+        # defer the platform-level write (registry / plist / INI) to
+        # process exit, and a kill -9 / power loss would lose the
+        # choice. A explicit flush is cheap (single small write).
+        self._qsettings.sync()
         self._log.info("Theme applied: %s", theme)
 
     def _open_log_file(self) -> None:

@@ -48,7 +48,7 @@ def render_pdf_pages(pdf_path: Path, out_dir: Path, dpi: int = 200) -> list[Page
         doc.close()
 
 
-def _import_pymupdf():
+def _import_pymupdf() -> Any:
     """Import PyMuPDF safely and avoid the unrelated `fitz` package collision."""
     try:
         import pymupdf as fitz  # PyMuPDF>=1.24 preferred import

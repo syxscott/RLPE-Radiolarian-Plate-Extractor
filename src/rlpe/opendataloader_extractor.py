@@ -212,7 +212,7 @@ class OpenDataLoaderExtractor:
 
     # -- caption OCR fallback ------------------------------------------------
 
-    def _get_or_init_ocr_engine(self):
+    def _get_or_init_ocr_engine(self) -> Any:
         """Return the cached EasyOCR reader, initialising it on first call.
 
         Returns ``None`` if EasyOCR is unavailable or init failed; the

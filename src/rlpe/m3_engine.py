@@ -1403,6 +1403,17 @@ def _normalize_species(species: str) -> str | None:
     s = species.strip()
     if not s:
         return None
+    # Phase 6D audit 2026-08-19 NIT-4: collapse runs of whitespace
+    # *before* any downstream regex so the per-corpus suffix rules
+    # (gen/sp/gr stripping, parens folding, etc.) see a single-spaced
+    # input. The previous code only collapsed at the very end, which
+    # meant a malformed ``"Entactinia   sp."`` (3 spaces, a common
+    # OCR tabular artefact) would survive all the structured-rule
+    # passes unchanged and only be normalised when the final
+    # ``re.sub(r"\s+", " ", s)`` ran. Collapsing early is also a
+    # defensive guard against future regex additions that don't
+    # anticipate multi-space input.
+    s = re.sub(r"\s+", " ", s)
     # Collapse "Spumellaria gen. et sp. indet." (and the OCR variant
     # "Spumellaria gen, et sp. indet.") to the abbreviated form that
     # gold uses. The BAUMGARTNER_CLAUSE_RE captures "Spumellaria gen"
@@ -2624,6 +2635,54 @@ def _validate_ma_range(record: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def _normalize_ma_pair(record: dict[str, Any]) -> dict[str, Any]:
+    """Auto-swap ``ma_top`` and ``ma_base`` when the LLM emits an inverted range.
+
+    Phase 6D audit 2026-08-19 NIT-3: ICZN / stratigraphic convention is
+    ``ma_top < ma_base`` (younger = smaller Ma, top of section is the
+    younger boundary). The vision LLM occasionally emits the inverted
+    range — e.g. reads a stratigraphic column with old-at-top axis
+    convention and reports ``ma_top=100, ma_base=50`` (thinking that
+    "top" means the visually upper label on the figure rather than
+    the stratigraphically younger boundary).
+
+    The previous :func:`_validate_ma_range` helper nulled both fields
+    on inversion, which threw away data we could have salvaged. This
+    helper AUTO-SWAPS the values so the schema contract is preserved
+    with no information loss. The schema layer
+    (:class:`rlpe.schema_models.GeologyLinkRecord`) already accepts
+    ``None`` for the raw pair, so callers that prefer strict null-on-
+    violation can keep using :func:`_validate_ma_range`; callers that
+    prefer auto-fix should chain ``_normalize_ma_pair`` BEFORE
+    :func:`_validate_ma_range` so the swap happens first.
+
+    Mutates ``record`` in place; returns the same object for chaining.
+    """
+    top = record.get("ma_top")
+    base = record.get("ma_base")
+    if top is None or base is None:
+        return record
+    try:
+        top_f = float(top)
+        base_f = float(base)
+    except (TypeError, ValueError):
+        return record
+    if top_f > base_f:
+        logger.warning(
+            "Ma range inverted (ma_top=%r > ma_base=%r); auto-swapping",
+            top,
+            base,
+        )
+        record["ma_top"] = base_f
+        record["ma_base"] = top_f
+        # ma_mid is the midpoint of the pair; if it was provided we
+        # assume the LLM got the midpoint right (since the midpoint of
+        # (a, b) equals the midpoint of (b, a)) and leave it untouched.
+        # If the LLM only emitted ma_top / ma_base and we compute ma_mid
+        # downstream, that code uses the (now swapped) fields anyway.
+    return record
+
+
 class M3Engine:
     """M3-Centric 5-stage engine.
 
@@ -3813,6 +3872,11 @@ class M3Engine:
             # Audit 2026-08-19 Phase 2b M-12: strip LLM-hallucinated
             # extras so they never reach panel.metadata.geology_links.
             _apply_geo_whitelist(item)
+            # Phase 6D audit 2026-08-19 NIT-3: auto-swap ma_top / ma_base
+            # when the LLM emits an inverted range. Run BEFORE the strict
+            # null-on-violation check so the swap happens first and the
+            # data is preserved.
+            _normalize_ma_pair(item)
             # Audit 2026-08-19 Phase 2b M-13: enforce ma_top < ma_base.
             _validate_ma_range(item)
             item.setdefault("section_type", section_type)
@@ -3837,6 +3901,9 @@ class M3Engine:
                     loc = dict(loc)
                     # Audit 2026-08-19 Phase 2b M-12/M-13
                     _apply_geo_whitelist(loc)
+                    # Phase 6D audit 2026-08-19 NIT-3: auto-swap before
+                    # the strict null-on-violation check.
+                    _normalize_ma_pair(loc)
                     _validate_ma_range(loc)
                     species = loc.get("species")
                     if not species:
@@ -3881,6 +3948,9 @@ class M3Engine:
                     layer = dict(layer)
                     # Audit 2026-08-19 Phase 2b M-12/M-13
                     _apply_geo_whitelist(layer)
+                    # Phase 6D audit 2026-08-19 NIT-3: auto-swap before
+                    # the strict null-on-violation check.
+                    _normalize_ma_pair(layer)
                     _validate_ma_range(layer)
                     evidence = (
                         layer.get("evidence")
@@ -4776,6 +4846,14 @@ def _coerce_bbox(v: Any, img_w: int, img_h: int) -> tuple[int, int, int, int] | 
     multi-plate enrichment crops. Real pixel values ≤ 1 are exceedingly
     rare in any meaningful figure (a 1x1 bbox is useless to the
     segmenter), so the 1.01 tolerance alone is sufficient to disambiguate.
+
+    Phase 6D audit 2026-08-19 NIT-1: enforce strict ``[0.0, 1.0]`` range
+    on normalized bboxes. The previous code silently clamped negative
+    values to 0 and values > 1.0 to ``img_w / img_h`` in the pixel path,
+    which masked malformed LLM output (e.g. ``[-0.5, 0.3, 0.4, 0.2]``
+    or ``[0.5, 0.3, 1.5, 0.2]``). We now raise :class:`ValueError` so
+    the caller can log the source figure / caption and decide whether
+    to skip the panel or retry the LLM call.
     """
     if not isinstance(v, (list, tuple)) or len(v) != 4:
         return None
@@ -4783,6 +4861,23 @@ def _coerce_bbox(v: Any, img_w: int, img_h: int) -> tuple[int, int, int, int] | 
         nums = [float(x) for x in v]
     except Exception:
         return None
+    # NIT-1: reject any negative coordinate. Negative values are
+    # meaningless for both normalized (axis convention) and pixel
+    # (image-origin) interpretations — no clamping can recover them.
+    if any(n < 0.0 for n in nums):
+        raise ValueError(
+            f"_coerce_bbox: negative coordinate in {v!r} (img_w={img_w}, img_h={img_h})"
+        )
+    # NIT-1: for normalized bbox (max <= 1.01), every value must be
+    # in [0.0, 1.0]. Silently clamping > 1.0 to the image edge would
+    # collapse a malformed bbox into a full-image rectangle, which
+    # then poisons the segmenter with a panel that spans the whole
+    # figure. Use the 1.01 tolerance only to CLASSIFY the bbox as
+    # normalized, not to excuse out-of-range values within it.
+    if max(nums) <= 1.01 and any(n > 1.0 for n in nums):
+        raise ValueError(
+            f"_coerce_bbox: normalized coordinate > 1.0 in {v!r} (img_w={img_w}, img_h={img_h})"
+        )
     # P4-9 fix: require at least one value > 1.0 to classify as
     # pixel coords. A 1x1 pixel bbox at the origin has max=1.0, which
     # would incorrectly match the normalized threshold and get scaled
