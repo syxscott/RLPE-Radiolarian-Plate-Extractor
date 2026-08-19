@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import hmac
 import re
 import shutil
 import sys
@@ -18,9 +19,21 @@ from urllib.parse import quote as _url_quote
 logger = logging.getLogger("rlpe.api")
 
 try:
-    from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
+    from fastapi import (
+        BackgroundTasks,
+        Depends,
+        FastAPI,
+        File,
+        Form,
+        Header,
+        HTTPException,
+        Request,
+        UploadFile,
+        WebSocket,
+        WebSocketDisconnect,
+    )
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse, Response
+    from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 except Exception as exc:  # pragma: no cover
@@ -57,7 +70,72 @@ if _RLPE_API_TEST_TMP is not None:
 else:
     UPLOAD_DIR = ensure_dir(APP_ROOT / "uploads")
     WORK_DIR = ensure_dir(APP_ROOT / "service_work")
-MAX_UPLOAD_SIZE_MB = 256
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int from an env var, falling back to ``default`` on
+    any parse error or non-positive value. Audit 2026-08-01 W1 / M14."""
+    try:
+        v = int(os.environ.get(name, str(default)))
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+# audit 2026-08-19 phase 5b (M-2): default upload cap lowered from 256
+# to 100 MB (per task spec). Operators can override with
+# ``RLPE_MAX_UPLOAD_MB`` (e.g. ``RLPE_MAX_UPLOAD_MB=512``). The 1 MB
+# streaming chunk and the in-loop hard cap are still in place — this
+# just changes the *number*, not the streaming contract.
+MAX_UPLOAD_SIZE_MB = _env_int("RLPE_MAX_UPLOAD_MB", 100)
+
+# audit 2026-08-19 phase 5e (M-26): default CORS origins — loopback
+# only. The previous wildcard ``allow_origins=["*"]`` advertised
+# permissive CORS to every site the operator visits and (combined
+# with the no-credentials default) silently dropped the
+# ``Allow-Credentials`` header in browsers. The list here is the
+# safe minimum: the two loopback ports the API commonly serves on
+# (8000 default, 8080 alternate). Operators that genuinely need a
+# wider allow-list set ``RLPE_CORS_ALLOWED_ORIGINS`` (comma-separated)
+# BEFORE the server starts — there's no runtime UI for it because
+# editing a CORS allow-list at runtime is a recipe for accidental
+# origins staying open forever.
+_DEFAULT_CORS_ALLOWED_ORIGINS: tuple[str, ...] = (
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+)
+
+
+def _resolve_cors_allowed_origins() -> list[str]:
+    """Resolve the CORS allow-list from env var, falling back to
+    the loopback defaults defined above.
+
+    Reads ``RLPE_CORS_ALLOWED_ORIGINS`` as a comma-separated list of
+    full origins (``scheme://host[:port]``). Empty tokens and
+    whitespace-only tokens are dropped. An unset or empty env var
+    returns the safe loopback default.
+
+    audit 2026-08-19 phase 5e (M-26): operators explicitly choose to
+    expand the allow-list — the default is the loopback-only minimum.
+    """
+    raw = os.environ.get("RLPE_CORS_ALLOWED_ORIGINS", "").strip()
+    if not raw:
+        return list(_DEFAULT_CORS_ALLOWED_ORIGINS)
+    tokens = [t.strip() for t in raw.split(",") if t.strip()]
+    if not tokens:
+        return list(_DEFAULT_CORS_ALLOWED_ORIGINS)
+    # Refuse the literal "*" — the previous version silently accepted
+    # it which defeats the whole point of having an explicit allow-list.
+    if any(t == "*" for t in tokens):
+        logger.warning(
+            "RLPE_CORS_ALLOWED_ORIGINS contains '*'; this is rejected for safety. "
+            "Falling back to loopback defaults."
+        )
+        return list(_DEFAULT_CORS_ALLOWED_ORIGINS)
+    return tokens
+
 RESULT_CACHE: dict[str, dict[str, Any]] = {}
 # All compound writes to ``RESULT_CACHE`` and ``FALLBACK_PENDING`` go
 # through this lock. The GIL makes individual dict operations atomic,
@@ -73,16 +151,6 @@ RESULT_CACHE: dict[str, dict[str, Any]] = {}
 # (e.g. 80k files, 20 GB) blocks ALL other concurrent
 # /jobs/{any_id}/* endpoints globally for the rmtree duration.
 RESULT_LOCK = threading.Lock()
-
-
-def _env_int(name: str, default: int) -> int:
-    """Read an int from an env var, falling back to ``default`` on
-    any parse error or non-positive value. Audit 2026-08-01 W1 / M14."""
-    try:
-        v = int(os.environ.get(name, str(default)))
-        return v if v > 0 else default
-    except (TypeError, ValueError):
-        return default
 
 
 # audit 2026-08-01 W1 / M14: cap concurrent pipeline runs so the
@@ -491,20 +559,136 @@ app = FastAPI(
 # auth and confusing the operator about why logins weren't sticking.
 app.add_middleware(
     CORSMiddleware,
-    # audit 2026-07-31: restrict origins to the app's own pages. The
-    # wildcard did not itself allow cross-origin reads (no credentials),
-    # but it advertised permissive CORS to every website the user
-    # visits; the real fix for the "drive the local API" vector is the
-    # loopback default bind in run_web_server.py. This keeps CORS
-    # honest for the same-origin static frontend.
-    allow_origins=[
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ],
+    # audit 2026-08-19 phase 5e (M-26): origins resolved from
+    # ``RLPE_CORS_ALLOWED_ORIGINS`` (comma-separated). Default is
+    # the loopback-only safe set defined in
+    # ``_DEFAULT_CORS_ALLOWED_ORIGINS`` above; the wildcard ``*``
+    # is REJECTED by ``_resolve_cors_allowed_origins``. The methods
+    # allow-list is also tightened from ``["*"]`` to ``["GET","POST"]``
+    # — every endpoint in this service is one of those two, and a
+    # wildcard methods list also lets a malicious origin drive
+    # DELETE / PUT / PATCH against the jobs router. Headers are
+    # restricted to the two the frontend actually sends:
+    # ``X-API-Key`` for the optional key header and ``Content-Type``
+    # for the JSON / multipart uploads.
+    allow_origins=_resolve_cors_allowed_origins(),
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["X-API-Key", "Content-Type"],
 )
+
+
+# ------------------------------------------------------------------
+# Security headers — audit 2026-08-19 phase 5b (M-5)
+# ------------------------------------------------------------------
+# Three "best-practice" headers that cost nothing and shut off the
+# most common browser-side attack vectors:
+#
+# * X-Content-Type-Options: nosniff — disable MIME sniffing so a
+#   crafted response can't be reinterpreted as a script.
+# * X-Frame-Options: DENY — never allow this API to be framed
+#   (clickjacking defence; the API has no UI to embed anyway).
+# * Referrer-Policy: no-referrer — don't leak the request URL
+#   (which can include ``?job_id=...`` tokens) to third parties.
+#
+# Implemented via the ``@app.middleware("http")`` decorator
+# (FastAPI's native middleware API) rather than
+# ``starlette.middleware.base.BaseHTTPMiddleware``. The Starlette
+# class has a well-known issue where exceptions from the inner app
+# propagate through ``call_next`` and bypass the ``response.headers``
+# assignment — so a 500 from the global exception handler would
+# miss these headers. FastAPI's ``@app.middleware("http")`` form
+# wraps the response in a way that runs the post-processing code
+# on the actual response object (success OR exception-handler
+# response), so the headers are applied uniformly.
+@app.middleware("http")
+async def _security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    return response
+
+
+# ------------------------------------------------------------------
+# Global exception handler — audit 2026-08-19 phase 5b (M-1)
+# ------------------------------------------------------------------
+# Catches any uncaught exception and returns a sanitised 500. The
+# default FastAPI behaviour is to return a JSON body that includes
+# ``"traceback"`` for ``debug=True``, OR an opaque ``Internal Server
+# Error`` for ``debug=False``. Neither is ideal here:
+#
+# * With ``debug=False`` the response is bare and the traceback
+#   vanishes from the operator's view.
+# * With ``debug=True`` the traceback leaks site-packages absolute
+#   paths, the Python version, and dependency module names to anyone
+#   who can trigger an exception.
+#
+# The handler below explicitly logs the full traceback server-side
+# (via ``logger.exception``) and ships a sanitised payload to the
+# client — just ``"Internal server error"`` plus the exception type
+# name so the operator can correlate with the log line.
+#
+# The security headers are also attached here directly. Starlette's
+# ``BaseHTTPMiddleware`` (which ``@app.middleware("http")`` uses
+# internally) has a known issue where exceptions propagating
+# through ``call_next`` bypass the post-processing code, so a 500
+# from THIS handler would miss the X-Content-Type-Options /
+# X-Frame-Options / Referrer-Policy headers set by the security
+# middleware. Setting them here makes the contract hold for BOTH
+# the success path (handled by the middleware) AND the exception
+# path (handled by this handler).
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "type": type(exc).__name__,
+        },
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
+
+# ------------------------------------------------------------------
+# API key auth — audit 2026-08-19 phase 5b (M-4)
+# ------------------------------------------------------------------
+# The API runs a paid MiniMax M3 / Anthropic key and can spend real
+# money in minutes if anyone on the LAN can hit ``/jobs/upload`` or
+# ``/system/test-llm``. When ``RLPE_API_KEY`` is set in the server's
+# environment, every state-changing endpoint requires the same
+# string in the ``X-API-Key`` request header.
+#
+# When ``RLPE_API_KEY`` is NOT set (the default for local dev), the
+# dependency is a no-op so existing workflows (tests, the SPA on
+# loopback, ``run_web_server.py`` defaults) keep working without
+# configuration. Operators opt in by setting the env var.
+def require_api_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> None:
+    expected = os.environ.get("RLPE_API_KEY")
+    if expected is None:
+        # Auth disabled — return early so the dependency is a no-op
+        # for callers that didn't opt in.
+        return
+    if x_api_key is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    # Constant-time comparison guards against timing side-channels.
+    if not hmac.compare_digest(str(x_api_key), str(expected)):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
 
 if WEB_DIR is not None:
     # No-cache headers for the dev-mode static files so JS / CSS edits
@@ -725,6 +909,7 @@ async def upload_pdf(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     options: str | None = Form(None),
+    _auth: None = Depends(require_api_key),
 ):
     original_filename = file.filename or ""
     safe_filename = Path(original_filename).name
@@ -876,6 +1061,167 @@ def job_status(job_id: str):
         stage=job.get("stage"),
         elapsed_sec=job.get("elapsed_sec"),
     )
+
+
+def _job_status_payload(job_id: str) -> dict[str, Any] | None:
+    """Build the JSON-serialisable status payload for ``job_id``.
+
+    Returns ``None`` when the job is unknown so callers can decide how
+    to surface the missing case (the SSE stream emits a sentinel
+    ``{"status": "not_found"}`` event; the WebSocket handler closes
+    with a 1008 code).
+
+    audit 2026-08-19 phase 5e (M-25 / M-27): the SSE + WebSocket
+    progress endpoints share the same payload shape as ``/status``
+    so the existing UI JobStatus model can consume either stream.
+    """
+    with RESULT_LOCK:
+        job = dict(RESULT_CACHE.get(job_id) or {})
+    if not job:
+        return None
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "detail": job.get("error") or job.get("detail"),
+        "created_at": job.get("created_at"),
+        "filename": job.get("filename"),
+        "progress": job.get("progress", 0),
+        "stage": job.get("stage"),
+        "elapsed_sec": job.get("elapsed_sec"),
+    }
+
+
+@app.get("/jobs/{job_id}/stream")
+async def stream_job_progress(job_id: str):
+    """Server-Sent Events stream of job progress.
+
+    audit 2026-08-19 phase 5e (M-25): the polling ``/jobs/{id}/status``
+    endpoint above is fine for the dev console but not for the live
+    web UI — a 1-5s polling cadence wastes a connection per tab and
+    misses progress updates between polls. SSE pushes every status
+    change the moment the worker writes it, and ``EventSource`` is
+    built into every browser (no library needed).
+
+    Wire format: ``text/event-stream`` with one event per status tick:
+
+        data: {"job_id": "...", "status": "running", "progress": 42, ...}\\n\\n
+
+    The stream closes after the job reaches a terminal state
+    (``done`` / ``failed`` / ``cancelled``). 404 jobs emit one
+    ``not_found`` event then close. Clients should treat any
+    stream-closed event as "stop polling".
+    """
+    import asyncio as _asyncio
+
+    # If the job doesn't exist we still want to return a valid SSE
+    # response (with a single not_found event) so the EventSource
+    # client doesn't fall over on a hard 404 — that would be
+    # indistinguishable from a server crash in the UI.
+    first_payload = _job_status_payload(job_id)
+    if first_payload is None:
+        first_payload = {"job_id": job_id, "status": "not_found"}
+        terminal_states = {"not_found"}
+    else:
+        terminal_states = {"done", "failed", "cancelled", "not_found"}
+
+    async def _event_stream():
+        payload = first_payload
+        # Emit the initial event immediately so the client sees the
+        # job's current state on connect (no 1-second wait).
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        if payload.get("status") in terminal_states:
+            return
+        while True:
+            await _asyncio.sleep(1.0)
+            payload = _job_status_payload(job_id)
+            if payload is None:
+                payload = {"job_id": job_id, "status": "not_found"}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            if payload.get("status") in terminal_states:
+                return
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        # Disable proxy buffering so the events reach the browser
+        # immediately. uvicorn / nginx defaults are 200ms+ of
+        # buffering which defeats the whole point of SSE.
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.websocket("/ws/jobs/{job_id}")
+async def websocket_job_progress(websocket: WebSocket, job_id: str):
+    """WebSocket push of job progress at 500ms cadence.
+
+    audit 2026-08-19 phase 5e (M-27): the SSE stream above is
+    sufficient for read-only progress watchers, but the GUI client
+    wants bidirectional control (cancel, fallback decisions,
+    result-row deletes) without re-establishing an EventSource on
+    every command. A WebSocket endpoint lets the GUI mux progress
+    + commands over one connection with sub-second latency.
+
+    Wire format: one JSON message per status tick (same shape as the
+    SSE ``data:`` payload). After the job reaches a terminal state
+    (``done`` / ``failed`` / ``cancelled``) we send one final
+    message and close with code 1000. 404 jobs close with code
+    1008 (policy violation — unknown job_id).
+
+    The handler tolerates ``WebSocketDisconnect`` (the client closed
+    without us asking) and any send failure (the client went away
+    mid-tick). We never raise out of the loop — an unhandled
+    exception in a WebSocket handler would 1006 the connection on
+    every transient hiccup.
+    """
+    import asyncio as _asyncio
+
+    await websocket.accept()
+    try:
+        payload = _job_status_payload(job_id)
+        if payload is None:
+            # Unknown job — close per RFC 6455: 1008 = policy
+            # violation (here: "job_id not found"). The GUI treats
+            # this as "remove this tab" rather than "retry".
+            await websocket.close(code=1008, reason="job_not_found")
+            return
+        terminal_states = {"done", "failed", "cancelled", "not_found"}
+        await websocket.send_json(payload)
+        if payload.get("status") in terminal_states:
+            await websocket.close(code=1000)
+            return
+        while True:
+            await _asyncio.sleep(0.5)
+            payload = _job_status_payload(job_id)
+            if payload is None:
+                payload = {"job_id": job_id, "status": "not_found"}
+            try:
+                await websocket.send_json(payload)
+            except Exception:
+                # Client disconnected mid-send — exit the loop
+                # without raising; the outer ``except
+                # WebSocketDisconnect`` is the canonical way to
+                # detect this, but some Starlette versions raise
+                # a different exception here.
+                break
+            if payload.get("status") in terminal_states:
+                break
+    except WebSocketDisconnect:
+        # Client closed the connection cleanly. Nothing to do —
+        # the server-side state machine doesn't care.
+        pass
+    except Exception:
+        # Anything else (CancelledError, RuntimeError on a closed
+        # socket, etc.) — log and close so the worker thread
+        # doesn't leak.
+        logger.exception("WebSocket handler for job %s crashed", job_id)
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
 
 
 @app.get("/jobs")
@@ -1126,7 +1472,10 @@ def _split_csv(raw: str | None) -> list[str]:
 
 
 @app.post("/jobs/{job_id}/cancel")
-def cancel_job(job_id: str):
+def cancel_job(
+    job_id: str,
+    _auth: None = Depends(require_api_key),
+):
     """Cancel a pending or running job.
 
     Returns ``was_running`` (True if the job was already past the "queued"
@@ -1396,13 +1745,20 @@ class BatchDeleteRequest(BaseModel):
 
 
 @app.delete("/jobs/{job_id}")
-def delete_job(job_id: str, delete_files: bool = True):
+def delete_job(
+    job_id: str,
+    delete_files: bool = True,
+    _auth: None = Depends(require_api_key),
+):
     """Delete a single job. Use ``?delete_files=false`` to keep on-disk data."""
     return _purge_job(job_id, delete_files=delete_files)
 
 
 @app.post("/jobs/batch-delete")
-def batch_delete_jobs(req: BatchDeleteRequest) -> dict[str, Any]:
+def batch_delete_jobs(
+    req: BatchDeleteRequest,
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
     """Delete multiple jobs in one call. Returns a per-job status list."""
     if not req.job_ids:
         raise HTTPException(status_code=400, detail="job_ids must not be empty")
@@ -1463,7 +1819,11 @@ def get_MiniMax_fallback(job_id: str) -> dict[str, Any]:
 
 
 @app.post("/jobs/{job_id}/MiniMax-fallback")
-def post_MiniMax_fallback(job_id: str, req: FallbackDecisionRequest) -> dict[str, Any]:
+def post_MiniMax_fallback(
+    job_id: str,
+    req: FallbackDecisionRequest,
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
     """Frontend posts the user's choice; releases the pipeline."""
     if req.action not in {"gemma4", "rules", "stop", "retry"}:
         raise HTTPException(status_code=400, detail=f"Invalid action: {req.action}")
@@ -1485,7 +1845,10 @@ def post_MiniMax_fallback(job_id: str, req: FallbackDecisionRequest) -> dict[str
 
 
 @app.post("/review/correction")
-def submit_correction(payload: ReviewCorrection):
+def submit_correction(
+    payload: ReviewCorrection,
+    _auth: None = Depends(require_api_key),
+):
     corrections_dir = ensure_dir(WORK_DIR / "corrections")
     target = corrections_dir / "corrections.jsonl"
     # audit 2026-08-01 W1 / D9 — rotate the corrections log before
@@ -1726,7 +2089,9 @@ def _persist_results_to_disk(job_id: str, root_str: str | None, rows: list[dict[
 
 
 @app.delete("/results")
-def delete_all_results() -> dict[str, int]:
+def delete_all_results(
+    _auth: None = Depends(require_api_key),
+) -> dict[str, int]:
     """Clear every result row across every done job.
 
     Keeps the job metadata (so ``/jobs`` listings, ``/system/info``
@@ -1766,7 +2131,10 @@ class DeleteRowsRequest(BaseModel):
 
 
 @app.delete("/results/batch")
-def delete_results_batch(payload: DeleteRowsRequest) -> dict[str, Any]:
+def delete_results_batch(
+    payload: DeleteRowsRequest,
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
     """Delete specific result rows by ``row_id``.
 
     Request body: ``{"row_ids": ["job_id:paper:figure:panel", ...]}``.
@@ -1976,7 +2344,10 @@ class TestLLMRequest(BaseModel):
 
 
 @app.post("/system/test-llm")
-def test_llm(req: TestLLMRequest | None = None) -> dict[str, Any]:
+def test_llm(
+    req: TestLLMRequest | None = None,
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
     """Send a minimal request to the MiniMax M3 endpoint to verify the key.
 
     The response shape matches the frontend's expectations:
