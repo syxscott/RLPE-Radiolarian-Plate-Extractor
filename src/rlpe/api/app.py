@@ -137,6 +137,21 @@ def _resolve_cors_allowed_origins() -> list[str]:
     return tokens
 
 RESULT_CACHE: dict[str, dict[str, Any]] = {}
+
+# Polling-interval constants. These were previously inlined as
+# ``await _asyncio.sleep(1.0)`` etc. and were easy to drift out of
+# sync between the SSE stream and the WebSocket stream (the SSE path
+# was 1.0s, the WebSocket path was 0.5s — a single source of truth
+# keeps the per-channel latency profile visible at a glance).
+_SSE_POLL_INTERVAL_SEC: float = 1.0
+_WS_POLL_INTERVAL_SEC: float = 0.5
+# Heartbeat tick — also inlined as ``stop_hb.wait(1.0)`` previously.
+_HEARTBEAT_TICK_SEC: float = 1.0
+# Fallback popup (Phase 5B): how long the worker waits for the
+# operator to pick an action before defaulting. TICK_MS is the
+# responsiveness granularity for the cancel check during the wait.
+FALLBACK_POPUP_TIMEOUT_MS: int = 300_000
+FALLBACK_POPUP_TICK_MS: int = 500
 # All compound writes to ``RESULT_CACHE`` and ``FALLBACK_PENDING`` go
 # through this lock. The GIL makes individual dict operations atomic,
 # but the cancel / progress / heartbeat / fallback-popup paths all
@@ -768,7 +783,16 @@ def _load_existing_jobs_from_disk() -> int:
                     line = line.strip()
                     if line:
                         rows.append(json.loads(line))
-        except Exception:
+        except Exception as exc:
+            # Phase F-3 NIT: was a bare ``except Exception: continue``
+            # which silently dropped every corrupt jsonl line — the
+            # operator had no way to know the file was malformed. Log
+            # at WARNING so it surfaces in the API log without
+            # spamming at INFO.
+            logger.warning(
+                "Skipping job %s: matches.jsonl could not be parsed (%s: %s)",
+                root.name, type(exc).__name__, exc,
+            )
             continue
         if not rows:
             continue
@@ -881,6 +905,10 @@ def web_css(file_path: str):
 def web_js(file_path: str):
     if WEB_DIR is None:
         raise HTTPException(status_code=404, detail="Web assets not found")
+    # Path-traversal defense (audit): reject literal "..", "\\", and
+    # absolute-path payloads BEFORE any filesystem resolution so the
+    # safe-input contract is obvious from a quick read of the
+    # function. Mirrors the same guards used by ``web_css`` above.
     if (
         ".." in file_path.split("/")
         or ".." in file_path.split("\\")
@@ -889,15 +917,39 @@ def web_js(file_path: str):
         raise HTTPException(status_code=400, detail="Invalid asset path")
     js_root = (WEB_DIR / "js").resolve()
     target = (js_root / file_path).resolve()
+    # ``strict=True`` makes relative_to raise ValueError when target is
+    # outside js_root (the default behavior). The previous version
+    # only raised when the result needed normalization, so a symlink
+    # under js_root/ pointing OUTSIDE the root would silently pass
+    # the check and serve an arbitrary file. Resolving both paths
+    # BEFORE the relative_to check further reduces the
+    # symlink-bypass surface.
     try:
-        target.relative_to(js_root, strict=True)
+        # audit 2026-07-26 M15: do NOT pass strict=True - it is only
+        # available on Python 3.12+ (raises TypeError on 3.11) and
+        # requires the path to exist, which would turn a missing-file
+        # 404 below into a 400. Both paths are already resolve()d
+        # above, so a plain relative_to is sufficient for the
+        # symlink-bypass guard. (The previous version of this handler
+        # inconsistently passed strict=True here even though the
+        # sibling web_css handler deliberately does not.)
+        target.relative_to(js_root)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid asset path")
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Asset not found")
+    # Refuse symlinks whose target resolves outside js_root.
+    # ``resolve()`` already follows symlinks; if ``target`` was a
+    # symlink pointing outside the root, the relative_to check above
+    # would have raised (since ``target`` was already resolved), but
+    # belt-and-braces guards against any future relaxation.
     if target.is_symlink():
         real = target.resolve(strict=True)
         try:
+            # strict=True is safe here because ``real`` came from
+            # ``resolve(strict=True)`` above and is guaranteed to
+            # exist; we use it to raise ValueError when the symlink
+            # chain points outside js_root.
             real.relative_to(js_root, strict=True)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid asset path")
@@ -1170,7 +1222,7 @@ async def stream_job_progress(job_id: str):
         if payload.get("status") in terminal_states:
             return
         while True:
-            await _asyncio.sleep(1.0)
+            await _asyncio.sleep(_SSE_POLL_INTERVAL_SEC)
             payload = _job_status_payload(job_id)
             if payload is None:
                 payload = {"job_id": job_id, "status": "not_found"}
@@ -1232,7 +1284,7 @@ async def websocket_job_progress(websocket: WebSocket, job_id: str):
             await websocket.close(code=1000)
             return
         while True:
-            await _asyncio.sleep(0.5)
+            await _asyncio.sleep(_WS_POLL_INTERVAL_SEC)
             payload = _job_status_payload(job_id)
             if payload is None:
                 payload = {"job_id": job_id, "status": "not_found"}
@@ -1819,8 +1871,10 @@ def batch_delete_jobs(
     """Delete multiple jobs in one call. Returns a per-job status list."""
     if not req.job_ids:
         raise HTTPException(status_code=400, detail="job_ids must not be empty")
-    if len(req.job_ids) > 200:
-        raise HTTPException(status_code=400, detail="too many job_ids (max 200)")
+    # The ``max_length=200`` on ``BatchDeleteRequest.job_ids`` (line 1783)
+    # already enforces the upper bound; Pydantic raises 422 before this
+    # function runs. The previous redundant ``len(req.job_ids) > 200``
+    # check here was dead code (Phase F-3 NIT).
     # audit 2026-08-01 W1 / M17: serial rmtree across 200 jobs would
     # block for many minutes on a small VPS. Now ``_purge_job`` keeps
     # ``RESULT_LOCK`` only during the short state-machine read + final
@@ -2298,14 +2352,28 @@ def _mask_api_key(key: str | None) -> str | None:
     *which* key is configured without us echoing it back. Empty / missing
     keys return None so the frontend can render the "not configured"
     state cleanly.
+
+    Phase F-3 NIT: a key shorter than the ``MIN_KEY_LEN_FOR_MASK``
+    threshold cannot be safely truncated without revealing most of it,
+    so we return a distinct sentinel ``"(short)"`` instead of ``"***"``
+    — that way the frontend can tell the operator "your key is set but
+    is too short to preview safely" rather than conflating it with the
+    "not configured" state.
     """
+    MIN_KEY_LEN_FOR_MASK = 8  # less than this and the preview leaks most of the key
     if not key:
         return None
     s = str(key).strip()
     if not s:
         return None
-    if len(s) <= 8:
-        return "***"
+    if len(s) < MIN_KEY_LEN_FOR_MASK:
+        # Phase F-3 NIT: distinguish "configured-but-too-short" from
+        # "not configured". The frontend renders the former with a
+        # warning hint instead of a "configure your key" CTA.
+        return "(short)"
+    if len(s) == MIN_KEY_LEN_FOR_MASK:
+        # Edge case: 8-char key — show only the first 2 chars as a hint.
+        return f"{s[:2]}…"
     return f"{s[:3]}...{s[-4:]}"
 
 
@@ -2411,9 +2479,18 @@ def llm_status() -> dict[str, Any]:
 
 
 class TestLLMRequest(BaseModel):
-    """Body for /system/test-llm — all fields optional, falls back to env."""
+    """Body for /system/test-llm — all fields optional, falls back to env.
 
-    model_config = ConfigDict(extra="ignore")
+    Phase F-3 NIT: was ``extra="ignore"`` which silently accepted
+    typos like ``api_kye`` (rather than ``api_key``) — the test would
+    then proceed with the typo'd field ignored, making the request
+    fall back to the env var and pass even when the operator thought
+    they had entered a custom key. Aligned with the project's
+    general ``extra="forbid"`` convention (e.g. ``BatchDeleteRequest``
+    at line 1782) so typos surface as a 422 instead.
+    """
+
+    model_config = ConfigDict(extra="forbid")
     api_key: str | None = None
     endpoint: str | None = None
     model: str | None = None
@@ -2729,7 +2806,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                         RESULT_CACHE[job_id]["elapsed_sec"] = int(_time.time() - t_start)
             except Exception:
                 pass
-            stop_hb.wait(1.0)
+            stop_hb.wait(_HEARTBEAT_TICK_SEC)
 
     # Pre-flight cancel check: if the user hit /jobs/{id}/cancel between
     # the upload's "queued" registration and the moment our worker thread
@@ -2930,8 +3007,12 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 # closes the browser tab). A 0.5s tick keeps the wait
                 # responsive without burning CPU.
                 waited_ms = 0
-                TIMEOUT_MS = 300_000
-                TICK_MS = 500
+                # Phase F-3 NIT: hoist the magic 300_000 / 500 ms
+                # values to module-level constants (FALLBACK_POPUP_*
+                # near the top of this module) so the polling budget
+                # is visible at a glance and easy to tweak.
+                TIMEOUT_MS = FALLBACK_POPUP_TIMEOUT_MS
+                TICK_MS = FALLBACK_POPUP_TICK_MS
                 while waited_ms < TIMEOUT_MS:
                     if event.wait(timeout=TICK_MS / 1000):
                         break  # user posted a decision (or cancelled)

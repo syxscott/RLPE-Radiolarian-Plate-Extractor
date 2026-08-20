@@ -7,6 +7,26 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+# Phase F-3 NIT: precompile the slugify regex at module load so each
+# call avoids the (small but cumulative) re.compile cost. Used in
+# `stable_id` and across the export pipeline.
+_SLUGIFY_NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
+
+# Phase F-3 NIT: pre-import numpy at module load so ``_json_default``
+# doesn't pay an import-lookup cost on every JSON-encoded row. ``numpy``
+# is an optional dependency (most operators don't have it installed);
+# when it's missing, ``_np`` is left as ``None`` and the relevant
+# branch in ``_json_default`` is skipped.
+try:
+    import numpy as _np  # type: ignore[import-not-found]
+except (ImportError, ModuleNotFoundError):  # pragma: no cover — optional dep
+    _np = None
+
+# Phase F-3 NIT: same lazy-import treatment for ``datetime`` so the
+# ``_json_default`` hot path doesn't re-execute ``import datetime``
+# on every non-datetime row.
+import datetime as _dt  # noqa: E402  (always available with stdlib)
+
 
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
@@ -14,7 +34,7 @@ def ensure_dir(path: Path) -> Path:
 
 
 def slugify(text: str, fallback: str = "item") -> str:
-    text = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
+    text = _SLUGIFY_NON_ALNUM.sub("_", text).strip("_")
     return text.lower() or fallback
 
 
@@ -68,36 +88,41 @@ def _json_default(obj: Any) -> Any:
     Covers:
       - ``Path``    → ``str(path)``
       - dataclass / objects with ``to_dict`` → recurse on the dict
-      - numpy scalars / arrays → Python equivalents
+      - numpy scalars / arrays → Python equivalents (when numpy is installed)
       - ``set`` / ``frozenset`` / ``tuple`` → list
       - ``datetime`` / ``date`` → ISO 8601 string
       - ``bytes`` → utf-8 with replacement
       - everything else → ``str(obj)`` so the call never raises.
+
+    Phase F-3 NIT: the previous version did
+    ``import numpy as _np`` / ``import datetime as _dt`` inside this
+    function on every call. Both modules are now imported at module
+    top (``_np`` is optional, ``_dt`` is always available). The
+    ``isinstance`` checks still skip gracefully when ``_np is None``.
     """
     # Path
     if isinstance(obj, Path):
         return str(obj)
-    # numpy — guard specifically against import failure (no numpy installed)
-    # and AttributeError (object has an attribute that raises during isinstance
-    # checks, e.g. a lazy numpy wrapper that proxies attribute access).
-    # NOT bare Exception: we explicitly want RecursionError and
-    # MemoryError to propagate so the caller knows the encoding failed.
-    try:
-        import numpy as _np  # type: ignore[import-not-found]
-
-        if isinstance(obj, _np.integer):
-            return int(obj)
-        if isinstance(obj, _np.floating):
-            return float(obj)
-        if isinstance(obj, _np.bool_):
-            return bool(obj)
-        if isinstance(obj, _np.ndarray):
-            return obj.tolist()
-    except (ImportError, ModuleNotFoundError, AttributeError, ValueError):
-        # ValueError from obj.tolist() on e.g. a structured numpy array
-        # with non-trivial Python objects — not a deployment issue, so
-        # surface it rather than silently produce wrong JSON.
-        pass
+    # numpy — guard specifically against AttributeError (object has
+    # an attribute that raises during isinstance checks, e.g. a lazy
+    # numpy wrapper that proxies attribute access). NOT bare
+    # Exception: we explicitly want RecursionError and MemoryError
+    # to propagate so the caller knows the encoding failed.
+    if _np is not None:
+        try:
+            if isinstance(obj, _np.integer):
+                return int(obj)
+            if isinstance(obj, _np.floating):
+                return float(obj)
+            if isinstance(obj, _np.bool_):
+                return bool(obj)
+            if isinstance(obj, _np.ndarray):
+                return obj.tolist()
+        except (AttributeError, ValueError):
+            # ValueError from obj.tolist() on e.g. a structured numpy
+            # array with non-trivial Python objects — not a deployment
+            # issue, so surface it rather than silently produce wrong JSON.
+            pass
     # to_dict / dataclass — guard against to_dict raising (e.g. a
     # malformed dataclass with a broken to_dict method). AttributeError
     # covers the case where the object has a to_dict attribute that
@@ -113,16 +138,14 @@ def _json_default(obj: Any) -> Any:
         return sorted(obj, key=lambda x: str(x))
     if isinstance(obj, tuple):
         return list(obj)
-    # datetime — guard against datetime module import failure and
-    # AttributeError from the isinstance check. ValueError covers
-    # extreme years (> 9999) that isoformat() rejects; OverflowError
-    # covers very large timedeltas.
+    # datetime — guard against AttributeError from the isinstance check
+    # (e.g. a ducktyped datetime). ValueError covers extreme years
+    # (> 9999) that isoformat() rejects; OverflowError covers very
+    # large timedeltas.
     try:
-        import datetime as _dt
-
         if isinstance(obj, (_dt.datetime, _dt.date)):
             return obj.isoformat()
-    except (ImportError, ModuleNotFoundError, AttributeError, ValueError, OverflowError):
+    except (AttributeError, ValueError, OverflowError):
         pass
     # bytes — decode with replacement. errors='replace' never raises
     # UnicodeDecodeError; TypeError covers a bytes subclass that
@@ -209,7 +232,19 @@ def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
 
 
 def read_text(path: Path, default: str = "") -> str:
+    """Read a UTF-8 text file or return ``default`` on missing-path.
+
+    Phase F-3 NIT: was catching only ``FileNotFoundError``. A directory
+    passed in by mistake would raise ``IsADirectoryError`` (a subclass
+    of ``OSError``), which propagated and crashed the caller with a
+    unhelpful error. A ``PermissionError`` (read-protected file) was
+    also propagated. Now we catch ``OSError`` and treat every flavour
+    as "missing-or-unreadable" — the caller still gets the default
+    back, but no longer crashes. Other exceptions (``UnicodeDecodeError``,
+    ``ValueError``) are intentionally NOT caught; they're bugs, not
+    deployment conditions.
+    """
     try:
         return path.read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except OSError:
         return default

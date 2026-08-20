@@ -69,8 +69,23 @@ except ImportError:
     pass
 
 from .config import PipelineConfig
+# Phase F-3 NIT: was imported lazily inside ``_maybe_load_config`` so
+# that ``--help`` / ``--dry-run`` invocations that never touch a
+# config file would still skip the (small but real) import cost.
+# config_io has no module-level side effects, so we move the import
+# up here for consistency with the other ``.``-relative imports
+# (config, pipeline, utils).
+from .config_io import load_config as _load_config
 from .pipeline import RadiolarianPipeline
 from .utils import ensure_dir
+
+# Phase F-3 NIT: module-level logger. The previous version fetched
+# ``logging.getLogger("rlpe.cli")`` inside ``apply_log_level`` (and
+# also implicitly in any place that logged from this module via the
+# ``logging`` module); using one module-level reference makes the
+# logger easy to monkey-patch in tests and avoids the per-call
+# ``getLogger`` lookup.
+_CLI_LOGGER = logging.getLogger("rlpe.cli")
 
 __all__ = [
     "UserError",
@@ -292,15 +307,19 @@ def apply_log_level(quiet: bool, verbose: bool) -> None:
     ``--quiet`` trumps ``--verbose`` when both are passed (matching
     GNU ``getopt`` convention) so a typo'd shell line can never
     silently flood the console.
+
+    Phase F-3 NIT: was re-fetching ``logging.getLogger("rlpe.cli")``
+    on every call. Now uses the module-level ``_CLI_LOGGER`` so the
+    logger is consistent with the rest of this module's logging and
+    tests can monkeypatch a fixture instead of every call site.
     """
 
-    logger = logging.getLogger("rlpe.cli")
     if quiet:
-        logger.setLevel(logging.ERROR)
+        _CLI_LOGGER.setLevel(logging.ERROR)
     elif verbose:
-        logger.setLevel(logging.DEBUG)
+        _CLI_LOGGER.setLevel(logging.DEBUG)
     else:
-        logger.setLevel(logging.WARNING)
+        _CLI_LOGGER.setLevel(logging.WARNING)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -861,11 +880,8 @@ def _maybe_load_config(args: argparse.Namespace) -> dict | None:
             )
         return None
     # Load via the existing config_io helper to inherit the coercion
-    # / validation logic.
-    try:
-        from .config_io import load_config as _load_config
-    except ImportError as exc:  # pragma: no cover — defensive
-        raise UserError(f"could not import config_io: {exc}") from exc
+    # / validation logic. ``_load_config`` is imported at module top
+    # (see Phase F-3 NIT) so this call is direct.
     try:
         cfg = _load_config(config_path)
     except (ValueError, OSError) as exc:
@@ -962,6 +978,16 @@ def _run_dry(args: argparse.Namespace) -> None:
     :class:`RadiolarianPipeline` (which would import torch, OCR
     engines, and SAM2) — that defeats the purpose of dry-run on
     minimal CI images.
+
+    Phase F-3 NIT (2026-08-20): the previous version omitted many of
+    the fields that the pipeline actually consumes (``--caption-window``,
+    ``--od-caption-window``, ``--use-opendataloader``, ``--min-panel-score``,
+    ``--render-dpi``, ``--yolo-conf``, ``--yolo-iou``, ``--use-yolo-figures``,
+    ``--save-intermediate``, ``--taxon-model``, ``--grobid-url``, and the
+    MiniMax options). A CI smoke test that grep'd for one of those
+    flags would get a false-negative "not configured" result. The
+    full list is now echoed below so the dry-run output mirrors the
+    pipeline's effective config.
     """
 
     _flush_print("== rlpe --dry-run ==")
@@ -976,10 +1002,29 @@ def _run_dry(args: argparse.Namespace) -> None:
     _flush_print(f"  --llm-backend : {args.llm_backend}")
     _flush_print(f"  --deterministic: {args.deterministic}")
     _flush_print(f"  --data-outbound-policy: {args.data_outbound_policy}")
+    _flush_print(f"  --caption-window   : {getattr(args, 'caption_window', '(unset)')}")
+    _flush_print(f"  --od-caption-window: {getattr(args, 'od_caption_window', '(unset)')}")
+    _flush_print(f"  --use-opendataloader: {getattr(args, 'use_opendataloader', '(unset)')}")
+    _flush_print(f"  --min-panel-score : {getattr(args, 'min_panel_score', '(unset)')}")
+    _flush_print(f"  --render-dpi      : {getattr(args, 'render_dpi', '(unset)')}")
+    _flush_print(f"  --save-intermediate: {getattr(args, 'save_intermediate', '(unset)')}")
+    _flush_print(f"  --taxon-model     : {getattr(args, 'taxon_model', '(unset)')}")
+    _flush_print(f"  --grobid-url      : {getattr(args, 'grobid_url', '(unset)')}")
+    _flush_print(f"  --use-yolo-figures: {getattr(args, 'use_yolo_figures', '(unset)')}")
+    _flush_print(f"  --yolo-conf       : {getattr(args, 'yolo_conf_threshold', '(unset)')}")
+    _flush_print(f"  --yolo-iou        : {getattr(args, 'yolo_iou_threshold', '(unset)')}")
     config_path = getattr(args, "config", None)
     if config_path is not None:
         _flush_print(f"  --config      : {config_path}")
     _flush_print("== dry-run OK: no OCR / SAM2 / LLM calls performed ==")
+
+
+# Phase F-3 NIT: hoist the magic ``32`` used by both the --num-workers
+# clamp and the argparse validator into a named constant. The previous
+# inlined ``max(1, min(32, ...))`` was easy to drift out of sync with
+# the corresponding ``type=`` validator.
+MAX_NUM_WORKERS = 32
+MIN_NUM_WORKERS = 1
 
 
 def _run_pipeline(args: argparse.Namespace) -> int:
@@ -988,11 +1033,13 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     raised here is re-raised; ``main`` decides how to exit.
     """
     # Clamp --num-workers to a sane range. ThreadPoolExecutor requires
-    # ``max_workers >= 1``; values above ~32 saturate the OCR / SAM2 /
-    # GROBID stack long before they help throughput. A user typo (e.g.
-    # ``--num-workers 0``) would otherwise crash the pool at submit
-    # time. Silently clamping matches what most CLI tools do.
-    args.num_workers = max(1, min(32, int(args.num_workers)))
+    # ``max_workers >= 1``; values above MAX_NUM_WORKERS saturate the
+    # OCR / SAM2 / GROBID stack long before they help throughput. A user
+    # typo (e.g. ``--num-workers 0``) would otherwise crash the pool
+    # at submit time. Silently clamping matches what most CLI tools do.
+    args.num_workers = max(
+        MIN_NUM_WORKERS, min(MAX_NUM_WORKERS, int(args.num_workers))
+    )
     # Resolve --use-gpu: explicit flag wins, else auto-detect CUDA.
     if args.use_gpu is None:
         try:

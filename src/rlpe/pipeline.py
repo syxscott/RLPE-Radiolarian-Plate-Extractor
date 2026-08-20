@@ -91,16 +91,22 @@ from .types import (
 from .utils import ensure_dir, slugify, stable_id, write_json, write_jsonl
 
 
-def _sha256_file(path: Path) -> str:
+def _short_sha256_file(path: Path) -> str:
     """Cheap content hash for image reproducibility audit (first 16 hex chars).
 
-    Distinct from the longer ``_sha256_file`` in ``provenance/stamp.py``:
-    that one is used as a stable content-addressable key for caching
-    pipeline artifacts (returns the full digest). This one is stamped
-    onto per-row M3-vision metadata so an operator can quickly tell
-    whether two panels came from the same crop without comparing MBs of
-    image data. 16 hex chars (64 bits) is enough entropy to disambiguate
-    real-world crops.
+    Phase F-3 NIT: the previous name ``_sha256_file`` collided with
+    the longer-digest ``_sha256_file`` in ``provenance/stamp.py`` —
+    both functions exist in the same import graph (via the API
+    worker), and a careless ``from .pipeline import _sha256_file``
+    followed by an indirect import of ``provenance.stamp`` could
+    silently mask the longer version. Renamed this one to
+    ``_short_sha256_file`` to make the truncation length obvious from
+    the name and to eliminate the cross-module name collision.
+
+    Returns the first 16 hex chars (64 bits) — enough entropy to
+    disambiguate real-world crops without comparing MBs of image data.
+    Distinct from ``provenance.stamp._sha256_file`` which returns the
+    full digest for content-addressable caching.
     """
     import hashlib
 
@@ -109,6 +115,13 @@ def _sha256_file(path: Path) -> str:
         while chunk := f.read(8192):
             h.update(chunk)
     return h.hexdigest()[:16]
+
+
+# Backward-compat alias. The previous name was imported by callers
+# outside this module (e.g. the audit log code), so keep it as an
+# explicit alias with a deprecation note rather than renaming
+# silently. New callers should use ``_short_sha256_file`` directly.
+_sha256_file = _short_sha256_file  # noqa: F811  (legacy alias for backward compat)
 
 
 class RadiolarianPipeline:
@@ -6513,10 +6526,12 @@ def _page_from_filename(fname: str) -> int | None:
     than the directory listing. Returns the last integer found in the
     stem (so ``plate_3.png`` -> 3, ``imageFile12.png`` -> 12), or None
     if no integer is present.
-    """
-    import os as _os_for_page
 
-    stem = _os_for_page.path.splitext(_os_for_page.path.basename(fname))[0]
+    Phase F-3 NIT: was using ``import os as _os_for_page`` even though
+    ``os`` is already imported at module top — pay the per-call import
+    cost for no reason. Now uses the module-level ``os``.
+    """
+    stem = os.path.splitext(os.path.basename(fname))[0]
     # Take the last numeric run — that matches OD's ``imageFile1.png``
     # naming where the trailing number is the index. Ignore the year-like
     # 4-digit prefix if there is one and a trailing shorter number exists.

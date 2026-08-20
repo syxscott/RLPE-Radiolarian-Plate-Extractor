@@ -34,6 +34,12 @@ from rlpe.provenance.stamp import build_provenance  # noqa: E402
 from rlpe.schema_models import ProvenanceRecord, RunOutput  # noqa: E402
 from rlpe.types import MatchResult  # noqa: E402
 
+# Phase F-3 NIT: module-level logger (was re-fetched via
+# ``logging.getLogger(__name__)`` inside ``_run_output_from_jsonl``
+# on every call). Hoisting it avoids the per-call lookup and
+# matches the convention used across the rest of the package.
+_logger = __import__("logging").getLogger(__name__)
+
 
 def _run_output_from_jsonl(input_path: Path) -> RunOutput:
     """Build a RunOutput from a JSONL of results.
@@ -43,10 +49,16 @@ def _run_output_from_jsonl(input_path: Path) -> RunOutput:
     require the JSONL to be a RunOutput shape.
     """
     import json
-    import logging
 
     matches: list[MatchResult] = []
-    with open(input_path) as f:
+    # Phase F-3 NIT: was ``open(input_path)`` with no encoding, which
+    # on Windows defaults to the active codepage (cp1252). A JSONL
+    # containing Chinese / Japanese species names (which is the
+    # common case for RLPE exports) would decode incorrectly or
+    # raise UnicodeDecodeError mid-run. Force UTF-8 so a
+    # Python-on-Windows / Python-on-POSIX operator gets the same
+    # behaviour.
+    with open(input_path, encoding="utf-8") as f:
         for line_no, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
@@ -54,7 +66,7 @@ def _run_output_from_jsonl(input_path: Path) -> RunOutput:
             try:
                 d = json.loads(line)
             except json.JSONDecodeError as exc:
-                logging.getLogger(__name__).warning(
+                _logger.warning(
                     "Skipping malformed JSONL line %d in %s: %s",
                     line_no,
                     input_path,
@@ -95,6 +107,14 @@ def main() -> int:
         options=AnalysisOptions(include_unmatched=args.include_unmatched),
     )
     print(f"  analysis.csv: {n_csv} rows")
+    # Phase F-3 NIT: was catching ONLY ImportError, so a real
+    # exception (e.g. ``pyarrow.lib.ArrowInvalid`` from a
+    # schema-mismatch crash) would propagate and silently skip
+    # the remaining exports (``write_ml_split``, ``write_dwca_zip``)
+    # below — the operator would see "CSV written" + a Python
+    # traceback on stderr with no clarity that the ML / DwCA
+    # outputs were also skipped. Now any non-ImportError exception
+    # is logged + re-raised so the caller sees the failure mode.
     try:
         n_parquet = write_parquet(
             run,
@@ -103,7 +123,14 @@ def main() -> int:
         )
         print(f"  analysis.parquet: {n_parquet} rows")
     except ImportError as e:
+        # Parquet is an optional dependency; missing pyarrow is
+        # expected on slim installs.
         print(f"  analysis.parquet: skipped ({e})")
+    except Exception as e:
+        # Real failure — surface the error so the operator knows
+        # the rest of the export may be incomplete, then re-raise.
+        _logger.exception("Parquet export failed: %s", e)
+        raise
 
     # 2. ML (JSONL with splits)
     counts = write_ml_split(
