@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtGui import QAction, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -103,6 +103,18 @@ MAX_JOBS: Final[int] = 500
 # running.
 MAX_JSONL_SIZE: Final[int] = 100 * 1024 * 1024  # 100 MB
 MAX_LINE_SIZE: Final[int] = 1 * 1024 * 1024     # 1 MB
+
+# Status → row-background tint map. Phase F-3 NIT fix: previously an
+# inline dict literal in ``_refresh_row``. Pulled to module scope so
+# the design tokens live in one place (next to ``MAX_JOBS``) and so
+# ``_refresh_row`` doesn't re-import QColor on every row update.
+_STATUS_BG_COLORS: Final[dict[str, "QColor"]] = {
+    STATUS_RUNNING: QColor("#d6e4ff"),
+    STATUS_DONE: QColor("#d8f5d0"),
+    STATUS_FAILED: QColor("#ffe0e0"),
+    STATUS_CANCELLED: QColor("#ffe9d6"),
+    STATUS_QUEUED: QColor("#eef1f6"),
+}
 
 
 class _PendingDiskScan:
@@ -882,15 +894,10 @@ class JobsTab(QWidget):
         # status column gets the matching QSS objectName set via
         # QTreeWidget.setObjectName — but QTableWidgetItem has no
         # setObjectName; instead we set the item background colour.
-        from PySide6.QtGui import QColor
-
-        bg_map = {
-            STATUS_RUNNING: QColor("#d6e4ff"),
-            STATUS_DONE: QColor("#d8f5d0"),
-            STATUS_FAILED: QColor("#ffe0e0"),
-            STATUS_CANCELLED: QColor("#ffe9d6"),
-            STATUS_QUEUED: QColor("#eef1f6"),
-        }
+        # Phase F-3 NIT: ``bg_map`` is now the module-level
+        # ``_STATUS_BG_COLORS`` constant (QColor imported at module
+        # scope), so we don't re-import on every row refresh.
+        bg_map = _STATUS_BG_COLORS
         if job.status in bg_map:
             for col in range(self._table.columnCount()):
                 it = self._table.item(row, col)

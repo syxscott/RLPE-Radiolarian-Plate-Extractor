@@ -74,6 +74,11 @@ from .utils import (
 # URL regex used for GROBID URL validation (same pattern as settings_tab).
 _URL_RX = r"^https?://[^\s/$.?#].[^\s]*$"
 
+# Status label truncation length. Keeps the status bar readable when
+# many log lines stream in during a long run (Phase F-3 NIT fix:
+# magic number 200 extracted as named constant).
+_STATUS_LABEL_MAX_LEN = 200
+
 
 class RunTab(QWidget):
     """First tab — configure + start a single-paper pipeline run."""
@@ -276,7 +281,9 @@ class RunTab(QWidget):
             max_val=50,
             value=2,
         )
-        self._caption_window.setToolTip("GROBID caption→page lookup window")
+        self._caption_window.setToolTip(
+            i18n._tr("runtab.label.caption_window.tooltip")
+        )
         basic_layout.addWidget(self._caption_window, row, 1)
         basic_layout.addWidget(tr_label("runtab.label.od_caption_window"), row, 2)
         self._od_caption_window = tr_spinbox(
@@ -286,7 +293,9 @@ class RunTab(QWidget):
             max_val=RANGE_OD_CAPTION_WINDOW[1],
             value=5,
         )
-        self._od_caption_window.setToolTip("OpenDataLoader caption↔image cross-page window")
+        self._od_caption_window.setToolTip(
+            i18n._tr("runtab.label.od_caption_window.tooltip")
+        )
         basic_layout.addWidget(self._od_caption_window, row, 3)
         row += 1
 
@@ -919,9 +928,9 @@ class RunTab(QWidget):
             self.job_progress.emit(self._current_job_id, current, total, message)
 
     def _log_to_statusbar(self, line: str) -> None:
-        # Append to the status label (truncate to last 200 chars)
+        # Append to the status label (truncate to last _STATUS_LABEL_MAX_LEN chars)
         existing = self._status_label.text()
-        new = (existing + "  »  " + line)[-200:]
+        new = (existing + "  »  " + line)[-_STATUS_LABEL_MAX_LEN:]
         self._status_label.setText(new)
 
     def _show_live_progress(self, message: str) -> None:

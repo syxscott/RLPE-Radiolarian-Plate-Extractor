@@ -69,6 +69,11 @@ let resultsData = [];
 let selectedResultRowIds = new Set();
 let refreshIntervalId = null;
 let _notificationTimer = null;
+// Phase F-3 NIT: hide delay + UX grace periods extracted to named
+// constants so the timing knobs are grep-able.
+const _NOTIFICATION_HIDE_MS = 3000;
+const _AUTO_SWITCH_GRACE_MS = 1200;
+const _BLOB_REVOKE_DELAY_MS = 1000;
 // Auto-tab-switch timer for "job just completed" notifications. The
 // loadJobs() poll sets this to a setTimeout id 1200ms after a job
 // transitions to ``done``; the timer fires and switches the active
@@ -116,7 +121,7 @@ function showNotification(message, type = 'success') {
     _notificationTimer = setTimeout(() => {
         notification.classList.add('hidden');
         _notificationTimer = null;
-    }, 3000);
+    }, _NOTIFICATION_HIDE_MS);
 }
 
 function formatFileSize(bytes) {
@@ -768,7 +773,7 @@ async function loadJobs() {
                 _autoSwitchTimer = setTimeout(() => {
                     _autoSwitchTimer = null;
                     document.querySelector('[data-tab="results"]')?.click();
-                }, 1200);
+                }, _AUTO_SWITCH_GRACE_MS);
             }
         }
     } catch (error) {
@@ -1013,20 +1018,14 @@ function showMiniMaxFallbackModal(jobId, errorInfo) {
     // decision. Pattern-matches the standard "该panel为图表…无可判定"
     // reasoning text and treats it as a silent skip.
     if (errorInfo && errorInfo.is_non_specimen_figure) {
-        console.info(
-            'MiniMax returned non-specimen refusal for',
-            jobId,
-            '— silently skipping without popup.'
-        );
+        // Phase F-3 NIT: console.info dropped from production code;
+        // the no-popup skip is the intentional UX and was already
+        // documented in the surrounding comment.
         return;
     }
     const msg = (errorInfo && (errorInfo.error || errorInfo.reasoning)) || '';
     if (looksLikeNonSpecimenRefusal(msg)) {
-        console.info(
-            'MiniMax refusal text matched non-specimen pattern for',
-            jobId,
-            '— silently skipping without popup.'
-        );
+        // Phase F-3 NIT: console.info dropped from production code.
         return;
     }
     let modal = document.getElementById('MiniMax-fallback-modal');
@@ -2385,7 +2384,7 @@ document.getElementById('export-btn')?.addEventListener('click', async () => {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url2), 1000);
+            setTimeout(() => URL.revokeObjectURL(url2), _BLOB_REVOKE_DELAY_MS);
         } catch (err) {
             showNotification(`导出 ${jobId} 异常: ${err}`, 'error');
         }

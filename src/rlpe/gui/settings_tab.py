@@ -649,7 +649,17 @@ class SettingsTab(QWidget):
 
         from .utils import LOG_FILE_NAME
 
-        log_path = os.path.expanduser(f"~/.cache/rlpe/gui/{LOG_FILE_NAME}")
+        # Phase F-3 MINOR: the log directory was a hard-coded string
+        # ``~/.cache/rlpe/gui/`` which would silently drift if the
+        # path ever changed. Compute it via ``platformdirs`` when
+        # available and fall back to the legacy path otherwise.
+        try:
+            from platformdirs import user_log_dir as _user_log_dir
+
+            log_dir = Path(_user_log_dir("rlpe", "RLPE", roaming=False))
+        except ImportError:
+            log_dir = Path(os.path.expanduser("~/.cache/rlpe/gui"))
+        log_path = log_dir / LOG_FILE_NAME
         try:
             # subprocess.Popen is always available — no hasattr check.
             if sys.platform == "darwin":
@@ -697,7 +707,15 @@ class SettingsTab(QWidget):
     # click Save. The actual *enforcement* lives in ``_save()``; these
     # slots only paint the UI.
 
-    _INVALID_BORDER_QSS = "QLineEdit { border: 2px solid #dc3545; border-radius: 3px; }"
+    # Phase F-3 MINOR: extracted the invalid-border colour and the QSS
+    # templates as named constants. Bootstrap's ``#dc3545`` is the
+    # canonical "danger" colour across this app's CSS; reusing the
+    # hex literal in two places made a future re-skin fragile.
+    _INVALID_BORDER_COLOR = "#dc3545"
+    _INVALID_BORDER_QSS = (
+        f"QLineEdit {{ border: 2px solid {_INVALID_BORDER_COLOR}; "
+        "border-radius: 3px; }"
+    )
     _VALID_BORDER_QSS = "QLineEdit {}"
 
     def _mark_lineedit_invalid(self, le: QLineEdit, message: str) -> None:

@@ -114,6 +114,25 @@ _LOOPBACK_HOSTS: frozenset[str] = frozenset(
     {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
 )
 
+# Caption snippet truncation length for the detail pane. Phase F-3
+# NIT fix: the magic number 280 was repeated twice on the same line.
+_CAPTION_SNIPPET_MAX = 280
+
+# Badge / inline-detail style block used by ``_render_detail``. Phase
+# F-3 MINOR fix: these CSS classes were previously an inline literal
+# string. Pulling them into a module-level constant keeps the design
+# tokens DRY with the rest of the project and makes the dark-mode story
+# (when we add a QPalette override) tractable.
+_DETAIL_BADGE_CSS = (
+    ".badge-info{padding:1px 5px;border-radius:3px;font-size:11px;"
+    "background:#d6e4ff;color:#1f77b4}"
+    ".badge-warn{padding:1px 5px;border-radius:3px;font-size:11px;"
+    "background:#ffe0a0;color:#c07800}"
+    ".badge-muted{padding:1px 5px;border-radius:3px;font-size:11px;"
+    "background:#eee;color:#888}"
+)
+_DETAIL_HEADING_COLOR = "#1f77b4"
+
 
 def _validate_api_url(url: str, *, allow_local: bool = False) -> str | None:
     """Validate an API URL — return the URL or ``None`` on rejection.
@@ -1217,16 +1236,13 @@ class ResultsTab(QWidget):
         geo_links = md.get("geology_links") or []
         html = []
         html.append(
-            "<html><head><style>"
-            ".badge-info{padding:1px 5px;border-radius:3px;font-size:11px;background:#d6e4ff;color:#1f77b4}"
-            ".badge-warn{padding:1px 5px;border-radius:3px;font-size:11px;background:#ffe0a0;color:#c07800}"
-            ".badge-muted{padding:1px 5px;border-radius:3px;font-size:11px;background:#eee;color:#888}"
-            "</style></head><body style='font-family:sans-serif;padding:0;margin:0'>"
+            f"<html><head><style>{_DETAIL_BADGE_CSS}</style>"
+            "</head><body style='font-family:sans-serif;padding:0;margin:0'>"
         )
 
         # ── Heading ──────────────────────────────────────────────
         html.append(
-            f"<h2 style='color:#1f77b4;margin:8px 8px 2px'>"
+            f"<h2 style='color:{_DETAIL_HEADING_COLOR};margin:8px 8px 2px'>"
             f"{html_escape(row.get('species') or '(no species)')}</h2>"
         )
         panel_id = row.get("panel_id") or ""
@@ -1426,7 +1442,7 @@ class ResultsTab(QWidget):
         # ── Caption snippet ───────────────────────────────────
         cap_snippet = row.get("caption_snippet") or ""
         if cap_snippet:
-            display = cap_snippet[:280] + ("…" if len(cap_snippet) > 280 else "")
+            display = cap_snippet[:_CAPTION_SNIPPET_MAX] + ("…" if len(cap_snippet) > _CAPTION_SNIPPET_MAX else "")
             html.append(
                 f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
                 f"<b style='font-size:12px'>{i18n._tr('restab.detail.caption', 'Caption')}</b>"
@@ -2354,6 +2370,14 @@ class ResultsTab(QWidget):
 
 
 def _format_bbox(bbox) -> str:
+    """Format a bounding box ``[x, y, w, h]`` for the detail pane.
+
+    Phase F-3 MINOR: this helper is currently dead code — the bbox
+    rendering in ``_render_detail`` builds HTML directly and never
+    imports it. Kept (with an explicit docstring) because the helper
+    is small, useful, and downstream tooling may want it. If it
+    stays unused for two more release cycles, remove it.
+    """
     if not bbox or len(bbox) != 4:
         return "—"
     x, y, w, h = bbox
