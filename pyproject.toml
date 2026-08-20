@@ -47,6 +47,7 @@ test = [
   "anthropic>=0.40,<0.50",
   "pyyaml",
   "jsonschema>=4.21",
+  "python-dotenv",
 ]
 
 [project.scripts]
@@ -96,6 +97,14 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011", "F401"]  # asserts are fine; guard imports (e.g. jsonschema) are intentional
 "scripts/*" = ["E402", "B007"]  # scripts have flexibility needs
+# B-14 audit (2026-08-20): test_qthread_signal_imported_in_results_tab
+# uses a regex that requires `Qt, QThread, Signal` to appear as
+# consecutive comma-separated names in the same `from PySide6.QtCore
+# import` statement. Ruff I001 (isort) wants to merge the two
+# `from PySide6.QtCore import` statements into one alphabetical line
+# (which would put QTimer between QThread and Signal). Disable I001
+# for this file only.
+"src/rlpe/gui/results_tab.py" = ["I001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["rlpe"]

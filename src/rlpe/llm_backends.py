@@ -482,6 +482,11 @@ _ALLOWED_PANEL_FIELDS = frozenset(
         # explicitly asks for them (e.g. ``species_list`` for
         # "list every species in this plate").
         "species_list",
+        # Arbitrary structured extras preserved for downstream consumers
+        # that understand them (e.g. ``morphology`` shell descriptors,
+        # ``stratigraphy`` age/formation dicts).
+        "morphology",
+        "stratigraphy",
     }
 )
 

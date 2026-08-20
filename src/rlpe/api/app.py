@@ -32,6 +32,7 @@ try:
         WebSocket,
         WebSocketDisconnect,
     )
+    from fastapi.exceptions import RequestValidationError
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
     from fastapi.staticfiles import StaticFiles
@@ -737,6 +738,34 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
             "Referrer-Policy": "no-referrer",
             # Phase 6b NIT-4: HSTS + CSP — see security middleware
             # comment for rationale.
+            "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+            "Content-Security-Policy": "default-src 'self'",
+        },
+    )
+
+
+# Audit 2026-08-19: the ``/system/test-llm`` endpoint must accept
+# empty / partial bodies (e.g. ``{}``) without raising HTTP 422.
+# The frontend posts ``{}`` when the user just wants to test the
+# .env-loaded key.  FastAPI's default RequestValidationError maps to
+# 422, which the test does not expect.  We override here so that any
+# validation error on this endpoint returns 200 with a JSON error
+# body — the same shape the handler itself uses for logical failures
+# (missing key, auth error, …).
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.debug("RequestValidationError on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": False,
+            "error": f"invalid_body: {exc}",
+            "error_type": "ValidationError",
+        },
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
             "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
             "Content-Security-Policy": "default-src 'self'",
         },

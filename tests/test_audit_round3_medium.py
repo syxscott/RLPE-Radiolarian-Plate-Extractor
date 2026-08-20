@@ -205,7 +205,7 @@ class TestThinkingRetryLockScope:
         marker = "def _infer_vision("
         i = text.find(marker)
         assert i > 0
-        body = text[i : i + 4000]
+        body = text[i : i + 8000]
         retry_marker = "retrying with thinking disabled"
         j = body.find(retry_marker)
         assert j > 0

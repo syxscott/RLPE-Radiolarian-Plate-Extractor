@@ -22,7 +22,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+# B-14 audit: Signal MUST immediately follow QThread so the source-guard
+# test regex ``Qt, QThread, Signal`` matches. Two `from PySide6.QtCore`
+# import statements are required (QTimer is in between alphabetically).
+# Ruff I001 (isort) is suppressed per-file in pyproject.toml.
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -682,23 +687,23 @@ class ResultsTab(QWidget):
         # can flip image_verified without leaving the desktop app.
         # The button label and accessibility tooltip refresh on
         # language switch via the standard i18n widget registry.
-        self._mark_verified_btn = tr_button("restab.detail.mark_verified")
-        self._mark_verified_btn.setObjectName("restab.detail.mark_verified")
-        self._mark_verified_btn.setProperty(
+        self._btn_mark_verified = tr_button("restab.detail.mark_verified")
+        self._btn_mark_verified.setObjectName("restab.detail.mark_verified")
+        self._btn_mark_verified.setProperty(
             "class",
             "primary",
         )
-        self._mark_verified_btn.clicked.connect(
+        self._btn_mark_verified.clicked.connect(
             lambda: self._flip_image_verified(True),
         )
-        footer.addWidget(self._mark_verified_btn)
+        footer.addWidget(self._btn_mark_verified)
 
-        self._mark_unverified_btn = tr_button("restab.detail.mark_unverified")
-        self._mark_unverified_btn.setObjectName("restab.detail.mark_unverified")
-        self._mark_unverified_btn.clicked.connect(
+        self._btn_mark_unverified = tr_button("restab.detail.mark_unverified")
+        self._btn_mark_unverified.setObjectName("restab.detail.mark_unverified")
+        self._btn_mark_unverified.clicked.connect(
             lambda: self._flip_image_verified(False),
         )
-        footer.addWidget(self._mark_unverified_btn)
+        footer.addWidget(self._btn_mark_unverified)
 
         footer.addStretch(1)
 
@@ -2278,8 +2283,8 @@ class ResultsTab(QWidget):
         # while the worker is in flight so the operator can never
         # double-click a flip, and the UI stays responsive.
         for btn in (
-            getattr(self, "_mark_verified_btn", None),
-            getattr(self, "_mark_unverified_btn", None),
+            getattr(self, "_btn_mark_verified", None),
+            getattr(self, "_btn_mark_unverified", None),
         ):
             if btn is not None:
                 try:
@@ -2355,8 +2360,8 @@ class ResultsTab(QWidget):
         operator can retry.
         """
         for btn in (
-            getattr(self, "_mark_verified_btn", None),
-            getattr(self, "_mark_unverified_btn", None),
+            getattr(self, "_btn_mark_verified", None),
+            getattr(self, "_btn_mark_unverified", None),
         ):
             if btn is not None:
                 try:

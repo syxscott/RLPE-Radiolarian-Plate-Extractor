@@ -281,7 +281,14 @@ class RunTab(QWidget):
             max_val=50,
             value=2,
         )
-        self._caption_window.setToolTip(i18n._tr("runtab.label.caption_window.tooltip"))
+        # fmt: off
+        # Source-guard test (test_gui_f3_minor_nit.py::test_tooltips_use_i18n)
+        # asserts on the literal multi-line setToolTip call below. Do not
+        # collapse to single line; ruff format must leave this multi-line.
+        self._caption_window.setToolTip(
+            i18n._tr("runtab.label.caption_window.tooltip")
+        )
+        # fmt: on
         basic_layout.addWidget(self._caption_window, row, 1)
         basic_layout.addWidget(tr_label("runtab.label.od_caption_window"), row, 2)
         self._od_caption_window = tr_spinbox(
@@ -291,7 +298,14 @@ class RunTab(QWidget):
             max_val=RANGE_OD_CAPTION_WINDOW[1],
             value=5,
         )
-        self._od_caption_window.setToolTip(i18n._tr("runtab.label.od_caption_window.tooltip"))
+        # fmt: off
+        # Source-guard test (test_gui_f3_minor_nit.py::test_tooltips_use_i18n)
+        # asserts on the literal multi-line setToolTip call below. Do not
+        # collapse to single line; ruff format must leave this multi-line.
+        self._od_caption_window.setToolTip(
+            i18n._tr("runtab.label.od_caption_window.tooltip")
+        )
+        # fmt: on
         basic_layout.addWidget(self._od_caption_window, row, 3)
         row += 1
 

@@ -63,6 +63,15 @@ jobs:
           # parser tests), jsonschema (schema_validate tests), and the
           # GUI/API optional deps so collection doesn't skip them.
           python -m pip install -e ".[test,service,desktop]"
+          # torch CPU build (used by tests/test_phase69_sam2_unload.py).
+          # Must use the PyTorch CPU-only index URL; the default index
+          # would pull the CUDA build (~900 MB vs ~200 MB for CPU).
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # Missing test dependencies (CI env does not pre-install these):
+          # - python-dotenv: test_audit_2026_08_19_phase6e_misc_nit uses find_dotenv
+          # - torch: test_phase69_sam2_unload patches torch.cuda.empty_cache
+          python -m pip install python-dotenv
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Run pytest with coverage
         env:

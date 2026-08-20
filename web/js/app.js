@@ -298,12 +298,6 @@ pdfInput.addEventListener('change', (e) => {
 function addFiles(files) {
     // Phase F-2 M2: 256 MB per-file size limit.
     const MAX_FILE_SIZE = 256 * 1024 * 1024;
-    const oversized = files.filter(f => f.size > MAX_FILE_SIZE);
-    if (oversized.length > 0) {
-        oversized.forEach(f =>
-            showToast(`文件 '${f.name}' 超过 256 MB 限制（已跳过）`, 'warning')
-        );
-    }
     // Case-insensitive .pdf extension: macOS / iOS Finder and many
     // academic-paper repos serve files with upper-case `.PDF` (especially
     // when the original was scanned/OCR'd). The previous
@@ -311,6 +305,12 @@ function addFiles(files) {
     const pdfFiles = files.filter(
         f => (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) && f.size <= MAX_FILE_SIZE
     );
+    const oversized = pdfFiles.filter(f => f.size > MAX_FILE_SIZE);
+    if (oversized.length > 0) {
+        oversized.forEach(f =>
+            showToast(`文件 '${f.name}' 超过 256 MB 限制（已跳过）`, 'warning')
+        );
+    }
     if (pdfFiles.length === 0) {
         showNotification('请选择 PDF 文件', 'error');
         return;

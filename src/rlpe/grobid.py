@@ -265,6 +265,15 @@ class GrobidClient:
                     retry_count=attempt,
                     error_type="none",
                 )
+            except PipelineCancelledError:
+                # Audit 2026-08-20: re-raise cancellation immediately
+                # instead of letting it be caught by the generic
+                # ``except Exception`` below and turned into a
+                # ``GrobidResult(success=False, ...)`` — that would
+                # hide the cancellation from the caller's
+                # ``pytest.raises(PipelineCancelledError)`` checks and
+                # block the GUI cancel button's feedback loop.
+                raise
             except Exception as exc:
                 last_exc = exc
                 last_error_type = self._classify_exception(exc)
