@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from rlpe.stratigraphy import (
     _ICS_ROWS as ICS_CHART,
+)
+from rlpe.stratigraphy import (
     classify_age_string,
     find_ages_in_text,
 )
@@ -86,8 +88,8 @@ class TestCambrianSeries:
         # ma_top is the YOUNG (smaller) boundary, ma_base is OLD (larger).
         tops = [epochs[n]["ma_top"] for n in self.EXPECTED]
         bases = [epochs[n]["ma_base"] for n in self.EXPECTED]
-        assert min(tops) == 485.4, f"youngest top should be Cambrian ma_top=485.4"
-        assert max(bases) == 538.8, f"oldest base should be Cambrian ma_base=538.8"
+        assert min(tops) == 485.4, "youngest top should be Cambrian ma_top=485.4"
+        assert max(bases) == 538.8, "oldest base should be Cambrian ma_base=538.8"
 
 
 class TestCambrianStages:

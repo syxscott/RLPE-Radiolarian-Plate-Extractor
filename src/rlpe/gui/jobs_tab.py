@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -57,7 +57,6 @@ from .utils import (
     get_gui_logger,
     short_path,
 )
-
 
 # Phase F-2 (M-12): the _jobs dict and the table must stay in sync.
 # MAX_JOBS is the hard cap on _jobs entries; the table cap is
@@ -108,7 +107,7 @@ MAX_LINE_SIZE: Final[int] = 1 * 1024 * 1024     # 1 MB
 # inline dict literal in ``_refresh_row``. Pulled to module scope so
 # the design tokens live in one place (next to ``MAX_JOBS``) and so
 # ``_refresh_row`` doesn't re-import QColor on every row update.
-_STATUS_BG_COLORS: Final[dict[str, "QColor"]] = {
+_STATUS_BG_COLORS: Final[dict[str, QColor]] = {
     STATUS_RUNNING: QColor("#d6e4ff"),
     STATUS_DONE: QColor("#d8f5d0"),
     STATUS_FAILED: QColor("#ffe0e0"),

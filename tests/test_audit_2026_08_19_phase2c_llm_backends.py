@@ -457,14 +457,20 @@ class TestB4LlamaCppNoDegradeOn4xx:
 
                 raise HTTPError("401 Unauthorized", response=self)
 
-        def _fake_post(url: str, json: dict[str, Any], timeout: Any = None) -> _FakeResp:
+        def _fake_post(url: str, json: dict[str, Any], timeout: Any = None) -> Any:
             return _Fake401Resp()
 
         monkeypatch.setattr("rlpe.llm_backends.requests.post", _fake_post)
         backend = LlamaCppGemmaBackend(host="http://127.0.0.1:8080", model="m")
         plate = _make_pil_image()
 
-        with pytest.raises(Exception):
+        # Phase 4B introduced typed HTTPError subclasses
+        # (``LLMAuthenticationError``) so the re-raise is no longer
+        # bare ``Exception``. Assert the SPECIFIC subclass instead of
+        # the blind ``Exception`` (B017).
+        from rlpe.llm_backends import LLMAuthenticationError
+
+        with pytest.raises(LLMAuthenticationError):
             backend._chat_completion(
                 panel_image=plate,
                 system_prompt="sys",
@@ -483,14 +489,16 @@ class TestB4LlamaCppNoDegradeOn4xx:
 
                 raise HTTPError("403 Forbidden", response=self)
 
-        def _fake_post(url: str, json: dict[str, Any], timeout: Any = None) -> _FakeResp:
+        def _fake_post(url: str, json: dict[str, Any], timeout: Any = None) -> Any:
             return _Fake403Resp()
 
         monkeypatch.setattr("rlpe.llm_backends.requests.post", _fake_post)
         backend = LlamaCppGemmaBackend(host="http://127.0.0.1:8080", model="m")
         plate = _make_pil_image()
 
-        with pytest.raises(Exception):
+        from rlpe.llm_backends import LLMAuthenticationError
+
+        with pytest.raises(LLMAuthenticationError):
             backend._chat_completion(
                 panel_image=plate,
                 system_prompt="sys",
@@ -545,8 +553,9 @@ class TestB4LlamaCppNoDegradeOn4xx:
     def test_connection_error_still_falls_back_to_completion(self, monkeypatch):
         """Connection errors (no HTTP status code) are transient — the
         fallback to ``/completion`` must still happen."""
-        from rlpe.llm_backends import LlamaCppGemmaBackend
         from requests import ConnectionError
+
+        from rlpe.llm_backends import LlamaCppGemmaBackend
 
         class _FakeCompletionResp:
             status_code = 200
@@ -787,9 +796,9 @@ class TestSourceGuard:
     def test_infer_panel_accepts_extra_image(self):
         """Both backends' ``infer_panel`` must accept the ``extra_image``
         keyword (backward-compatible default ``None``)."""
-        from rlpe.llm_backends import LlamaCppGemmaBackend, MiniMaxM3Backend
-
         import inspect
+
+        from rlpe.llm_backends import LlamaCppGemmaBackend, MiniMaxM3Backend
 
         sig_minimax = inspect.signature(MiniMaxM3Backend.infer_panel)
         sig_llamacpp = inspect.signature(LlamaCppGemmaBackend.infer_panel)

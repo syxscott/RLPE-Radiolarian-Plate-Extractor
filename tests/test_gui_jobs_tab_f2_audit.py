@@ -24,14 +24,14 @@ import collections
 import os
 import sys
 import time
-import pytest
 import unittest.mock
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QEventLoop, QPoint, QTimer  # noqa: E402
@@ -426,7 +426,7 @@ def test_export_worker_failed_signal():
     worker.failed.connect(_fail)
 
     def _raise_io(*args, **kwargs):
-        raise IOError("disk full")
+        raise OSError("disk full")
 
     with unittest.mock.patch("builtins.open", side_effect=_raise_io):
         worker.run()
@@ -463,7 +463,7 @@ def test_export_error_logs_and_pops_up(monkeypatch):
         exc = OSError("permission denied")
 
         def raise_on_run(self):
-            self.failed.emit(f"OSError: permission denied")
+            self.failed.emit("OSError: permission denied")
 
         mock_run.side_effect = raise_on_run
         jt._run_export_worker("xlsx", run_output, "/tmp/fail.xlsx")

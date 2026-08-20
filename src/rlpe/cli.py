@@ -70,6 +70,7 @@ except ImportError:
 
 from . import __version__ as _PKG_VERSION
 from .config import PipelineConfig
+
 # Phase F-3 NIT: was imported lazily inside ``_maybe_load_config`` so
 # that ``--help`` / ``--dry-run`` invocations that never touch a
 # config file would still skip the (small but real) import cost.

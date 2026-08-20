@@ -58,7 +58,15 @@ def _import_pymupdf() -> Any:
         pass
 
     try:
-        import fitz  # legacy PyMuPDF import path
+        # Re-import in fallback try block after pymupdf import failed
+        # above. Mypy sees the second ``import fitz`` as a name
+        # redefinition because the upper try introduced ``fitz`` as
+        # a local alias for ``pymupdf``; ruff sees it as a duplicate
+        # import (F811). The runtime behaviour is correct: the upper
+        # try re-raised before reaching here so ``fitz`` is unbound
+        # when this block runs. ``type: ignore[no-redef]`` on the
+        # import line silences mypy; ``noqa: F811`` silences ruff.
+        import fitz  # type: ignore[no-redef]  # noqa: F811
 
         # Guard against wrong `fitz` package (not PyMuPDF).
         if not hasattr(fitz, "open"):

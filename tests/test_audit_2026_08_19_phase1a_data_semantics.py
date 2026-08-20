@@ -32,8 +32,8 @@ if str(_SRC) not in sys.path:
 
 from rlpe.converters import (  # noqa: E402
     _extract_authorship,
-    _normalize_dwc_name,
     _normalise_species_name,
+    _normalize_dwc_name,
     _verbatim_species_name,
     taxon_records_from_matches,
 )
@@ -42,7 +42,6 @@ from rlpe.local_pdf_parser import (  # noqa: E402
     _SPECIES_RE,
 )
 from rlpe.types import MatchResult, PaperMetadata  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

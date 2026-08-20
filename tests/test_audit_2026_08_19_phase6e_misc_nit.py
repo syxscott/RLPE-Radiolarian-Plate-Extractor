@@ -373,8 +373,7 @@ def test_type_hints_on_phase6e_targets():
     import inspect
 
     import rlpe
-    from rlpe import layout
-    from rlpe import opendataloader_extractor
+    from rlpe import layout, opendataloader_extractor
 
     # rlpe.__getattr__
     sig = inspect.signature(rlpe.__getattr__)

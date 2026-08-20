@@ -37,8 +37,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlpe import config as config_mod
-from rlpe.config import PipelineConfig, _KNOWN_EXTRA_KEYS
-
+from rlpe.config import _KNOWN_EXTRA_KEYS, PipelineConfig
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SRC_PIPELINE = _REPO_ROOT / "src" / "rlpe" / "pipeline.py"

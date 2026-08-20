@@ -43,11 +43,11 @@ from pathlib import Path
 import pytest
 
 from rlpe.paleo_reconstruction import (
+    _DEPRECATED_PLATE_ALIASES,
+    _SETON2012_POLES,
     COUNTRY_PLATE,
     EULER_POLES,
     PLATE_OVERRIDES,
-    _DEPRECATED_PLATE_ALIASES,
-    _SETON2012_POLES,
     _interpolate_euler,
     _load_seton2012_from_external,
     _resolve_deprecated_plate,
@@ -55,7 +55,6 @@ from rlpe.paleo_reconstruction import (
     infer_plate_id,
     reconstruct_paleo_position,
 )
-
 
 # ---------------------------------------------------------------------------
 # B-11 — Real Seton 2012 rotation table

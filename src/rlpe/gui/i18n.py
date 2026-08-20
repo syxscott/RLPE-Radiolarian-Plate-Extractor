@@ -223,7 +223,7 @@ def _apply_to_one(object_name: str, attr: str, key: str, fmt: dict | None = None
         # a name, so we use a def. The shiboken path is the
         # production one; this fallback exists only for headless
         # test environments without PySide6 fully wired in.
-        def _is_valid(obj: object) -> bool:
+        def _is_valid(obj: object) -> bool:  # type: ignore[misc]
             return True
 
     try:
@@ -328,7 +328,7 @@ def _apply_registry() -> None:
     except ImportError:
         # Audit 2026-08-17: ruff E731 forbids reassigning a lambda to
         # a name, so we use a def.
-        def _is_valid(obj: object) -> bool:
+        def _is_valid(obj: object) -> bool:  # type: ignore[misc]
             return True
 
     try:

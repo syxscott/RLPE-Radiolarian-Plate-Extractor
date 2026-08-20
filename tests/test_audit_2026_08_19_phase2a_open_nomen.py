@@ -30,7 +30,6 @@ from rlpe.converters import _taxon_parts, taxon_records_from_matches  # noqa: E4
 from rlpe.schema_models import TaxonRecord  # noqa: E402
 from rlpe.types import MatchResult, PaperMetadata  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

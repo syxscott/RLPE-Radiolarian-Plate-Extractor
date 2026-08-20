@@ -50,7 +50,6 @@ from .i18n_widgets import tr_label
 from .styles import SPACE_S
 from .utils import get_gui_logger
 
-
 # ============================================================
 # Memory guards (audit 2026-08-20 B-4 / M-20)
 # ============================================================

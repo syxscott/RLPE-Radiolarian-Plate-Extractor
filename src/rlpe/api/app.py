@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
-import hmac
 import re
 import shutil
 import sys
@@ -548,6 +548,7 @@ FALLBACK_PENDING: dict[str, dict[str, Any]] = {}
 # dict). The lifespan startup hook also does a single full sweep
 # so a server restart recovers the full state.
 import time as _time_for_pending
+
 FALLBACK_PENDING_TTL_SEC: int = 3600  # 1 hour — popup's max wait is 5 min, so stale by 1h means orphaned
 
 

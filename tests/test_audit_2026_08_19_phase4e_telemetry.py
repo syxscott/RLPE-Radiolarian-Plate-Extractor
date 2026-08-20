@@ -45,17 +45,16 @@ if str(_SRC) not in sys.path:
 from PIL import Image  # noqa: E402
 
 from rlpe.m3_engine import (  # noqa: E402
+    PROMPT_REGISTRY,
+    PROMPT_REGISTRY_VERSION,
     LLMAuthenticationError,
     LLMRateLimitError,
     LLMSchemaError,
-    PROMPT_REGISTRY,
-    PROMPT_REGISTRY_VERSION,
     M3Engine,
     get_prompt_registry,
     get_prompt_registry_version,
 )
 from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Test helpers

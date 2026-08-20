@@ -32,7 +32,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Condition, RLock, get_ident
 from typing import Any
 
@@ -3506,7 +3506,7 @@ class M3Engine:
             "model": getattr(self.backend, "model", None) if self.backend is not None else None,
             "prompt_version": get_prompt_registry_version(),
             "latency_ms": int(max(0, (time.time() - float(start)) * 1000)),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if llm_error is not None:
             tel["llm_error"] = llm_error

@@ -33,7 +33,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from rlpe.pipeline import RadiolarianPipeline
 from rlpe.types import PanelCandidate
 
-
 _PIPELINE_PATH = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
 
 

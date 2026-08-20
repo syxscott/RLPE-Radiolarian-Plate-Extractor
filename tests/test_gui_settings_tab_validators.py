@@ -237,7 +237,7 @@ def test_save_refuses_invalid_url(monkeypatch, tmp_path):
     )
     # A warning popup must have been shown (call recorded).
     assert len(warnings) >= 1, (
-        f"_save() did not display a QMessageBox.warning when the URL was invalid"
+        "_save() did not display a QMessageBox.warning when the URL was invalid"
     )
     # ...and the GUI logger should have a matching entry.
     assert any("GROBID URL" in str(m) or "URL" in str(m) for m in log_calls), (
@@ -300,7 +300,7 @@ def test_save_refuses_invalid_yolo_path(monkeypatch, tmp_path):
         f"_save() leaked invalid YOLO path into cache: {cache.get('yolo_model_path')!r}"
     )
     assert len(warnings) >= 1, (
-        f"_save() did not display a QMessageBox.warning when YOLO path was invalid"
+        "_save() did not display a QMessageBox.warning when YOLO path was invalid"
     )
     assert any("YOLO" in str(m) for m in log_calls), (
         f"_save() did not log a warning about the invalid YOLO path. log_calls={log_calls}"

@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 import sys
 import unittest.mock as mock
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -411,7 +412,7 @@ class TestM23LLMHTTPErrorClasses:
         assert issubclass(LLMNotFoundError, LLMHTTPError)
 
     def test_rate_limit_error_is_subclass(self):
-        from rlpe.llm_backends import LLMRateLimitError, LLMHTTPError
+        from rlpe.llm_backends import LLMHTTPError, LLMRateLimitError
 
         assert issubclass(LLMRateLimitError, LLMHTTPError)
 
@@ -429,7 +430,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
     ``HTTPError`` that the caller has to inspect."""
 
     def test_401_raises_authentication_error(self, monkeypatch):
-        from rlpe.llm_backends import LLMAuthenticationError, LlamaCppGemmaBackend
+        from rlpe.llm_backends import LlamaCppGemmaBackend, LLMAuthenticationError
 
         class _FakeResp:
             status_code = 401
@@ -453,7 +454,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
         assert ei.value.status_code == 401
 
     def test_403_raises_authentication_error(self, monkeypatch):
-        from rlpe.llm_backends import LLMAuthenticationError, LlamaCppGemmaBackend
+        from rlpe.llm_backends import LlamaCppGemmaBackend, LLMAuthenticationError
 
         class _FakeResp:
             status_code = 403
@@ -477,7 +478,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
         assert ei.value.status_code == 403
 
     def test_404_raises_not_found_error(self, monkeypatch):
-        from rlpe.llm_backends import LLMNotFoundError, LlamaCppGemmaBackend
+        from rlpe.llm_backends import LlamaCppGemmaBackend, LLMNotFoundError
 
         class _FakeResp:
             status_code = 404
@@ -501,7 +502,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
         assert ei.value.status_code == 404
 
     def test_429_raises_rate_limit_error(self, monkeypatch):
-        from rlpe.llm_backends import LLMRateLimitError, LlamaCppGemmaBackend
+        from rlpe.llm_backends import LlamaCppGemmaBackend, LLMRateLimitError
 
         class _FakeResp:
             status_code = 429
@@ -692,12 +693,12 @@ class TestM24ParseRetryAfterHeader:
     def test_http_date_in_future_returns_seconds(self):
         """An HTTP-date in the future returns the seconds-to-date,
         capped at 60."""
-        from rlpe.llm_backends import MiniMaxM3Backend
-
         # 5 minutes from now — well within the 60s cap.
         from datetime import datetime, timedelta, timezone
 
-        future = datetime.now(timezone.utc) + timedelta(minutes=5)
+        from rlpe.llm_backends import MiniMaxM3Backend
+
+        future = datetime.now(UTC) + timedelta(minutes=5)
         http_date = future.strftime("%a, %d %b %Y %H:%M:%S GMT")
         result = MiniMaxM3Backend._parse_retry_after_header(http_date)
         # Must be > 0 (future date) and <= 60 (cap).
@@ -705,23 +706,23 @@ class TestM24ParseRetryAfterHeader:
 
     def test_http_date_in_past_returns_zero(self):
         """An HTTP-date in the past returns 0 (no waiting needed)."""
-        from rlpe.llm_backends import MiniMaxM3Backend
-
         from datetime import datetime, timedelta, timezone
 
-        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        from rlpe.llm_backends import MiniMaxM3Backend
+
+        past = datetime.now(UTC) - timedelta(minutes=5)
         http_date = past.strftime("%a, %d %b %Y %H:%M:%S GMT")
         assert MiniMaxM3Backend._parse_retry_after_header(http_date) == 0.0
 
     def test_http_date_far_future_capped_at_60(self):
         """An HTTP-date far in the future is capped at 60 seconds so a
         buggy server can't pin a worker for minutes."""
-        from rlpe.llm_backends import MiniMaxM3Backend
-
         from datetime import datetime, timedelta, timezone
 
+        from rlpe.llm_backends import MiniMaxM3Backend
+
         # 24 hours in the future.
-        future = datetime.now(timezone.utc) + timedelta(days=1)
+        future = datetime.now(UTC) + timedelta(days=1)
         http_date = future.strftime("%a, %d %b %Y %H:%M:%S GMT")
         result = MiniMaxM3Backend._parse_retry_after_header(http_date)
         assert result == 60.0

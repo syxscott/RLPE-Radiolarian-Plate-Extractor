@@ -113,13 +113,13 @@ class TestPromptRegistry:
         """Sanity: the registry keys must mirror the module-level
         constants in m3_engine (no accidental renaming)."""
         from rlpe.m3_engine import (
-            _PARSE_CAPTION_SYSTEM,
-            _PARSE_CAPTION_SYSTEM_JA,
             _CLASSIFY_PLATE_SYSTEM,
-            _SEGMENT_PANELS_SYSTEM,
+            _CRITIQUE_SYSTEM,
             _MATCH_PANEL_SYSTEM,
             _MATCH_PANEL_SYSTEM_VISUAL_ONLY,
-            _CRITIQUE_SYSTEM,
+            _PARSE_CAPTION_SYSTEM,
+            _PARSE_CAPTION_SYSTEM_JA,
+            _SEGMENT_PANELS_SYSTEM,
             get_prompt_registry,
         )
 
@@ -186,8 +186,8 @@ class TestGemmaUsesM3Prompts:
         ``m3.get_prompt_registry()[0]['match_panel']`` — they must be
         the SAME STRING. A drift here means Gemma would emit a
         different JSON contract than M3 (the original M-10 bug)."""
-        from rlpe.m3_engine import get_prompt_registry
         import rlpe.gemma_postprocess as gemma
+        from rlpe.m3_engine import get_prompt_registry
 
         registry, _version = get_prompt_registry()
         m3_prompt = registry["match_panel"]
@@ -199,8 +199,8 @@ class TestGemmaUsesM3Prompts:
         )
 
     def test_gemma_get_system_prompt_visual_only_matches(self):
-        from rlpe.m3_engine import get_prompt_registry
         import rlpe.gemma_postprocess as gemma
+        from rlpe.m3_engine import get_prompt_registry
 
         registry, _version = get_prompt_registry()
         m3_prompt = registry["match_panel_visual_only"]
@@ -217,8 +217,8 @@ class TestGemmaUsesM3Prompts:
     def test_gemma_stage_aliases_resolve(self):
         """``zh`` / ``en`` / ``match`` aliases are accepted so legacy
         callers keep working without code changes."""
-        from rlpe.m3_engine import get_prompt_registry
         import rlpe.gemma_postprocess as gemma
+        from rlpe.m3_engine import get_prompt_registry
 
         registry, _version = get_prompt_registry()
         assert gemma._get_system_prompt("zh") == registry["match_panel"]
@@ -280,35 +280,35 @@ class TestConfidenceFieldFallback:
     ``{confidence, conf_score, c_score, score}`` (audit M-11)."""
 
     def test_pick_field_prefers_confidence(self):
-        from rlpe.gemma_postprocess import _pick_field, _CONFIDENCE_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
         # ``confidence`` is the canonical M3 name and must be preferred.
         payload = {"confidence": 0.9, "conf_score": 0.5, "score": 0.1}
         assert _pick_field(payload, _CONFIDENCE_FIELD_FALLBACK) == 0.9
 
     def test_pick_field_falls_back_to_conf_score(self):
-        from rlpe.gemma_postprocess import _pick_field, _CONFIDENCE_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
         # Older prompts / YOLO paths emit ``conf_score`` instead.
         payload = {"conf_score": 0.95}
         assert _pick_field(payload, _CONFIDENCE_FIELD_FALLBACK) == 0.95
 
     def test_pick_field_falls_back_to_score(self):
-        from rlpe.gemma_postprocess import _pick_field, _CONFIDENCE_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
         # Layout / pipeline paths use the bare ``score`` key.
         payload = {"score": 0.85}
         assert _pick_field(payload, _CONFIDENCE_FIELD_FALLBACK) == 0.85
 
     def test_pick_field_falls_back_to_c_score(self):
-        from rlpe.gemma_postprocess import _pick_field, _CONFIDENCE_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
         # Stage 3 bbox/crop paths use ``c_score``.
         payload = {"c_score": 0.7}
         assert _pick_field(payload, _CONFIDENCE_FIELD_FALLBACK) == 0.7
 
     def test_pick_field_missing_returns_none(self):
-        from rlpe.gemma_postprocess import _pick_field, _CONFIDENCE_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
         assert _pick_field({}, _CONFIDENCE_FIELD_FALLBACK) is None
         assert _pick_field({"unrelated": 1.0}, _CONFIDENCE_FIELD_FALLBACK) is None
@@ -316,14 +316,14 @@ class TestConfidenceFieldFallback:
     def test_pick_field_skips_null(self):
         """A present-but-null entry must not be returned (caller
         treated as missing)."""
-        from rlpe.gemma_postprocess import _pick_field, _CONFIDENCE_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
         payload = {"confidence": None, "conf_score": 0.8}
         assert _pick_field(payload, _CONFIDENCE_FIELD_FALLBACK) == 0.8
 
     def test_pick_field_with_non_dict_payload(self):
         """Defensive: ``_pick_field`` should not crash on a non-dict."""
-        from rlpe.gemma_postprocess import _pick_field, _CONFIDENCE_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
         assert _pick_field(None, _CONFIDENCE_FIELD_FALLBACK) is None
         assert _pick_field("string", _CONFIDENCE_FIELD_FALLBACK) is None
@@ -335,34 +335,34 @@ class TestNameFieldFallback:
     ``{verbatim_name, raw_name, name, taxon}`` (audit M-11)."""
 
     def test_pick_field_prefers_verbatim_name(self):
-        from rlpe.gemma_postprocess import _pick_field, _NAME_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _NAME_FIELD_FALLBACK, _pick_field
 
         # ``verbatim_name`` is the canonical 2026-08-19 B-2 schema.
         payload = {"verbatim_name": "Entactinia", "raw_name": "other"}
         assert _pick_field(payload, _NAME_FIELD_FALLBACK) == "Entactinia"
 
     def test_pick_field_falls_back_to_raw_name(self):
-        from rlpe.gemma_postprocess import _pick_field, _NAME_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _NAME_FIELD_FALLBACK, _pick_field
 
         payload = {"raw_name": "Entactinia"}
         assert _pick_field(payload, _NAME_FIELD_FALLBACK) == "Entactinia"
 
     def test_pick_field_falls_back_to_name(self):
-        from rlpe.gemma_postprocess import _pick_field, _NAME_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _NAME_FIELD_FALLBACK, _pick_field
 
         # Older M3 prompts emitted ``name``.
         payload = {"name": "Entactinia"}
         assert _pick_field(payload, _NAME_FIELD_FALLBACK) == "Entactinia"
 
     def test_pick_field_falls_back_to_taxon(self):
-        from rlpe.gemma_postprocess import _pick_field, _NAME_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _NAME_FIELD_FALLBACK, _pick_field
 
         # ``taxon`` is used by some converter paths.
         payload = {"taxon": "Entactinia"}
         assert _pick_field(payload, _NAME_FIELD_FALLBACK) == "Entactinia"
 
     def test_pick_field_missing_returns_none(self):
-        from rlpe.gemma_postprocess import _pick_field, _NAME_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _NAME_FIELD_FALLBACK, _pick_field
 
         assert _pick_field({}, _NAME_FIELD_FALLBACK) is None
 
@@ -378,7 +378,7 @@ class TestConfidenceCoercion:
     become ``gemma_conf = 0.0`` rather than raise."""
 
     def test_string_numeric_coerced(self):
-        from rlpe.gemma_postprocess import _pick_field, _CONFIDENCE_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
         # ``conf_score`` arrives as a string sometimes (provider side).
         payload = {"conf_score": "0.92"}
@@ -390,7 +390,7 @@ class TestConfidenceCoercion:
         assert val == pytest.approx(0.92)
 
     def test_garbage_value_becomes_zero(self):
-        from rlpe.gemma_postprocess import _pick_field, _CONFIDENCE_FIELD_FALLBACK
+        from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
         # Garbage payload must NOT raise — pattern used in
         # ``apply_gemma_to_matches`` wraps the conversion in

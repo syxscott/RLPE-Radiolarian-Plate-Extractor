@@ -5,9 +5,10 @@ no direct fetch(), file size limit, toast vs alert, JSON.parse try/catch,
 tab fallback class names, MutationObserver disconnect.
 """
 
-import pytest
 import re
 from pathlib import Path
+
+import pytest
 
 WEB_HTML = Path(__file__).resolve().parents[1] / "web" / "index.html"
 WEB_JS  = Path(__file__).resolve().parents[1] / "web" / "js" / "app.js"
@@ -32,8 +33,8 @@ class TestXFrameOptions:
     def test_x_frame_options_in_response(self):
         # Import here so we don't hard-fail if fastapi isn't in test env
         try:
-            from starlette.testclient import TestClient
             from fastapi import FastAPI
+            from starlette.testclient import TestClient
         except ImportError:
             pytest.skip("starlette/fastapi not available in test env")
 

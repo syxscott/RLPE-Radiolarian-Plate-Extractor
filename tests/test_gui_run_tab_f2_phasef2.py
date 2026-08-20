@@ -14,9 +14,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from rlpe.gui import i18n
-
 import pytest
+
+from rlpe.gui import i18n
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
@@ -125,8 +125,9 @@ class TestM21InputsLockedDuringRun:
 
     def test_inputs_locked_during_run(self, qapp, tmp_path):
         """Browse/Clear/Open buttons are disabled while pipeline runs."""
-        from rlpe.gui.run_tab import RunTab
         from unittest.mock import MagicMock
+
+        from rlpe.gui.run_tab import RunTab
 
         pdf = tmp_path / "paper.pdf"
         pdf.write_bytes(b"%PDF-1.4")
@@ -199,8 +200,9 @@ class TestM27ShutdownNoDestroyRunningThread:
 
     def test_shutdown_no_runtime_error_if_already_finished(self, qapp):
         """Calling shutdown() when worker has already finished raises no RuntimeError."""
-        from rlpe.gui.run_tab import RunTab
         from unittest.mock import MagicMock
+
+        from rlpe.gui.run_tab import RunTab
 
         rt = RunTab(settings={}, parent=None)
         mock_worker = MagicMock()
@@ -216,8 +218,9 @@ class TestM27ShutdownNoDestroyRunningThread:
 
     def test_shutdown_calls_requestInterruption(self, qapp):
         """shutdown() calls requestInterruption() on a running worker."""
-        from rlpe.gui.run_tab import RunTab
         from unittest.mock import MagicMock
+
+        from rlpe.gui.run_tab import RunTab
 
         rt = RunTab(settings={}, parent=None)
         mock_worker = MagicMock()

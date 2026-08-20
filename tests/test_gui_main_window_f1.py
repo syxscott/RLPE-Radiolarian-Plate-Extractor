@@ -278,7 +278,7 @@ class TestAutoOpenResultsAfterAsyncScan:
         through ``_on_disk_scan_done`` which only runs after the worker
         truly finishes.
         """
-        from PySide6.QtCore import QEventLoop, QTimer
+        from PySide6.QtCore import QEventLoop
 
         from rlpe.gui.constants import STATUS_DONE, TAB_RESULTS
         from rlpe.gui.main_window import MainWindow
@@ -328,7 +328,7 @@ class TestAutoOpenResultsAfterAsyncScan:
     def test_auto_open_skipped_when_no_jobs(self, empty_work_dirs):
         """With no candidates on disk, ``scan_finished`` fires with an
         empty list and the GUI must stay on the default Run tab."""
-        from PySide6.QtCore import QEventLoop, QTimer
+        from PySide6.QtCore import QEventLoop
 
         from rlpe.gui.constants import TAB_RUN
         from rlpe.gui.main_window import MainWindow

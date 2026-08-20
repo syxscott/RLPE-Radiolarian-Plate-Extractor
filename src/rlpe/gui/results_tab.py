@@ -461,7 +461,9 @@ class _ExportWorker(QThread):
             elif self._fmt == "dwca":
                 from ..exporters.archive import write_dwca_zip
 
-                write_dwca_zip(self._run_output, self._path)
+                # ``write_dwca_zip`` expects ``Path``; the GUI accepts
+                # ``str`` (QFileDialog returns str) so coerce explicitly.
+                write_dwca_zip(self._run_output, Path(self._path))
             else:
                 # Defensive: _VALID_FMTS already rejected this in __init__,
                 # but keep an explicit branch so a future refactor can't

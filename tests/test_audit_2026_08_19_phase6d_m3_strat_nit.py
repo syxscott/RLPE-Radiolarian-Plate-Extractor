@@ -453,7 +453,7 @@ class TestNIT3ExtractGeologyAutoswaps:
         """Drive ``extract_geology`` with a fake backend that
         returns an inverted ma_top / ma_base pair and verify the
         resulting record has the values swapped (not nulled)."""
-        from rlpe.m3_engine import M3Engine, _validate_ma_range, _normalize_ma_pair
+        from rlpe.m3_engine import M3Engine, _normalize_ma_pair, _validate_ma_range
 
         # Use the helpers directly with the JSON the LLM would emit
         # — this avoids the heavy image / puppet backend plumbing.

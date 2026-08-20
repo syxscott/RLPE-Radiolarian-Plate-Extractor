@@ -105,7 +105,6 @@ from .results_tab import ResultsTab
 from .run_tab import RunTab
 from .settings_tab import SettingsTab
 
-
 # ============================================================
 # Batch export worker (M-25)
 # ============================================================

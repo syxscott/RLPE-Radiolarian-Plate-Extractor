@@ -718,7 +718,7 @@ class TestSourceGuards:
     the guard."""
 
     def test_llm_backends_defines_whitelist_and_helper(self):
-        from rlpe.llm_backends import _apply_geo_whitelist, _GEO_KEY_WHITELIST
+        from rlpe.llm_backends import _GEO_KEY_WHITELIST, _apply_geo_whitelist
 
         assert callable(_apply_geo_whitelist)
         assert isinstance(_GEO_KEY_WHITELIST, (set, frozenset))

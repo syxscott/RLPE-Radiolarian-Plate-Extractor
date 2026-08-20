@@ -328,7 +328,21 @@ def gemma_match_panel(
     # installs without ``m3_engine`` keep working.
     if system_prompt is None:
         m3_prompt = _get_system_prompt("match_panel")
-        prompt = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_ZH
+        if not m3_prompt:
+            # Audit 2026-08-19 Phase 4C (Bug M-10) used to fall back to
+            # a hardcoded ``GEMMA_SYSTEM_PROMPT_ZH`` constant here, but
+            # that constant was intentionally removed when the prompt
+            # registry moved to ``m3_engine`` (single source of truth).
+            # A missing match_panel prompt means M3 is not installed /
+            # the registry is empty; surface that as a configuration
+            # error instead of running Gemma with an empty system
+            # prompt and silently producing garbage.
+            raise RuntimeError(
+                "match_panel prompt not available from m3_engine "
+                "registry — cannot run Gemma fallback. Install rlpe "
+                "with the M3 extras or pass an explicit system_prompt."
+            )
+        prompt = m3_prompt
     else:
         prompt = system_prompt
     user_prompt = (
@@ -370,12 +384,29 @@ def apply_gemma_to_matches(
     is_zh = prompt_lang.lower().startswith("zh")
     if is_zh:
         m3_prompt = _get_system_prompt("match_panel")
-        prompt: str = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_ZH
+        if not m3_prompt:
+            # Same rationale as ``gemma_match_panel`` above: the
+            # legacy GEMMA_SYSTEM_PROMPT_* constants were removed in
+            # Phase 4C; if the M3 registry is empty we MUST surface a
+            # configuration error rather than silently running Gemma
+            # with an empty system prompt.
+            raise RuntimeError(
+                "match_panel prompt not available from m3_engine "
+                "registry — cannot run Gemma fallback for "
+                f"prompt_lang={prompt_lang!r}."
+            )
+        prompt: str = m3_prompt
     else:
         # English pipeline: M3 doesn't ship a dedicated EN match_panel
-        # prompt, so fall back to the legacy inline English prompt.
+        # prompt, so fall back to the visual-only match_panel prompt.
         m3_prompt = _get_system_prompt("match_panel_visual_only")
-        prompt = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_EN
+        if not m3_prompt:
+            raise RuntimeError(
+                "match_panel_visual_only prompt not available from "
+                "m3_engine registry — cannot run Gemma fallback for "
+                f"prompt_lang={prompt_lang!r}."
+            )
+        prompt = m3_prompt
     for match in matches:
         if not match.panel_path:
             continue
@@ -490,10 +521,22 @@ def batch_gemma_postprocess_rows(
     is_zh = prompt_lang.lower().startswith("zh")
     if is_zh:
         m3_prompt = _get_system_prompt("match_panel")
-        prompt: str = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_ZH
+        if not m3_prompt:
+            raise RuntimeError(
+                "match_panel prompt not available from m3_engine "
+                "registry — cannot run batch Gemma fallback for "
+                f"prompt_lang={prompt_lang!r}."
+            )
+        prompt: str = m3_prompt
     else:
         m3_prompt = _get_system_prompt("match_panel_visual_only")
-        prompt = m3_prompt if m3_prompt else GEMMA_SYSTEM_PROMPT_EN
+        if not m3_prompt:
+            raise RuntimeError(
+                "match_panel_visual_only prompt not available from "
+                "m3_engine registry — cannot run batch Gemma fallback "
+                f"for prompt_lang={prompt_lang!r}."
+            )
+        prompt = m3_prompt
     out_rows: list[dict[str, Any]] = []
     for row in tqdm(rows, desc="Gemma postprocess"):
         new_row = dict(row)

@@ -400,7 +400,6 @@ def test_all_i18n_tr_keys_are_defined():
     in both EN and ZH dicts. This is a static guarantee that
     nothing renders `⟦key⟧` at runtime."""
     import glob
-
     import re
 
     from rlpe.gui import strings_en, strings_zh_CN

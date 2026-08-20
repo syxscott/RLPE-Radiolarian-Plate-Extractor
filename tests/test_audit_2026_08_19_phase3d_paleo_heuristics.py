@@ -61,11 +61,10 @@ from rlpe.geology_extraction import _classify_coordinate_age  # noqa: E402
 from rlpe.paleo_reconstruction import (  # noqa: E402
     COUNTRY_PLATE,
     EULER_POLES,
+    _interpolate_euler,
     infer_plate_id,
     reconstruct_paleo_position,
-    _interpolate_euler,
 )
-
 
 # ===========================================================================
 # Task 1 / M3 — plate coord bucket (Eastern Mediterranean gap)

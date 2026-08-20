@@ -87,7 +87,6 @@ from .i18n_widgets import (
 from .styles import SPACE_L, SPACE_M, SPACE_S, apply_theme
 from .utils import get_gui_logger
 
-
 # ============================================================
 # Module-level validators
 # ============================================================
@@ -656,7 +655,11 @@ class SettingsTab(QWidget):
         try:
             from platformdirs import user_log_dir as _user_log_dir
 
-            log_dir = Path(_user_log_dir("rlpe", "RLPE", roaming=False))
+            # ``roaming=`` was added in platformdirs 4.x; older 3.x
+            # releases don't accept it. ``type: ignore[call-arg]`` lets
+            # mypy stay quiet across both versions without an import-
+            # time version probe.
+            log_dir = Path(_user_log_dir("rlpe", "RLPE", roaming=False))  # type: ignore[call-arg]
         except ImportError:
             log_dir = Path(os.path.expanduser("~/.cache/rlpe/gui"))
         log_path = log_dir / LOG_FILE_NAME

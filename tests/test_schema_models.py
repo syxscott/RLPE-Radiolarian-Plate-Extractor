@@ -759,9 +759,9 @@ class TestProductDataPackage:
             "X_PR-SB28",
             "X_PR-SB30",
         }, (
-            f"sample_ids should be {{S_PR-SB28, S_PR-SB30}} or "
-            f"{{X_PR-SB28, X_PR-SB30}}, got "
-            f"{{s['sample_id'] for s in samples}}"
+            "sample_ids should be {S_PR-SB28, S_PR-SB30} or "
+            "{X_PR-SB28, X_PR-SB30}, got "
+            "{s['sample_id'] for s in samples}"
         )
 
     def test_warnings_emitted_for_missing_panel_image(self):

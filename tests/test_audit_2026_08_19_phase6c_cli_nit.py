@@ -127,9 +127,9 @@ class TestExpandUserPath:
         """Non-string input to the ``type=`` factory must raise
         ``ArgumentTypeError`` so a future caller can't slip a Path
         through and bypass the expansion."""
-        from rlpe.cli import ExpandUserPath
-
         import argparse
+
+        from rlpe.cli import ExpandUserPath
 
         with pytest.raises(argparse.ArgumentTypeError):
             ExpandUserPath(123)  # type: ignore[arg-type]
@@ -283,7 +283,7 @@ class TestDefaultConfigExample:
         (``~/.rlpe/config.json``), so the test does NOT pass
         ``--config`` explicitly — that's the auto-create path.
         """
-        from rlpe.cli import EXAMPLE_CONFIG_FILENAME, EXAMPLE_CONFIG_DIRNAME, main
+        from rlpe.cli import EXAMPLE_CONFIG_DIRNAME, EXAMPLE_CONFIG_FILENAME, main
 
         sandbox_home = tmp_path / "home"
         sandbox_home.mkdir()
@@ -468,9 +468,9 @@ class TestFlushPrint:
 
     def test_flush_print_defaults_flush_true(self):
         """``_flush_print`` must default ``flush=True``."""
-        from rlpe.cli import _flush_print
-
         import io as _io
+
+        from rlpe.cli import _flush_print
 
         buf = _io.StringIO()
         # Patch print to capture kwargs.
@@ -486,9 +486,9 @@ class TestFlushPrint:
     def test_flush_print_accepts_extra_kwargs(self):
         """``_flush_print`` must accept ``file=`` / ``end=`` / ``sep=``
         without crashing."""
-        from rlpe.cli import _flush_print
-
         import io as _io
+
+        from rlpe.cli import _flush_print
 
         buf = _io.StringIO()
         _flush_print("a", "b", file=buf, end="!\n", sep="-", flush=True)

@@ -1193,7 +1193,7 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
                         "raising LLMNotFoundError"
                     )
                     raise LLMNotFoundError(
-                        f"HTTP 404 from llama.cpp; check model name or endpoint",
+                        "HTTP 404 from llama.cpp; check model name or endpoint",
                         status_code=status_code,
                     ) from exc
                 if status_code == 429:
@@ -1202,7 +1202,7 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
                         "raising LLMRateLimitError"
                     )
                     raise LLMRateLimitError(
-                        f"HTTP 429 from llama.cpp; rate-limited",
+                        "HTTP 429 from llama.cpp; rate-limited",
                         status_code=status_code,
                     ) from exc
                 logger.debug(

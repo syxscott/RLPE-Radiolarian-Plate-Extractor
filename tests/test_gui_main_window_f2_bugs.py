@@ -227,7 +227,7 @@ def test_batch_placeholder_output_dir_has_work_output():
 def test_batch_export_worker_does_not_block():
     """M-25: _BatchExportWorker runs write_xlsx on a QThread, not the GUI thread."""
     import tempfile
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     from rlpe.gui.main_window import _BatchExportWorker
 
