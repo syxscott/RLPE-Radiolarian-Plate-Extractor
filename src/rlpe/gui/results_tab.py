@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -463,8 +463,17 @@ class ResultsTab(QWidget):
         self._log = get_gui_logger()
         self._all_rows: list[dict[str, Any]] = []
         self._filtered_rows: list[dict[str, Any]] = []
+        # M-6: stable key → index mapping for live-row lookup in
+        # _on_row_selected. Built in load_job / append_rows / clear.
+        self._row_lookup: dict[tuple, int] = {}
         self._current_job_id: str | None = None
         self._current_job_dir: str | None = None
+        # M-14: debounce timer so search / filter changes don't rebuild
+        # the full table on every keystroke / every selection change.
+        self._view_rebuild_timer = QTimer()
+        self._view_rebuild_timer.setSingleShot(True)
+        self._view_rebuild_timer.setInterval(200)
+        self._view_rebuild_timer.timeout.connect(self._do_refresh_view)
         self._build_ui()
         # headers + filter labels + count label auto-translate on
         # language switch (was: MainWindow had to manually walk every
@@ -684,10 +693,22 @@ class ResultsTab(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    def _reset_detail_pane(self) -> None:
+        """Clear the preview image and detail browser (not the title).
+
+        M-15 fix: called from ``load_job`` so the operator never sees
+        the previous job's detail HTML after loading a new job.
+        """
+        self._preview.clear()
+        self._detail_browser.clear()
+
     def load_job(
         self, job_id: str, rows: list[dict[str, Any]], output_dir: str | None = None
     ) -> None:
         """Replace the current results with a new job's rows."""
+        # M-15: clear the detail pane FIRST so an empty-job load never
+        # shows the previous job's HTML while the table is rebuilding.
+        self._reset_detail_pane()
         # Phase 56 audit: reset search and filters so stale state doesn't leak
         self._search_edit.blockSignals(True)
         self._search_edit.clear()
@@ -715,7 +736,7 @@ class ResultsTab(QWidget):
             )
         )
         self._refresh_filter_options()
-        self._refresh_view()
+        self._do_refresh_view()
 
     def append_rows(self, rows: list[dict[str, Any]], job_id: str | None = None) -> None:
         """Stream-add rows from a running job (live update).
@@ -740,7 +761,7 @@ class ResultsTab(QWidget):
             )
         )
         self._refresh_filter_options()
-        self._refresh_view()
+        self._do_refresh_view()
 
     def _refresh_texts(self) -> None:
         """Re-translate column headers + filter labels."""
@@ -979,6 +1000,27 @@ class ResultsTab(QWidget):
         return out
 
     def _refresh_view(self) -> None:
+        """Debounced entry point for user-driven view rebuilds.
+
+        M-14 fix: instead of rebuilding the full table synchronously on
+        every keystroke or filter change, fire the 200 ms single-shot
+        timer. The timer callback runs the actual expensive work. This
+        keeps the GUI responsive at 20,000 rows.
+        """
+        if not self._view_rebuild_timer.isActive():
+            self._view_rebuild_timer.start()
+
+    def _do_refresh_view(self) -> None:
+        """Actual table refresh — called either directly (load_job) or
+        after the 200 ms debounce (user interactions).
+
+        M-14 fix: the entry-point wrapper debounces; this method
+        contains the synchronous work that was previously in the entry
+        point.
+        """
+        # M-6: rebuild the stable key → index lookup first so
+        # _on_row_selected can find live rows immediately after.
+        self._build_row_lookup()
         rows = self._filter_rows()
         self._filtered_rows = rows
         # Phase 56 audit: use i18n template with placeholders so the
@@ -993,7 +1035,14 @@ class ResultsTab(QWidget):
             for c_idx, col in enumerate(RESULT_COLUMNS):
                 value = self._extract_column(row, col.key)
                 item = QTableWidgetItem(str(value) if value is not None else "—")
-                item.setData(Qt.UserRole, row)
+                # M-6: store stable identity keys ONLY on the first
+                # column's item so _on_row_selected can do a live-row
+                # lookup instead of reading the stale QVariant copy.
+                if c_idx == 0:
+                    item.setData(Qt.UserRole + 1, row.get("paper_id") or "")
+                    item.setData(Qt.UserRole + 2, row.get("figure_id") or "")
+                    item.setData(Qt.UserRole + 3, row.get("panel_path") or "")
+                    item.setData(Qt.UserRole, row)
                 if col.key == "confidence" and isinstance(value, (int, float)):
                     item.setText(f"{value:.2f}")
                 if col.key == "species":
@@ -1088,13 +1137,40 @@ class ResultsTab(QWidget):
                     return p
         return None
 
+    def _build_row_lookup(self) -> None:
+        """Rebuild ``self._row_lookup`` from ``self._all_rows``.
+
+        M-6 fix: used to look up live row dicts in ``_on_row_selected``
+        instead of reading a stale QVariant copy from the
+        QTableWidgetItem. The lookup key is ``(paper_id, figure_id,
+        panel_path)`` — the same triple the flip worker matches on.
+        """
+        self._row_lookup.clear()
+        for idx, r in enumerate(self._all_rows):
+            key = (
+                r.get("paper_id") or "",
+                r.get("figure_id") or "",
+                r.get("panel_path") or "",
+            )
+            self._row_lookup[key] = idx
+
     def _on_row_selected(self) -> None:
         items = self._table.selectedItems()
         if not items:
             return
-        row = items[0].data(Qt.UserRole)
-        if not row:
+        # M-6 fix: read stable keys from the item, look up the live
+        # row in _row_lookup, and render that — never the QVariant
+        # copy stored via setData(UserRole, row) which goes stale
+        # after _flip_image_verified mutates _all_rows in place.
+        item = items[0]
+        paper_id = item.data(Qt.UserRole + 1) or ""
+        figure_id = item.data(Qt.UserRole + 2) or ""
+        panel_path = item.data(Qt.UserRole + 3) or ""
+        key = (paper_id, figure_id, panel_path)
+        idx = self._row_lookup.get(key)
+        if idx is None:
             return
+        row = self._all_rows[idx]
         self._render_detail(row)
         # Load image preview. audit 2026-07-31: the row bbox is in
         # PAGE/FIURE coordinates but panel_path is a PANEL CROP —
@@ -2190,8 +2266,8 @@ class ResultsTab(QWidget):
         # while the worker is in flight so the operator can never
         # double-click a flip, and the UI stays responsive.
         for btn in (
-            getattr(self, "_btn_mark_verified", None),
-            getattr(self, "_btn_mark_unverified", None),
+            getattr(self, "_mark_verified_btn", None),
+            getattr(self, "_mark_unverified_btn", None),
         ):
             if btn is not None:
                 try:
@@ -2242,7 +2318,7 @@ class ResultsTab(QWidget):
             self._re_enable_flip_buttons()
 
         def _on_error(msg: str) -> None:
-            self._log.warning("image_verified flip failed: %s", msg)
+            self._log.error("image_verified flip failed: %s", msg, exc_info=True)
             QMessageBox.warning(
                 self,
                 i18n._tr("restab.detail.mark_verified"),
@@ -2267,8 +2343,8 @@ class ResultsTab(QWidget):
         operator can retry.
         """
         for btn in (
-            getattr(self, "_btn_mark_verified", None),
-            getattr(self, "_btn_mark_unverified", None),
+            getattr(self, "_mark_verified_btn", None),
+            getattr(self, "_mark_unverified_btn", None),
         ):
             if btn is not None:
                 try:

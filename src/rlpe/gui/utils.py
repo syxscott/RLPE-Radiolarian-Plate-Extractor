@@ -144,12 +144,13 @@ def short_hash(text: str, length: int = 8) -> str:
 # Format helpers
 # ============================================================
 
-_HTML_ESCAPE = re.compile(r"[&<>\"]")
+_HTML_ESCAPE = re.compile(r"[&<>\"']")
 _HTML_ESCAPE_MAP = {
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
     '"': "&quot;",
+    "'": "&#39;",
 }
 
 

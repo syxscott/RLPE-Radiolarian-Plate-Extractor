@@ -119,6 +119,9 @@ STRINGS = {
     "runtab.prompt.no_outdir.body": "Please choose an output directory.",
     "runtab.prompt.cancelled": "Cancellation requested.",
     "runtab.prompt.error.title": "Pipeline error",
+    # M-19: input validation errors
+    "runtab.error.invalid_pdf": "The selected file is not a valid PDF.",
+    "runtab.error.invalid_grobid_url": "GROBID URL must be a valid http(s) URL.",
     # ============================================================
     # Jobs tab
     # ============================================================
@@ -142,6 +145,7 @@ STRINGS = {
     "jobstab.menu.export_xlsx": "📤  Export xlsx (Round 24)",
     "jobstab.menu.export_json": "📤  Export JSON",
     "jobstab.menu.remove": "🗑  Remove from list",
+    "jobstab.action.retry": "🔁  Retry",
     "jobstab.export.no_rows": "No rows to export.",
     "jobstab.export.failed": "Export failed: {error}",
     "jobstab.loaded_from_disk": "Loaded from disk",
@@ -356,6 +360,15 @@ STRINGS = {
     "main.batch_complete": "Batch complete.",
     "main.batch_stopped_on_error": "Batch stopped on error: {failed} ({remaining} remaining).",
     "main.recent_loaded": "Loaded {n} recent job(s) from disk.",
+    # Phase F-2 (M-8): progress messages use an i18n key so language
+    # switch re-renders the status bar correctly. Previously
+    # _on_job_progress wrote directly to _status_perm.setText(),
+    # bypassing _status_key / _status_kwargs — after that, switching
+    # language jumped back to the stale key.
+    "main.progress": "{msg}  ({current}/{total})",
+    "main.cancelled": "Job {id} cancelled",
+    # Phase F-2 (M-25): batch export on background thread
+    "main.batch_exporting": "Exporting batch xlsx: {msg}",
     # ============================================================
     # Common dialogs
     # ============================================================

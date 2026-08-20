@@ -87,6 +87,21 @@ let _autoSwitchTimer = null;
 // per page, (b) was a XSS vector if records contained `&` or `<`.
 let __rlpeRecords = [];
 
+// ==================== fetchWithTimeout helper (Phase F-2 M1) ==================== //
+// Wraps fetch() with an AbortController timeout so hung backends don't
+// leave the UI in limbo. All 18 direct fetch() call sites have been
+// converted to use this helper. AbortError is caught at the call site
+// and surfaced as a user-friendly toast.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 // ==================== Utilities ==================== //
 function showNotification(message, type = 'success') {
     const notification = document.getElementById('notification');
@@ -164,7 +179,7 @@ function resolveAssetUrl(path, jobId) {
 async function checkApiHealth() {
     const status = document.getElementById('api-status');
     try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/health`);
+        const response = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/health`);
         if (response.ok) {
             status.textContent = '已连接';
             status.className = 'status-indicator status-connected';
@@ -175,6 +190,12 @@ async function checkApiHealth() {
             return false;
         }
     } catch (error) {
+        // Phase F-2 M1: handle AbortError (timeout) separately.
+        if (error.name === 'AbortError') {
+            status.textContent = '无法连接 (请求超时)';
+            status.className = 'status-indicator status-error';
+            return false;
+        }
         // Distinguish network/CORS failures from other errors so the user
         // can tell "server is down" from "browser is blocking the request".
         if (error instanceof TypeError) {
@@ -270,11 +291,21 @@ pdfInput.addEventListener('change', (e) => {
 });
 
 function addFiles(files) {
+    // Phase F-2 M2: 256 MB per-file size limit.
+    const MAX_FILE_SIZE = 256 * 1024 * 1024;
+    const oversized = files.filter(f => f.size > MAX_FILE_SIZE);
+    if (oversized.length > 0) {
+        oversized.forEach(f =>
+            showToast(`文件 '${f.name}' 超过 256 MB 限制（已跳过）`, 'warning')
+        );
+    }
     // Case-insensitive .pdf extension: macOS / iOS Finder and many
     // academic-paper repos serve files with upper-case `.PDF` (especially
     // when the original was scanned/OCR'd). The previous
     // ``f.name.endsWith('.pdf')`` silently dropped them.
-    const pdfFiles = files.filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    const pdfFiles = files.filter(
+        f => (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) && f.size <= MAX_FILE_SIZE
+    );
     if (pdfFiles.length === 0) {
         showNotification('请选择 PDF 文件', 'error');
         return;
@@ -406,7 +437,7 @@ document.getElementById('process-btn').addEventListener('click', async () => {
             // PBDB were off.
             formData.append('options', JSON.stringify(combinedOptions));
 
-            const response = await fetch(`${CONFIG.apiBaseUrl}/jobs/upload`, {
+            const response = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/upload`, {
                 method: 'POST',
                 body: formData
             });
@@ -449,7 +480,7 @@ document.getElementById('process-btn').addEventListener('click', async () => {
             const jobsPane = document.getElementById('jobs-tab');
             if (jobsPane) {
                 document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
-                document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
                 jobsPane.classList.remove('hidden');
             }
         }
@@ -659,7 +690,7 @@ async function loadJobs() {
     }
     _loadJobsInFlight = true;
     try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/jobs`);
+        const response = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs`);
         if (!response.ok) {
             _onPollFailure(`HTTP ${response.status}`);
             return;
@@ -741,7 +772,12 @@ async function loadJobs() {
             }
         }
     } catch (error) {
-        _onPollFailure(error.message || String(error));
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
+        if (error.name === 'AbortError') {
+            _onPollFailure('请求超时（30秒）');
+        } else {
+            _onPollFailure(error.message || String(error));
+        }
     } finally {
         _loadJobsInFlight = false;
     }
@@ -951,7 +987,7 @@ async function checkMiniMaxFallbacks() {
     for (const job of awaiting) {
         if (_MiniMaxPopupShown.has(job.job_id)) continue;
         try {
-            const r = await fetch(`${CONFIG.apiBaseUrl}/jobs/${job.job_id}/MiniMax-fallback`);
+            const r = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/${job.job_id}/MiniMax-fallback`);
             if (!r.ok) continue;
             const data = await r.json();
             if (data.status !== 'awaiting_decision') continue;
@@ -1048,7 +1084,7 @@ function showMiniMaxFallbackModal(jobId, errorInfo) {
 async function submitMiniMaxFallback(jobId, action, modal) {
     modal.querySelectorAll('button').forEach(b => b.disabled = true);
     try {
-        const r = await fetch(`${CONFIG.apiBaseUrl}/jobs/${jobId}/MiniMax-fallback`, {
+        const r = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/${jobId}/MiniMax-fallback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ job_id: jobId, action }),
@@ -1063,7 +1099,12 @@ async function submitMiniMaxFallback(jobId, action, modal) {
             loadJobs();
         }
     } catch (err) {
-        showNotification(`提交失败: ${err.message || err}`, 'error');
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
+        if (err.name === 'AbortError') {
+            showNotification('提交失败: 请求超时', 'error');
+        } else {
+            showNotification(`提交失败: ${err.message || err}`, 'error');
+        }
     } finally {
         modal.querySelectorAll('button').forEach(b => b.disabled = false);
     }
@@ -1194,7 +1235,16 @@ function formatBytes(n) {
 
 async function confirmDelete() {
     const confirmBtn = document.getElementById('delete-modal-confirm');
-    const jobIds = JSON.parse(confirmBtn.dataset.jobIds || '[]');
+    let jobIds = [];
+    try {
+        jobIds = JSON.parse(confirmBtn.dataset.jobIds || '[]');
+        if (!Array.isArray(jobIds)) jobIds = [];
+    } catch (e) {
+        // Malformed data-job-ids attribute — fall back to singular jobId if present
+        console.warn('confirmDelete: failed to parse jobIds', e);
+        const singular = confirmBtn.dataset.jobId;
+        jobIds = singular ? [singular] : [];
+    }
     const deleteFiles = document.getElementById('delete-modal-files').checked;
     if (jobIds.length === 0) return;
 
@@ -1205,13 +1255,13 @@ async function confirmDelete() {
         let resp, data;
         if (jobIds.length === 1) {
             const url = `${CONFIG.apiBaseUrl}/jobs/${encodeURIComponent(jobIds[0])}?delete_files=${deleteFiles}`;
-            resp = await fetch(url, { method: 'DELETE' });
+            resp = await fetchWithTimeout(url, { method: 'DELETE' });
             // Read the body only after we know the status. A non-2xx
             // response (e.g. from a proxy HTML error page) would crash
             // resp.json() with an unhandled SyntaxError.
             data = resp.ok ? await resp.json() : { detail: resp.statusText };
         } else {
-            resp = await fetch(`${CONFIG.apiBaseUrl}/jobs/batch-delete`, {
+            resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/batch-delete`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ job_ids: jobIds, delete_files: deleteFiles }),
@@ -1220,7 +1270,7 @@ async function confirmDelete() {
         }
 
         if (!resp.ok) {
-            alert(`删除失败: ${data.detail || resp.statusText}`);
+            showToast(`删除失败: ${data.detail || resp.statusText}`, 'error');
             confirmBtn.disabled = false;
             confirmBtn.textContent = '确认删除';
             return;
@@ -1287,8 +1337,13 @@ async function confirmDelete() {
             showToast(`已删除 ${deleted} 个任务${suffix}${freed}`, deleted > 0 && !refused ? 'success' : (refused ? 'warning' : 'info'));
         }
     } catch (err) {
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
         console.error('Delete failed', err);
-        alert(`删除失败: ${err}`);
+        if (err.name === 'AbortError') {
+            showToast('删除请求超时，请检查网络连接', 'error');
+        } else {
+            showToast(`删除失败: ${err}`, 'error');
+        }
         confirmBtn.disabled = false;
         confirmBtn.textContent = '确认删除';
     }
@@ -1341,7 +1396,7 @@ async function viewJobDetails(jobId) {
     modal.classList.remove('hidden');
 
     try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/jobs/${jobId}/result`);
+        const response = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/${jobId}/result`);
 
         if (response.status === 202) {
             content.innerHTML = `
@@ -1497,7 +1552,7 @@ async function cancelJob(jobId, cancelBtn) {
     cancelBtn.innerHTML = '<span class="spinner-small"></span> 取消中...';
 
     try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/jobs/${jobId}/cancel`, {
+        const response = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/${jobId}/cancel`, {
             method: 'POST'
         });
 
@@ -1527,7 +1582,9 @@ async function cancelJob(jobId, cancelBtn) {
             throw new Error(detail);
         }
     } catch (error) {
-        showNotification(error.message, 'error');
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
+        const msg = error.name === 'AbortError' ? '请求超时，请检查网络连接' : error.message;
+        showNotification(msg, 'error');
         cancelBtn.disabled = false;
         cancelBtn.innerHTML = originalText;
     }
@@ -1568,7 +1625,7 @@ async function loadResults() {
         let offset = 0;
         let all = [];
         for (;;) {
-            const response = await fetch(
+            const response = await fetchWithTimeout(
                 `${CONFIG.apiBaseUrl}/results?limit=${PAGE}&offset=${offset}`
             );
             if (!response.ok) {
@@ -1595,11 +1652,16 @@ async function loadResults() {
         renderResults();
         updateStats();
     } catch (error) {
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
         // audit 2026-07-31: a failure here used to be silent —
         // the operator kept looking at stale data as if it were
         // current. Surface it like the jobs poll does.
         console.error('Failed to load results:', error);
-        showToast('结果加载失败，显示的可能不是最新数据', 'error');
+        if (error.name === 'AbortError') {
+            showToast('结果加载超时，显示的可能不是最新数据', 'warning');
+        } else {
+            showToast('结果加载失败，显示的可能不是最新数据', 'error');
+        }
     }
 }
 
@@ -1945,7 +2007,7 @@ async function deleteAllResults() {
         : '确认清空全部结果？此操作不可撤销。';
     if (!confirm(msg)) return;
     try {
-        const resp = await fetch(`${CONFIG.apiBaseUrl}/results`, { method: 'DELETE' });
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/results`, { method: 'DELETE' });
         if (!resp.ok) {
             const data = await resp.json().catch(() => ({}));
             throw new Error(data.detail || resp.statusText);
@@ -1956,7 +2018,9 @@ async function deleteAllResults() {
         await loadResults();
         renderResults();
     } catch (err) {
-        showToast(`清空失败: ${err.message || err}`, 'error');
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
+        const msg = err.name === 'AbortError' ? '清空请求超时' : (err.message || err);
+        showToast(`清空失败: ${msg}`, 'error');
     }
 }
 
@@ -1967,7 +2031,7 @@ async function deleteSelectedResults() {
     const rowIds = Array.from(selectedResultRowIds);
     if (!confirm(`确认删除选中的 ${rowIds.length} 条结果？此操作不可撤销。`)) return;
     try {
-        const resp = await fetch(`${CONFIG.apiBaseUrl}/results/batch`, {
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/results/batch`, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ row_ids: rowIds }),
@@ -1986,7 +2050,9 @@ async function deleteSelectedResults() {
         await loadResults();
         renderResults();
     } catch (err) {
-        showToast(`删除失败: ${err.message || err}`, 'error');
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
+        const msg = err.name === 'AbortError' ? '删除请求超时' : (err.message || err);
+        showToast(`删除失败: ${msg}`, 'error');
     }
 }
 
@@ -2289,7 +2355,9 @@ document.getElementById('export-btn')?.addEventListener('click', async () => {
             // audit 2026-07-31: the URL was hard-coded relative while every
     // other request honours CONFIG.apiBaseUrl — a custom API origin
     // made export fail against the page origin.
-            const resp = await fetch(url, {
+            // Phase F-2 (M-1): route through fetchWithTimeout so a hung
+            // backend can't leave the export UI hanging.
+            const resp = await fetchWithTimeout(url, {
                 method: 'GET',
                 credentials: 'same-origin',
             });
@@ -2615,7 +2683,7 @@ document.getElementById('correction-form')?.addEventListener('submit', async (e)
     }
 
     try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/review/correction`, {
+        const response = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/review/correction`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -2640,7 +2708,9 @@ document.getElementById('correction-form')?.addEventListener('submit', async (e)
             throw new Error(detail);
         }
     } catch (error) {
-        showNotification(error.message, 'error');
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
+        const msg = error.name === 'AbortError' ? '提交失败: 请求超时' : error.message;
+        showNotification(msg, 'error');
     }
 });
 
@@ -2747,7 +2817,7 @@ window.addEventListener('focus', () => {
 
 async function loadSystemInfo() {
     try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/system/info`);
+        const response = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/info`);
         if (!response.ok) return;
 
         const info = await response.json();
@@ -2773,6 +2843,7 @@ async function loadSystemInfo() {
             `;
         }
     } catch (error) {
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
         console.error('Failed to load system info:', error);
     }
 }
@@ -2913,7 +2984,7 @@ async function refreshLLMStatus() {
     const bodyEl = document.getElementById('llm-status-body');
     if (!bodyEl) return;
     try {
-        const resp = await fetch(`${CONFIG.apiBaseUrl}/system/llm-status`);
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-status`);
         if (!resp.ok) {
             if (iconEl) iconEl.textContent = '❌';
             bodyEl.innerHTML = `<span class="llm-status-error">无法获取 LLM 状态（HTTP ${resp.status}）</span>`;
@@ -2971,10 +3042,11 @@ async function refreshLLMStatus() {
                     🔗 申请 MiniMax Token Plan
                 </a>
             `;
-        }
     } catch (err) {
+        // Phase F-2 M1: handle AbortError (timeout) explicitly.
         if (iconEl) iconEl.textContent = '❌';
-        bodyEl.innerHTML = `<span class="llm-status-error">检查失败：${escapeHtml(err.message || String(err))}</span>`;
+        const msg = err.name === 'AbortError' ? '检查超时' : (err.message || String(err));
+        bodyEl.innerHTML = `<span class="llm-status-error">检查失败：${escapeHtml(msg)}</span>`;
     }
 }
 
@@ -2998,7 +3070,7 @@ async function testLLMConnection() {
         if (apiKeyVal) body.api_key = apiKeyVal;
         if (endpointVal) body.endpoint = endpointVal;
         if (modelVal) body.model = modelVal;
-        const resp = await fetch(`${CONFIG.apiBaseUrl}/system/test-llm`, {
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/test-llm`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
@@ -3070,10 +3142,12 @@ function initCostEstimate() {
     // Hook into add/remove events. addFiles / removeFile / clear-btn
     // already call renderFileList; we attach a MutationObserver to the
     // file-list element to catch all of them with a single hook.
+    // Phase F-2 M7 fix: save the observer reference so it can be
+    // disconnected on page unload to prevent memory leaks.
     const fileList = document.getElementById('file-list');
     if (fileList) {
-        const observer = new MutationObserver(updateEstimate);
-        observer.observe(fileList, { childList: true, subtree: true });
+        window._costEstimateObserver = new MutationObserver(updateEstimate);
+        window._costEstimateObserver.observe(fileList, { childList: true, subtree: true });
     }
     // Also re-estimate when the LLM toggle / backend changes.
     document.getElementById('use-gemma4')?.addEventListener('change', updateEstimate);
@@ -3083,6 +3157,15 @@ function initCostEstimate() {
     updateEstimate();
 }
 
+// Phase F-2 M7: disconnect MutationObserver on page unload to prevent
+// memory leaks in long-lived sessions.
+window.addEventListener('beforeunload', () => {
+    if (window._costEstimateObserver) {
+        window._costEstimateObserver.disconnect();
+        window._costEstimateObserver = null;
+    }
+});
+
 // ====================================================================
 // MiniMax usage panel (settings tab) — renders cumulative call counts
 // and total cost from the same /system/llm-status endpoint.
@@ -3091,7 +3174,7 @@ async function refreshMiniMaxUsage() {
     const panel = document.getElementById('minimax-usage');
     if (!panel) return;
     try {
-        const resp = await fetch(`${CONFIG.apiBaseUrl}/system/llm-status`);
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-status`);
         if (!resp.ok) {
             panel.innerHTML = `<p style="color: var(--text-muted);">无法读取用量（HTTP ${resp.status}）</p>`;
             return;

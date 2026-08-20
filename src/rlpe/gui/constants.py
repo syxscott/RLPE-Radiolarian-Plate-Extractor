@@ -118,7 +118,7 @@ LOG_FILE_NAME: Final[str] = "rlpe-gui.log"
 
 # Display limits (avoid choking the UI)
 MAX_LOG_LINES_IN_VIEW: Final[int] = 5000
-MAX_RECENT_JOBS_IN_LIST: Final[int] = 200
+MAX_RECENT_JOBS_IN_LIST: Final[int] = 500
 PROGRESS_BAR_MIN_HEIGHT_PX: Final[int] = 18
 
 # Hard limits on input ranges (mirrors JobOptions validators)

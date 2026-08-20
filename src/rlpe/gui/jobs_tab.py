@@ -14,6 +14,7 @@ list, which matches the Web UI's behaviour (jobs are in-memory).
 
 from __future__ import annotations
 
+import collections
 import json
 import time
 from dataclasses import dataclass, field
@@ -56,6 +57,14 @@ from .utils import (
     get_gui_logger,
     short_path,
 )
+
+
+# Phase F-2 (M-12): the _jobs dict and the table must stay in sync.
+# MAX_JOBS is the hard cap on _jobs entries; the table cap is
+# MAX_RECENT_JOBS_IN_LIST (200). When _jobs hits MAX_JOBS the
+# oldest entry is evicted from both the dict and the table so
+# len(_jobs) == table.rowCount() is always true.
+MAX_JOBS: Final[int] = 500
 
 
 # ============================================================
@@ -304,6 +313,74 @@ class _DiskScanWorker(QThread):
 
 
 # ============================================================
+# Phase F-2 (M-13): async export worker
+# ============================================================
+class _JobsExportWorker(QThread):
+    """Background worker that writes one XLSX or JSON export file.
+
+    Phase F-2 (M-13): runs on a QThread so the GUI stays responsive
+    during large exports (50k+ rows). The ``run_output`` dict is
+    captured on the GUI thread before the worker starts, so the worker
+    is side-effect-free with respect to the job record.
+
+    Signals
+    -------
+    finished_ok(str) — destination path on success.
+    failed(str) — error message on failure (never re-raises).
+    progress(int) — 0-100 progress percentage for status-bar updates.
+    """
+
+    finished_ok = Signal(str)
+    failed = Signal(str)
+    progress = Signal(int)
+
+    _VALID_FMTS: frozenset[str] = frozenset({"xlsx", "json"})
+
+    def __init__(
+        self,
+        fmt: str,
+        run_output: dict[str, Any],
+        path: str,
+    ) -> None:
+        super().__init__()
+        if fmt not in self._VALID_FMTS:
+            raise ValueError(f"unknown export format {fmt!r}")
+        self._fmt = fmt
+        self._run_output = run_output
+        self._path = path
+        # Phase F-2 (M-13): cancellation support.
+        self._cancelled: bool = False
+
+    def cancel(self) -> None:
+        """Ask :meth:`run` to bail out at the next checkpoint."""
+        self._cancelled = True
+
+    def run(self) -> None:  # noqa: D401 — QThread contract
+        try:
+            if self._cancelled:
+                return
+            self.progress.emit(10)
+            if self._fmt == "xlsx":
+                from ..exporters.xlsx import write_xlsx
+
+                write_xlsx(self._run_output, self._path)
+            elif self._fmt == "json":
+                self.progress.emit(30)
+                with open(self._path, "w", encoding="utf-8") as fh:
+                    json.dump(
+                        self._run_output,
+                        fh,
+                        indent=2,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+            self.progress.emit(100)
+            self.finished_ok.emit(self._path)
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
+# ============================================================
 # Job dataclass
 # ============================================================
 @dataclass
@@ -386,7 +463,20 @@ class JobsTab(QWidget):
     """Job queue + history. Updated reactively from ``RunTab`` signals."""
 
     open_results_requested = Signal(str)  # job_id
-    retry_requested = Signal(str, dict)  # job_id, settings
+    # Phase F-2 (M-24): ``retry_requested(job_id)`` — emitted by the
+    # Retry context menu action for FAILED/CANCELLED jobs.
+    #
+    # Expected handler signature (in MainWindow):
+    #
+    #     def _on_retry(self, job_id: str) -> None:
+    #         job = self._jobs_tab.get_job(job_id)
+    #         if job is None:
+    #             return
+    #         self._run_tab.set_pdf_path(job.pdf_path)
+    #         self._run_tab.set_settings(job.settings)
+    #         self._run_tab.set_output_dir(job.output_dir)
+    #         self._run_tab.start()  # actually re-runs the pipeline
+    retry_requested = Signal(str)  # job_id
     # Phase F-1 (B-3): ``scan_finished`` carries the final list of
     # ``JobRecord`` instances produced by the async disk scan (empty
     # if no candidates were found, or after a graceful shutdown
@@ -405,7 +495,10 @@ class JobsTab(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._log = get_gui_logger()
-        self._jobs: dict[str, JobRecord] = {}
+        # Phase F-2 (M-12): OrderedDict so _trim_old_jobs can pop the
+        # oldest (first) entry deterministically and keep dict ordering
+        # aligned with table row order (oldest = row 0).
+        self._jobs: collections.OrderedDict[str, JobRecord] = collections.OrderedDict()
         self._ctx_actions: list[tuple[QAction, str]] = []
         # Phase F-1 (B-1): keep a strong ref to the disk-scan worker
         # so it doesn't get GC'd mid-flight; ``shutdown()`` clears it
@@ -629,9 +722,16 @@ class JobsTab(QWidget):
 
     # ------------------------------------------------------------------
     def add_or_update_job(self, job: JobRecord) -> None:
-        """Insert or update a job record in the table."""
-        self._jobs[job.job_id] = job
+        """Insert or update a job record in the table.
+
+        Phase F-2 (M-12): ordering matters here. ``_refresh_row`` evicts
+        the oldest entry from both ``_jobs`` and the table when the
+        MAX_JOBS cap is hit. We add to ``_jobs`` AFTER ``_refresh_row``
+        trims so the eviction pop and the new insert land at the same
+        length, preserving the ``len(_jobs) == rowCount()`` invariant.
+        """
         self._refresh_row(job)
+        self._jobs[job.job_id] = job
         self._update_summary()
         self._trim_old_jobs()
 
@@ -704,15 +804,18 @@ class JobsTab(QWidget):
     def _refresh_row(self, job: JobRecord) -> None:
         row = self._find_row(job.job_id)
         if row < 0:
-            # Phase 64: cap BEFORE inserting so the cap doesn't shift
-            # the just-inserted row 0 by removeRow. With 271 historical
-            # jobs and MAX_RECENT_JOBS_IN_LIST=200, this race silently
-            # failed setItem() at row=old_index when row 0 was evicted,
-            # causing _refresh_row to throw AttributeError on the next
-            # `self._table.item(row, 1)` call. main_window's
-            # load_recent_jobs_from_disk wrapped in try/except caught
-            # this and the user saw an empty GUI.
-            while self._table.rowCount() >= MAX_RECENT_JOBS_IN_LIST:
+            # Phase F-2 (M-12): both _jobs (MAX_JOBS=500) and the table
+            # (MAX_RECENT_JOBS_IN_LIST=200) must stay in sync.
+            #
+            # Evict oldest entries as a PAIR (one dict pop + one table
+            # removeRow) so the two structures never drift apart.
+            # This loop runs at most once per insert in steady state
+            # (the second condition only triggers during the gap between
+            # when the dict hits 500 and the table catches up to 200).
+            while len(self._jobs) >= MAX_JOBS or (
+                self._table.rowCount() >= MAX_RECENT_JOBS_IN_LIST
+            ):
+                self._jobs.popitem(last=False)
                 self._table.removeRow(0)
             row = self._table.rowCount()
             self._table.insertRow(row)
@@ -817,10 +920,20 @@ class JobsTab(QWidget):
         )
 
     def _trim_old_jobs(self) -> None:
-        """Cap the table at MAX_RECENT_JOBS_IN_LIST rows."""
+        """Cap the table at MAX_RECENT_JOBS_IN_LIST rows (safety net).
+
+        Phase F-2 (M-12): _jobs dict trimming is handled exclusively in
+        _refresh_row (before insert) so the two stay in sync.
+        _trim_old_jobs is only called after terminal state transitions
+        (done/failed/cancelled) as a safety net — it only removes table
+        rows; _jobs is already correct.
+        """
         while self._table.rowCount() > MAX_RECENT_JOBS_IN_LIST:
-            # Remove the oldest row (top of table)
             self._table.removeRow(0)
+
+    def get_job(self, job_id: str) -> JobRecord | None:
+        """Return the JobRecord for ``job_id``, or None if not found."""
+        return self._jobs.get(job_id)
 
     # ------------------------------------------------------------------
     # Context menu / row interactions
@@ -862,6 +975,13 @@ class JobsTab(QWidget):
         act_open_out.triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(job.output_dir))
         )
+
+        # Phase F-2 (M-24): Retry action — enabled only for failed/cancelled jobs.
+        # Emits ``retry_requested(job_id)`` so MainWindow can restart the pipeline
+        # with the original settings. The action text carries the 🔁 icon.
+        act_retry = _add_action("jobstab.action.retry")
+        act_retry.setEnabled(job.status in (STATUS_FAILED, STATUS_CANCELLED))
+        act_retry.triggered.connect(lambda: self.retry_requested.emit(job.job_id))
 
         menu.addSeparator()
 
@@ -914,31 +1034,11 @@ class JobsTab(QWidget):
         )
         if not path:
             return
+        # Snapshot the run_output on the GUI thread before kicking off
+        # the worker so subsequent row mutations (filtering, edits) don't
+        # race with the write.
         run_output = self._build_run_output(job)
-        # Use the canonical xlsx exporter (write_xlsx from exporters.xlsx).
-        # audit 2026-07-31: catch runtime errors and surface the message
-        # in a dialog so the operator isn't left wondering.
-        try:
-            from ..exporters.xlsx import write_xlsx
-
-            write_xlsx(run_output, path)
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                i18n._tr("jobstab.menu.export_xlsx"),
-                i18n._tr("jobstab.export.failed").format(
-                    error=f"{type(exc).__name__}: {exc}",
-                ),
-            )
-            return
-        QMessageBox.information(
-            self,
-            i18n._tr("jobstab.menu.export_xlsx"),
-            i18n._tr("jobstab.export.saved").format(
-                count=len(job.rows),
-                path=path,
-            ),
-        )
+        self._run_export_worker("xlsx", run_output, path)
 
     def _export_json(self, job: JobRecord) -> None:
         if not job.rows:
@@ -957,25 +1057,55 @@ class JobsTab(QWidget):
         )
         if not path:
             return
-        try:
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump(
-                    self._build_run_output(job), fh, indent=2, ensure_ascii=False, default=str
-                )
-            QMessageBox.information(
-                self,
-                i18n._tr("jobstab.menu.export_json"),
-                i18n._tr("jobstab.export.saved").format(
-                    count=len(job.rows),
-                    path=path,
-                ),
+        run_output = self._build_run_output(job)
+        self._run_export_worker("json", run_output, path)
+
+    # ------------------------------------------------------------------
+    # Phase F-2 (M-13, M-26): async export workers
+    # ------------------------------------------------------------------
+    def _run_export_worker(
+        self,
+        fmt: str,
+        run_output: dict[str, Any],
+        path: str,
+    ) -> None:
+        """Spin up an :class:`_ExportWorker` for ``fmt`` and wire it up.
+
+        Phase F-2 (M-13): moves the write off the GUI thread so
+        large jobs (50k+ rows) don't freeze the UI. Phase F-2
+        (M-26): both XLSX and JSON go through the same worker so
+        the error path is unified — log at ERROR level with exc_info
+        AND surface a popup to the user.
+        """
+        worker = _JobsExportWorker(fmt, run_output, path)
+        # Keep the worker alive so it isn't GC'd mid-flight (PySide6 footgun).
+        self._export_worker = worker
+
+        def _on_success(saved_path: str) -> None:
+            self._export_worker = None
+            self._log.info("Export succeeded: %s → %s", fmt, saved_path)
+
+        def _on_error(msg: str) -> None:
+            self._export_worker = None
+            # M-26: log AND popup — same pattern as results_tab.
+            self._log.error(
+                "Export failed (%s → %s): %s",
+                fmt,
+                path,
+                msg,
+                exc_info=True,
             )
-        except Exception as exc:
+            label_key = f"jobstab.export.{fmt}_title"
             QMessageBox.warning(
                 self,
-                i18n._tr("jobstab.menu.export_json"),
-                i18n._tr("jobstab.export.failed").format(error=str(exc)),
+                i18n._tr(label_key),
+                i18n._tr("jobstab.export.failed").format(error=msg),
             )
+
+        worker.finished_ok.connect(_on_success)
+        worker.failed.connect(_on_error)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
     def _build_run_output(self, job: JobRecord) -> dict[str, Any]:
         """Build a RunOutput-compatible dict for the exporters."""

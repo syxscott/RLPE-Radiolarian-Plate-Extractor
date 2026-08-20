@@ -7,8 +7,8 @@ import functools
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QRegularExpression, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -71,12 +71,19 @@ from .utils import (
     get_gui_logger,
 )
 
+# URL regex used for GROBID URL validation (same pattern as settings_tab).
+_URL_RX = r"^https?://[^\s/$.?#].[^\s]*$"
+
 
 class RunTab(QWidget):
     """First tab — configure + start a single-paper pipeline run."""
 
     # Emitted to the parent (MainWindow) to broadcast job state.
-    job_started = Signal(str, str)  # job_id, pdf_path
+    # Phase F-2 (M-10/M-16): job_started now carries output_dir (str)
+    # so MainWindow can record the correct path on JobRecord without
+    # re-deriving it from pdf_path / stem. The output_dir is
+    # <work_dir>/output where work_dir = <user_selected>/work.
+    job_started = Signal(str, str, str)  # job_id, pdf_path, output_dir
     job_progress = Signal(str, int, int, str)  # job_id, cur, total, msg
     job_finished = Signal(str, list)  # job_id, results
     job_failed = Signal(str, str)  # job_id, error
@@ -87,6 +94,11 @@ class RunTab(QWidget):
         self._log = get_gui_logger()
         self._worker: PipelineWorker | None = None
         self._current_job_id: str | None = None
+        # M-21: saved widget references for run-time input locking
+        self._browse_pdf_btn: QWidget | None = None
+        self._clear_pdf_btn: QWidget | None = None
+        self._output_browse_btn: QWidget | None = None
+        self._open_output_btn: QWidget | None = None
         self._build_ui()
         self._connect_signals()
         # Register an i18n listener so progress format strings re-render
@@ -119,12 +131,14 @@ class RunTab(QWidget):
         browse_btn.setMinimumHeight(BUTTON_MIN_HEIGHT)
         browse_btn.clicked.connect(self._on_browse)
         file_layout.addWidget(browse_btn)
+        self._browse_pdf_btn = browse_btn
 
         clear_btn = tr_button("runtab.clear", object_name="runtab.clear")
         clear_btn.setProperty("class", "flat")  # QSS object-name selector
         clear_btn.setMinimumHeight(BUTTON_MIN_HEIGHT)
         clear_btn.clicked.connect(self._on_clear)
         file_layout.addWidget(clear_btn)
+        self._clear_pdf_btn = clear_btn
 
         outer.addWidget(file_group)
 
@@ -142,10 +156,12 @@ class RunTab(QWidget):
         out_btn.setMinimumHeight(BUTTON_MIN_HEIGHT)
         out_btn.clicked.connect(self._on_pick_outdir)
         out_layout.addWidget(out_btn)
+        self._output_browse_btn = out_btn
         open_btn = tr_button("runtab.out.open", object_name="runtab.out.open")
         open_btn.setMinimumHeight(BUTTON_MIN_HEIGHT)
         open_btn.clicked.connect(self._on_open_outdir)
         out_layout.addWidget(open_btn)
+        self._open_output_btn = open_btn
         outer.addWidget(out_group)
 
         # ---- Config form (split into Basic / Advanced sections) ----
@@ -226,6 +242,9 @@ class RunTab(QWidget):
             text=DEFAULT_GROBID_URL,
         )
         basic_layout.addWidget(self._grobid_edit, row, 1, 1, 3)
+        self._grobid_edit.setValidator(
+            QRegularExpressionValidator(QRegularExpression(_URL_RX), self._grobid_edit)
+        )
         row += 1
 
         basic_layout.addWidget(tr_label("runtab.label.grobid_retries"), row, 0)
@@ -697,6 +716,45 @@ class RunTab(QWidget):
             default_out = path.parent / f"{stem}_rlpe_out"
             self._out_edit.setText(str(default_out))
 
+    # M-19: PDF path validation helper
+    @staticmethod
+    def _validate_pdf_path(p: str) -> str | None:
+        """Return None if valid, an error message string if invalid."""
+        if not p:
+            return i18n._tr("runtab.error.invalid_pdf")
+        path = Path(p)
+        if not path.is_file():
+            return i18n._tr("runtab.error.invalid_pdf")
+        if path.suffix.lower() != ".pdf":
+            return i18n._tr("runtab.error.invalid_pdf")
+        return None
+
+    # M-21: lock/unlock input widgets during pipeline execution
+    def _set_inputs_locked(self, locked: bool) -> None:
+        """Disable (or re-enable) all input widgets while pipeline runs."""
+        state = not locked
+        for w in (
+            self._browse_pdf_btn,
+            self._clear_pdf_btn,
+            self._output_browse_btn,
+            self._open_output_btn,
+            self._path_edit,
+            self._out_edit,
+            self._grobid_edit,
+        ):
+            if w is not None:
+                w.setEnabled(state)
+        # Also lock spinboxes/combos that are not already disabled
+        for w in (self._caption_window, self._od_caption_window):
+            try:
+                w.setEnabled(state)
+            except AttributeError:
+                pass  # not all callers have these spinboxes
+        if locked:
+            self.setStyleSheet("RunTab QWidget:disabled { background-color: #f0f0f0; }")
+        else:
+            self.setStyleSheet("")
+
     def _on_start(self) -> None:
         # Start. Without this guard, two PipelineWorker threads could
         # be created, the second overwriting self._worker and leaking
@@ -707,12 +765,11 @@ class RunTab(QWidget):
             return
         pdf = self._path_edit.text().strip()
         out_dir = self._out_edit.text().strip()
-        if not pdf or not Path(pdf).exists():
-            QMessageBox.warning(
-                self,
-                i18n._tr("runtab.prompt.no_pdf.title"),
-                i18n._tr("runtab.prompt.no_pdf.body"),
-            )
+        # M-19: validate PDF path (must be a real .pdf file)
+        pdf_error = self._validate_pdf_path(pdf)
+        if pdf_error:
+            QMessageBox.critical(self, i18n._tr("runtab.prompt.no_pdf.title"), pdf_error)
+            self._log.warning("Invalid PDF path: %s", pdf)
             return
         if not out_dir:
             QMessageBox.warning(
@@ -721,18 +778,32 @@ class RunTab(QWidget):
                 i18n._tr("runtab.prompt.no_outdir.body"),
             )
             return
+        # M-19: validate GROBID URL format
+        if not self._grobid_edit.hasAcceptableInput():
+            QMessageBox.critical(
+                self,
+                i18n._tr("runtab.prompt.no_pdf.title"),
+                i18n._tr("runtab.error.invalid_grobid_url"),
+            )
+            self._log.warning("Invalid GROBID URL: %s", self._grobid_edit.text())
+            return
         out_path = Path(out_dir)
+        work_dir = out_path / "work"
+        # M-17: both mkdir calls in the same try/except so OSError from
+        # either the output dir or the work sub-dir is caught uniformly.
         try:
             out_path.mkdir(parents=True, exist_ok=True)
+            work_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            QMessageBox.warning(
+            self._log.error("Cannot create output dir %s: %s", work_dir, exc, exc_info=True)
+            QMessageBox.critical(
                 self,
-                i18n._tr("runtab.prompt.no_outdir.title"),
-                i18n._tr("runtab.prompt.no_outdir.body") + f"\n\n{type(exc).__name__}: {exc}",
+                i18n._tr("runtab.prompt.no_pdf.title"),
+                f"{type(exc).__name__}: {exc}",
             )
+            self._start_btn.setEnabled(bool(self._path_edit.text().strip()))
+            self._status_label.setText(i18n._tr("runtab.status.idle"))
             return
-        work_dir = out_path / "work"
-        work_dir.mkdir(parents=True, exist_ok=True)
         self._settings["last_export_dir"] = str(out_path)
         self._settings["last_pdf_dir"] = str(Path(pdf).parent)
 
@@ -755,16 +826,21 @@ class RunTab(QWidget):
         # ~2s in). The partial carries the owning worker so the
         # handler can only ever touch its own thread.
         self._worker.finished.connect(functools.partial(self._on_thread_done, self._worker))
-        # Toggle buttons
+        # Toggle buttons + lock inputs
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
+        self._set_inputs_locked(True)
         self._progress.setRange(0, 0)
         self._progress.setFormat(i18n._tr("runtab.progress.starting"))
         self._show_live_progress(i18n._tr("runtab.progress.init"))
         self._status_label.setText(i18n._tr("runtab.status.starting"))
         self._status_label.setProperty("status", "running")
         self._log.info("Starting job %s on %s", self._current_job_id, pdf)
-        self.job_started.emit(self._current_job_id, pdf)
+        # Phase F-2 (M-10/M-16): emit the actual output_dir so MainWindow
+        # can record it on JobRecord. output_dir = <out_path>/output;
+        # worker.work_dir = <out_path>/work.
+        output_dir = str(out_path / "output")
+        self.job_started.emit(self._current_job_id, pdf, output_dir)
         self._worker.start()
 
     def _on_cancel(self) -> None:
@@ -780,6 +856,32 @@ class RunTab(QWidget):
         self._status_label.setProperty("status", "cancelling")
         self._status_label.style().unpolish(self._status_label)
         self._status_label.style().polish(self._status_label)
+
+    def shutdown(self) -> None:
+        """M-27: Clean shutdown of the pipeline worker.
+
+        Called from MainWindow.closeEvent. Requests worker interruption,
+        waits up to 30s for it to exit, and clears state. Unlike the
+        internal _on_thread_done path this does NOT restore buttons or
+        unlock inputs — that is the caller's responsibility after this
+        returns.
+        """
+        if self._worker is None:
+            return
+        if self._worker.isRunning():
+            self._worker.requestInterruption()
+            try:
+                if not self._worker.wait(30000):
+                    self._log.critical(
+                        "PipelineWorker did not exit within 30s after "
+                        "requestInterruption in shutdown(); thread will be "
+                        "reclaimed on process exit."
+                    )
+            except RuntimeError:
+                # wait() raises RuntimeError if the thread has already
+                # finished. Safe to ignore.
+                pass
+
 
     @staticmethod
     def _make_job_id(pdf_path: str | Path) -> str:
@@ -847,6 +949,8 @@ class RunTab(QWidget):
         # Status colour via property is QSS-driven — see styles.py.
 
     def _on_finished(self, results: list) -> None:
+        # M-22: mark terminal outcome so _on_thread_done knows this succeeded
+        self._pending_outcome = "success"
         self._log.info("Job %s finished with %d rows", self._current_job_id, len(results))
         # Phase 56 audit: clear live progress message so it doesn't linger
         self._reset_to_idle()
@@ -854,8 +958,10 @@ class RunTab(QWidget):
             self.job_finished.emit(self._current_job_id, results)
 
     def _on_failed(self, error: str) -> None:
-        self._log.error("Job %s failed: %s", self._current_job_id, error)
+        # M-22: mark terminal outcome so _on_thread_done knows this failed/cancelled
         cancelled = "cancelled" in (error or "").lower() or "取消" in (error or "")
+        self._pending_outcome = "cancelled" if cancelled else "failed"
+        self._log.error("Job %s failed: %s", self._current_job_id, error)
         # audit 2026-07-31: a user cancellation is not a pipeline
         # failure — no red error dialog, status shows "cancelled".
         if cancelled:
@@ -869,13 +975,6 @@ class RunTab(QWidget):
             self._status_label.setProperty("status", "failed")
             self._status_label.style().unpolish(self._status_label)
             self._status_label.style().polish(self._status_label)
-            QMessageBox.critical(
-                self,
-                i18n._tr("runtab.prompt.error.title"),
-                error,
-            )
-        if self._current_job_id:
-            self.job_failed.emit(self._current_job_id, error)
 
     def _on_thread_done(self, worker: PipelineWorker | None = None) -> None:
         # audit 2026-07-31: the handler now receives the worker that
@@ -888,7 +987,9 @@ class RunTab(QWidget):
         # job 2 died ~2s in) and disconnected its signals.
         if worker is None:
             return
-        was_cancelled = worker.isInterruptionRequested()
+        # M-22: read the terminal outcome set by _on_finished / _on_failed.
+        # If neither ran (shouldn't happen), treat as cancelled.
+        outcome = getattr(self, "_pending_outcome", "cancelled")
         # Phase 56 audit: disconnect signals before cleanup so late
         # signals from a dying thread don't reach stale slots.
         try:
@@ -910,17 +1011,22 @@ class RunTab(QWidget):
             # sets the interrupt flag the pipeline polls between stages;
             # the 30s wait gives it time to flush and clean up. If the
             # worker is still running after 30s, log a warning rather than
-            # killing it — the OS will reclaim the thread on process exit,
-            # and forcibly killing a worker that owns a live JVM is worse
-            # than letting the parent process exit normally.
+            # forcibly killing it — the OS will reclaim the thread on
+            # process exit, and forcibly killing a worker that owns a
+            # live JVM is worse than letting the parent process exit normally.
             worker.requestInterruption()
-            if not worker.wait(30000):  # 30s timeout
-                self._log.warning(
-                    "PipelineWorker did not exit within 30s after "
-                    "requestInterruption; leaving thread alive (process "
-                    "exit will reclaim it). OpenDataLoader JVM or LLM "
-                    "HTTP request may still be in flight."
-                )
+            try:
+                if not worker.wait(30000):  # 30s timeout
+                    self._log.warning(
+                        "PipelineWorker did not exit within 30s after "
+                        "requestInterruption; leaving thread alive (process "
+                        "exit will reclaim it). OpenDataLoader JVM or LLM "
+                        "HTTP request may still be in flight."
+                    )
+            except RuntimeError:
+                # M-27: wait() raises RuntimeError if the thread has already
+                # finished or is being finished by another means. Ignore it.
+                pass
         # Only reset the shared state when this worker is still the
         # active one (single-job mode). In batch mode the next worker
         # is already running; clearing its bookkeeping would corrupt
@@ -930,18 +1036,26 @@ class RunTab(QWidget):
             self._current_job_id = None
             self._start_btn.setEnabled(bool(self._path_edit.text().strip()))
             self._cancel_btn.setEnabled(False)
-            self._progress.setRange(0, 1)
-            self._progress.setValue(1)
-            # Phase 56 audit: reset status label QSS property to idle so
-            # colour reverts from "running" (blue) back to neutral after
-            # the job completes.
-            self._status_label.setProperty("status", "idle")
-            self._status_label.style().unpolish(self._status_label)
-            self._status_label.style().polish(self._status_label)
-            # reset to the empty-state hint) so the user can read the
-            # completion message.
-            self._progress_msg.setText(i18n._tr("runtab.progress.done"))
-            if was_cancelled:
-                self._status_label.setText(i18n._tr("runtab.status.cancelled"))
-            else:
+            self._set_inputs_locked(False)
+            # M-22: set UI state based on terminal outcome
+            if outcome == "success":
+                self._progress.setRange(0, 1)
+                self._progress.setValue(1)
+                self._status_label.setProperty("status", "idle")
+                self._status_label.style().unpolish(self._status_label)
+                self._status_label.style().polish(self._status_label)
                 self._status_label.setText(i18n._tr("runtab.status.done"))
+                self._progress_msg.setText(i18n._tr("runtab.progress.done"))
+            elif outcome == "cancelled":
+                self._progress.setRange(0, 1)
+                self._progress.setValue(0)
+                self._status_label.setProperty("status", "cancelled")
+                self._status_label.style().unpolish(self._status_label)
+                self._status_label.style().polish(self._status_label)
+                self._status_label.setText(i18n._tr("runtab.status.cancelled"))
+                self._progress_msg.clear()
+            else:  # "failed"
+                self._status_label.setProperty("status", "failed")
+                self._status_label.style().unpolish(self._status_label)
+                self._status_label.style().polish(self._status_label)
+                self._progress_msg.clear()

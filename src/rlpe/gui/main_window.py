@@ -15,11 +15,12 @@ the Results tab and loads the rows.
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
@@ -103,6 +104,78 @@ from .jobs_tab import JobRecord, JobsTab
 from .results_tab import ResultsTab
 from .run_tab import RunTab
 from .settings_tab import SettingsTab
+
+
+# ============================================================
+# Batch export worker (M-25)
+# ============================================================
+
+
+class _BatchExportWorker(QThread):
+    """Phase F-2 (M-25): run the heavy XLSX write on a background
+    QThread so the GUI never freezes during a large batch export.
+
+    Signals
+    -------
+    progress(str) — human-readable progress message
+    finished_ok(str) — absolute path of the written file on success
+    failed(str) — error message on failure
+    """
+
+    progress = Signal(str)
+    finished_ok = Signal(str)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        jobs: list,  # snapshot of JobRecord list
+        out_path: str,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._jobs = jobs
+        self._out_path = out_path
+        self._cancelled = False
+
+    def run(self) -> None:
+        try:
+            all_rows: list[dict[str, Any]] = []
+            for job in self._jobs:
+                for row in getattr(job, "rows", None) or []:
+                    all_rows.append(row)
+            if not all_rows:
+                self.failed.emit("No rows to export")
+                return
+
+            self.progress.emit(f"Writing {len(all_rows):,} rows…")
+            run_output = {
+                "schema_version": "1.0.0",
+                "provenance": {"job_id": "batch", "source": "rlpe-gui"},
+                "papers": [],
+                "figures": [],
+                "panels": all_rows,
+                "taxa": [],
+                "samples": [],
+                "geology_contexts": [
+                    g
+                    for r in all_rows
+                    for g in ((r.get("metadata") or {}).get("geology_links") or [])
+                ],
+                "localities": [
+                    {"country": g.get("country"), "locality": g.get("locality")}
+                    for r in all_rows
+                    for g in ((r.get("metadata") or {}).get("geology_links") or [])
+                    if g.get("country") or g.get("locality")
+                ],
+                "paleo_coordinates": [],
+                "warnings": [],
+            }
+            from ..exporters.xlsx import write_xlsx
+
+            write_xlsx(run_output, self._out_path)
+            self.finished_ok.emit(self._out_path)
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
 # ============================================================
@@ -540,6 +613,7 @@ class MainWindow(QMainWindow):
 
     def _wire_signals(self) -> None:
         # Run tab → Jobs tab + Results tab + status bar
+        # Phase F-2 (M-10/M-16): job_started now carries output_dir
         self._run_tab.job_started.connect(self._on_job_started)
         self._run_tab.job_progress.connect(self._on_job_progress)
         self._run_tab.job_finished.connect(self._on_job_finished)
@@ -598,6 +672,16 @@ class MainWindow(QMainWindow):
             self._jobs_tab.shutdown()
         except Exception as exc:  # pragma: no cover — defensive
             self._log.warning("Phase F-1 B-1: jobs_tab shutdown failed: %s", exc)
+        # Phase F-2 (M-9+M-27): also shut down RunTab (cancels any
+        # in-flight pipeline via request_cancel) before stopping the
+        # worker thread. RunTab.shutdown is a graceful no-op if there
+        # is no active job.
+        try:
+            run_shutdown = getattr(self._run_tab, "shutdown", None)
+            if run_shutdown:
+                run_shutdown()
+        except Exception as exc:  # pragma: no cover — defensive
+            self._log.warning("Phase F-2 M-9: run_tab shutdown failed: %s", exc)
         self._stop_pipeline_worker()
         self._flush_settings()
         event.accept()
@@ -657,12 +741,24 @@ class MainWindow(QMainWindow):
         # is still running after 30s, log a warning rather than killing
         # it — forcibly killing a worker that owns a live JVM is worse
         # than letting the parent process exit normally.
-        if not worker.wait(30000):  # 30s timeout
+        # Phase F-2 (M-9+M-27): the wait() call can raise RuntimeError
+        # if the QThread C++ object was already destroyed by the time
+        # we call wait() (e.g. the GUI is closing and the Qt event
+        # loop has already cleaned up the thread). Catch it and proceed
+        # gracefully — the process is exiting anyway.
+        try:
+            if not worker.wait(30000):  # 30s timeout
+                self._log.warning(
+                    "PipelineWorker did not exit within 30s after "
+                    "request_cancel; leaving thread alive (process exit "
+                    "will reclaim it). OpenDataLoader JVM may still be "
+                    "running."
+                )
+        except RuntimeError as exc:
             self._log.warning(
-                "PipelineWorker did not exit within 30s after "
-                "request_cancel; leaving thread alive (process exit "
-                "will reclaim it). OpenDataLoader JVM may still be "
-                "running."
+                "Phase F-2 M-9: worker.wait() raised RuntimeError "
+                "(thread already gone): %s. Proceeding with close.",
+                exc,
             )
         if current_job_id:
             try:
@@ -791,11 +887,13 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Job lifecycle
     # ------------------------------------------------------------------
-    def _on_job_started(self, job_id: str, pdf_path: str) -> None:
-        # audit 2026-07-31: promote the batch placeholder row (if any)
-        # to the REAL job id so the queue shows one row per PDF through
-        # queued → running → done instead of a stale "queued" row plus
-        # a duplicate running row.
+    def _on_job_started(self, job_id: str, pdf_path: str, output_dir: str) -> None:
+        # Phase F-2 (M-10/M-16): output_dir now comes from the signal
+        # (RunTab computes it as <out_path>/output where out_path is the
+        # user-selected directory). Previously MainWindow re-derived it
+        # from pdf_path/stem which was wrong for batch jobs (which use
+        # <batch_out_dir>/<stem>_rlpe_out/work/output, not
+        # <pdf_parent>/<stem>_rlpe_out).
         stem = Path(pdf_path).stem
         placeholder_ids = getattr(self, "_batch_placeholder_by_stem", {})
         ph = placeholder_ids.get(stem)
@@ -804,7 +902,7 @@ class MainWindow(QMainWindow):
         job = JobRecord(
             job_id=job_id,
             pdf_path=pdf_path,
-            output_dir=str(Path(pdf_path).parent / f"{stem}_rlpe_out"),
+            output_dir=output_dir,
             status=STATUS_RUNNING,
             started_at=time.time(),
             settings=self._run_tab.collect_settings(),
@@ -826,7 +924,11 @@ class MainWindow(QMainWindow):
         if total > 0:
             self._mini_progress.setRange(0, total)
             self._mini_progress.setValue(current)
-        self._status_perm.setText(f"{msg}  ({current}/{total})" if total > 0 else msg)
+        # Phase F-2 (M-8): use _set_status so the i18n key is preserved.
+        # Previously this wrote directly to _status_perm.setText(),
+        # bypassing _status_key / _status_kwargs — after that, a
+        # language switch would jump back to the stale key's text.
+        self._set_status("main.progress", msg=msg, current=current, total=total)
 
     def _on_job_finished(self, job_id: str, rows: list[dict[str, Any]]) -> None:
         # Update jobs tab
@@ -875,7 +977,26 @@ class MainWindow(QMainWindow):
             self._start_next_batch_job()
 
     def _on_job_failed(self, job_id: str, error: str) -> None:
-        cancelled = "cancelled" in (error or "").lower() or "取消" in (error or "")
+        # Phase F-2 (M-7): check the worker's was_cancelled() flag FIRST.
+        # The pipeline emits a "cancelled (...)" message via the failed signal
+        # for both genuine user cancellations AND exceptions where the error
+        # string contains the word "cancelled" (e.g. "cannot cancel: worker
+        # still running"). Substring matching was falsely classifying the
+        # latter as a user cancellation.
+        # Fall back to word-boundary regex only when the worker is not
+        # accessible (e.g. race condition between job start and failure).
+        cancelled = False
+        worker = getattr(self._run_tab, "_worker", None)
+        if worker is not None and hasattr(worker, "was_cancelled"):
+            cancelled = worker.was_cancelled()
+        if not cancelled:
+            # Word-boundary check as fallback for legacy / cross-process calls.
+            # Chinese "取消" substring is deliberately excluded: it matches
+            # "无法取消" (cannot cancel) which is a real error, not a
+            # user-initiated cancellation. When the pipeline genuinely cancels,
+            # worker.was_cancelled() is True and this branch is never reached.
+            e = error or ""
+            cancelled = bool(re.search(r"\bcancelled\b|\bcanceled\b", e, re.IGNORECASE))
         if cancelled:
             # audit 2026-07-31: a user-initiated cancellation is NOT a
             # failure — mark_cancelled and don't treat it as a batch
@@ -980,10 +1101,16 @@ class MainWindow(QMainWindow):
         for i, p in enumerate(pdfs):
             jid = f"batch-{i:02d}-{p.stem}"
             self._batch_placeholder_by_stem[p.stem] = jid
+            # Phase F-2 (M-10/M-16): output_dir must be <stem>_rlpe_out/work/output
+            # to match what RunTab computes (out_path / "work" is the PipelineWorker's
+            # work_dir; actual results live at <work_dir>/output). Previously this was
+            # just <stem>_rlpe_out (missing /work/output), so "open output dir"
+            # opened the wrong folder for every batch job.
+            out_root = Path(batch_settings["last_export_dir"]) / f"{p.stem}_rlpe_out"
             job = JobRecord(
                 job_id=jid,
                 pdf_path=str(p),
-                output_dir=str(Path(batch_settings["last_export_dir"]) / f"{p.stem}_rlpe_out"),
+                output_dir=str(out_root / "work" / "output"),
                 status=STATUS_QUEUED,
                 started_at=time.time(),
                 settings=batch_settings,
@@ -1042,20 +1169,15 @@ class MainWindow(QMainWindow):
         self._run_tab._on_start()
 
     def _export_batch_xlsx(self) -> None:
-        """Phase 55 audit M2 — export a single workbook combining all
-        batch job rows, opened with a Save dialog so the user picks
-        the destination. Falls back to the batch output_dir when
-        the user cancels.
+        """Phase F-2 (M-25): export a single workbook combining all
+        batch job rows on a background thread so the GUI never freezes.
         """
         import datetime as _dt
 
         from PySide6.QtWidgets import QFileDialog
 
-        all_rows: list[dict[str, Any]] = []
-        for job in getattr(self._jobs_tab, "_jobs", {}).values():
-            for row in getattr(job, "rows", None) or []:
-                all_rows.append(row)
-        if not all_rows:
+        jobs = list(getattr(self._jobs_tab, "_jobs", {}).values())
+        if not jobs:
             return
         default_dir = (self._batch_settings or {}).get("last_export_dir") or str(Path.home())
         default_name = f"rlpe_batch_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -1067,30 +1189,41 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        # Phase 56 audit: build run_output from all batch rows and export via xlsx.
-        from ..exporters.xlsx import write_xlsx
+        self._set_status("main.batch_exporting")
+        # Kick off background worker; terminal slots handle completion / error.
+        self._batch_export_worker = _BatchExportWorker(jobs, path, parent=self)
+        self._batch_export_worker.progress.connect(
+            lambda msg: self._set_status("main.batch_exporting", msg=msg)
+        )
+        self._batch_export_worker.finished_ok.connect(self._on_batch_export_ok)
+        self._batch_export_worker.failed.connect(self._on_batch_export_failed)
+        self._batch_export_worker.start()
 
-        run_output = {
-            "schema_version": "1.0.0",
-            "provenance": {"job_id": "batch", "source": "rlpe-gui"},
-            "papers": [],
-            "figures": [],
-            "panels": all_rows,
-            "taxa": [],
-            "samples": [],
-            "geology_contexts": [
-                g for r in all_rows for g in ((r.get("metadata") or {}).get("geology_links") or [])
-            ],
-            "localities": [
-                {"country": g.get("country"), "locality": g.get("locality")}
-                for r in all_rows
-                for g in ((r.get("metadata") or {}).get("geology_links") or [])
-                if g.get("country") or g.get("locality")
-            ],
-            "paleo_coordinates": [],
-            "warnings": [],
-        }
-        write_xlsx(run_output, str(path))
+    def _on_batch_export_ok(self, path: str) -> None:
+        """Phase F-2 (M-25): called on GUI thread when the export succeeds."""
+        self._log.info("Batch export succeeded: %s", path)
+        self._set_status("main.batch_complete")
+        QMessageBox.information(
+            self,
+            i18n._tr("jobstab.export.xlsx_title"),
+            i18n._tr("jobstab.export.saved").format(count="?", path=path),
+        )
+        if hasattr(self, "_batch_export_worker"):
+            self._batch_export_worker.deleteLater()
+            del self._batch_export_worker
+
+    def _on_batch_export_failed(self, error: str) -> None:
+        """Phase F-2 (M-25): called on GUI thread when the export fails."""
+        self._log.error("Batch export failed: %s", error)
+        self._set_status("main.idle")
+        QMessageBox.warning(
+            self,
+            i18n._tr("common.error"),
+            i18n._tr("jobstab.export.failed").format(error=error),
+        )
+        if hasattr(self, "_batch_export_worker"):
+            self._batch_export_worker.deleteLater()
+            del self._batch_export_worker
 
     # Patch into the run tab to advance the batch on each completion
     def _refresh_texts(self) -> None:

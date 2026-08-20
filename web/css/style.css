@@ -2435,3 +2435,41 @@ body {
     color: var(--primary-color);
     font-family: var(--font-mono);
 }
+
+/* ==================== Toast notifications (Phase F-2 B3/M3) ==================== */
+#toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: var(--z-toast);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+}
+
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    max-width: 360px;
+    box-shadow: var(--shadow-lg);
+    pointer-events: auto;
+    cursor: pointer;
+    animation: toast-in 0.25s ease-out;
+    border-left: 4px solid var(--info-color);
+    background: var(--bg-white);
+}
+
+.toast.toast-success { border-left-color: var(--success-color); }
+.toast.toast-error   { border-left-color: var(--danger-color); }
+.toast.toast-warning { border-left-color: var(--warning-color); }
+.toast.toast-info    { border-left-color: var(--info-color); }
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}

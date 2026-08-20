@@ -98,6 +98,18 @@ class PipelineWorker(QThread):
         self._cancel_event.set()
         self.requestInterruption()
 
+    def was_cancelled(self) -> bool:
+        """Phase F-2 (M-7): return True if this worker was cancelled.
+
+        Checks the cancel event set by ``request_cancel()`` so the
+        GUI can distinguish a genuine user-initiated cancellation
+        from a pipeline failure whose error message happens to
+        contain the word "cancelled" (e.g. "cannot cancel: worker
+        still running" — the substring check misclassified this as
+        a user cancellation).
+        """
+        return self._cancel_event.is_set()
+
     # ------------------------------------------------------------------
     # Helpers exposed to the GUI
     # ------------------------------------------------------------------
