@@ -41,8 +41,8 @@ dev = ["hypothesis>=6.0"]
 # behaviour. yaml: required by tests/test_yolo_dataset_builder.py
 # (YOLO data.yaml parsing). jsonschema: used by tests/test_schema_models.py.
 test = [
-  "pytest>=8",
-  "pytest-cov",
+  "pytest>=8,<9",
+  "pytest-cov<7",
   "openpyxl",
   "anthropic>=0.40,<0.50",
   "pyyaml",
