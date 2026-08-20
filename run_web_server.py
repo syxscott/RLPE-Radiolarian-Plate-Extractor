@@ -34,7 +34,7 @@ if str(src_path) not in sys.path:
 #   1. Pre-existing OS env vars win for MOST keys (so an operator can
 #      temporarily override .env from the shell).
 #   2. EXCEPT for the project's MiniMax-related keys (ANTHROPIC_API_KEY,
-#      ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, MiniMax_*) where the .env
+#      ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, MINIMAX_*) where the .env
 #      file wins. This is because tools like Claude Code set
 #      ``ANTHROPIC_BASE_URL`` globally for their own use, and that
 #      value (e.g. ark.cn-beijing.volces.com) is NOT what RLPE wants —
@@ -60,45 +60,109 @@ from rlpe.api.app import app
 
 # Force UTF-8 on stdout/stderr so the banner (which contains box-drawing
 # characters and an emoji) can print on Windows code pages (cp936 / cp1252).
+# Phase F-3-E NIT-1: also fall back to an ASCII-only banner if the
+# stream still can't render the box characters (e.g. running under
+# ``nohup`` redirect to a cp1252 log file where reconfigure silently
+# failed, or under PyInstaller where sys.stdout has no ``encoding``).
+# The previous version assumed reconfigure ALWAYS succeeded and printed
+# mojibake on the failure path.
+_USE_BOX_BANNER = True
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
     except Exception:
-        pass
+        # If reconfigure fails the stream is likely a pipe / file
+        # that can't be re-encoded; fall back to ASCII-only banner
+        # to keep the output usable.
+        _USE_BOX_BANNER = False
+        break
+    else:
+        # Probe: if encoding is still NOT utf-8 after reconfigure
+        # (some Windows consoles keep cp1252), drop to ASCII mode.
+        try:
+            _enc = (getattr(_stream, "encoding", "") or "").lower().replace("-", "_")
+            if _enc not in ("utf_8", "utf8"):
+                _USE_BOX_BANNER = False
+        except Exception:
+            _USE_BOX_BANNER = False
 
 
-def main() -> None:
-    """Start the RLPE web server."""
+_BANNER_BOX = """
+    ╔════════════════════════════════════════════════════════════╗
+    ║  🔬 RLPE Web Server                                        ║
+    ║  放射虫图版提取系统 - Web 界面                               ║
+    ║                                                            ║
+    ║  访问地址: http://{host}:{port}                             ║
+    ║  API 文档: http://{host}:{port}/docs                       ║
+    ║  workers : {workers}                                       ║
+    ║  log     : {log_level}                                     ║
+    ╚════════════════════════════════════════════════════════════╝
+"""
+
+_BANNER_ASCII = """
+    +------------------------------------------------------------+
+    |  RLPE Web Server                                           |
+    |  放射虫图版提取系统 - Web 界面                               |
+    |                                                            |
+    |  访问地址: http://{host}:{port}                             |
+    |  API 文档: http://{host}:{port}/docs                       |
+    |  workers : {workers}                                       |
+    |  log     : {log_level}                                     |
+    +------------------------------------------------------------+
+"""
+
+
+def main() -> int:
+    """Start the RLPE web server.
+
+    Returns 0 on a clean shutdown (e.g. SIGINT → uvicorn raises
+    SystemExit(0)) and non-zero on a configuration / startup error.
+    Without the explicit ``-> int`` and exit code (Phase F-3-E NIT-3),
+    a shell wrapper that runs ``run_web_server.py`` cannot tell
+    "server started then was killed" apart from "failed to bind port"
+    — both just exit with whatever uvicorn chose.
+    """
     # audit 2026-07-31: default to loopback. The server runs the user's
     # paid MiniMax key with NO authentication; binding 0.0.0.0 exposed
     # it to the LAN (any local webpage could also drive it via a CORS
     # simple request). Set RLPE_HOST=0.0.0.0 explicitly for remote use.
     host = os.environ.get("RLPE_HOST", "127.0.0.1")
-    port = int(os.environ.get("RLPE_PORT", "8000"))
-    workers = int(os.environ.get("RLPE_WORKERS", "1"))
+    try:
+        port = int(os.environ.get("RLPE_PORT", "8000"))
+        workers = int(os.environ.get("RLPE_WORKERS", "1"))
+    except ValueError as exc:
+        # Phase F-3-E NIT-2: a malformed RLPE_PORT (e.g. ``abc``) used
+        # to raise an unhelpful ValueError traceback and exit 1. Now
+        # we catch and surface a one-line error.
+        print(f"Error: invalid numeric env var ({exc})", file=sys.stderr)
+        return 1
     log_level = os.environ.get("RLPE_LOG_LEVEL", "info")
 
-    print(f"""
-    ╔════════════════════════════════════════════════════════════╗
-    ║  🔬 RLPE Web Server                                        ║
-    ║  放射虫图版提取系统 - Web 界面                               ║
-    ║                                                            ║
-    ║  访问地址: http://{host}:{port}                          ║
-    ║  API 文档: http://{host}:{port}/docs                    ║
-    ║  workers : {workers}                                      ║
-    ║  log     : {log_level}                                    ║
-    ╚════════════════════════════════════════════════════════════╝
-    """)
+    if _USE_BOX_BANNER:
+        print(_BANNER_BOX.format(host=host, port=port, workers=workers, log_level=log_level))
+    else:
+        print(_BANNER_ASCII.format(host=host, port=port, workers=workers, log_level=log_level))
 
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        workers=workers,
-        reload=False,
-        log_level=log_level,
-    )
+    try:
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            workers=workers,
+            reload=False,
+            log_level=log_level,
+        )
+    except SystemExit as exc:
+        # uvicorn raises SystemExit on clean shutdown (SIGINT) or
+        # port-bind failure. Forward the exit code so the shell
+        # wrapper sees "server stopped cleanly" (0) vs "port in use"
+        # (1).
+        return int(exc.code) if exc.code is not None else 0
+    except Exception as exc:
+        print(f"Error: uvicorn failed to start: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

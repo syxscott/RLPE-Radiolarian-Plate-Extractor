@@ -537,6 +537,48 @@ class FallbackDecisionRequest(BaseModel):
 # multi-worker mode, set RLPE_REDIS_URL and use the redis-backed registry below.
 FALLBACK_PENDING: dict[str, dict[str, Any]] = {}
 
+# Phase F-3 NIT-4 (TTL cleanup): the previous version had no
+# mechanism to evict stale entries — a worker that crashed
+# mid-wait (e.g. SIGKILL, OOM, container restart) would leave
+# the FALLBACK_PENDING entry behind forever, bloating the dict
+# on long-running API servers. We now stamp every entry with a
+# ``_created_at`` timestamp and evict entries older than
+# ``FALLBACK_PENDING_TTL_SEC`` opportunistically on every miss
+# (cheap, runs on a user-driven path that already touches the
+# dict). The lifespan startup hook also does a single full sweep
+# so a server restart recovers the full state.
+import time as _time_for_pending
+FALLBACK_PENDING_TTL_SEC: int = 3600  # 1 hour — popup's max wait is 5 min, so stale by 1h means orphaned
+
+
+def _purge_stale_fallback_pending() -> int:
+    """Best-effort eviction of FALLBACK_PENDING entries older than the
+    TTL. Returns the count of entries evicted.
+
+    Called opportunistically from access paths (cheaper than a
+    dedicated background thread) plus once at lifespan startup. The
+    lock is held for the duration of the sweep so no race with
+    concurrent registrations.
+    """
+    now = _time_for_pending.time()
+    stale: list[str] = []
+    with RESULT_LOCK:
+        for jid, entry in FALLBACK_PENDING.items():
+            created = entry.get("_created_at")
+            if created is None:
+                # Back-compat: older entries (still in memory from
+                # before the TTL upgrade) don't have a timestamp;
+                # treat them as "infinitely old" and evict to force
+                # the next request to re-register if the worker is
+                # still alive.
+                stale.append(jid)
+                continue
+            if (now - float(created)) > FALLBACK_PENDING_TTL_SEC:
+                stale.append(jid)
+        for jid in stale:
+            FALLBACK_PENDING.pop(jid, None)
+    return len(stale)
+
 
 # ``lifespan`` replaces the deprecated ``on_event("startup")`` (removed in
 # FastAPI 0.110+). The previous decorator still works on 0.111.0 but
@@ -553,6 +595,17 @@ async def _lifespan(_app: FastAPI):
         import logging as _log
 
         _log.getLogger("rlpe.api").info("Loaded %d existing job(s) from disk", n)
+    # Phase F-3 NIT-4 (TTL cleanup): one full sweep at startup so
+    # any stale FALLBACK_PENDING entries left over from a previous
+    # server process are evicted before the first request lands.
+    evicted = _purge_stale_fallback_pending()
+    if evicted:
+        import logging as _log2
+
+        _log2.getLogger("rlpe.api").info(
+            "Startup TTL sweep evicted %d stale FALLBACK_PENDING entry/entries",
+            evicted,
+        )
     yield
 
 
@@ -1090,10 +1143,11 @@ async def upload_pdf(
             # record that root so ``_purge_job`` can remove it (the
             # safe-root / CLI-shared checks below still apply).
             # Sweep 7 (audit 2026-08-02 C5): ``.resolve()`` for parity
-            # with the CLI-discovered path at line 596 which stores
-            # ``str(root.resolve())``. Readers (lines 858, 1129) call
-            # ``.resolve()`` defensively but a stable string form
-            # makes cached comparisons + audit-log output match.
+            # with the CLI-discovered path in ``_load_existing_jobs``
+            # (just above) which stores ``str(root.resolve())``.
+            # Readers elsewhere in the module call ``.resolve()``
+            # defensively but a stable string form makes cached
+            # comparisons + audit-log output match.
             "_root": str((WORK_DIR / job_id).resolve()),
         }
 
@@ -1740,7 +1794,8 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
     # yet, but the cancel-check + the new cache-pop above means the
     # worker either sees the entry (and proceeds safely; its _root is
     # untouched) or sees ``not_found`` (and exits via the pre-flight
-    # branch at line 1914). Directory deletions are captured locally so
+    # branch in ``delete_job`` further below). Directory deletions are
+    # captured locally so
     # we don't re-read RESULT_CACHE.
     files_removed = False
     bytes_freed = 0
@@ -1752,8 +1807,8 @@ def _purge_job(job_id: str, delete_files: bool) -> dict[str, Any]:
         # cancelled pre-flight, or one whose upload was orphaned by a
         # server restart while the queue was non-empty, left the PDF
         # behind forever. The file is named ``<job_id>_<safe_filename>``
-        # in ``upload_pdf`` (line 713); we glob by prefix so a
-        # missing/renamed filename still gets cleaned.
+        # in ``upload_pdf`` (above, in the same module); we glob by
+        # prefix so a missing/renamed filename still gets cleaned.
         for pdf in UPLOAD_DIR.glob(f"{job_id}_*"):
             try:
                 bytes_freed += pdf.stat().st_size
@@ -1871,10 +1926,10 @@ def batch_delete_jobs(
     """Delete multiple jobs in one call. Returns a per-job status list."""
     if not req.job_ids:
         raise HTTPException(status_code=400, detail="job_ids must not be empty")
-    # The ``max_length=200`` on ``BatchDeleteRequest.job_ids`` (line 1783)
-    # already enforces the upper bound; Pydantic raises 422 before this
-    # function runs. The previous redundant ``len(req.job_ids) > 200``
-    # check here was dead code (Phase F-3 NIT).
+    # The ``max_length=200`` on ``BatchDeleteRequest.job_ids``
+    # (declared just below) already enforces the upper bound; Pydantic
+    # raises 422 before this function runs. The previous redundant
+    # ``len(req.job_ids) > 200`` check here was dead code (Phase F-3 NIT).
     # audit 2026-08-01 W1 / M17: serial rmtree across 200 jobs would
     # block for many minutes on a small VPS. Now ``_purge_job`` keeps
     # ``RESULT_LOCK`` only during the short state-machine read + final
@@ -1914,7 +1969,15 @@ def get_MiniMax_fallback(job_id: str) -> dict[str, Any]:
     # ``dict(pending)`` snapshots the values so the response is consistent
     # even if the entry is mutated by the worker thread while we are
     # serialising it.
+    #
+    # Phase F-3-E NIT-4: opportunistic stale-pending cleanup. The
+    # frontend polls this endpoint every ``_WS_POLL_INTERVAL_SEC``
+    # (0.5s), so we piggyback a TTL sweep here rather than spawning a
+    # dedicated background thread. The sweep is O(N) over the
+    # ``FALLBACK_PENDING`` dict and runs under the same lock, so it's
+    # safe and bounded by the number of jobs in flight.
     with RESULT_LOCK:
+        _purge_stale_fallback_pending()
         pending = FALLBACK_PENDING.get(job_id)
         if not pending:
             return {"status": "none", "job_id": job_id}
@@ -2487,7 +2550,7 @@ class TestLLMRequest(BaseModel):
     fall back to the env var and pass even when the operator thought
     they had entered a custom key. Aligned with the project's
     general ``extra="forbid"`` convention (e.g. ``BatchDeleteRequest``
-    at line 1782) so typos surface as a 422 instead.
+    declared further above) so typos surface as a 422 instead.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -2993,6 +3056,11 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                         "error_info": error_info,
                         "event": event,
                         "decision": None,
+                        # Phase F-3 NIT-4: stamp the entry so the
+                        # opportunistic TTL cleanup can evict stale
+                        # entries on a server that's been running for
+                        # hours with orphaned jobs.
+                        "_created_at": _time_for_pending.time(),
                     }
                     RESULT_CACHE[job_id]["status"] = "awaiting_user_decision"
                     RESULT_CACHE[job_id]["detail"] = (
