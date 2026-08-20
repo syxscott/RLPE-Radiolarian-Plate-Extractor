@@ -88,9 +88,7 @@ def test_yolo_rejects_nonexistent_path(tmp_path):
     fake = tmp_path / "does-not-exist.pt"
     assert not fake.exists()
     result = _validate_yolo_model_path(str(fake))
-    assert result is None, (
-        f"Non-existent .pt path should be rejected, got {result!r}"
-    )
+    assert result is None, f"Non-existent .pt path should be rejected, got {result!r}"
 
 
 def test_yolo_rejects_unsupported_extension(tmp_path):
@@ -100,9 +98,7 @@ def test_yolo_rejects_unsupported_extension(tmp_path):
     p = tmp_path / "foo.abc"
     p.write_bytes(b"")
     result = _validate_yolo_model_path(str(p))
-    assert result is None, (
-        f"Unsupported .abc extension should be rejected, got {result!r}"
-    )
+    assert result is None, f"Unsupported .abc extension should be rejected, got {result!r}"
 
 
 def test_yolo_empty_path_allowed():
@@ -110,7 +106,9 @@ def test_yolo_empty_path_allowed():
     from rlpe.gui.settings_tab import _validate_yolo_model_path
 
     for empty in ("", "   ", None):
-        result = _validate_yolo_model_path(empty) if empty is not None else _validate_yolo_model_path("")
+        result = (
+            _validate_yolo_model_path(empty) if empty is not None else _validate_yolo_model_path("")
+        )
         assert result is None, f"Empty path should not validate, got {result!r}"
 
 
@@ -121,9 +119,7 @@ def test_validate_api_url_accepts_http_and_https():
     from rlpe.gui.settings_tab import _validate_api_url
 
     assert _validate_api_url("http://localhost:8070") == "http://localhost:8070"
-    assert _validate_api_url("https://paleobiodb.org/data1.2") == (
-        "https://paleobiodb.org/data1.2"
-    )
+    assert _validate_api_url("https://paleobiodb.org/data1.2") == ("https://paleobiodb.org/data1.2")
 
 
 def test_validate_api_url_rejects_garbage():
@@ -158,7 +154,7 @@ def test_validate_ocr_lang_accepts_iso_codes():
 def test_validate_ocr_lang_rejects_unknown_codes():
     from rlpe.gui.settings_tab import _validate_ocr_lang
 
-    for bad in ("xx", "en,xx", "english", "EN" ):
+    for bad in ("xx", "en,xx", "english", "EN"):
         result = _validate_ocr_lang(bad)
         assert result is None, f"OCR lang {bad!r} should be rejected"
 
@@ -325,20 +321,20 @@ def test_save_refuses_nonexistent_yolo_path(monkeypatch, tmp_path):
     st._ocr_lang.setText("en")
 
     monkeypatch.setattr(
-        QMessageBox, "warning",
+        QMessageBox,
+        "warning",
         staticmethod(lambda *a, **kw: QMessageBox.Ok),
     )
     monkeypatch.setattr(
-        QMessageBox, "information",
+        QMessageBox,
+        "information",
         staticmethod(lambda *a, **kw: QMessageBox.Ok),
     )
 
     st._qsettings.setValue("yolo_model_path", "BEFORE_SAVE")
     st._save()
     after = st._qsettings.value("yolo_model_path", "")
-    assert after != str(bogus), (
-        f"_save() persisted non-existent YOLO path {str(bogus)!r}"
-    )
+    assert after != str(bogus), f"_save() persisted non-existent YOLO path {str(bogus)!r}"
 
 
 def test_save_accepts_valid_yolo_path(monkeypatch, tmp_path):
@@ -357,11 +353,13 @@ def test_save_accepts_valid_yolo_path(monkeypatch, tmp_path):
     st._ocr_lang.setText("en")
 
     monkeypatch.setattr(
-        QMessageBox, "warning",
+        QMessageBox,
+        "warning",
         staticmethod(lambda *a, **kw: QMessageBox.Ok),
     )
     monkeypatch.setattr(
-        QMessageBox, "information",
+        QMessageBox,
+        "information",
         staticmethod(lambda *a, **kw: QMessageBox.Ok),
     )
 
@@ -386,20 +384,20 @@ def test_save_refuses_invalid_pbdb_endpoint(monkeypatch, tmp_path):
     # Non-empty invalid PBDB endpoint
     warnings: list = []
     monkeypatch.setattr(
-        QMessageBox, "warning",
+        QMessageBox,
+        "warning",
         staticmethod(lambda *a, **kw: warnings.append(1) or QMessageBox.Ok),
     )
     monkeypatch.setattr(
-        QMessageBox, "information",
+        QMessageBox,
+        "information",
         staticmethod(lambda *a, **kw: QMessageBox.Ok),
     )
     st._pbdb_endpoint.setText("not-a-url")
     st._qsettings.setValue("paleodb_endpoint", "BEFORE_SAVE")
     st._save()
     after = st._qsettings.value("paleodb_endpoint", "")
-    assert after == "BEFORE_SAVE", (
-        f"_save() persisted invalid PBDB endpoint; got {after!r}"
-    )
+    assert after == "BEFORE_SAVE", f"_save() persisted invalid PBDB endpoint; got {after!r}"
     assert warnings, "PBDB-endpoint rejection should produce a QMessageBox"
 
 
@@ -415,11 +413,13 @@ def test_save_refuses_invalid_ocr_lang(monkeypatch, tmp_path):
 
     warnings: list = []
     monkeypatch.setattr(
-        QMessageBox, "warning",
+        QMessageBox,
+        "warning",
         staticmethod(lambda *a, **kw: warnings.append(1) or QMessageBox.Ok),
     )
     monkeypatch.setattr(
-        QMessageBox, "information",
+        QMessageBox,
+        "information",
         staticmethod(lambda *a, **kw: QMessageBox.Ok),
     )
 
@@ -429,9 +429,7 @@ def test_save_refuses_invalid_ocr_lang(monkeypatch, tmp_path):
     st._qsettings.setValue("ocr_lang", "BEFORE_SAVE")
     st._save()
     after = st._qsettings.value("ocr_lang", "")
-    assert after == "BEFORE_SAVE", (
-        f"_save() persisted invalid OCR lang; got {after!r}"
-    )
+    assert after == "BEFORE_SAVE", f"_save() persisted invalid OCR lang; got {after!r}"
     assert warnings, "OCR-lang rejection should produce a QMessageBox"
 
 

@@ -53,7 +53,7 @@ class TestApplyGeoVisionAllowlist:
         assertion only looks inside the right scope."""
         text = _PIPELINE_PATH.read_text(encoding="utf-8")
         # Locate the ``allowed: list[str] = list(...)`` block.
-        marker = 'allowed: list[str] = list('
+        marker = "allowed: list[str] = list("
         i = text.find(marker)
         assert i > 0, "could not locate _apply_geo_vision allowlist literal"
         # End at the matching closing paren of the outer ``list(...)`` call.
@@ -92,9 +92,7 @@ class TestApplyGeoVisionAllowlist:
             '"litholog_column"',
             '"paleogeographic_map"',
         ):
-            assert expected in block, (
-                f"default allowlist missing expected type {expected!r}"
-            )
+            assert expected in block, f"default allowlist missing expected type {expected!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -152,9 +150,7 @@ class TestRecoverBboxesDuplicatePanelId:
             {"panel_id": "1", "bbox": None, "panel_path": None, "metadata": {}},
         ]
 
-        out = pipe._recover_bboxes_via_segmentation(
-            results, plate, paper_id="p1", figure_id="pl01"
-        )
+        out = pipe._recover_bboxes_via_segmentation(results, plate, paper_id="p1", figure_id="pl01")
 
         # Each row's bbox must equal one of the three segmented bboxes.
         expected = [
@@ -192,9 +188,7 @@ class TestRecoverBboxesDuplicatePanelId:
             {"panel_id": "1", "bbox": None, "panel_path": None, "metadata": {}},
         ]
 
-        out = pipe._recover_bboxes_via_segmentation(
-            results, plate, paper_id="p1", figure_id="pl01"
-        )
+        out = pipe._recover_bboxes_via_segmentation(results, plate, paper_id="p1", figure_id="pl01")
 
         # Sort puts the two "1"s first (sorted by panel_id numeric
         # value): sorted_results = [orig_0("1"), orig_2("1"), orig_1("2")].
@@ -203,14 +197,13 @@ class TestRecoverBboxesDuplicatePanelId:
         #   sorted_idx 1 (orig_2, "1") → seg1
         #   sorted_idx 2 (orig_1, "2") → seg2
         expected = [
-            [10, 10, 60, 80],   # orig_0  ("1") gets seg0
+            [10, 10, 60, 80],  # orig_0  ("1") gets seg0
             [400, 10, 60, 80],  # orig_1  ("2") gets seg2
             [200, 10, 60, 80],  # orig_2  ("1") gets seg1
         ]
         assigned = [r["bbox"] for r in out]
         assert assigned == expected, (
-            f"mixed unique+duplicate panel_ids must each get a distinct "
-            f"bbox. Got {assigned}"
+            f"mixed unique+duplicate panel_ids must each get a distinct bbox. Got {assigned}"
         )
 
 
@@ -282,8 +275,7 @@ class TestOdGrobidGuardDefaultSymmetry:
         # _exit must not raise and must leave depth at 0.
         pipe._exit_od_grobid_guard()
         assert getattr(pipe._od_grobid_depth, "depth", 0) == 0, (
-            "_exit_od_grobid_guard on a fresh thread-local must leave "
-            "depth at 0"
+            "_exit_od_grobid_guard on a fresh thread-local must leave depth at 0"
         )
 
     def test_enter_exit_cycle_balances(self, pipe):
@@ -293,9 +285,7 @@ class TestOdGrobidGuardDefaultSymmetry:
         assert pipe._enter_od_grobid_guard("p1", "OD") is True
         assert getattr(pipe._od_grobid_depth, "depth", 0) == 1
         pipe._exit_od_grobid_guard()
-        assert getattr(pipe._od_grobid_depth, "depth", 0) == 0, (
-            "enter→exit must return depth to 0"
-        )
+        assert getattr(pipe._od_grobid_depth, "depth", 0) == 0, "enter→exit must return depth to 0"
 
     def test_enter_exit_loop_accumulates_and_releases(self, pipe):
         """Multiple enter→exit cycles must accumulate and release

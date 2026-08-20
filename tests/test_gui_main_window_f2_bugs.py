@@ -290,9 +290,7 @@ def test_close_event_wait_runtime_error_handled():
     # Mock run_tab with a worker whose wait() raises RuntimeError
     dead_worker = MagicMock()
     dead_worker.isRunning.return_value = True
-    dead_worker.wait.side_effect = RuntimeError(
-        "QThread: Destroyed while thread is still running"
-    )
+    dead_worker.wait.side_effect = RuntimeError("QThread: Destroyed while thread is still running")
     w._run_tab = MagicMock()
     w._run_tab._worker = dead_worker
     w._run_tab._current_job_id = "job-dead"

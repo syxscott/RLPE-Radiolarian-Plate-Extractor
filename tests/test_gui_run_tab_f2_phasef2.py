@@ -107,8 +107,9 @@ class TestM19GrobidValidator:
 
         rt = RunTab(settings={}, parent=None)
         rt._grobid_edit.setText("not-a-url")
-        assert not rt._grobid_edit.hasAcceptableInput(), \
+        assert not rt._grobid_edit.hasAcceptableInput(), (
             "hasAcceptableInput() should be False for 'not-a-url'"
+        )
 
     def test_grobid_validator_accepts_valid_url(self, qapp):
         """_grobid_edit hasAcceptableInput() is True for a valid http URL."""
@@ -116,8 +117,9 @@ class TestM19GrobidValidator:
 
         rt = RunTab(settings={}, parent=None)
         rt._grobid_edit.setText("http://localhost:8070")
-        assert rt._grobid_edit.hasAcceptableInput(), \
+        assert rt._grobid_edit.hasAcceptableInput(), (
             "hasAcceptableInput() should be True for valid http URL"
+        )
 
 
 class TestM21InputsLockedDuringRun:
@@ -191,8 +193,9 @@ class TestM22FailureNotDone:
 
         # Status should be "failed", NOT "done" - check the QSS property
         status_prop = rt._status_label.property("status")
-        assert status_prop == "failed", \
+        assert status_prop == "failed", (
             f"Failed job should have status='failed', got: {status_prop!r}"
+        )
 
 
 class TestM27ShutdownNoDestroyRunningThread:

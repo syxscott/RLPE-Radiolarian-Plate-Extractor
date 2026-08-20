@@ -206,9 +206,9 @@ def test_cleanup_paper_metadata_source_guard():
     """Source guard: converters.py must call cleanup_paper_metadata
     inside paper_records_from_matches. Without this wiring, the
     fixes above are dead code."""
-    src = Path(
-        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "converters.py"
-    ).read_text(encoding="utf-8")
+    src = Path(Path(__file__).resolve().parents[1] / "src" / "rlpe" / "converters.py").read_text(
+        encoding="utf-8"
+    )
     assert "cleanup_paper_metadata" in src, (
         "converters.py does not import or call cleanup_paper_metadata. "
         "Round 20 paper-metadata fixes are not wired."

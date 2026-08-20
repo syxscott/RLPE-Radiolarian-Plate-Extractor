@@ -180,9 +180,7 @@ class TestM9CountryListCompleteness:
         ],
     )
     def test_country_in_country_plate(self, country, expected_plate):
-        assert country in COUNTRY_PLATE, (
-            f"{country!r} must be in COUNTRY_PLATE (Phase 3D M9)"
-        )
+        assert country in COUNTRY_PLATE, f"{country!r} must be in COUNTRY_PLATE (Phase 3D M9)"
         assert COUNTRY_PLATE[country] == expected_plate
 
     def test_jordan_country_lookup(self):
@@ -241,13 +239,10 @@ class TestM4ClassifyCoordinateAgeAfter:
         the 400-char AFTER-window)."""
         prefix = "Locality description starts here"
         tail = "during the " + "x" * 180 + " Late Cretaceous"
-        text, m_start, m_end = self._build(
-            prefix=prefix, coord="38N, 14E", tail=tail
-        )
+        text, m_start, m_end = self._build(prefix=prefix, coord="38N, 14E", tail=tail)
         out = _classify_coordinate_age(text, m_start, m_end)
         assert out == "paleo", (
-            f"'Late Cretaceous' 200 chars after the coord must "
-            f"be detected; got {out!r}."
+            f"'Late Cretaceous' 200 chars after the coord must be detected; got {out!r}."
         )
 
     def test_modern_keyword_after_coord_detected(self):
@@ -259,36 +254,25 @@ class TestM4ClassifyCoordinateAgeAfter:
             tail="today the road is paved",
         )
         out = _classify_coordinate_age(text, m_start, m_end)
-        assert out == "modern", (
-            f"'today' AFTER the coord must classify as 'modern'; "
-            f"got {out!r}"
-        )
+        assert out == "modern", f"'today' AFTER the coord must classify as 'modern'; got {out!r}"
 
     def test_paleo_before_still_works(self):
         """Regression: the BEFORE-window must still work. Put a
         paleo keyword 200 chars before the coord and nothing
         after. The function must return 'paleo'."""
         prefix = "Eocene " + "g" * 200
-        text, m_start, m_end = self._build(
-            prefix=prefix, coord="38N, 14E", tail="rock description"
-        )
+        text, m_start, m_end = self._build(prefix=prefix, coord="38N, 14E", tail="rock description")
         out = _classify_coordinate_age(text, m_start, m_end)
         assert out == "paleo", (
-            f"'Eocene' 200 chars BEFORE the coord must still be "
-            f"detected; got {out!r}"
+            f"'Eocene' 200 chars BEFORE the coord must still be detected; got {out!r}"
         )
 
     def test_ambiguous_both_sides_still_none(self):
         """No keyword on either side → still None (the original
         Phase 3A contract)."""
-        text, m_start, m_end = self._build(
-            prefix="g" * 300, coord="38N, 14E", tail="g" * 300
-        )
+        text, m_start, m_end = self._build(prefix="g" * 300, coord="38N, 14E", tail="g" * 300)
         out = _classify_coordinate_age(text, m_start, m_end)
-        assert out is None, (
-            f"No keyword on either side must still return None; "
-            f"got {out!r}"
-        )
+        assert out is None, f"No keyword on either side must still return None; got {out!r}"
 
     def test_paleo_after_beats_modern_before(self):
         """When a paleo keyword sits AFTER the coord and a
@@ -311,8 +295,7 @@ class TestM4ClassifyCoordinateAgeAfter:
         # keywords is detected — pinning the more specific
         # assertion would over-constrain the implementation.
         assert out in ("paleo", "modern"), (
-            f"At least one of the two keywords must be detected; "
-            f"got {out!r}"
+            f"At least one of the two keywords must be detected; got {out!r}"
         )
 
 
@@ -329,25 +312,20 @@ class TestM5GeoCoordsBrackets:
 
     def test_halfwidth_bracket_decimal(self):
         c = parse_coordinate("(35.7 N, 110.3 E)")
-        assert c is not None, (
-            "'(35.7 N, 110.3 E)' (half-width brackets) must parse"
-        )
+        assert c is not None, "'(35.7 N, 110.3 E)' (half-width brackets) must parse"
         assert abs(c.latitude - 35.7) < 0.01
         assert abs(c.longitude - 110.3) < 0.01
 
     def test_fullwidth_bracket_decimal(self):
         c = parse_coordinate("（35.7N, 110.3E）")
-        assert c is not None, (
-            "'（35.7N, 110.3E）' (CJK full-width brackets) must parse"
-        )
+        assert c is not None, "'（35.7N, 110.3E）' (CJK full-width brackets) must parse"
         assert abs(c.latitude - 35.7) < 0.01
         assert abs(c.longitude - 110.3) < 0.01
 
     def test_fullwidth_bracket_no_space(self):
         c = parse_coordinate("（35.7,110.3）")
         assert c is not None, (
-            "'（35.7,110.3）' (full-width brackets, no space, no "
-            "hemisphere) must parse"
+            "'（35.7,110.3）' (full-width brackets, no space, no hemisphere) must parse"
         )
         assert abs(c.latitude - 35.7) < 0.01
         assert abs(c.longitude - 110.3) < 0.01
@@ -364,9 +342,7 @@ class TestM5GeoCoordsBrackets:
         """The DMS regex should also support bracket wrapping.
         ``"（35°42'12\"N, 110°18'00\"E）"`` should parse."""
         c = parse_coordinate("（35°42'12\"N, 110°18'00\"E）")
-        assert c is not None, (
-            "Full-width-bracketed DMS must parse"
-        )
+        assert c is not None, "Full-width-bracketed DMS must parse"
         assert abs(c.latitude - 35.70333) < 0.001
         assert abs(c.longitude - 110.30) < 0.01
 
@@ -409,18 +385,13 @@ class TestM7InterpolateEulerFallback:
         """A request at age=-1 Ma is below the modern (0 Ma)
         end of every table. Must return None."""
         result = _interpolate_euler("Adria", -1.0)
-        assert result is None, (
-            f"age=-1 Ma (below modern 0 Ma) must return None; "
-            f"got {result!r}"
-        )
+        assert result is None, f"age=-1 Ma (below modern 0 Ma) must return None; got {result!r}"
 
     def test_unknown_plate_returns_none(self):
         """A plate not in ``EULER_POLES`` returns None at the
         very top of the function (no fabrication possible)."""
         result = _interpolate_euler("Atlantis", 100.0)
-        assert result is None, (
-            f"Unknown plate must return None; got {result!r}"
-        )
+        assert result is None, f"Unknown plate must return None; got {result!r}"
 
     def test_age_in_range_still_interpolates(self):
         """Regression: ages inside the table range still
@@ -429,8 +400,7 @@ class TestM7InterpolateEulerFallback:
         in-range request."""
         result = _interpolate_euler("Adria", 130.0)
         assert result is not None, (
-            f"Adria at 130 Ma (inside table) must NOT return "
-            f"None; got {result!r}"
+            f"Adria at 130 Ma (inside table) must NOT return None; got {result!r}"
         )
         lat, lon, rot = result
         # Adria at 130 Ma has euler_lat=38, euler_lon=23,
@@ -498,10 +468,10 @@ class TestM7InterpolateEulerFallback:
         # fall through to identity silently", regardless of the
         # exit mechanism.
         assert (
-            "raise ValueError" in cleaned or
+            "raise ValueError" in cleaned
+            or
             # look for "return None" after the for-loop body
-            re.search(r"for i in range.*?\n.*?return None", cleaned, re.DOTALL)
-            is not None
+            re.search(r"for i in range.*?\n.*?return None", cleaned, re.DOTALL) is not None
         ), (
             "_interpolate_euler must NOT silently fall through to "
             "the identity pole; the loop exit must be "
@@ -511,8 +481,7 @@ class TestM7InterpolateEulerFallback:
         # And the source must mention the M-7 fix in a comment
         # so future maintainers see the cross-reference.
         assert "M-7" in src or "M7" in src or "identity pole" in src.lower(), (
-            "_interpolate_euler source should mention the M-7 "
-            "fix in a comment for cross-reference"
+            "_interpolate_euler source should mention the M-7 fix in a comment for cross-reference"
         )
 
     def test_reconstruct_paleo_position_out_of_range_returns_none(self):
@@ -542,8 +511,7 @@ class TestSourceGuard:
     def test_anatolia_bucket_present(self):
         src = (_SRC / "rlpe" / "paleo_reconstruction.py").read_text()
         assert "Anatolia" in src, (
-            "paleo_reconstruction.py must contain 'Anatolia' "
-            "(the new bucket added by Phase 3D M3)"
+            "paleo_reconstruction.py must contain 'Anatolia' (the new bucket added by Phase 3D M3)"
         )
         # Also pin the bucket range literally so a future
         # maintainer can't accidentally widen/shrink it.
@@ -581,8 +549,7 @@ class TestSourceGuard:
         # ``[\\(（]?`` ... ``\\s*[)）]?``. Look for the closing
         # bracket which is unique to the fix.
         assert "[)）]?" in src, (
-            "geo_coords.py must contain the optional closing-"
-            "bracket pattern '[)）]?' (Phase 3D M5)"
+            "geo_coords.py must contain the optional closing-bracket pattern '[)）]?' (Phase 3D M5)"
         )
         assert "[\\(（]?" in src, (
             "geo_coords.py must contain the optional opening-"

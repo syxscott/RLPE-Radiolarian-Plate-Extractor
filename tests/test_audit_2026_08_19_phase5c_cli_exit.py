@@ -60,11 +60,17 @@ class TestExitCodeThreeState:
         from rlpe.cli import UserError, main
 
         bad_dir = tmp_path / "does_not_exist"
-        with patch.object(sys, "argv", [
-            "rlpe",
-            "--pdf-dir", str(bad_dir),
-            "--work-dir", str(tmp_path / "work"),
-        ]):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "rlpe",
+                "--pdf-dir",
+                str(bad_dir),
+                "--work-dir",
+                str(tmp_path / "work"),
+            ],
+        ):
             rc = main()
         assert rc == 2, f"--pdf-dir typo should exit 2, got {rc}"
 
@@ -74,10 +80,14 @@ class TestExitCodeThreeState:
         from rlpe.cli import UserError, _validate_args, build_parser
 
         bad_dir = tmp_path / "missing"
-        args = build_parser().parse_args([
-            "--pdf-dir", str(bad_dir),
-            "--work-dir", str(tmp_path / "work"),
-        ])
+        args = build_parser().parse_args(
+            [
+                "--pdf-dir",
+                str(bad_dir),
+                "--work-dir",
+                str(tmp_path / "work"),
+            ]
+        )
         with pytest.raises(UserError, match="--pdf-dir does not exist"):
             _validate_args(args)
 
@@ -88,11 +98,17 @@ class TestExitCodeThreeState:
         from rlpe.cli import main
 
         bad_dir = tmp_path / "missing"
-        with patch.object(sys, "argv", [
-            "rlpe",
-            "--pdf-dir", str(bad_dir),
-            "--work-dir", str(tmp_path / "work"),
-        ]):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "rlpe",
+                "--pdf-dir",
+                str(bad_dir),
+                "--work-dir",
+                str(tmp_path / "work"),
+            ],
+        ):
             rc = main()
         captured = capsys.readouterr()
         assert rc == 2
@@ -112,11 +128,17 @@ class TestExitCodeThreeState:
         (pdf_dir / "stub.pdf").write_bytes(b"%PDF-1.4 stub")
         work_dir = tmp_path / "work"
 
-        with patch.object(sys, "argv", [
-            "rlpe",
-            "--pdf-dir", str(pdf_dir),
-            "--work-dir", str(work_dir),
-        ]):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "rlpe",
+                "--pdf-dir",
+                str(pdf_dir),
+                "--work-dir",
+                str(work_dir),
+            ],
+        ):
             # Patch the LOCAL reference in the cli module — cli.py does
             # ``from .pipeline import RadiolarianPipeline`` so the name
             # lives in rlpe.cli's namespace, not rlpe.pipeline's.
@@ -202,9 +224,7 @@ class TestUtf8Encoding:
         assert '("stdout", "stderr")' in text, (
             "cli.py must iterate both stdout and stderr in the wrap loop"
         )
-        assert "io.TextIOWrapper" in text, (
-            "cli.py must use io.TextIOWrapper to rewrap the streams"
-        )
+        assert "io.TextIOWrapper" in text, "cli.py must use io.TextIOWrapper to rewrap the streams"
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +249,7 @@ class TestVersionFlag:
                 # Use isinstance (the public-but-private surface) plus
                 # the .version string as the source of truth.
                 assert isinstance(action, argparse._VersionAction), (
-                    f"--version must use argparse's _VersionAction, "
-                    f"got {type(action).__name__}"
+                    f"--version must use argparse's _VersionAction, got {type(action).__name__}"
                 )
                 assert "RLPE" in action.version, (
                     f"--version output must start with 'RLPE', got {action.version!r}"
@@ -254,8 +273,7 @@ class TestVersionFlag:
         from rlpe import __version__, cli
 
         assert cli.VERSION == __version__, (
-            f"cli.VERSION ({cli.VERSION!r}) must equal __version__ "
-            f"({__version__!r})"
+            f"cli.VERSION ({cli.VERSION!r}) must equal __version__ ({__version__!r})"
         )
 
     def test_version_subprocess_exits_zero(self):
@@ -271,8 +289,7 @@ class TestVersionFlag:
             timeout=30,
         )
         assert result.returncode == 0, (
-            f"--version must exit 0, got {result.returncode}. "
-            f"stderr: {result.stderr}"
+            f"--version must exit 0, got {result.returncode}. stderr: {result.stderr}"
         )
         out = result.stdout.strip()
         assert out, "--version output must be non-empty"
@@ -355,49 +372,79 @@ class TestYoloConfValidation:
 
         parser = build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args([
-                "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-                "--yolo-conf", "2.0",
-            ])
+            parser.parse_args(
+                [
+                    "--pdf-dir",
+                    "/tmp",
+                    "--work-dir",
+                    "/tmp",
+                    "--yolo-conf",
+                    "2.0",
+                ]
+            )
 
     def test_rejects_below_zero(self):
         from rlpe.cli import build_parser
 
         parser = build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args([
-                "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-                "--yolo-conf", "-0.5",
-            ])
+            parser.parse_args(
+                [
+                    "--pdf-dir",
+                    "/tmp",
+                    "--work-dir",
+                    "/tmp",
+                    "--yolo-conf",
+                    "-0.5",
+                ]
+            )
 
     def test_accepts_zero(self):
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-            "--yolo-conf", "0.0",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                "/tmp",
+                "--work-dir",
+                "/tmp",
+                "--yolo-conf",
+                "0.0",
+            ]
+        )
         assert ns.yolo_conf == 0.0
 
     def test_accepts_one(self):
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-            "--yolo-conf", "1.0",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                "/tmp",
+                "--work-dir",
+                "/tmp",
+                "--yolo-conf",
+                "1.0",
+            ]
+        )
         assert ns.yolo_conf == 1.0
 
     def test_accepts_midrange(self):
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-            "--yolo-conf", "0.5",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                "/tmp",
+                "--work-dir",
+                "/tmp",
+                "--yolo-conf",
+                "0.5",
+            ]
+        )
         assert ns.yolo_conf == 0.5
 
     def test_default_is_none(self):
@@ -406,9 +453,14 @@ class TestYoloConfValidation:
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                "/tmp",
+                "--work-dir",
+                "/tmp",
+            ]
+        )
         assert ns.yolo_conf is None
 
 
@@ -420,29 +472,47 @@ class TestYoloIouValidation:
 
         parser = build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args([
-                "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-                "--yolo-iou", "1.5",
-            ])
+            parser.parse_args(
+                [
+                    "--pdf-dir",
+                    "/tmp",
+                    "--work-dir",
+                    "/tmp",
+                    "--yolo-iou",
+                    "1.5",
+                ]
+            )
 
     def test_rejects_below_zero(self):
         from rlpe.cli import build_parser
 
         parser = build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args([
-                "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-                "--yolo-iou", "-0.1",
-            ])
+            parser.parse_args(
+                [
+                    "--pdf-dir",
+                    "/tmp",
+                    "--work-dir",
+                    "/tmp",
+                    "--yolo-iou",
+                    "-0.1",
+                ]
+            )
 
     def test_accepts_midrange(self):
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-            "--yolo-iou", "0.45",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                "/tmp",
+                "--work-dir",
+                "/tmp",
+                "--yolo-iou",
+                "0.45",
+            ]
+        )
         assert ns.yolo_iou == 0.45
 
 
@@ -453,20 +523,32 @@ class TestTaxonModelChoices:
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-            "--taxon-model", "en_eco",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                "/tmp",
+                "--work-dir",
+                "/tmp",
+                "--taxon-model",
+                "en_eco",
+            ]
+        )
         assert ns.taxon_model == "en_eco"
 
     def test_accepts_en_plus(self):
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-            "--taxon-model", "en_plus",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                "/tmp",
+                "--work-dir",
+                "/tmp",
+                "--taxon-model",
+                "en_plus",
+            ]
+        )
         assert ns.taxon_model == "en_plus"
 
     def test_rejects_invalid(self):
@@ -476,18 +558,29 @@ class TestTaxonModelChoices:
 
         parser = build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args([
-                "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-                "--taxon-model", "invalid",
-            ])
+            parser.parse_args(
+                [
+                    "--pdf-dir",
+                    "/tmp",
+                    "--work-dir",
+                    "/tmp",
+                    "--taxon-model",
+                    "invalid",
+                ]
+            )
 
     def test_default_is_en_eco(self):
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", "/tmp", "--work-dir", "/tmp",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                "/tmp",
+                "--work-dir",
+                "/tmp",
+            ]
+        )
         assert ns.taxon_model == "en_eco"
 
 
@@ -515,21 +608,17 @@ class TestSourceGuardAllFixes:
         assert idx > 0
         body = text[idx : idx + 3000]
         assert "return 2" in body, (
-            "main() must handle exit code 2 (UserError). "
-            f"Body:\n{body[:500]}…"
+            f"main() must handle exit code 2 (UserError). Body:\n{body[:500]}…"
         )
         assert "return 1" in body, (
-            "main() must handle exit code 1 (unexpected exception). "
-            f"Body:\n{body[:500]}…"
+            f"main() must handle exit code 1 (unexpected exception). Body:\n{body[:500]}…"
         )
         # The success path may be ``return _run_pipeline(args)`` or
         # ``return 0``; either is fine as long as _run_pipeline itself
         # returns 0. Verify both: a) main() delegates to _run_pipeline
         # AND b) _run_pipeline ends with ``return 0``.
         run_idx = text.find("def _run_pipeline(")
-        assert run_idx > 0, (
-            "_run_pipeline() must exist (the success path's return 0)"
-        )
+        assert run_idx > 0, "_run_pipeline() must exist (the success path's return 0)"
         run_body = text[run_idx:]
         assert "return 0" in run_body, (
             "_run_pipeline() must end with ``return 0`` so main()'s "
@@ -550,14 +639,13 @@ class TestSourceGuardAllFixes:
     def test_taxon_model_uses_choices(self):
         text = _CLI_PATH.read_text(encoding="utf-8")
         assert "taxon-model" in text and '"en_eco"' in text and "choices=" in text, (
-            "--taxon-model must declare a choices= allow-list "
-            "containing en_eco"
+            "--taxon-model must declare a choices= allow-list containing en_eco"
         )
 
     def test_version_flag_present(self):
         text = _CLI_PATH.read_text(encoding="utf-8")
         assert '"--version"' in text, "--version flag must be present"
-        assert "action=\"version\"" in text or "action='version'" in text, (
+        assert 'action="version"' in text or "action='version'" in text, (
             "--version must use action='version'"
         )
 
@@ -580,11 +668,17 @@ class TestCliLogger:
         work_dir = tmp_path / "work"
 
         with caplog.at_level(logging.ERROR, logger="rlpe.cli"):
-            with patch.object(sys, "argv", [
-                "rlpe",
-                "--pdf-dir", str(pdf_dir),
-                "--work-dir", str(work_dir),
-            ]):
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "rlpe",
+                    "--pdf-dir",
+                    str(pdf_dir),
+                    "--work-dir",
+                    str(work_dir),
+                ],
+            ):
                 # Patch the LOCAL reference in rlpe.cli (cli.py does
                 # ``from .pipeline import RadiolarianPipeline`` so the
                 # name lives in rlpe.cli's namespace, not rlpe.pipeline's).
@@ -595,8 +689,7 @@ class TestCliLogger:
         assert rc == 1
         # At least one log record on rlpe.cli at ERROR or above.
         error_records = [
-            r for r in caplog.records
-            if r.name == "rlpe.cli" and r.levelno >= logging.ERROR
+            r for r in caplog.records if r.name == "rlpe.cli" and r.levelno >= logging.ERROR
         ]
         assert error_records, (
             "runtime-error branch must log via rlpe.cli logger "

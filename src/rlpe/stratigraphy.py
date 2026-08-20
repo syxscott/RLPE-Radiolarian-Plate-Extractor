@@ -2005,11 +2005,15 @@ def lookup_biozone_ma(name: str | None) -> tuple[float, float] | None:
     # Real papers write every variant. We try the direct hit FIRST,
     # then fall back to the alternate spacing if needed. This
     # preserves backward-compat with all Phase 60 entries.
-    raw_loose = re.sub(
-        r"^([UAZRPNrpnuaz]+)\s+(\d+)$",
-        r"\1\2",
-        raw,
-    ) if re.match(r"^(?:UAZ|RP|RN)\s+\d+$", raw, re.IGNORECASE) else raw
+    raw_loose = (
+        re.sub(
+            r"^([UAZRPNrpnuaz]+)\s+(\d+)$",
+            r"\1\2",
+            raw,
+        )
+        if re.match(r"^(?:UAZ|RP|RN)\s+\d+$", raw, re.IGNORECASE)
+        else raw
+    )
     if raw_loose != raw and raw_loose in _BIOZONE_TO_MA:
         raw = raw_loose
     # Direct hit.

@@ -110,9 +110,7 @@ def _fmt_float(v: Any, fmt: str) -> str | None:
 # callers pass ``allow_local=True`` from the dev defaults path. Any
 # URL loaded from QSettings is rejected on loopback unless the
 # caller explicitly opts in.
-_LOOPBACK_HOSTS: frozenset[str] = frozenset(
-    {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
-)
+_LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"})
 
 # Caption snippet truncation length for the detail pane. Phase F-3
 # NIT fix: the magic number 280 was repeated twice on the same line.
@@ -384,8 +382,7 @@ class _ExportWorker(QThread):
         super().__init__()
         if fmt not in self._VALID_FMTS:
             raise ValueError(
-                f"unknown export format {fmt!r} "
-                f"(must be one of {sorted(self._VALID_FMTS)})"
+                f"unknown export format {fmt!r} (must be one of {sorted(self._VALID_FMTS)})"
             )
         self._fmt = fmt
         self._run_output = run_output
@@ -1444,7 +1441,9 @@ class ResultsTab(QWidget):
         # ── Caption snippet ───────────────────────────────────
         cap_snippet = row.get("caption_snippet") or ""
         if cap_snippet:
-            display = cap_snippet[:_CAPTION_SNIPPET_MAX] + ("…" if len(cap_snippet) > _CAPTION_SNIPPET_MAX else "")
+            display = cap_snippet[:_CAPTION_SNIPPET_MAX] + (
+                "…" if len(cap_snippet) > _CAPTION_SNIPPET_MAX else ""
+            )
             html.append(
                 f"<div style='padding:6px 8px;border-top:1px solid #eee'>"
                 f"<b style='font-size:12px'>{i18n._tr('restab.detail.caption', 'Caption')}</b>"
@@ -2023,9 +2022,7 @@ class ResultsTab(QWidget):
                     i18n._tr("jobstab.export.saved").format(count=count, path=basename)
                 )
             else:
-                self._set_status(
-                    i18n._tr("jobstab.export.saved_short").format(path=basename)
-                )
+                self._set_status(i18n._tr("jobstab.export.saved_short").format(path=basename))
 
         def _on_error(msg: str) -> None:
             self._re_enable_export_buttons()
@@ -2148,9 +2145,7 @@ class ResultsTab(QWidget):
         """
         validated = _validate_api_url(url)
         if validated is None:
-            self._log.warning(
-                "ResultsTab._set_api_url rejected %r (M-5)", url
-            )
+            self._log.warning("ResultsTab._set_api_url rejected %r (M-5)", url)
             self._set_status(
                 i18n._tr(
                     "restab.api_url.invalid",
@@ -2258,8 +2253,7 @@ class ResultsTab(QWidget):
                     api_url = validated
                 else:
                     self._log.warning(
-                        "ignoring invalid API URL override %r (M-5); "
-                        "falling back to %s",
+                        "ignoring invalid API URL override %r (M-5); falling back to %s",
                         v,
                         DEFAULT_API_URL,
                     )

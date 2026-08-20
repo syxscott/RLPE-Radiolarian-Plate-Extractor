@@ -47,10 +47,19 @@ class TestF3RunTab:
     def test_tooltips_use_i18n(self):
         src = _read("src/rlpe/gui/run_tab.py")
         # The two fixed tooltip lines must go through i18n._tr.
-        assert 'self._caption_window.setToolTip(\n            i18n._tr("runtab.label.caption_window.tooltip")\n        )' in src
-        assert 'self._od_caption_window.setToolTip(\n            i18n._tr("runtab.label.od_caption_window.tooltip")\n        )' in src
+        assert (
+            'self._caption_window.setToolTip(\n            i18n._tr("runtab.label.caption_window.tooltip")\n        )'
+            in src
+        )
+        assert (
+            'self._od_caption_window.setToolTip(\n            i18n._tr("runtab.label.od_caption_window.tooltip")\n        )'
+            in src
+        )
         # And the raw English strings must be gone.
-        assert 'GROBID caption→page lookup window' not in src or 'i18n._tr(' in src.split('GROBID caption→page lookup window')[0][-200:]
+        assert (
+            "GROBID caption→page lookup window" not in src
+            or "i18n._tr(" in src.split("GROBID caption→page lookup window")[0][-200:]
+        )
 
     def test_status_label_constant_exists(self):
         src = _read("src/rlpe/gui/run_tab.py")
@@ -120,8 +129,13 @@ class TestF3JobsTab:
         src = _read("src/rlpe/gui/jobs_tab.py")
         assert "_STATUS_BG_COLORS" in src
         # All five statuses must be in the map.
-        for status in ("STATUS_RUNNING", "STATUS_DONE", "STATUS_FAILED",
-                       "STATUS_CANCELLED", "STATUS_QUEUED"):
+        for status in (
+            "STATUS_RUNNING",
+            "STATUS_DONE",
+            "STATUS_FAILED",
+            "STATUS_CANCELLED",
+            "STATUS_QUEUED",
+        ):
             assert status in src.split("_STATUS_BG_COLORS")[1].split("\n\n")[0], (
                 f"{status} missing from _STATUS_BG_COLORS"
             )
@@ -150,14 +164,10 @@ class TestF3SettingsTab:
         # The QSS template must interpolate the constant (no raw
         # hex inside the template literal). The template is multi-line
         # so we look for the f-string in the assignment block.
-        qss_block = re.search(
-            r"_INVALID_BORDER_QSS\s*=\s*\(([\s\S]*?)\)", src
-        )
+        qss_block = re.search(r"_INVALID_BORDER_QSS\s*=\s*\(([\s\S]*?)\)", src)
         assert qss_block is not None, "_INVALID_BORDER_QSS multi-line def must exist"
         block = qss_block.group(1)
-        assert "#dc3545" not in block, (
-            "_INVALID_BORDER_QSS must reference the constant, not hex"
-        )
+        assert "#dc3545" not in block, "_INVALID_BORDER_QSS must reference the constant, not hex"
         assert "_INVALID_BORDER_COLOR" in block
 
 
@@ -198,9 +208,7 @@ class TestF3WebSpaMagicNums:
         m = re.search(r"function\s+showNotification\s*\([^)]*\)\s*\{([\s\S]*?)\n\}", js)
         assert m is not None, "showNotification function must exist"
         body = m.group(1)
-        assert "3000" not in body, (
-            "showNotification should use _NOTIFICATION_HIDE_MS, not 3000"
-        )
+        assert "3000" not in body, "showNotification should use _NOTIFICATION_HIDE_MS, not 3000"
         # And the named constant must be defined.
         assert "_NOTIFICATION_HIDE_MS = 3000" in js
 
@@ -214,9 +222,7 @@ class TestF3WebSpaMagicNums:
             f"_autoSwitchTimer must use _AUTO_SWITCH_GRACE_MS, not literal {m.group(1) if m else '?'}"
         )
         m2 = re.search(r"revokeObjectURL\([^)]+\)\s*,\s*\d+\)", js)
-        assert m2 is None, (
-            "revokeObjectURL timeout must use _BLOB_REVOKE_DELAY_MS, not literal"
-        )
+        assert m2 is None, "revokeObjectURL timeout must use _BLOB_REVOKE_DELAY_MS, not literal"
 
     def test_no_console_info_in_production(self):
         # Phase F-3 NIT: two console.info calls inside showMiniMaxFallbackModal
@@ -228,8 +234,7 @@ class TestF3WebSpaMagicNums:
         assert m is not None
         body = m.group(0)
         assert "console.info(" not in body, (
-            "showMiniMaxFallbackModal should not call console.info(...) "
-            "in production"
+            "showMiniMaxFallbackModal should not call console.info(...) in production"
         )
 
     def test_no_inline_onclick_in_template_literal(self):
@@ -243,9 +248,7 @@ class TestF3WebSpaMagicNums:
         # comments don't trip the assertion.
         js_stripped = re.sub(r"//[^\n]*", "", js)
         js_stripped = re.sub(r"/\*[\s\S]*?\*/", "", js_stripped)
-        assert (
-            "onclick=\"document.querySelector('[data-tab=" not in js_stripped
-        ), (
+        assert "onclick=\"document.querySelector('[data-tab=" not in js_stripped, (
             "inline onclick for tab-switch should be replaced with data-action"
         )
         # And the delegation handler must include the new action.
@@ -257,9 +260,7 @@ class TestF3WebSpaMagicNums:
         )
         assert m is not None, "jobs-list click handler block must exist"
         body = m.group(1)
-        assert "'goto-upload'" in body, (
-            "click handler must dispatch the goto-upload action"
-        )
+        assert "'goto-upload'" in body, "click handler must dispatch the goto-upload action"
 
     def test_inner_html_loop_replaced(self):
         # Phase F-3 MINOR: ``populateResultFilter`` used
@@ -291,7 +292,10 @@ class TestF3WebSpaMagicNums:
         index_html = _read("web/index.html")
         # The inline style for upload hint must be gone.
         assert 'class="upload-area-hint"' in index_html
-        assert 'style="font-size: 0.78rem; color: var(--text-light); margin-top: 0.5rem;"' not in index_html
+        assert (
+            'style="font-size: 0.78rem; color: var(--text-light); margin-top: 0.5rem;"'
+            not in index_html
+        )
         css = _read("web/css/style.css")
         assert ".upload-area-hint" in css
         assert "font-size: 0.78rem" in css

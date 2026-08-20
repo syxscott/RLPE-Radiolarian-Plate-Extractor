@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 WEB_HTML = Path(__file__).resolve().parents[1] / "web" / "index.html"
-WEB_JS  = Path(__file__).resolve().parents[1] / "web" / "js" / "app.js"
+WEB_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "app.js"
 
 
 # -----------------------------------------------------------------------
@@ -20,10 +20,10 @@ WEB_JS  = Path(__file__).resolve().parents[1] / "web" / "js" / "app.js"
 class TestCSPMeta:
     def test_csp_meta_in_html(self):
         html = WEB_HTML.read_text()
-        assert 'Content-Security-Policy' in html, \
-            "web/index.html must contain a CSP <meta> tag"
-        assert re.search(r'<meta[^>]+http-equiv=["\']Content-Security-Policy["\']', html), \
+        assert "Content-Security-Policy" in html, "web/index.html must contain a CSP <meta> tag"
+        assert re.search(r'<meta[^>]+http-equiv=["\']Content-Security-Policy["\']', html), (
             "CSP meta tag not found — check web/index.html <head>"
+        )
 
 
 # -----------------------------------------------------------------------
@@ -56,10 +56,12 @@ class TestXFrameOptions:
 
         client = TestClient(app)
         resp = client.get("/")
-        assert "x-frame-options" in resp.headers, \
+        assert "x-frame-options" in resp.headers, (
             "X-Frame-Options header must be present in API responses"
-        assert resp.headers["x-frame-options"].lower() == "deny", \
+        )
+        assert resp.headers["x-frame-options"].lower() == "deny", (
             f"X-Frame-Options must be DENY, got {resp.headers['x-frame-options']}"
+        )
 
 
 # -----------------------------------------------------------------------
@@ -68,14 +70,14 @@ class TestXFrameOptions:
 class TestFetchWithTimeout:
     def test_fetch_with_timeout_helper_exists(self):
         js = WEB_JS.read_text()
-        assert "async function fetchWithTimeout(" in js, \
+        assert "async function fetchWithTimeout(" in js, (
             "fetchWithTimeout helper must be defined in web/js/app.js"
-        assert "new AbortController()" in js, \
-            "fetchWithTimeout must use AbortController"
-        assert "controller.abort()" in js, \
+        )
+        assert "new AbortController()" in js, "fetchWithTimeout must use AbortController"
+        assert "controller.abort()" in js, (
             "fetchWithTimeout must call controller.abort() on timeout"
-        assert "clearTimeout(timer)" in js, \
-            "fetchWithTimeout must clear the timer in finally block"
+        )
+        assert "clearTimeout(timer)" in js, "fetchWithTimeout must clear the timer in finally block"
 
     def test_no_direct_fetch_in_app_js(self):
         """All fetch() calls should go through fetchWithTimeout().
@@ -95,8 +97,7 @@ class TestFetchWithTimeout:
         # each one either (a) is inside fetchWithTimeout, or (b) is the
         # definition line "return await fetch(" inside fetchWithTimeout.
         lines_with_fetch = [
-            (i + 1, line) for i, line in enumerate(js.splitlines())
-            if 'fetch(' in line
+            (i + 1, line) for i, line in enumerate(js.splitlines()) if "fetch(" in line
         ]
 
         # fetchWithTimeout definition: the `return await fetch(` line inside it
@@ -105,23 +106,21 @@ class TestFetchWithTimeout:
         bad_lines = []
         in_fetch_with_timeout = False
         for lineno, line in enumerate(js.splitlines(), 1):
-            if 'async function fetchWithTimeout(' in line:
+            if "async function fetchWithTimeout(" in line:
                 in_fetch_with_timeout = True
-            elif in_fetch_with_timeout and line.strip().startswith('}'):
+            elif in_fetch_with_timeout and line.strip().startswith("}"):
                 in_fetch_with_timeout = False
             # Skip JS comment lines (//, /*, *). Comments may legitimately
             # mention ``fetch()`` in prose without being a real call site.
             stripped = line.lstrip()
-            if stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*'):
+            if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*"):
                 continue
-            if 'fetch(' in line and not in_fetch_with_timeout:
+            if "fetch(" in line and not in_fetch_with_timeout:
                 # Check if it's the return await fetch() inside the helper
-                if 'return await fetch(' not in line and 'fetchWithTimeout(' not in line:
+                if "return await fetch(" not in line and "fetchWithTimeout(" not in line:
                     bad_lines.append((lineno, line.strip()))
 
-        assert not bad_lines, (
-            f"Direct fetch() calls found outside fetchWithTimeout: {bad_lines}"
-        )
+        assert not bad_lines, f"Direct fetch() calls found outside fetchWithTimeout: {bad_lines}"
 
 
 # -----------------------------------------------------------------------
@@ -130,12 +129,15 @@ class TestFetchWithTimeout:
 class TestAddFilesSizeLimit:
     def test_add_files_size_limit_constant(self):
         js = WEB_JS.read_text()
-        assert re.search(r'MAX_FILE_SIZE\s*=\s*256\s*\*\s*1024\s*\*\s*1024', js), \
+        assert re.search(r"MAX_FILE_SIZE\s*=\s*256\s*\*\s*1024\s*\*\s*1024", js), (
             "MAX_FILE_SIZE = 256 * 1024 * 1024 must be defined in addFiles()"
-        assert "f.size > MAX_FILE_SIZE" in js or "f.size > 256" in js, \
+        )
+        assert "f.size > MAX_FILE_SIZE" in js or "f.size > 256" in js, (
             "addFiles must check file.size against MAX_FILE_SIZE"
-        assert "showToast" in js and "超过 256 MB" in js, \
+        )
+        assert "showToast" in js and "超过 256 MB" in js, (
             "Oversized files must trigger a showToast warning"
+        )
 
 
 # -----------------------------------------------------------------------
@@ -146,22 +148,20 @@ class TestToastReplacesAlert:
         js = WEB_JS.read_text()
         # alert( can legitimately appear in a string or comment; check lines
         alert_lines = [
-            (i + 1, line) for i, line in enumerate(js.splitlines())
-            if re.search(r'\balert\s*\(', line)
-            and not line.strip().startswith('//')
-            and '//' not in line.split('alert')[0]  # alert not in comment
+            (i + 1, line)
+            for i, line in enumerate(js.splitlines())
+            if re.search(r"\balert\s*\(", line)
+            and not line.strip().startswith("//")
+            and "//" not in line.split("alert")[0]  # alert not in comment
         ]
-        assert not alert_lines, \
-            f"alert() calls still present in app.js: {alert_lines}"
+        assert not alert_lines, f"alert() calls still present in app.js: {alert_lines}"
 
     def test_toast_container_in_html(self):
         html = WEB_HTML.read_text()
-        assert 'id="toast-container"' in html, \
-            'web/index.html must contain a #toast-container div'
+        assert 'id="toast-container"' in html, "web/index.html must contain a #toast-container div"
         css = Path(__file__).resolve().parents[1] / "web" / "css" / "style.css"
         css_text = css.read_text()
-        assert '.toast' in css_text, \
-            "web/css/style.css must define .toast styles"
+        assert ".toast" in css_text, "web/css/style.css must define .toast styles"
 
 
 # -----------------------------------------------------------------------
@@ -171,10 +171,7 @@ class TestJSONParseTryCatch:
     def test_confirm_delete_job_ids_try_catch(self):
         js = WEB_JS.read_text()
         # The confirmDelete function should have a try/catch around JSON.parse
-        confirm_delete_match = re.search(
-            r'async function confirmDelete\s*\([^)]*\)\s*\{',
-            js
-        )
+        confirm_delete_match = re.search(r"async function confirmDelete\s*\([^)]*\)\s*\{", js)
         assert confirm_delete_match, "confirmDelete function not found"
 
         # Extract the function body (rough scan to closing brace).
@@ -184,9 +181,9 @@ class TestJSONParseTryCatch:
         depth = 1
         end = start
         for i, ch in enumerate(js[start:], start=start):
-            if ch == '{':
+            if ch == "{":
                 depth += 1
-            elif ch == '}':
+            elif ch == "}":
                 depth -= 1
                 if depth == 0:
                     end = i
@@ -194,15 +191,15 @@ class TestJSONParseTryCatch:
 
         fn_body = js[start:end]
         assert "JSON.parse" in fn_body, "JSON.parse should be used in confirmDelete"
-        assert re.search(r'try\s*\{[\s\S]*JSON\.parse', fn_body), \
+        assert re.search(r"try\s*\{[\s\S]*JSON\.parse", fn_body), (
             "JSON.parse must be inside a try block"
+        )
         # Verify catch block handles error with a fallback. Use
         # ``[\s\S]*?`` (non-greedy) so the catch body can contain
         # nested ``{}`` literals (e.g. ``dataset.jobIds || '[]'``).
-        assert re.search(
-            r'catch\s*\([^)]+\)\s*\{[\s\S]*?jobIds\s*=', fn_body,
-            re.DOTALL
-        ), "JSON.parse catch block must reassign jobIds with a fallback (e.g. singular data-job-id or [])"
+        assert re.search(r"catch\s*\([^)]+\)\s*\{[\s\S]*?jobIds\s*=", fn_body, re.DOTALL), (
+            "JSON.parse catch block must reassign jobIds with a fallback (e.g. singular data-job-id or [])"
+        )
 
 
 # -----------------------------------------------------------------------
@@ -213,10 +210,10 @@ class TestTabFallbackClass:
         js = WEB_JS.read_text()
         # The showTab fallback (or tab-switching fallback) must use .tab-btn
         # NOT .tab-button
-        assert ".tab-button" not in js, \
+        assert ".tab-button" not in js, (
             ".tab-button class must be replaced with .tab-btn in fallback code"
-        assert ".tab-btn" in js, \
-            "Fallback code must use .tab-btn class"
+        )
+        assert ".tab-btn" in js, "Fallback code must use .tab-btn class"
 
 
 # -----------------------------------------------------------------------
@@ -225,12 +222,15 @@ class TestTabFallbackClass:
 class TestMutationObserverDisconnect:
     def test_observer_disconnect_in_app_js(self):
         js = WEB_JS.read_text()
-        assert "observer.disconnect()" in js or "_costEstimateObserver" in js, \
+        assert "observer.disconnect()" in js or "_costEstimateObserver" in js, (
             "MutationObserver must be disconnected on page unload"
-        assert "beforeunload" in js, \
+        )
+        assert "beforeunload" in js, (
             "beforeunload event listener must be added to disconnect observer"
-        assert "_costEstimateObserver" in js, \
+        )
+        assert "_costEstimateObserver" in js, (
             "Observer reference must be stored (e.g. window._costEstimateObserver)"
+        )
 
 
 # -----------------------------------------------------------------------

@@ -216,8 +216,7 @@ class TestThinkingRetryLockScope:
         # order bug. Accept either form when locating the lock-open.
         lock_open = retry_block.find("with self._thinking_retry_lock")
         assert lock_open >= 0, (
-            "Round 9 fix: retry block must open "
-            "'with self._thinking_retry_lock' before infer_panel"
+            "Round 9 fix: retry block must open 'with self._thinking_retry_lock' before infer_panel"
         )
         # The infer_panel call MUST be inside the lock block. The
         # previous "lock released before infer_panel" pattern closed

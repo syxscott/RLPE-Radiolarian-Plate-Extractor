@@ -93,10 +93,8 @@ class TestSweep6N1GrobidFallbackForwardsDevice:
         # Pin the GROBID-fallback site by the unique
         # `for page in pages:` + ``detect_figure_regions`` pattern.
         page_loop_idx = src.find("\n        for page in pages:")
-        assert page_loop_idx > 0, (
-            "`for page in pages:` loop missing — file refactored?"
-        )
-        snippet = src[page_loop_idx:page_loop_idx + 2000]
+        assert page_loop_idx > 0, "`for page in pages:` loop missing — file refactored?"
+        snippet = src[page_loop_idx : page_loop_idx + 2000]
         assert "detect_figure_regions(" in snippet, (
             "for-page-in-pages loop no longer calls detect_figure_regions"
         )

@@ -134,9 +134,7 @@ class TestM21NormalizePanelDictFiltersHallucinatedFields:
         — the whitelist is now authoritative."""
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "X", "fake_field": {"nested": "garbage"}}
-        )
+        out = _normalize_panel_dict({"species": "X", "fake_field": {"nested": "garbage"}})
         assert "fake_field" not in out
 
     def test_list_hallucinated_field_dropped(self):
@@ -153,9 +151,7 @@ class TestM21NormalizePanelDictFiltersHallucinatedFields:
         """A whitelisted LIST (``"species_list"``) IS preserved."""
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "X", "species_list": ["X", "Y", "Z"]}
-        )
+        out = _normalize_panel_dict({"species": "X", "species_list": ["X", "Y", "Z"]})
         assert out.get("species_list") == ["X", "Y", "Z"]
 
     def test_whitelisted_dict_preserved(self):
@@ -171,15 +167,11 @@ class TestM21NormalizePanelDictFiltersHallucinatedFields:
         from rlpe.llm_backends import _normalize_panel_dict
 
         caplog.set_level(logging.DEBUG, logger="rlpe.llm_backends")
-        _normalize_panel_dict(
-            {"species": "X", "ocr_confidence": 0.95, "fake_field": "garbage"}
-        )
+        _normalize_panel_dict({"species": "X", "ocr_confidence": 0.95, "fake_field": "garbage"})
         debug_msgs = [
             record.message for record in caplog.records if record.levelno <= logging.DEBUG
         ]
-        assert any(
-            "ocr_confidence" in m and "fake_field" in m for m in debug_msgs
-        ), (
+        assert any("ocr_confidence" in m and "fake_field" in m for m in debug_msgs), (
             f"Expected DEBUG log naming dropped keys, got {debug_msgs}"
         )
 
@@ -195,9 +187,7 @@ class TestM21NormalizePanelDictFiltersHallucinatedFields:
         ]
         # Only the open-nomen discount message (if any) should appear —
         # never the "Dropped hallucinated panel fields" message.
-        assert not any(
-            "Dropped hallucinated panel fields" in m for m in debug_msgs
-        ), (
+        assert not any("Dropped hallucinated panel fields" in m for m in debug_msgs), (
             f"Did not expect a drop-fields log, got {debug_msgs}"
         )
 
@@ -261,12 +251,8 @@ class TestM22ValidateMaRangeHelper:
 
         caplog.set_level(logging.WARNING, logger="rlpe.llm_backends")
         _validate_ma_range(100, 50)
-        warnings = [
-            r.message for r in caplog.records if r.levelno >= logging.WARNING
-        ]
-        assert any(
-            "ma_top=100" in m and "ma_base=50" in m for m in warnings
-        ), (
+        warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("ma_top=100" in m and "ma_base=50" in m for m in warnings), (
             f"Expected WARNING with the bad range values, got {warnings}"
         )
 
@@ -441,9 +427,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
 
                 raise HTTPError("401", response=self)
 
-        monkeypatch.setattr(
-            "rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp()
-        )
+        monkeypatch.setattr("rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp())
         backend = LlamaCppGemmaBackend(host="http://127.0.0.1:8080", model="m")
         with pytest.raises(LLMAuthenticationError) as ei:
             backend._chat_completion(
@@ -465,9 +449,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
 
                 raise HTTPError("403", response=self)
 
-        monkeypatch.setattr(
-            "rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp()
-        )
+        monkeypatch.setattr("rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp())
         backend = LlamaCppGemmaBackend(host="http://127.0.0.1:8080", model="m")
         with pytest.raises(LLMAuthenticationError) as ei:
             backend._chat_completion(
@@ -489,9 +471,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
 
                 raise HTTPError("404", response=self)
 
-        monkeypatch.setattr(
-            "rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp()
-        )
+        monkeypatch.setattr("rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp())
         backend = LlamaCppGemmaBackend(host="http://127.0.0.1:8080", model="m")
         with pytest.raises(LLMNotFoundError) as ei:
             backend._chat_completion(
@@ -513,9 +493,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
 
                 raise HTTPError("429", response=self)
 
-        monkeypatch.setattr(
-            "rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp()
-        )
+        monkeypatch.setattr("rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp())
         backend = LlamaCppGemmaBackend(host="http://127.0.0.1:8080", model="m")
         with pytest.raises(LLMRateLimitError) as ei:
             backend._chat_completion(
@@ -540,9 +518,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
             def raise_for_status(self) -> None:
                 raise HTTPError("400", response=self)
 
-        monkeypatch.setattr(
-            "rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp()
-        )
+        monkeypatch.setattr("rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp())
         backend = LlamaCppGemmaBackend(host="http://127.0.0.1:8080", model="m")
         with pytest.raises(HTTPError):
             backend._chat_completion(
@@ -564,9 +540,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
             def raise_for_status(self) -> None:
                 raise HTTPError("413", response=self)
 
-        monkeypatch.setattr(
-            "rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp()
-        )
+        monkeypatch.setattr("rlpe.llm_backends.requests.post", lambda *a, **kw: _FakeResp())
         backend = LlamaCppGemmaBackend(host="http://127.0.0.1:8080", model="m")
         with pytest.raises(HTTPError):
             backend._chat_completion(
@@ -734,9 +708,7 @@ class TestM24ParseRetryAfterHeader:
         gap during the test)."""
         from rlpe.llm_backends import MiniMaxM3Backend
 
-        result = MiniMaxM3Backend._parse_retry_after_header(
-            "Wed, 21 Oct 2026 07:28:00 GMT"
-        )
+        result = MiniMaxM3Backend._parse_retry_after_header("Wed, 21 Oct 2026 07:28:00 GMT")
         # The test runs in real time — the date could be in the past
         # OR far in the future. Either way the helper must return a
         # well-formed cap-bounded value:
@@ -750,21 +722,14 @@ class TestM24ParseRetryAfterHeader:
         from rlpe.llm_backends import MiniMaxM3Backend
 
         # Use a past date so we expect 0.0 (regardless of wall clock).
-        result = MiniMaxM3Backend._parse_retry_after_header(
-            "Wednesday, 21-Oct-2026 07:28:00 GMT"
-        )
+        result = MiniMaxM3Backend._parse_retry_after_header("Wednesday, 21-Oct-2026 07:28:00 GMT")
         assert 0.0 <= result <= 60.0
 
     def test_http_date_invalid_returns_zero(self):
         """An unparseable HTTP-date returns 0 (no crash)."""
         from rlpe.llm_backends import MiniMaxM3Backend
 
-        assert (
-            MiniMaxM3Backend._parse_retry_after_header(
-                "this is not a date 12345"
-            )
-            == 0.0
-        )
+        assert MiniMaxM3Backend._parse_retry_after_header("this is not a date 12345") == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -817,9 +782,7 @@ class TestSourceGuard:
             "LLMNotFoundError",
             "LLMRateLimitError",
         ):
-            assert name in src, (
-                f"LlamaCppGemmaBackend source lost reference to {name!r}"
-            )
+            assert name in src, f"LlamaCppGemmaBackend source lost reference to {name!r}"
 
     def test_minimax_defines_parse_retry_after_header(self):
         from rlpe.llm_backends import MiniMaxM3Backend

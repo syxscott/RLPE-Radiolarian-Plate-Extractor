@@ -196,13 +196,11 @@ class TestCloseEventStopsDiskScanWorker:
             # * the worker must have finished (or wait() timed out)
             # * the strong reference must be cleared so Qt can free it
             assert mw._jobs_tab._disk_scan_worker is None, (
-                "Phase F-1 (B-1): shutdown() must clear "
-                "_disk_scan_worker after the thread finishes"
+                "Phase F-1 (B-1): shutdown() must clear _disk_scan_worker after the thread finishes"
             )
             # The sleeper itself must have finished (interrupted + wait).
             assert not sleeper.isRunning(), (
-                "Phase F-1 (B-1): worker must have finished "
-                "before closeEvent returns"
+                "Phase F-1 (B-1): worker must have finished before closeEvent returns"
             )
         finally:
             # Belt-and-suspenders: belt belt. If closeEvent didn't
@@ -296,8 +294,7 @@ class TestAutoOpenResultsAfterAsyncScan:
 
             # The async scan must have populated _jobs.
             assert len(mw._jobs_tab._jobs) >= 2, (
-                f"async scan should have loaded jobs, got "
-                f"{list(mw._jobs_tab._jobs)}"
+                f"async scan should have loaded jobs, got {list(mw._jobs_tab._jobs)}"
             )
 
             # The auto-open must have fired and switched to Results.
@@ -314,8 +311,7 @@ class TestAutoOpenResultsAfterAsyncScan:
             # Pick the latest STATUS_DONE job and check the auto-open
             # landed on it.
             latest = max(
-                (j for j in mw._jobs_tab._jobs.values()
-                 if j.status == STATUS_DONE and j.rows),
+                (j for j in mw._jobs_tab._jobs.values() if j.status == STATUS_DONE and j.rows),
                 key=lambda j: j.finished_at,
             )
             assert mw._results_tab._current_job_id == latest.job_id, (
@@ -424,19 +420,13 @@ def test_main_window_wires_scan_finished_signal():
     future refactor that drops the connect doesn't silently break the
     auto-open again."""
     src = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "rlpe"
-        / "gui"
-        / "main_window.py"
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "main_window.py"
     ).read_text(encoding="utf-8")
     assert "scan_finished.connect(self._on_disk_scan_done)" in src, (
-        "Phase F-1 (B-3): main_window must wire "
-        "scan_finished → _on_disk_scan_done"
+        "Phase F-1 (B-3): main_window must wire scan_finished → _on_disk_scan_done"
     )
     assert "scan_failed.connect(self._on_disk_scan_failed)" in src, (
-        "Phase F-1 (B-3): main_window must wire "
-        "scan_failed → _on_disk_scan_failed"
+        "Phase F-1 (B-3): main_window must wire scan_failed → _on_disk_scan_failed"
     )
 
 
@@ -444,15 +434,11 @@ def test_main_window_close_event_calls_shutdown():
     """B-1 source-guard: ``closeEvent`` must call ``self._jobs_tab.shutdown()``
     before the pipeline worker shutdown."""
     src = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "rlpe"
-        / "gui"
-        / "main_window.py"
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "main_window.py"
     ).read_text(encoding="utf-8")
     idx = src.find("def closeEvent")
     assert idx != -1, "closeEvent must exist"
-    close_body = src[idx:src.find("def _remove_i18n_listeners", idx)]
+    close_body = src[idx : src.find("def _remove_i18n_listeners", idx)]
     assert "self._jobs_tab.shutdown()" in close_body, (
         "Phase F-1 (B-1): closeEvent must call self._jobs_tab.shutdown()"
     )
@@ -460,10 +446,7 @@ def test_main_window_close_event_calls_shutdown():
     # pipeline worker doesn't need to wait on the disk scan.
     assert close_body.index("self._jobs_tab.shutdown()") < close_body.index(
         "self._stop_pipeline_worker()"
-    ), (
-        "Phase F-1 (B-1): _jobs_tab.shutdown() must be called "
-        "BEFORE _stop_pipeline_worker()"
-    )
+    ), "Phase F-1 (B-1): _jobs_tab.shutdown() must be called BEFORE _stop_pipeline_worker()"
 
 
 def test_load_recent_jobs_no_longer_does_sync_auto_open():
@@ -471,11 +454,7 @@ def test_load_recent_jobs_no_longer_does_sync_auto_open():
     synchronous auto-open logic anymore (it would always read
     ``_jobs`` before the worker finished emitting)."""
     src = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "rlpe"
-        / "gui"
-        / "main_window.py"
+        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "gui" / "main_window.py"
     ).read_text(encoding="utf-8")
     idx = src.find("def _load_recent_jobs")
     assert idx != -1

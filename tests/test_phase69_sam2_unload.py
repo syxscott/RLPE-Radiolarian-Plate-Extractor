@@ -56,8 +56,10 @@ class TestUnloadSam2:
         fake_predictor = MagicMock(name="SAM2ImagePredictor")
         seg._predictor = fake_predictor
         # Patch torch.empty_cache so we don't depend on CUDA.
-        with patch("torch.cuda.empty_cache") as mock_empty_cache, \
-             patch("torch.cuda.is_available", return_value=True):
+        with (
+            patch("torch.cuda.empty_cache") as mock_empty_cache,
+            patch("torch.cuda.is_available", return_value=True),
+        ):
             seg.unload_sam2()
         # Predictor reference dropped.
         assert seg._predictor is None
@@ -89,8 +91,10 @@ class TestUnloadSam2:
         unload still drops the predictor."""
         seg = PanelSegmenter()
         seg._predictor = MagicMock(name="SAM2ImagePredictor")
-        with patch("torch.cuda.is_available", return_value=False), \
-             patch("torch.cuda.empty_cache") as mock_empty_cache:
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.cuda.empty_cache") as mock_empty_cache,
+        ):
             seg.unload_sam2()
         assert seg._predictor is None
         # empty_cache must NOT be called when CUDA is unavailable.
@@ -112,9 +116,10 @@ class TestUnloadSam2:
         unload still completes — never propagate from cleanup."""
         seg = PanelSegmenter()
         seg._predictor = MagicMock(name="SAM2ImagePredictor")
-        with patch("torch.cuda.is_available", return_value=True), \
-             patch("torch.cuda.empty_cache",
-                   side_effect=RuntimeError("CUDA driver hung")):
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.empty_cache", side_effect=RuntimeError("CUDA driver hung")),
+        ):
             # Must not raise.
             seg.unload_sam2()
         # Predictor was still dropped even though empty_cache failed.
@@ -153,10 +158,9 @@ class TestWebApiUnloadsSam2:
         # ``stop_hb.set()``; widen the window to 3000 chars to keep
         # this source guard robust to future cleanups.
         window_start = max(0, last_idx - 3000)
-        window = src[window_start:last_idx + 200]
+        window = src[window_start : last_idx + 200]
         assert "finally:" in window, (
-            "finally: not found near stop_hb.set() — refactor may have "
-            "moved cleanup out of finally"
+            "finally: not found near stop_hb.set() — refactor may have moved cleanup out of finally"
         )
         assert "unload_sam2()" in window, (
             "unload_sam2() must be inside the _run_job finally block "

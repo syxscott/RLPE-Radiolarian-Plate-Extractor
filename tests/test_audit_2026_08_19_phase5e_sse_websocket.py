@@ -144,13 +144,9 @@ class TestM25SSEProgressStream:
             assert r.status_code == 200
             body = r.read().decode("utf-8")
         # The full body is a single ``data: ...\\n\\n`` event.
-        assert body.startswith("data: "), (
-            f"first SSE event missing 'data: ' prefix: {body!r}"
-        )
+        assert body.startswith("data: "), f"first SSE event missing 'data: ' prefix: {body!r}"
         # Each event is terminated by a blank line (``\\n\\n``).
-        assert body.endswith("\n\n"), (
-            f"event not terminated by blank line: {body!r}"
-        )
+        assert body.endswith("\n\n"), f"event not terminated by blank line: {body!r}"
         # Strip the prefix + terminator and parse the JSON body.
         payload_str = body.split("data: ", 1)[1].rsplit("\n\n", 1)[0]
         payload = json.loads(payload_str)
@@ -258,9 +254,7 @@ class TestM26CORSAllowedOrigins:
                 f"non-loopback fallback: {o}"
             )
 
-    def test_wildcard_in_list_with_other_origins_is_rejected(
-        self, app_module, monkeypatch
-    ) -> None:
+    def test_wildcard_in_list_with_other_origins_is_rejected(self, app_module, monkeypatch) -> None:
         """A list containing ``*`` AND specific origins must be refused
         — partial wildcards defeat the whole point."""
         monkeypatch.setenv(
@@ -280,18 +274,16 @@ class TestM26CORSAllowedOrigins:
             assert origins, f"empty origins for value {value!r}"
             assert "*" not in origins, f"wildcard leaked for {value!r}: {origins}"
 
-    def test_whitespace_and_empty_tokens_are_dropped(
-        self, app_module, monkeypatch
-    ) -> None:
+    def test_whitespace_and_empty_tokens_are_dropped(self, app_module, monkeypatch) -> None:
         """Surrounding whitespace and empty tokens are trimmed /
         dropped. ``a, , b`` → ``['a', 'b']``."""
-        monkeypatch.setenv("RLPE_CORS_ALLOWED_ORIGINS", "  https://a.example  ,  , https://b.example ")
+        monkeypatch.setenv(
+            "RLPE_CORS_ALLOWED_ORIGINS", "  https://a.example  ,  , https://b.example "
+        )
         origins = app_module._resolve_cors_allowed_origins()
         assert origins == ["https://a.example", "https://b.example"]
 
-    def test_cors_middleware_uses_resolved_origins(
-        self, app_module, client, monkeypatch
-    ) -> None:
+    def test_cors_middleware_uses_resolved_origins(self, app_module, client, monkeypatch) -> None:
         """End-to-end check that the configured CORS middleware
         actually rejects a non-loopback origin while accepting a
         loopback one. We don't need a live cross-origin browser;
@@ -313,9 +305,7 @@ class TestM26CORSAllowedOrigins:
         # whether the origin passes the CORS check; we only care
         # about the response header.
         acao = r.headers.get("access-control-allow-origin")
-        assert acao != "https://evil.example.com", (
-            f"non-loopback origin was accepted: {acao!r}"
-        )
+        assert acao != "https://evil.example.com", f"non-loopback origin was accepted: {acao!r}"
         # Loopback origin MUST be accepted.
         r2 = client.options(
             "/health",
@@ -325,13 +315,9 @@ class TestM26CORSAllowedOrigins:
             },
         )
         acao2 = r2.headers.get("access-control-allow-origin")
-        assert acao2 == "http://localhost:8000", (
-            f"loopback origin was rejected: {acao2!r}"
-        )
+        assert acao2 == "http://localhost:8000", f"loopback origin was rejected: {acao2!r}"
 
-    def test_methods_and_headers_are_tightened(
-        self, app_module, monkeypatch
-    ) -> None:
+    def test_methods_and_headers_are_tightened(self, app_module, monkeypatch) -> None:
         """The methods allow-list is ``["GET","POST"]`` and headers
         is ``["X-API-Key","Content-Type"]`` — no wildcards."""
         # Read the middleware config off the app instance. Starlette's
@@ -366,9 +352,7 @@ class TestM26CORSAllowedOrigins:
         assert "*" not in methods, f"wildcard method: {methods}"
         assert "*" not in headers, f"wildcard header: {headers}"
         # Headers allow-list is exactly the two the frontend sends.
-        assert set(headers) == {"X-API-Key", "Content-Type"}, (
-            f"unexpected headers: {headers}"
-        )
+        assert set(headers) == {"X-API-Key", "Content-Type"}, f"unexpected headers: {headers}"
 
 
 # ---------------------------------------------------------------------------
@@ -379,9 +363,7 @@ class TestM27WebSocketProgress:
     status updates every 500 ms, and close after the job reaches
     a terminal state."""
 
-    def test_websocket_accepts_connection_and_sends_first_payload(
-        self, app_module, client
-    ) -> None:
+    def test_websocket_accepts_connection_and_sends_first_payload(self, app_module, client) -> None:
         """Connecting to a known job yields the current status as
         the first message. The payload must have the same shape as
         ``/status``."""
@@ -400,9 +382,7 @@ class TestM27WebSocketProgress:
         assert payload["stage"] == "parsing PDF…"
         assert payload["elapsed_sec"] == 5
 
-    def test_websocket_closes_after_terminal_state(
-        self, app_module, client
-    ) -> None:
+    def test_websocket_closes_after_terminal_state(self, app_module, client) -> None:
         """For a job already in a terminal state, the WebSocket
         sends one final message and closes with code 1000."""
         app_module.RESULT_CACHE["jid_ws_done"] = {
@@ -425,9 +405,7 @@ class TestM27WebSocketProgress:
             with pytest.raises(WebSocketDisconnect):
                 ws.receive_text()
 
-    def test_websocket_closes_with_1008_for_unknown_job(
-        self, app_module, client
-    ) -> None:
+    def test_websocket_closes_with_1008_for_unknown_job(self, app_module, client) -> None:
         """An unknown job_id closes with code 1008 (policy
         violation — ``job_not_found`` reason). The GUI treats this
         as "remove this tab" rather than "retry"."""
@@ -459,9 +437,7 @@ class TestM27WebSocketProgress:
         if code is not None:
             assert code == 1008, f"expected close code 1008, got {code}"
 
-    def test_websocket_pushes_multiple_updates(
-        self, app_module, client
-    ) -> None:
+    def test_websocket_pushes_multiple_updates(self, app_module, client) -> None:
         """For a running job, the WebSocket pushes multiple updates
         until the server-side handler closes. We use the
         ``receive_json(timeout=...)`` method to wait for two
@@ -483,6 +459,7 @@ class TestM27WebSocketProgress:
             # than the 0.5s server tick so the second message has
             # been emitted and the close has been processed.
             import time as _time
+
             _time.sleep(0.7)
             app_module.RESULT_CACHE["jid_ws_live"]["status"] = "done"
             app_module.RESULT_CACHE["jid_ws_live"]["progress"] = 100
@@ -496,9 +473,7 @@ class TestM27WebSocketProgress:
             # sent at least one update after the first".
             assert second["status"] in {"running", "done"}
 
-    def test_websocket_handler_tolerates_client_disconnect(
-        self, app_module, client
-    ) -> None:
+    def test_websocket_handler_tolerates_client_disconnect(self, app_module, client) -> None:
         """The server-side handler must NOT crash when the client
         disconnects mid-stream. We exercise this by closing the
         client-side socket before the next tick fires."""

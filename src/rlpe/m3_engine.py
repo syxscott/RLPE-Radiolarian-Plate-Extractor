@@ -112,6 +112,7 @@ def _classify_llm_error(exc: BaseException) -> str:
         return "parse"
     return "other"
 
+
 # ---------------------------------------------------------------------------
 # JSON parsing helpers (more lenient than the backend's default)
 # ---------------------------------------------------------------------------
@@ -4474,10 +4475,7 @@ class M3Engine:
         # Tiny images produce only noise; bail early without burning
         # a vision call. Same threshold as extract_geology / extract_schematic.
         try:
-            if (
-                plate_image.width < 32
-                or plate_image.height < 32
-            ):
+            if plate_image.width < 32 or plate_image.height < 32:
                 return empty
         except (AttributeError, TypeError):
             return empty

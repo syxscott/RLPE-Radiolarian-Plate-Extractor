@@ -93,6 +93,7 @@ class TestF3EAsciiBanner:
     def test_module_picks_ascii_when_reconfigure_fails(self, monkeypatch):
         """If ``sys.stdout.reconfigure`` raises, the module sets
         ``_USE_BOX_BANNER = False`` so the ASCII banner prints."""
+
         # Patch sys.stdout so reconfigure() raises. We do this BEFORE
         # importing the module so the module-load code path is
         # exercised.

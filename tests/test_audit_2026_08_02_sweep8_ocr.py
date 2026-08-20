@@ -60,7 +60,8 @@ class TestSweep8N6SilentBoxDrops:
         assert out[0][1] == "alpha"
         # The skip is logged with actionable detail.
         warnings = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.levelno == logging.WARNING and "paddleocr" in r.message.lower()
         ]
         assert len(warnings) >= 1, (
@@ -89,12 +90,12 @@ class TestSweep8N6SilentBoxDrops:
         assert len(out) == 2
         # No paddleocr warnings expected.
         warnings = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.levelno == logging.WARNING and "paddleocr" in r.message.lower()
         ]
         assert not warnings, (
-            f"Unexpected paddleocr warning on matched-shape result: "
-            f"{[r.message for r in warnings]}"
+            f"Unexpected paddleocr warning on matched-shape result: {[r.message for r in warnings]}"
         )
 
     def test_break_replaced_with_continue_source_guard(self):
@@ -110,7 +111,7 @@ class TestSweep8N6SilentBoxDrops:
         # tight; widen to 1000 chars.
         assert "if i >= len(polys):" in src
         idx = src.find("if i >= len(polys):")
-        snippet = src[idx:idx + 1000]
+        snippet = src[idx : idx + 1000]
         assert "continue" in snippet, (
             "Orphan-text handling no longer `continue`s; the N6 fix "
             "may have regressed to silent `break`"
@@ -132,6 +133,7 @@ class TestSweep8O2OCRExceptionLogging:
     def test_recognize_logs_on_failure(self, caplog, monkeypatch):
         """When the OCR backend raises, ``recognize`` must log a warning
         with the exception type + traceback before returning ``[]``."""
+
         # Build a fake engine that always raises. Use the easyocr
         # backend branch (``readtext``) so we don't need to mock
         # paddleocr's ``.ocr(image, cls=True)`` call signature.
@@ -208,16 +210,14 @@ class TestSweep8C3IterativeNormalize:
         # ``_normalize_paddle_result(d)`` for any element.
         list_branch = src.find("if isinstance(result, list):")
         assert list_branch > 0, "list-of-dicts branch missing"
-        snippet = src[list_branch:list_branch + 800]
+        snippet = src[list_branch : list_branch + 800]
         assert "_normalize_paddle_result(" not in snippet.replace(
             "_normalize_paddle_result(\n", ""
         ).replace(
             # The top-level def line is allowed.
-            "def _normalize_paddle_result(", "def _normalize_paddle_dict("
-        ), (
-            "list-of-dicts branch still recurses into "
-            "_normalize_paddle_result(d) — C3 fix regressed"
-        )
+            "def _normalize_paddle_result(",
+            "def _normalize_paddle_dict(",
+        ), "list-of-dicts branch still recurses into _normalize_paddle_result(d) — C3 fix regressed"
         # And it MUST call the iterative helper.
         assert "_normalize_paddle_dict(" in snippet, (
             "list-of-dicts branch no longer calls the iterative "
@@ -239,7 +239,7 @@ class TestSweep8RegressionCompat:
             [
                 [  # one line = [box, payload]
                     [[0, 0], [10, 0], [10, 10], [0, 10]],  # box
-                    ("alpha", 0.99),                        # (text, conf)
+                    ("alpha", 0.99),  # (text, conf)
                 ],
             ],
             None,

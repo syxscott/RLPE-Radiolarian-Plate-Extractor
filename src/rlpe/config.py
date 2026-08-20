@@ -39,9 +39,7 @@ _COCO_YOLO_BASENAMES = {
 #   - "cuda"      : any CUDA-capable GPU
 #   - "mps"       : Apple Silicon GPU
 #   - "0".."7"    : specific GPU index
-_VALID_YOLO_DEVICES = frozenset(
-    {"auto", "cpu", "cuda", "mps"} | {str(i) for i in range(8)}
-)
+_VALID_YOLO_DEVICES = frozenset({"auto", "cpu", "cuda", "mps"} | {str(i) for i in range(8)})
 
 # Recognised extra-config keys; any key outside this set triggers a warning.
 _KNOWN_EXTRA_KEYS = {

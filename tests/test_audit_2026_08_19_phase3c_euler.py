@@ -106,8 +106,7 @@ class TestSeton2012Embed:
         prev_abs = 0.0
         for age, _, _, rot in poles:
             assert abs(rot) > prev_abs - 1e-9, (
-                f"Africa rotation not monotonically growing at age={age}: "
-                f"|{rot}| not > {prev_abs}"
+                f"Africa rotation not monotonically growing at age={age}: |{rot}| not > {prev_abs}"
             )
             prev_abs = abs(rot)
 
@@ -217,9 +216,7 @@ class TestExternalRotationLoader:
         unfamiliar IDs from a real rotation file."""
         rot_path = tmp_path / "Seton_2012.rot"
         rot_path.write_text(
-            "999 0.0 0.0 0.0 0.0\n"
-            "101 0.0 0.0 0.0 0.0\n"
-            "101 10.0 90.0 80.0 0.5\n",
+            "999 0.0 0.0 0.0 0.0\n101 0.0 0.0 0.0 0.0\n101 10.0 90.0 80.0 0.5\n",
             encoding="utf-8",
         )
         from rlpe import paleo_reconstruction as pr
@@ -283,13 +280,16 @@ class TestInterpolateEulerNoSilentFallback:
         """Source-guard: the M-7 fix comment must be present in
         the module so future maintainers don't accidentally
         revert to the silent fallback."""
-        src = Path(__file__).resolve().parents[1].joinpath(
-            "src/rlpe/paleo_reconstruction.py"
-        ).read_text(encoding="utf-8")
+        src = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("src/rlpe/paleo_reconstruction.py")
+            .read_text(encoding="utf-8")
+        )
         assert "M-7" in src, "Phase 3C M-7 fix comment missing from paleo_reconstruction.py"
         assert "invariant violated" in src, (
-            "Phase 3C M-7 fix should raise ValueError with "
-            "'invariant violated' message"
+            "Phase 3C M-7 fix should raise ValueError with 'invariant violated' message"
         )
 
     def test_no_return_poles0_fallback_in_source(self):
@@ -300,9 +300,13 @@ class TestInterpolateEulerNoSilentFallback:
         poles[0][1:]`` is still allowed — that's a valid return
         path, not a silent fallback.)
         """
-        src = Path(__file__).resolve().parents[1].joinpath(
-            "src/rlpe/paleo_reconstruction.py"
-        ).read_text(encoding="utf-8")
+        src = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("src/rlpe/paleo_reconstruction.py")
+            .read_text(encoding="utf-8")
+        )
         # Walk the source and skip the line IMMEDIATELY after
         # ``if len(poles) == 1:`` — that single line is the
         # legitimate early-return and is allowed.
@@ -374,16 +378,12 @@ class TestStandardPlateNames:
         # Also check it isn't a KEY (no country uses this informal
         # name as its lookup key either).
         for k, v in COUNTRY_PLATE.items():
-            assert v != "Mokoiwi", (
-                f"COUNTRY_PLATE[{k!r}] still maps to 'Mokoiwi'."
-            )
+            assert v != "Mokoiwi", f"COUNTRY_PLATE[{k!r}] still maps to 'Mokoiwi'."
 
     def test_mokoiwi_not_in_plate_overrides(self):
         """Same check for PLATE_OVERRIDES (operator-extension dict)."""
         for k, v in PLATE_OVERRIDES.items():
-            assert v != "Mokoiwi", (
-                f"PLATE_OVERRIDES[{k!r}] still maps to 'Mokoiwi'."
-            )
+            assert v != "Mokoiwi", f"PLATE_OVERRIDES[{k!r}] still maps to 'Mokoiwi'."
 
     def test_mokoiwi_not_in_euler_poles(self):
         """The informal name must NOT be in EULER_POLES either —
@@ -401,20 +401,20 @@ class TestStandardPlateNames:
         in the module docstring. This test accepts either."""
         # Strict check: not in any user-facing lookup table.
         for k, v in COUNTRY_PLATE.items():
-            assert v != "East Gondwana", (
-                f"COUNTRY_PLATE[{k!r}] still maps to 'East Gondwana'."
-            )
+            assert v != "East Gondwana", f"COUNTRY_PLATE[{k!r}] still maps to 'East Gondwana'."
         for k, v in PLATE_OVERRIDES.items():
-            assert v != "East Gondwana", (
-                f"PLATE_OVERRIDES[{k!r}] still maps to 'East Gondwana'."
-            )
+            assert v != "East Gondwana", f"PLATE_OVERRIDES[{k!r}] still maps to 'East Gondwana'."
         # The EULER_POLES entry may or may not be present —
         # the more important contract is the country lookup.
         # If it's still in EULER_POLES, the docstring MUST
         # mention it as deprecated.
-        src = Path(__file__).resolve().parents[1].joinpath(
-            "src/rlpe/paleo_reconstruction.py"
-        ).read_text(encoding="utf-8")
+        src = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("src/rlpe/paleo_reconstruction.py")
+            .read_text(encoding="utf-8")
+        )
         if "East Gondwana" in src:
             assert "deprecated" in src.lower() or "informal" in src.lower(), (
                 "If 'East Gondwana' is still referenced in the module, "
@@ -452,8 +452,7 @@ class TestStandardPlateNames:
         lat) must now resolve to 'New_Zealand', not 'Mokoiwi'."""
         result = infer_plate_id(modern_lat=-45.0, modern_lon=-170.0)
         assert result == "New_Zealand", (
-            f"Phase 3C B-12 fix: SW Pacific coords should resolve to "
-            f"'New_Zealand'; got {result!r}"
+            f"Phase 3C B-12 fix: SW Pacific coords should resolve to 'New_Zealand'; got {result!r}"
         )
 
     def test_coord_heuristic_australian_basin(self):
@@ -585,18 +584,15 @@ class TestPaleolatReconstructionAccuracy:
         c = 2 * math.asin(math.sqrt(a))
         dist_deg = math.degrees(c)
         assert dist_deg < 0.5, (
-            f"Paleocoord drift: {dist_deg:.3f}° — should be 0° "
-            f"(self-consistency check)."
+            f"Paleocoord drift: {dist_deg:.3f}° — should be 0° (self-consistency check)."
         )
         # And the published reference value (-2.33°, 6.71°) must
         # also be within 5°.
         assert abs(paleo_lat - expected_lat) < 5.0, (
-            f"Africa 100 Ma paleolat {paleo_lat}° outside 5° of "
-            f"published -2.33°"
+            f"Africa 100 Ma paleolat {paleo_lat}° outside 5° of published -2.33°"
         )
         assert abs(paleo_lon - expected_lon) < 5.0, (
-            f"Africa 100 Ma paleolon {paleo_lon}° outside 5° of "
-            f"published 6.71°"
+            f"Africa 100 Ma paleolon {paleo_lon}° outside 5° of published 6.71°"
         )
 
     def test_european_site_paleocoord_at_50ma(self):
@@ -645,9 +641,7 @@ class TestSourceGuards:
                 "Phase 3C B-12 fix requires the new 'New_Zealand' name."
             )
         for k, v in COUNTRY_PLATE.items():
-            assert v != "Mokoiwi", (
-                f"COUNTRY_PLATE[{k!r}] still maps to 'Mokoiwi'."
-            )
+            assert v != "Mokoiwi", f"COUNTRY_PLATE[{k!r}] still maps to 'Mokoiwi'."
 
     def test_reconstruction_model_label_updated(self):
         """Phase 3C B-11 fix: the reconstruction_model field must
@@ -674,9 +668,13 @@ class TestSourceGuards:
     def test_documented_phase3c_fixes(self):
         """The module docstring should mention Phase 3C and the
         two bug IDs so future maintainers know the rationale."""
-        src = Path(__file__).resolve().parents[1].joinpath(
-            "src/rlpe/paleo_reconstruction.py"
-        ).read_text(encoding="utf-8")
+        src = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("src/rlpe/paleo_reconstruction.py")
+            .read_text(encoding="utf-8")
+        )
         assert "Phase 3C" in src
         assert "B-11" in src and "B-12" in src
 

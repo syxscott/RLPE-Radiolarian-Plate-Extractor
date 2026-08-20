@@ -90,9 +90,7 @@ def test_frontend_search_includes_geology_fields():
     assert "gl0.formation" in src and "gl0.country" in src, (
         "geoBlob must include formation and country from geology_links[0]."
     )
-    assert "caption.includes(" in src, (
-        "Search filter no longer searches caption_snippet."
-    )
+    assert "caption.includes(" in src, "Search filter no longer searches caption_snippet."
 
 
 # --- Audit-10: export includes geology (CSV/Excel) ----------------------

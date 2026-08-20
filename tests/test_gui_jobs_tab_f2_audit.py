@@ -265,9 +265,7 @@ def test_export_worker_does_not_block_gui():
     # Snapshot the run_output (what _export_xlsx does).
     run_output = jt._build_run_output(job)
 
-    with unittest.mock.patch(
-        "rlpe.gui.jobs_tab._JobsExportWorker"
-    ) as MockWorker:
+    with unittest.mock.patch("rlpe.gui.jobs_tab._JobsExportWorker") as MockWorker:
         from PySide6.QtCore import QThread
 
         mock_instance = unittest.mock.MagicMock(spec=_JobsExportWorker)
@@ -433,7 +431,7 @@ def test_export_worker_failed_signal():
 
     assert len(emitted_error) == 1
     # IOError is aliased to OSError in Python 3; either name is acceptable.
-    assert ("IOError" in emitted_error[0] or "OSError" in emitted_error[0])
+    assert "IOError" in emitted_error[0] or "OSError" in emitted_error[0]
     assert "disk full" in emitted_error[0]
 
 

@@ -111,17 +111,13 @@ class TestShutdownSourceGuards:
         """shutdown() must set the cancel flag AND wait() on both workers."""
         src = _read("src/rlpe/gui/results_tab.py")
         body = _body_before_next_def(src, "def shutdown(self) -> None:")
-        assert "cancel()" in body, (
-            "B-2: shutdown() must call worker.cancel() on each worker"
-        )
+        assert "cancel()" in body, "B-2: shutdown() must call worker.cancel() on each worker"
         assert ".wait(" in body, (
-            "B-2: shutdown() must call worker.wait(timeout) on each "
-            "worker (with a finite timeout)"
+            "B-2: shutdown() must call worker.wait(timeout) on each worker (with a finite timeout)"
         )
         # 30s cap matches the rest of the GUI shutdown paths.
         assert ".wait(30000)" in body, (
-            "B-2: shutdown() must use wait(30000) — the GUI shutdown "
-            "timeout contract"
+            "B-2: shutdown() must use wait(30000) — the GUI shutdown timeout contract"
         )
 
     def test_shutdown_drains_both_workers(self):
@@ -142,12 +138,10 @@ class TestShutdownSourceGuards:
         src = _read("src/rlpe/gui/results_tab.py")
         body = _body_before_next_def(src, "def shutdown(self) -> None:")
         assert "self._flip_worker = None" in body or "_flip_worker = None" in body, (
-            "B-2: shutdown() must drop the _flip_worker reference after "
-            "the wait returns"
+            "B-2: shutdown() must drop the _flip_worker reference after the wait returns"
         )
         assert "self._export_worker = None" in body or "_export_worker = None" in body, (
-            "B-2: shutdown() must drop the _export_worker reference after "
-            "the wait returns"
+            "B-2: shutdown() must drop the _export_worker reference after the wait returns"
         )
 
     def test_shutdown_called_from_close_event(self):
@@ -171,20 +165,15 @@ class TestShutdownSourceGuards:
             "ResultsTab.shutdown can request a graceful exit"
         )
         assert "_cancelled" in body, (
-            "B-2: _FlipVerifiedWorker must carry a _cancelled flag so "
-            "the run() loop exits early"
+            "B-2: _FlipVerifiedWorker must carry a _cancelled flag so the run() loop exits early"
         )
 
     def test_export_worker_has_cancel(self):
         """``_ExportWorker.cancel()`` must exist."""
         src = _read("src/rlpe/gui/results_tab.py")
         body = _body_before_next_def(src, "class _ExportWorker(QThread):")
-        assert "def cancel(self) -> None:" in body, (
-            "B-2: _ExportWorker must expose cancel()"
-        )
-        assert "_cancelled" in body, (
-            "B-2: _ExportWorker must carry a _cancelled flag"
-        )
+        assert "def cancel(self) -> None:" in body, "B-2: _ExportWorker must expose cancel()"
+        assert "_cancelled" in body, "B-2: _ExportWorker must carry a _cancelled flag"
 
     def test_flip_run_checks_cancellation(self):
         """``_FlipVerifiedWorker.run`` must check ``_cancelled`` so a
@@ -488,9 +477,7 @@ class TestValidateApiUrl:
         """Loopback is allowed when ``allow_local=True``."""
         from rlpe.gui.results_tab import _validate_api_url
 
-        out = _validate_api_url(
-            "http://127.0.0.1:8000", allow_local=True
-        )
+        out = _validate_api_url("http://127.0.0.1:8000", allow_local=True)
         assert out == "http://127.0.0.1:8000"
 
         out = _validate_api_url("http://localhost:8000", allow_local=True)
@@ -570,9 +557,7 @@ class TestValidateApiUrl:
             "M-5: _validate_api_url must be defined at module level"
         )
         # Must use urlparse from stdlib.
-        assert "urlparse" in src, (
-            "M-5: _validate_api_url must use urllib.parse.urlparse"
-        )
+        assert "urlparse" in src, "M-5: _validate_api_url must use urllib.parse.urlparse"
 
 
 @pytest.mark.skipif(not _HAS_PYSIDE6, reason="PySide6 not installed")
@@ -640,9 +625,7 @@ class TestSetApiUrlRuntime:
                 "  ",
             ):
                 ok = tab._set_api_url(hostile)
-                assert ok is False, (
-                    f"M-5: _set_api_url must reject {hostile!r} and return False"
-                )
+                assert ok is False, f"M-5: _set_api_url must reject {hostile!r} and return False"
                 # On rejection the existing sentinel value must be
                 # untouched.
                 s_check = QSettings(APP_AUTHOR, APP_NAME)
@@ -673,8 +656,7 @@ class TestSourceGuardIntegration:
         )
         # The previous metadata-only loop must be gone.
         assert "md.get(key)" not in body, (
-            "M-3: _on_row_selected must not still do the metadata-only "
-            "loop after the fix"
+            "M-3: _on_row_selected must not still do the metadata-only loop after the fix"
         )
 
     def test_flip_image_verified_validates_url(self):

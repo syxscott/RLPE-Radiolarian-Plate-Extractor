@@ -316,9 +316,7 @@ class MainWindow(QMainWindow):
             if not finished:
                 return
             latest = max(finished, key=lambda j: getattr(j, "finished_at", 0) or 0)
-            self._results_tab.load_job(
-                latest.job_id, latest.rows, latest.output_dir
-            )
+            self._results_tab.load_job(latest.job_id, latest.rows, latest.output_dir)
             self._tabs.setCurrentIndex(TAB_RESULTS)
         except Exception as exc:  # pragma: no cover — defensive
             self._log.warning("Phase F-1 B-3 auto-open failed: %s", exc)
@@ -877,9 +875,7 @@ class MainWindow(QMainWindow):
             else:
                 # Linux: xdg-open + start_new_session (setsid) to avoid
                 # orphaned viewer if the GUI is killed.
-                subprocess.Popen(
-                    ["xdg-open", str(log_path)], start_new_session=True
-                )
+                subprocess.Popen(["xdg-open", str(log_path)], start_new_session=True)
         except Exception as exc:
             QMessageBox.warning(
                 self,

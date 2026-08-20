@@ -132,9 +132,7 @@ class TestF3DCliNumWorkers:
             # does a lot of setup); we just want to know the clamp
             # ran first.
             pass
-        assert ns.num_workers == 32, (
-            f"clamp should cap at MAX_NUM_WORKERS=32, got {ns.num_workers}"
-        )
+        assert ns.num_workers == 32, f"clamp should cap at MAX_NUM_WORKERS=32, got {ns.num_workers}"
 
 
 # ============================================================
@@ -247,7 +245,7 @@ class TestF3DCliExportEncoding:
         src = _read("src/rlpe/cli_export.py")
         # The old form: ``with open(input_path) as f:``
         # The new form: ``with open(input_path, encoding="utf-8") as f:``
-        assert "open(input_path, encoding=\"utf-8\")" in src
+        assert 'open(input_path, encoding="utf-8")' in src
 
     def test_chinese_jsonl_parses(self, tmp_path):
         """Round-trip: write a JSONL containing Chinese species names

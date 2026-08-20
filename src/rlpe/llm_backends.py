@@ -498,9 +498,7 @@ def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
     if obj:
         dropped = [k for k in list(obj.keys()) if k not in _ALLOWED_PANEL_FIELDS]
         if dropped:
-            logger.debug(
-                "Dropped hallucinated panel fields: %s", sorted(dropped)
-            )
+            logger.debug("Dropped hallucinated panel fields: %s", sorted(dropped))
             for k in dropped:
                 obj.pop(k, None)
 
@@ -577,7 +575,7 @@ def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
 # works regardless of whether the LLM returns the
 # ``open_nomenclature_strength`` field or not.
 _OPEN_NOMEN_CF_AFF_CAP = 0.55  # cf. / aff. / ?
-_OPEN_NOMEN_EX_GR_CAP = 0.50   # ex gr. (group)
+_OPEN_NOMEN_EX_GR_CAP = 0.50  # ex gr. (group)
 
 
 def _apply_open_nomen_discount(out: dict[str, Any]) -> None:
@@ -601,9 +599,7 @@ def _apply_open_nomen_discount(out: dict[str, Any]) -> None:
     # substring inside longer words (e.g. "pacificus" doesn't
     # match "cf"). Case-insensitive — gold uses lowercase but
     # OCR-derived text sometimes uppercases.
-    has_cf_aff = bool(
-        re.search(r"\b(?:cf|aff)\.?\b", species, flags=re.IGNORECASE)
-    )
+    has_cf_aff = bool(re.search(r"\b(?:cf|aff)\.?\b", species, flags=re.IGNORECASE))
     # "?" literal — gold/caption convention is "(?)" before sp.
     # but raw LLM output may emit "?" anywhere. Only treat as
     # open-nomen when "?" appears between the genus and the
@@ -613,9 +609,7 @@ def _apply_open_nomen_discount(out: dict[str, Any]) -> None:
     has_question = "?" in species
     # "ex gr." — ICZN group marker. Match "ex gr." with optional
     # whitespace; also catch the rarer "ex.gr." abbreviation.
-    has_ex_gr = bool(
-        re.search(r"\bex\.?\s*gr\.?\b", species, flags=re.IGNORECASE)
-    )
+    has_ex_gr = bool(re.search(r"\bex\.?\s*gr\.?\b", species, flags=re.IGNORECASE))
     if has_ex_gr:
         out["confidence"] = min(out["confidence"], _OPEN_NOMEN_EX_GR_CAP)
     elif has_cf_aff or has_question:
@@ -1115,7 +1109,10 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
         # text-only short-circuit because text-only callers also
         # benefit from the explicit note (so the model's response can
         # mention it in ``reasoning`` for downstream observability).
-        if extra_image is not None and "strat column image not used by this backend" not in user_prompt:
+        if (
+            extra_image is not None
+            and "strat column image not used by this backend" not in user_prompt
+        ):
             user_prompt = (
                 "[Note: strat column image not used by this backend — caption-only path]\n\n"
                 + user_prompt
@@ -1188,26 +1185,21 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
                         status_code=status_code,
                     ) from exc
                 if status_code == 404:
-                    logger.debug(
-                        "llama.cpp /v1/chat/completions 404; "
-                        "raising LLMNotFoundError"
-                    )
+                    logger.debug("llama.cpp /v1/chat/completions 404; raising LLMNotFoundError")
                     raise LLMNotFoundError(
                         "HTTP 404 from llama.cpp; check model name or endpoint",
                         status_code=status_code,
                     ) from exc
                 if status_code == 429:
                     logger.debug(
-                        "llama.cpp /v1/chat/completions 429 rate-limited; "
-                        "raising LLMRateLimitError"
+                        "llama.cpp /v1/chat/completions 429 rate-limited; raising LLMRateLimitError"
                     )
                     raise LLMRateLimitError(
                         "HTTP 429 from llama.cpp; rate-limited",
                         status_code=status_code,
                     ) from exc
                 logger.debug(
-                    "llama.cpp /v1/chat/completions 4xx (status=%d); "
-                    "not degrading to /completion",
+                    "llama.cpp /v1/chat/completions 4xx (status=%d); not degrading to /completion",
                     status_code,
                 )
                 raise

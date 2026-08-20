@@ -136,9 +136,9 @@ def test_pipeline_routes_map_to_geo_vision():
     """Source guard: pipeline.py:1110 must include 'map' in the
     geo_vision figure_type set. Without it, plain map captions route
     to plate segmentation and produce no geology records."""
-    src = Path(
-        Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
-    ).read_text(encoding="utf-8")
+    src = Path(Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py").read_text(
+        encoding="utf-8"
+    )
     # Look for the geo_vision routing tuple
     assert '"map"' in src, (
         "pipeline.py geo_vision routing does not include 'map' as a "

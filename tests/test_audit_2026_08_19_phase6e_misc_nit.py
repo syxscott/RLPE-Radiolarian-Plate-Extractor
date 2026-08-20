@@ -109,10 +109,7 @@ def test_image_preview_tooltip_uses_i18n_keys():
         # Shape 1: i18n._tr("...").format(...)
         if node.func.attr == "format" and isinstance(node.func.value, ast.Call):
             inner = node.func.value
-            if (
-                isinstance(inner.func, ast.Attribute)
-                and inner.func.attr == "_tr"
-            ):
+            if isinstance(inner.func, ast.Attribute) and inner.func.attr == "_tr":
                 return inner.func
         # Shape 2: i18n._tr("...")
         if node.func.attr == "_tr":
@@ -189,11 +186,7 @@ def test_test_minimax_api_script_uses_find_dotenv():
     Guards against a regression where someone removes ``find_dotenv``
     and reverts to a hard-coded path lookup.
     """
-    script = (
-        Path(__file__).resolve().parents[1]
-        / "scripts"
-        / "test_MiniMax_api.py"
-    )
+    script = Path(__file__).resolve().parents[1] / "scripts" / "test_MiniMax_api.py"
     src = script.read_text(encoding="utf-8")
     assert "find_dotenv" in src, (
         f"{script.name} must import find_dotenv so the .env is found even "
@@ -209,11 +202,7 @@ def test_test_minimax_api_script_uses_find_dotenv():
 
 def test_round10_live_pdf_script_uses_find_dotenv():
     """NIT-2: scripts/round10_live_pdf.py also picks up find_dotenv."""
-    script = (
-        Path(__file__).resolve().parents[1]
-        / "scripts"
-        / "round10_live_pdf.py"
-    )
+    script = Path(__file__).resolve().parents[1] / "scripts" / "round10_live_pdf.py"
     src = script.read_text(encoding="utf-8")
     assert "find_dotenv" in src, (
         f"{script.name} must import find_dotenv so the .env is found "
@@ -274,10 +263,7 @@ def test_all_loggers_under_rlpe_namespace():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            if not (
-                isinstance(node.func, ast.Attribute)
-                and node.func.attr == "getLogger"
-            ):
+            if not (isinstance(node.func, ast.Attribute) and node.func.attr == "getLogger"):
                 continue
             if not node.args:
                 # getLogger() with no arg defaults to root — flag for
@@ -294,25 +280,18 @@ def test_all_loggers_under_rlpe_namespace():
             if isinstance(arg, ast.Name) and arg.id in constants:
                 # Indirect lookup — follow the constant.
                 if not constants[arg.id].startswith("rlpe"):
-                    violations.append(
-                        (py_file, node.lineno, f"{arg.id}={constants[arg.id]!r}")
-                    )
+                    violations.append((py_file, node.lineno, f"{arg.id}={constants[arg.id]!r}"))
                 continue
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 if not arg.value.startswith("rlpe"):
-                    violations.append(
-                        (py_file, node.lineno, f"literal={arg.value!r}")
-                    )
+                    violations.append((py_file, node.lineno, f"literal={arg.value!r}"))
                 continue
             # Anything else (computed name) is too dynamic to verify
             # statically — flag for human review.
-            violations.append(
-                (py_file, node.lineno, f"computed arg: {ast.dump(arg)[:60]}")
-            )
+            violations.append((py_file, node.lineno, f"computed arg: {ast.dump(arg)[:60]}"))
 
-    assert not violations, (
-        "All logger names must start with 'rlpe.'. Violations:\n"
-        + "\n".join(f"  {p.relative_to(src_root)}:{ln}: {why}" for p, ln, why in violations)
+    assert not violations, "All logger names must start with 'rlpe.'. Violations:\n" + "\n".join(
+        f"  {p.relative_to(src_root)}:{ln}: {why}" for p, ln, why in violations
     )
 
 
@@ -326,7 +305,9 @@ def test_gitignore_excludes_pycache_and_pyc():
     assert gitignore.exists(), f"{gitignore} not found"
 
     text = gitignore.read_text(encoding="utf-8")
-    lines = {ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")}
+    lines = {
+        ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")
+    }
 
     assert "__pycache__/" in lines, (
         f".gitignore must contain '__pycache__/' as a top-level entry; "
@@ -395,8 +376,7 @@ def test_type_hints_on_phase6e_targets():
         opendataloader_extractor.OpenDataLoaderExtractor._get_or_init_ocr_engine
     )
     assert sig.return_annotation is not inspect.Signature.empty, (
-        "OpenDataLoaderExtractor._get_or_init_ocr_engine should carry "
-        "a return annotation"
+        "OpenDataLoaderExtractor._get_or_init_ocr_engine should carry a return annotation"
     )
 
 
@@ -427,6 +407,6 @@ def test_image_preview_no_bare_english_field_labels():
         "f'family: ",
     ]
     leftovers = [s for s in forbidden_substrings if s in src]
-    assert not leftovers, (
-        "_bbox_tooltip still has bare-English field labels: " + ", ".join(leftovers)
+    assert not leftovers, "_bbox_tooltip still has bare-English field labels: " + ", ".join(
+        leftovers
     )

@@ -101,7 +101,7 @@ MAX_JOBS: Final[int] = 500
 # Anything larger is logged and skipped; the rest of the scan keeps
 # running.
 MAX_JSONL_SIZE: Final[int] = 100 * 1024 * 1024  # 100 MB
-MAX_LINE_SIZE: Final[int] = 1 * 1024 * 1024     # 1 MB
+MAX_LINE_SIZE: Final[int] = 1 * 1024 * 1024  # 1 MB
 
 # Status → row-background tint map. Phase F-3 NIT fix: previously an
 # inline dict literal in ``_refresh_row``. Pulled to module scope so
@@ -174,8 +174,7 @@ class _DiskScanWorker(QThread):
                 # caller can release the thread cleanly.
                 if self.isInterruptionRequested():
                     self._log.info(
-                        "load_recent_jobs: disk scan interrupted "
-                        "after %d entries",
+                        "load_recent_jobs: disk scan interrupted after %d entries",
                         len(loaded),
                     )
                     self.completed.emit(loaded)
@@ -215,8 +214,7 @@ class _DiskScanWorker(QThread):
             return None
         if mp_size > MAX_JSONL_SIZE:
             self._log.warning(
-                "load_recent_jobs: skipping %s (matches.jsonl exceeds "
-                "%d MB; %d bytes)",
+                "load_recent_jobs: skipping %s (matches.jsonl exceeds %d MB; %d bytes)",
                 mp,
                 MAX_JSONL_SIZE // (1024 * 1024),
                 mp_size,
@@ -648,10 +646,7 @@ class JobsTab(QWidget):
                                 jid=child.name,
                                 root=child,
                                 matches_path=mp,
-                                complete_flag=child
-                                / "output"
-                                / "manifests"
-                                / "complete.flag",
+                                complete_flag=child / "output" / "manifests" / "complete.flag",
                             )
                         )
         # Also scan project root work/ for ad-hoc CLI runs.

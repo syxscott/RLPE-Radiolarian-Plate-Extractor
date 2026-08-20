@@ -131,12 +131,9 @@ class TestHtmlEscapeUsageInResultsTab:
 
     def test_only_one_setHtml_call(self):
         src = _src()
-        setHtml_lines = [
-            line for line in src.splitlines() if ".setHtml(" in line
-        ]
+        setHtml_lines = [line for line in src.splitlines() if ".setHtml(" in line]
         assert len(setHtml_lines) == 1, (
-            f"Expected exactly 1 setHtml call, found {len(setHtml_lines)}: "
-            f"{setHtml_lines}"
+            f"Expected exactly 1 setHtml call, found {len(setHtml_lines)}: {setHtml_lines}"
         )
 
     def test_setHtml_receives_join_of_escaped_fragments(self):
@@ -249,7 +246,9 @@ class TestEmptyJobClearsDetail:
         reset_pos = body.find("_reset_detail_pane()")
         refresh_pos = body.find("_refresh_filter_options")
         assert reset_pos != -1, "_reset_detail_pane() must be called"
-        assert reset_pos < refresh_pos, "_reset_detail_pane must come before _refresh_filter_options"
+        assert reset_pos < refresh_pos, (
+            "_reset_detail_pane must come before _refresh_filter_options"
+        )
 
 
 # ----------------------------------------------------------------------
@@ -334,7 +333,7 @@ class TestHtmlEscapeRuntime:
             "paper_id": "test123",
             "figure_id": "fig1",
             "panel_path": "/panel/1",
-            "species": '<script>alert(1)</script>',
+            "species": "<script>alert(1)</script>",
             "metadata": {},
             "confidence": 0.95,
         }
@@ -363,7 +362,7 @@ class TestHtmlEscapeRuntime:
             "panel_path": "/panel/2",
             "species": "Testus normalis",
             "metadata": {
-                "title": '<img src=x onerror=alert(1)>',
+                "title": "<img src=x onerror=alert(1)>",
             },
             "confidence": 0.88,
         }
@@ -434,7 +433,9 @@ class TestUserRoleLiveRowRuntime:
 class TestSearchDebounceRuntime:
     """M-14 runtime: verify rapid text changes only fire one rebuild."""
 
-    @pytest.mark.skip(reason="debounce test needs real event loop (app.exec); offscreen processEvents doesn't fire QTimer single-shot")
+    @pytest.mark.skip(
+        reason="debounce test needs real event loop (app.exec); offscreen processEvents doesn't fire QTimer single-shot"
+    )
     @pytest.mark.skipif(not _HAS_PYSIDE6, reason="PySide6 not available")
     def test_search_debounced(self):
         from PySide6.QtCore import QCoreApplication, QTimer

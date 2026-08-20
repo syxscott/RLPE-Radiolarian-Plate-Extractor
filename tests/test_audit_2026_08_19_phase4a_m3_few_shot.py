@@ -77,9 +77,7 @@ GEOLOGY_PROMPTS = (
 )
 
 # The required footer string. Every modified prompt ends with this.
-REQUIRED_FOOTER = (
-    "Output MUST match the JSON schema exactly. See example"
-)
+REQUIRED_FOOTER = "Output MUST match the JSON schema exactly. See example"
 
 
 def _example_count(prompt_text: str) -> int:
@@ -185,8 +183,7 @@ class TestFewShotInputOutputPairs:
 
         prompt = getattr(m3_engine, prompt_name)
         assert _has_input_output_pair(prompt), (
-            f"{prompt_name} few-shot examples lack a full (input, "
-            f"JSON output) pair."
+            f"{prompt_name} few-shot examples lack a full (input, JSON output) pair."
         )
 
 
@@ -335,9 +332,7 @@ class TestMatchPanelCoverage:
         from rlpe import m3_engine
 
         prompt = m3_engine._MATCH_PANEL_SYSTEM
-        assert "cf." in prompt, (
-            "_MATCH_PANEL_SYSTEM missing open-nomen example"
-        )
+        assert "cf." in prompt, "_MATCH_PANEL_SYSTEM missing open-nomen example"
 
     def test_no_candidate_example_present(self):
         from rlpe import m3_engine
@@ -365,25 +360,19 @@ class TestCritiqueCoverage:
         from rlpe import m3_engine
 
         prompt = m3_engine._CRITIQUE_SYSTEM
-        assert '"agree"' in prompt or "agree" in prompt, (
-            "_CRITIQUE_SYSTEM missing agree example"
-        )
+        assert '"agree"' in prompt or "agree" in prompt, "_CRITIQUE_SYSTEM missing agree example"
 
     def test_disagree_example_present(self):
         from rlpe import m3_engine
 
         prompt = m3_engine._CRITIQUE_SYSTEM
-        assert "disagree" in prompt, (
-            "_CRITIQUE_SYSTEM missing disagree example"
-        )
+        assert "disagree" in prompt, "_CRITIQUE_SYSTEM missing disagree example"
 
     def test_uncertain_example_present(self):
         from rlpe import m3_engine
 
         prompt = m3_engine._CRITIQUE_SYSTEM
-        assert "uncertain" in prompt, (
-            "_CRITIQUE_SYSTEM missing uncertain example"
-        )
+        assert "uncertain" in prompt, "_CRITIQUE_SYSTEM missing uncertain example"
 
     def test_low_confidence_batch_example_present(self):
         """Phase 4A adds a 3-panel low-confidence batch example."""
@@ -391,9 +380,7 @@ class TestCritiqueCoverage:
 
         prompt = m3_engine._CRITIQUE_SYSTEM
         # The Phase 4A example has 3 panels with confidence 0.4 each.
-        assert "0.4" in prompt, (
-            "_CRITIQUE_SYSTEM missing low-confidence batch example"
-        )
+        assert "0.4" in prompt, "_CRITIQUE_SYSTEM missing low-confidence batch example"
 
 
 # ---------------------------------------------------------------------------
@@ -463,9 +450,7 @@ class TestExtractGeologySchemaConsistency:
             assert key in fields, f"GeologyContextRecord missing field {key!r}"
         # The example output must use them.
         for key in ("age", "formation", "lithology", "ma_top", "ma_base", "confidence"):
-            assert f'"{key}"' in prompt, (
-                f"strat_column_geo example missing field {key!r}"
-            )
+            assert f'"{key}"' in prompt, f"strat_column_geo example missing field {key!r}"
 
     def test_litholog_column_example_uses_geology_context_keys(self):
         from rlpe import m3_engine
@@ -476,9 +461,7 @@ class TestExtractGeologySchemaConsistency:
         for key in ("age", "lithology", "ma_top", "ma_base", "confidence"):
             assert key in fields, f"GeologyContextRecord missing field {key!r}"
         for key in ("age", "lithology", "ma_top", "ma_base", "confidence"):
-            assert f'"{key}"' in prompt, (
-                f"litholog_column_geo example missing field {key!r}"
-            )
+            assert f'"{key}"' in prompt, f"litholog_column_geo example missing field {key!r}"
 
     def test_paleogeographic_example_uses_locality_keys(self):
         from rlpe import m3_engine
@@ -493,15 +476,9 @@ class TestExtractGeologySchemaConsistency:
         # The example output uses latitude/longitude (raw schema key
         # in the geo wrapper) — verify those appear at least once in
         # the example block.
-        assert '"latitude"' in prompt, (
-            "paleogeographic_map_geo example missing latitude field"
-        )
-        assert '"longitude"' in prompt, (
-            "paleogeographic_map_geo example missing longitude field"
-        )
-        assert '"species"' in prompt, (
-            "paleogeographic_map_geo example missing species field"
-        )
+        assert '"latitude"' in prompt, "paleogeographic_map_geo example missing latitude field"
+        assert '"longitude"' in prompt, "paleogeographic_map_geo example missing longitude field"
+        assert '"species"' in prompt, "paleogeographic_map_geo example missing species field"
 
 
 # ---------------------------------------------------------------------------
@@ -519,8 +496,7 @@ class TestRequiredFooter:
 
         prompt = getattr(m3_engine, prompt_name)
         assert REQUIRED_FOOTER in prompt, (
-            f"{prompt_name} missing required footer "
-            f"{REQUIRED_FOOTER!r} (Phase 4A addition)"
+            f"{prompt_name} missing required footer {REQUIRED_FOOTER!r} (Phase 4A addition)"
         )
 
     @pytest.mark.parametrize("prompt_key", GEOLOGY_PROMPTS)
@@ -529,8 +505,7 @@ class TestRequiredFooter:
 
         prompt = m3_engine.PROMPT_REGISTRY[prompt_key]
         assert REQUIRED_FOOTER in prompt, (
-            f"PROMPT_REGISTRY[{prompt_key!r}] missing required footer "
-            f"{REQUIRED_FOOTER!r}"
+            f"PROMPT_REGISTRY[{prompt_key!r}] missing required footer {REQUIRED_FOOTER!r}"
         )
 
 
@@ -551,9 +526,7 @@ class TestPromptTokenBudget:
         cjk = sum(1 for c in prompt if ord(c) > 0x3000)
         ascii_ = len(prompt) - cjk
         approx_tokens = cjk + ascii_ // 4
-        assert approx_tokens < 4000, (
-            f"{prompt_name} ~{approx_tokens} tokens exceeds 4000 budget"
-        )
+        assert approx_tokens < 4000, f"{prompt_name} ~{approx_tokens} tokens exceeds 4000 budget"
 
     @pytest.mark.parametrize("prompt_key", GEOLOGY_PROMPTS)
     def test_geology_prompt_under_budget(self, prompt_key: str):

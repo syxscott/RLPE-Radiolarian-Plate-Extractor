@@ -59,8 +59,12 @@ def _reset_gemma_prompt_cache():
                 gemma._PROMPTS_CACHE = None
                 gemma._PROMPTS_VERSION = None
             else:
-                expected = {"match_panel", "match_panel_visual_only",
-                            "parse_caption", "classify_plate"}
+                expected = {
+                    "match_panel",
+                    "match_panel_visual_only",
+                    "parse_caption",
+                    "classify_plate",
+                }
                 if not expected.issubset(set(cache.keys())):
                     gemma._PROMPTS_CACHE = None
                     gemma._PROMPTS_VERSION = None

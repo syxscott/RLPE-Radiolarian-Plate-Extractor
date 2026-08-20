@@ -119,8 +119,7 @@ def test_shutdown_interrupts_running_disk_scan(tmp_path, monkeypatch):
     # must be cleared (so Qt can free it).
     assert not worker.isRunning(), "worker should have stopped after shutdown"
     assert jt._disk_scan_worker is None, (
-        "shutdown should clear _disk_scan_worker; "
-        "deleting a running QThread would crash the GUI"
+        "shutdown should clear _disk_scan_worker; deleting a running QThread would crash the GUI"
     )
 
 
@@ -212,9 +211,7 @@ def test_scan_finished_signal_emitted(tmp_path, monkeypatch):
         f"{[r.job_id for r in records]}"
     )
     jids_loaded = {r.job_id for r in records}
-    assert jids_loaded == {"job-a", "job-b", "job-c"}, (
-        f"unexpected loaded jobs: {jids_loaded}"
-    )
+    assert jids_loaded == {"job-a", "job-b", "job-c"}, f"unexpected loaded jobs: {jids_loaded}"
 
 
 def test_scan_finished_emits_empty_when_no_candidates(tmp_path, monkeypatch):
@@ -330,9 +327,7 @@ def test_jsonl_overlong_line_skipped(tmp_path, monkeypatch, caplog):
     assert job is not None, "job should still be loaded (valid line kept)"
     # Only the 1 valid row should survive; the 2 MB garbage line
     # was truncated to 1 MB and then ``json.loads`` failed → skipped.
-    assert len(job.rows) == 1, (
-        f"expected 1 row (truncated line skipped), got {len(job.rows)}"
-    )
+    assert len(job.rows) == 1, f"expected 1 row (truncated line skipped), got {len(job.rows)}"
     assert job.rows[0]["species"] == "OK"
 
 
@@ -407,8 +402,7 @@ def test_partial_flag_marks_failed(tmp_path, monkeypatch):
     job = jt._jobs.get("interrupted")
     assert job is not None, "interrupted job should still be loaded (rows present)"
     assert job.status == STATUS_FAILED, (
-        f"interrupted job (no complete.flag) must be STATUS_FAILED, "
-        f"got {job.status!r}"
+        f"interrupted job (no complete.flag) must be STATUS_FAILED, got {job.status!r}"
     )
     # progress_msg must hint at the missing flag.
     assert "complete.flag" in job.progress_msg, (
@@ -486,8 +480,7 @@ def test_partial_flag_empty_matches_marks_failed(tmp_path, monkeypatch):
     job = jt._jobs.get("empty_no_flag")
     if job is not None:
         assert job.status == STATUS_FAILED, (
-            f"empty matches.jsonl + no flag must be STATUS_FAILED, "
-            f"got {job.status!r}"
+            f"empty matches.jsonl + no flag must be STATUS_FAILED, got {job.status!r}"
         )
 
 
@@ -559,10 +552,8 @@ def test_new_signals_declared_at_class_level():
 
     # Class-level presence is what makes ``connect()`` work in PySide6.
     assert "scan_finished" in JobsTab.__dict__, (
-        "scan_finished must be a class-level Signal; "
-        "defining it in __init__ breaks .connect()"
+        "scan_finished must be a class-level Signal; defining it in __init__ breaks .connect()"
     )
     assert "scan_failed" in JobsTab.__dict__, (
-        "scan_failed must be a class-level Signal; "
-        "defining it in __init__ breaks .connect()"
+        "scan_failed must be a class-level Signal; defining it in __init__ breaks .connect()"
     )

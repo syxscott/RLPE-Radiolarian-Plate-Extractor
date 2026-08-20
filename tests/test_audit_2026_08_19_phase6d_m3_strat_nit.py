@@ -365,9 +365,7 @@ class TestNIT2PromptMentionsFields:
 
     def test_prompt_mentions_zone_authority(self):
         src = _read(_SRC_RCE)
-        assert "zone_authority" in src, (
-            "M3 range_chart prompt must mention zone_authority"
-        )
+        assert "zone_authority" in src, "M3 range_chart prompt must mention zone_authority"
 
     def test_prompt_mentions_zone_publication_year(self):
         src = _read(_SRC_RCE)
@@ -475,7 +473,7 @@ class TestNIT3ExtractGeologyAutoswaps:
         assert extract_geo_idx > 0
         # Search for the helper calls inside the extract_geology body.
         end_marker = src.find("\n    def ", extract_geo_idx + 1)
-        body = src[extract_geo_idx:end_marker if end_marker > 0 else len(src)]
+        body = src[extract_geo_idx : end_marker if end_marker > 0 else len(src)]
         # The normalize helper must be called; the validate helper
         # must also be called; normalize must come first.
         normalize_pos = body.find("_normalize_ma_pair")
@@ -505,10 +503,8 @@ class TestNIT3SourceGuard:
         # Find the function and the next 60 lines for the docstring.
         idx = src.find("def _normalize_ma_pair")
         assert idx > 0
-        chunk = src[idx:idx + 2000]
-        assert "NIT-3" in chunk, (
-            "_normalize_ma_pair docstring must mention NIT-3"
-        )
+        chunk = src[idx : idx + 2000]
+        assert "NIT-3" in chunk, "_normalize_ma_pair docstring must mention NIT-3"
 
 
 # ===========================================================================
@@ -577,13 +573,12 @@ class TestNIT4SourceGuard:
         assert idx > 0
         # Take the next ~5000 chars (the function body is long because
         # of the multi-line docstring).
-        chunk = src[idx:idx + 5000]
+        chunk = src[idx : idx + 5000]
         # Find the EARLIEST collapse position in the chunk.
         # The source uses a raw string r"\s+" — match it literally.
         early_collapse = chunk.find('re.sub(r"\\s+", " ", s)')
         assert early_collapse > 0, (
-            "_normalize_species must call re.sub(r'\\s+', ' ', s) "
-            "to collapse whitespace (NIT-4)"
+            "_normalize_species must call re.sub(r'\\s+', ' ', s) to collapse whitespace (NIT-4)"
         )
 
     def test_collapses_at_function_start(self):
@@ -593,14 +588,13 @@ class TestNIT4SourceGuard:
         src = _read(_SRC_M3)
         idx = src.find("def _normalize_species")
         assert idx > 0
-        chunk = src[idx:idx + 5000]
+        chunk = src[idx : idx + 5000]
         collapse_pos = chunk.find('re.sub(r"\\s+", " ", s)')
         spumellaria_pos = chunk.find("Spumellaria|Nassellaria")
         assert collapse_pos > 0
         assert spumellaria_pos > 0
         assert collapse_pos < spumellaria_pos, (
-            "whitespace collapse must run BEFORE the "
-            "Spumellaria/Nassellaria fold"
+            "whitespace collapse must run BEFORE the Spumellaria/Nassellaria fold"
         )
 
 

@@ -106,8 +106,7 @@ class TestExGrMerging:
             f"got {result['specific_epithet']!r}"
         )
         assert result["qualifier"] == "ex gr.", (
-            f"qualifier should be 'ex gr.' (multi-word ICZN marker), "
-            f"got {result['qualifier']!r}"
+            f"qualifier should be 'ex gr.' (multi-word ICZN marker), got {result['qualifier']!r}"
         )
 
     def test_triactoma_ex_gr_kamoensis(self) -> None:
@@ -151,8 +150,7 @@ class TestExGrMerging:
         result = _taxon_parts("Genus ex gr.")
         assert result["genus"] == "Genus"
         assert result["specific_epithet"] is None, (
-            f"epithet should be None when ex gr. has no species, "
-            f"got {result['specific_epithet']!r}"
+            f"epithet should be None when ex gr. has no species, got {result['specific_epithet']!r}"
         )
         assert result["qualifier"] == "ex gr."
 
@@ -178,8 +176,7 @@ class TestExGrMerging:
             f"got {result['specific_epithet']!r}"
         )
         assert result["qualifier"] == "ex gr.", (
-            f"qualifier should be 'ex gr.' (NOT 'ex gr. species'), "
-            f"got {result['qualifier']!r}"
+            f"qualifier should be 'ex gr.' (NOT 'ex gr. species'), got {result['qualifier']!r}"
         )
 
 
@@ -279,13 +276,11 @@ class TestSourceExtractionSplit:
         assert len(taxa) == 1
         t = taxa[0]
         assert t["source"] == "paleodb", (
-            f"source should be 'paleodb' when PBDB provides taxonomy, "
-            f"got {t['source']!r}"
+            f"source should be 'paleodb' when PBDB provides taxonomy, got {t['source']!r}"
         )
         # The extraction method is now in a separate field.
         assert t["extraction_method"] == "llm_first", (
-            f"extraction_method should be 'llm_first', got "
-            f"{t['extraction_method']!r}"
+            f"extraction_method should be 'llm_first', got {t['extraction_method']!r}"
         )
 
     def test_no_pbdb_source_is_none_string(self) -> None:
@@ -297,9 +292,7 @@ class TestSourceExtractionSplit:
         taxa = taxon_records_from_matches([m])
         assert len(taxa) == 1
         t = taxa[0]
-        assert t["source"] == "none", (
-            f"source should be 'none' without PBDB, got {t['source']!r}"
-        )
+        assert t["source"] == "none", f"source should be 'none' without PBDB, got {t['source']!r}"
         assert t["extraction_method"] == "regex"
 
     def test_no_pbdb_llm_first_source_is_none_string(self) -> None:
@@ -381,9 +374,7 @@ class TestTaxonRecordSchema:
         that already read it don't break.
         """
         fields = TaxonRecord.model_fields
-        assert "source" in fields, (
-            "TaxonRecord.source removed — backwards-compat broken?"
-        )
+        assert "source" in fields, "TaxonRecord.source removed — backwards-compat broken?"
         rec = TaxonRecord(
             taxon_id="tx_1",
             verbatim_name="Genus species",

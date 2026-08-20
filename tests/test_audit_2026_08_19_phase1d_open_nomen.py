@@ -44,9 +44,7 @@ class TestB7OpenNomenDiscount:
         from rlpe.llm_backends import _normalize_panel_dict
 
         # cf. with period → cap at 0.55
-        out = _normalize_panel_dict(
-            {"species": "Triactoma cf. kamoensis", "confidence": 0.85}
-        )
+        out = _normalize_panel_dict({"species": "Triactoma cf. kamoensis", "confidence": 0.85})
         assert out["confidence"] <= 0.55
 
     def test_cf_marker_no_period_also_discounts(self):
@@ -54,17 +52,13 @@ class TestB7OpenNomenDiscount:
         (``Triactoma cf kamoense``). The discount must still fire."""
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "Triactoma cf kamoense", "confidence": 0.85}
-        )
+        out = _normalize_panel_dict({"species": "Triactoma cf kamoense", "confidence": 0.85})
         assert out["confidence"] <= 0.55
 
     def test_aff_marker_discounts_to_055(self):
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "Triactoma aff. kamoensis", "confidence": 0.85}
-        )
+        out = _normalize_panel_dict({"species": "Triactoma aff. kamoensis", "confidence": 0.85})
         assert out["confidence"] <= 0.55
 
     def test_question_marker_discounts_to_055(self):
@@ -74,9 +68,7 @@ class TestB7OpenNomenDiscount:
         may remain in raw LLM output)."""
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "Archaeodictyomitra (?) sp.", "confidence": 0.85}
-        )
+        out = _normalize_panel_dict({"species": "Archaeodictyomitra (?) sp.", "confidence": 0.85})
         assert out["confidence"] <= 0.55
 
     def test_question_marker_bare_genus(self):
@@ -90,9 +82,7 @@ class TestB7OpenNomenDiscount:
         """Plain species without cf./aff./?/ex gr. must NOT be discounted."""
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "Actinomma sp.", "confidence": 0.85}
-        )
+        out = _normalize_panel_dict({"species": "Actinomma sp.", "confidence": 0.85})
         # 0.85 rounded to 2dp is 0.85 — must not be touched
         assert out["confidence"] == 0.85
 
@@ -101,9 +91,7 @@ class TestB7OpenNomenDiscount:
         (the substring ``cific`` must not match the cf. regex)."""
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "Puffinus pacificus", "confidence": 0.85}
-        )
+        out = _normalize_panel_dict({"species": "Puffinus pacificus", "confidence": 0.85})
         assert out["confidence"] == 0.85
 
     def test_ex_gr_marker_discounts_to_050(self):
@@ -111,18 +99,14 @@ class TestB7OpenNomenDiscount:
         in bandini 2011 — caps at 0.50 (lower than cf./aff./?)."""
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "Stichocapsa ex gr. convexa", "confidence": 0.85}
-        )
+        out = _normalize_panel_dict({"species": "Stichocapsa ex gr. convexa", "confidence": 0.85})
         assert out["confidence"] <= 0.50
 
     def test_ex_gr_shortform_discounts(self):
         """``ex.gr.`` abbreviation must also trigger."""
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "Stichocapsa ex.gr. convexa", "confidence": 0.85}
-        )
+        out = _normalize_panel_dict({"species": "Stichocapsa ex.gr. convexa", "confidence": 0.85})
         assert out["confidence"] <= 0.50
 
     def test_discount_floor_at_input_confidence(self):
@@ -130,9 +114,7 @@ class TestB7OpenNomenDiscount:
         the discount is a no-op (we only ``min()``, never boost)."""
         from rlpe.llm_backends import _normalize_panel_dict
 
-        out = _normalize_panel_dict(
-            {"species": "Triactoma cf. kamoensis", "confidence": 0.30}
-        )
+        out = _normalize_panel_dict({"species": "Triactoma cf. kamoensis", "confidence": 0.30})
         # 0.30 < 0.55 cap → stays at 0.30
         assert out["confidence"] == 0.30
 
@@ -328,9 +310,7 @@ class TestM1ParseCaptionFewShot:
         assert "open_nomenclature_strength" in _MATCH_PANEL_SYSTEM
         # All 6 enum values must appear.
         for value in ("none", "cf.", "aff.", "ex gr.", "subgen.", "?"):
-            assert value in _MATCH_PANEL_SYSTEM, (
-                f"_MATCH_PANEL_SYSTEM missing enum value {value!r}"
-            )
+            assert value in _MATCH_PANEL_SYSTEM, f"_MATCH_PANEL_SYSTEM missing enum value {value!r}"
 
     def test_critique_prompt_documents_open_nomenclature_strength(self):
         """The critique prompt must document the new field too,

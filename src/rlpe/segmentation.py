@@ -134,6 +134,7 @@ class PanelSegmenter:
             self._predictor = None
         try:
             import torch  # local import — torch is optional at runtime
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:

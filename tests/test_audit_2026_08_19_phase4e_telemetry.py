@@ -162,9 +162,7 @@ class TestInferVisionTelemetry:
         assert isinstance(tel["timestamp"], str)
         # ISO-8601 timestamp must contain a 'T' separator (Python's
         # datetime.isoformat() default).
-        assert "T" in tel["timestamp"], (
-            f"timestamp not ISO-8601: {tel['timestamp']!r}"
-        )
+        assert "T" in tel["timestamp"], f"timestamp not ISO-8601: {tel['timestamp']!r}"
         # No llm_error on the success path.
         assert "llm_error" not in tel
 

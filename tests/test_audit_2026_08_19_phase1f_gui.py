@@ -79,7 +79,7 @@ def _body_before_next_def(src: str, signature: str) -> str:
     # the next class rather than the next method means we still capture
     # nested methods inside the class body (including ``run()`` inside
     # a QThread).
-    after = src[idx + len(signature):]
+    after = src[idx + len(signature) :]
     next_class = re.search(r"\nclass |\nif __name__", after)
     if next_class is None:
         return after
@@ -118,9 +118,7 @@ class TestFlipVerifiedWorkerExists:
         worker_body = _body_before_next_def(src, "class _FlipVerifiedWorker(QThread)")
         # The HTTP POST must live inside the worker.run() method, not
         # on the GUI thread.
-        assert "def run(self)" in worker_body, (
-            "B-14 fix: _FlipVerifiedWorker must implement run()"
-        )
+        assert "def run(self)" in worker_body, "B-14 fix: _FlipVerifiedWorker must implement run()"
         # The POST itself should be inside the run() method. We assert
         # by counting the number of 'requests.post' usages inside the
         # class body — there should be exactly one (inside run()).
@@ -161,9 +159,7 @@ class TestFlipVerifiedWorkerExists:
         assert ".error.connect(" in flip_body, (
             "B-14 fix: _flip_image_verified must connect the error signal"
         )
-        assert ".start()" in flip_body, (
-            "B-14 fix: _flip_image_verified must .start() the worker"
-        )
+        assert ".start()" in flip_body, "B-14 fix: _flip_image_verified must .start() the worker"
 
     def test_flip_method_disables_buttons_while_in_flight(self):
         """Double-click protection: the mark-verified buttons must be
@@ -217,12 +213,9 @@ class TestDiskScanIsAsync:
         assert "_DiskScanWorker(" in body, (
             "B-15 fix: load_recent_jobs_from_disk must construct the worker"
         )
-        assert ".start()" in body, (
-            "B-15 fix: load_recent_jobs_from_disk must .start() the worker"
-        )
+        assert ".start()" in body, "B-15 fix: load_recent_jobs_from_disk must .start() the worker"
         assert "job_loaded.connect(" in body, (
-            "B-15 fix: load_recent_jobs_from_disk must connect the "
-            "worker's job_loaded signal"
+            "B-15 fix: load_recent_jobs_from_disk must connect the worker's job_loaded signal"
         )
         # The sync version used to walk every line of every jsonl in the
         # loop body. The async version must NOT — the worker does the
@@ -249,8 +242,7 @@ class TestDiskScanIsAsync:
         # 2. The synchronous ``matches_path.open(`` block that used
         #    to read the file is gone from the load method.
         assert "matches_path.open(" not in body, (
-            "B-15 fix: load_recent_jobs_from_disk must not open "
-            "matches.jsonl directly anymore"
+            "B-15 fix: load_recent_jobs_from_disk must not open matches.jsonl directly anymore"
         )
         # 3. add_or_update_job IS still referenced, but only inside
         #    the _on_job callback that is connected to job_loaded.
@@ -271,12 +263,10 @@ class TestDiskScanIsAsync:
         # The async version does not have this loop; the worker body
         # has it instead.
         assert "for line in fh" not in body, (
-            "B-15 fix: load_recent_jobs_from_disk must not iterate jsonl "
-            "lines on the GUI thread"
+            "B-15 fix: load_recent_jobs_from_disk must not iterate jsonl lines on the GUI thread"
         )
         assert "json.loads(line)" not in body, (
-            "B-15 fix: load_recent_jobs_from_disk must not call json.loads "
-            "on the GUI thread"
+            "B-15 fix: load_recent_jobs_from_disk must not call json.loads on the GUI thread"
         )
 
     def test_qthread_imported_in_jobs_tab(self):
@@ -301,9 +291,7 @@ class TestOCRErrorLogging:
         # The fix turns "except Exception: pass" into a debug log.
         # Pin the new log message so a future refactor can't silently
         # strip it.
-        assert "per-panel OCR failed" in src, (
-            "M-1 fix: pipeline.py must log per-panel OCR failures"
-        )
+        assert "per-panel OCR failed" in src, "M-1 fix: pipeline.py must log per-panel OCR failures"
 
     def test_label_region_ocr_failure_is_logged(self):
         src = _read("src/rlpe/pipeline.py")
@@ -361,9 +349,7 @@ class TestExportErrorLogging:
         assert "Export failed (xlsx" in body, (
             "M-15 fix: _export_xlsx must log a 'Export failed (xlsx ...)' error"
         )
-        assert "_log.error(" in body, (
-            "M-15 fix: _export_xlsx must call _log.error(...)"
-        )
+        assert "_log.error(" in body, "M-15 fix: _export_xlsx must call _log.error(...)"
         assert "exc_info=True" in body, (
             "M-15 fix: _export_xlsx must pass exc_info=True to _log.error"
         )
@@ -374,9 +360,7 @@ class TestExportErrorLogging:
         assert "Export failed (json" in body, (
             "M-15 fix: _export_json must log a 'Export failed (json ...)' error"
         )
-        assert "_log.error(" in body, (
-            "M-15 fix: _export_json must call _log.error(...)"
-        )
+        assert "_log.error(" in body, "M-15 fix: _export_json must call _log.error(...)"
 
     def test_csv_export_logs_error(self):
         src = _read("src/rlpe/gui/results_tab.py")
@@ -384,9 +368,7 @@ class TestExportErrorLogging:
         assert "Export failed (csv" in body, (
             "M-15 fix: _export_csv must log a 'Export failed (csv ...)' error"
         )
-        assert "_log.error(" in body, (
-            "M-15 fix: _export_csv must call _log.error(...)"
-        )
+        assert "_log.error(" in body, "M-15 fix: _export_csv must call _log.error(...)"
 
     def test_dwca_export_logs_error(self):
         src = _read("src/rlpe/gui/results_tab.py")
@@ -394,9 +376,7 @@ class TestExportErrorLogging:
         assert "Export failed (dwca" in body, (
             "M-15 fix: _export_dwca must log a 'Export failed (dwca ...)' error"
         )
-        assert "_log.error(" in body, (
-            "M-15 fix: _export_dwca must call _log.error(...)"
-        )
+        assert "_log.error(" in body, "M-15 fix: _export_dwca must call _log.error(...)"
 
     def test_export_module_doc_acknowledges_qthread_followup(self):
         """Documentation hysteresis: the next engineer should be able to

@@ -848,8 +848,7 @@ def _load_seton2012_from_external(path: str | os.PathLike) -> int:
         EULER_POLES[name] = sorted(rows, key=lambda r: r[0])
         merged += 1
         logger.info(
-            "paleo_reconstruction: loaded %d rotation rows for plate=%r "
-            "from %s",
+            "paleo_reconstruction: loaded %d rotation rows for plate=%r from %s",
             len(rows),
             name,
             p,

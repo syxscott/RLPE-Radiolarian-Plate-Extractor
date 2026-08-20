@@ -505,8 +505,7 @@ class TestProductDataPackage:
         parts = _taxon_parts("cf. species")
         for key in ("genus", "specific_epithet", "qualifier"):
             assert parts.get(key) is None, (
-                f"_taxon_parts('cf. species') expected {key}=None, "
-                f"got {parts.get(key)!r}"
+                f"_taxon_parts('cf. species') expected {key}=None, got {parts.get(key)!r}"
             )
 
     def test_sample_records_namespaced_by_paper_id(self):
@@ -538,8 +537,7 @@ class TestProductDataPackage:
                 f"sample_id should end with '_PR-SB26', got {s['sample_id']!r}"
             )
             assert s["sample_id"][:2] in {"S_", "X_"}, (
-                f"sample_id prefix should be 'S_' (legacy) or 'X_' "
-                f"(helper), got {s['sample_id']!r}"
+                f"sample_id prefix should be 'S_' (legacy) or 'X_' (helper), got {s['sample_id']!r}"
             )
 
     def test_locality_records_namespaced_by_paper_id(self):

@@ -166,7 +166,9 @@ class _CaptureMessagesBackend:
         )
         return dict(self.canned_response)
 
-    def infer_text(self, system_prompt: str = "", user_prompt: str = "", **_kw: Any) -> dict[str, Any]:
+    def infer_text(
+        self, system_prompt: str = "", user_prompt: str = "", **_kw: Any
+    ) -> dict[str, Any]:
         return dict(self.canned_response)
 
 
@@ -412,7 +414,15 @@ class TestM14LlamaCppSingleImageDegradation:
                 return None
 
             def json(self) -> dict[str, Any]:
-                return {"choices": [{"message": {"content": '{"label":"1","species":"X","confidence":0.5,"reasoning":""}'}}]}
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"label":"1","species":"X","confidence":0.5,"reasoning":""}'
+                            }
+                        }
+                    ]
+                }
 
         def _fake_post(url: str, json: dict[str, Any], timeout: Any = None) -> _FakeResp:
             return _FakeResp()

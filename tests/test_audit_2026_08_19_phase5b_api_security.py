@@ -112,9 +112,7 @@ class TestTracebackNotLeaked:
     response body must not contain a Python traceback, file paths,
     or line numbers."""
 
-    def test_unhandled_exception_returns_sanitised_500(
-        self, app_module: object
-    ) -> None:
+    def test_unhandled_exception_returns_sanitised_500(self, app_module: object) -> None:
         """Inject a route that raises ``RuntimeError("boom")``, hit
         it, and assert the response is 500 with only a sanitised
         body — no traceback, no file paths, no module names."""
@@ -135,7 +133,7 @@ class TestTracebackNotLeaked:
         assert r.status_code == 500
         body_text = r.text
         # Forbidden substrings (case-sensitive).
-        for needle in ("Traceback", "File \"", "site-packages", "/__test/", "RuntimeError: boom"):
+        for needle in ("Traceback", 'File "', "site-packages", "/__test/", "RuntimeError: boom"):
             assert needle not in body_text, (
                 f"Traceback leak detected (needle={needle!r}): {body_text[:400]}"
             )
@@ -203,9 +201,7 @@ class TestUploadSizeCap:
 
         assert app_mod.MAX_UPLOAD_SIZE_MB == 50
 
-    def test_50mb_upload_succeeds(
-        self, app_module: object, client, tmp_path: Path
-    ) -> None:
+    def test_50mb_upload_succeeds(self, app_module: object, client, tmp_path: Path) -> None:
         """A 50 MB PDF must upload successfully under the 100 MB
         default cap."""
         # Force the cap to a known value to keep the test fast.
@@ -322,9 +318,7 @@ class TestContentDispositionSecurity:
         assert filename.startswith("rlpe_"), filename
         assert filename.endswith(".xlsx"), filename
 
-    def test_raw_headers_in_response_have_no_crlf(
-        self, app_module, setup: str, client
-    ) -> None:
+    def test_raw_headers_in_response_have_no_crlf(self, app_module, setup: str, client) -> None:
         """Iterate ``response.headers.raw`` and assert every header
         line is single-line (no embedded CR/LF). The HTTP spec
         forbids header splitting as it enables response-splitting
@@ -334,9 +328,7 @@ class TestContentDispositionSecurity:
         # ``response.headers.raw`` is a list of (bytes, bytes) tuples
         # in httpx; we check both header name and value.
         for name, value in r.headers.raw:
-            assert b"\r" not in name and b"\n" not in name, (
-                f"CR/LF in header name: {name!r}"
-            )
+            assert b"\r" not in name and b"\n" not in name, f"CR/LF in header name: {name!r}"
             assert b"\r" not in value and b"\n" not in value, (
                 f"CR/LF in header value ({name!r}): {value!r}"
             )
@@ -352,9 +344,7 @@ class TestApiKeyAuth:
     ApiKey`` response header. When the env var is NOT set, the
     dependency is a no-op."""
 
-    def test_no_key_when_env_unset_allows_request(
-        self, app_module, client
-    ) -> None:
+    def test_no_key_when_env_unset_allows_request(self, app_module, client) -> None:
         """With ``RLPE_API_KEY`` unset, the same-origin SPA workflow
         (POST /review/correction) must succeed without any header."""
         payload = {
@@ -367,9 +357,7 @@ class TestApiKeyAuth:
             f"expected success without auth, got {r.status_code}: {r.text[:300]}"
         )
 
-    def test_missing_x_api_key_returns_403(
-        self, authed_app_module, authed_client
-    ) -> None:
+    def test_missing_x_api_key_returns_403(self, authed_app_module, authed_client) -> None:
         """With ``RLPE_API_KEY=secret123`` set, a POST without the
         ``X-API-Key`` header must return 403."""
         payload = {
@@ -378,14 +366,10 @@ class TestApiKeyAuth:
             "corrected_species": "Genus species",
         }
         r = authed_client.post("/review/correction", json=payload)
-        assert r.status_code == 403, (
-            f"expected 403, got {r.status_code}: {r.text[:300]}"
-        )
+        assert r.status_code == 403, f"expected 403, got {r.status_code}: {r.text[:300]}"
         assert r.headers.get("www-authenticate") == "ApiKey"
 
-    def test_wrong_x_api_key_returns_403(
-        self, authed_app_module, authed_client
-    ) -> None:
+    def test_wrong_x_api_key_returns_403(self, authed_app_module, authed_client) -> None:
         """With ``RLPE_API_KEY=secret123`` set, a POST with the
         wrong ``X-API-Key`` header must return 403."""
         payload = {
@@ -398,13 +382,9 @@ class TestApiKeyAuth:
             json=payload,
             headers={"X-API-Key": "wrong-key"},
         )
-        assert r.status_code == 403, (
-            f"expected 403, got {r.status_code}: {r.text[:300]}"
-        )
+        assert r.status_code == 403, f"expected 403, got {r.status_code}: {r.text[:300]}"
 
-    def test_correct_x_api_key_returns_success(
-        self, authed_app_module, authed_client
-    ) -> None:
+    def test_correct_x_api_key_returns_success(self, authed_app_module, authed_client) -> None:
         """With ``RLPE_API_KEY=secret123`` set, a POST with the
         matching ``X-API-Key`` header must succeed."""
         payload = {
@@ -435,9 +415,7 @@ class TestApiKeyAuth:
                 "/jobs/upload",
                 files={"file": (pdf.name, f, "application/pdf")},
             )
-        assert r.status_code == 403, (
-            f"expected 403 for upload without key, got {r.status_code}"
-        )
+        assert r.status_code == 403, f"expected 403 for upload without key, got {r.status_code}"
 
         # With the right header → 200/202.
         with pdf.open("rb") as f:
@@ -450,21 +428,15 @@ class TestApiKeyAuth:
             f"expected success with valid key, got {r.status_code}: {r.text[:300]}"
         )
 
-    def test_read_endpoint_does_not_require_auth(
-        self, authed_app_module, authed_client
-    ) -> None:
+    def test_read_endpoint_does_not_require_auth(self, authed_app_module, authed_client) -> None:
         """GET endpoints stay open — the SPA fetches them from
         loopback without an auth header."""
         r = authed_client.get("/health")
-        assert r.status_code == 200, (
-            f"GET /health should not require auth, got {r.status_code}"
-        )
+        assert r.status_code == 200, f"GET /health should not require auth, got {r.status_code}"
         r = authed_client.get("/system/info")
         assert r.status_code == 200
 
-    def test_require_api_key_uses_constant_time_compare(
-        self, app_module: object
-    ) -> None:
+    def test_require_api_key_uses_constant_time_compare(self, app_module: object) -> None:
         """The dependency must use ``hmac.compare_digest`` so the
         check doesn't leak length / position via timing. This is a
         source-level assertion — cheap and deterministic."""
@@ -472,8 +444,7 @@ class TestApiKeyAuth:
 
         src = inspect.getsource(app_module.require_api_key)
         assert "hmac.compare_digest" in src, (
-            "require_api_key should use hmac.compare_digest for "
-            "constant-time comparison"
+            "require_api_key should use hmac.compare_digest for constant-time comparison"
         )
 
 

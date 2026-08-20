@@ -183,9 +183,7 @@ class TestSweep7C2FallbackPendingCleanup:
         pop_count = src.count("FALLBACK_PENDING.pop(job_id, None)")
         del_count = src.count("del FALLBACK_PENDING[")
         # ≥4 sites, all using the same pattern.
-        assert pop_count >= 4, (
-            f"Expected ≥4 FALLBACK_PENDING.pop(job_id, None); got {pop_count}"
-        )
+        assert pop_count >= 4, f"Expected ≥4 FALLBACK_PENDING.pop(job_id, None); got {pop_count}"
         assert del_count == 0, (
             f"del FALLBACK_PENDING still appears {del_count}× — "
             f"replace with .pop(..., None) for consistency"
@@ -204,10 +202,8 @@ class TestSweep7C5RootStorageConsistency:
         # The "str(root.resolve())" pattern at line ~596 is the
         # CLI-discovered path; the new web-upload path uses
         # "str((WORK_DIR / job_id).resolve())".
-        assert 'str(root.resolve())' in src, (
-            "CLI-discovered _root site no longer calls .resolve()"
-        )
-        assert 'str((WORK_DIR / job_id).resolve())' in src, (
+        assert "str(root.resolve())" in src, "CLI-discovered _root site no longer calls .resolve()"
+        assert "str((WORK_DIR / job_id).resolve())" in src, (
             "Web-upload _root site no longer calls .resolve() — "
             "storing an unresolved path can differ from the .resolve()'d "
             "form the CLI-discovered site produces, breaking "
@@ -235,7 +231,7 @@ class TestSweep7C5RootStorageConsistency:
                 elif ch == ")":
                     depth -= 1
                 i += 1
-            inner = src[start:i - 1]
+            inner = src[start : i - 1]
             if ".resolve()" not in inner:
                 bad_sites.append(inner)
         assert not bad_sites, (

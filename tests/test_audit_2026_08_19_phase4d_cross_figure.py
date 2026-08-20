@@ -365,9 +365,7 @@ class TestPhase4DSourceGuard:
 
         sig = inspect.signature(M3Engine.cross_figure_visual_inference)
         # ``params`` includes ``self`` for bound methods; skip it.
-        params = [
-            p for name, p in sig.parameters.items() if name != "self"
-        ]
+        params = [p for name, p in sig.parameters.items() if name != "self"]
         # ``plate_image`` is the 1st user-facing parameter; ``strat_image``
         # is the 2nd. The Phase 4D change makes ``strat_image`` default
         # to ``None`` (was: required).
@@ -435,9 +433,7 @@ class TestStage4CaptionImageJointInference:
         panel = _make_pil_image(width=128, height=128, color="blue")
         engine.match_panel(
             panel_image=panel,
-            caption_pairs=[
-                CaptionPair(labels=["A"], species="X", raw_text="A: X")
-            ],
+            caption_pairs=[CaptionPair(labels=["A"], species="X", raw_text="A: X")],
             caption_text="A: X",
         )
         forwarded = capture.calls[0]["panel_image"]
@@ -489,9 +485,7 @@ class TestStage4SourceGuard:
         assert "panel_image" in sig.parameters
         # panel_image is the FIRST positional user-facing parameter
         # (``self`` is excluded from the bound-method signature).
-        params = [
-            p for name, p in sig.parameters.items() if name != "self"
-        ]
+        params = [p for name, p in sig.parameters.items() if name != "self"]
         assert params[0].name == "panel_image"
 
 

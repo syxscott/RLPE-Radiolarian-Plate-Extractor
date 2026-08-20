@@ -131,8 +131,7 @@ class TestCambrianStages:
         for name in self.EXPECTED:
             parent = ages[name]["parent"]
             assert parent in cambrian_series, (
-                f"{name} should parent to a Cambrian series "
-                f"({cambrian_series}); got {parent!r}"
+                f"{name} should parent to a Cambrian series ({cambrian_series}); got {parent!r}"
             )
 
     def test_fortunian_anchors_terreneuvian(self):
@@ -312,7 +311,7 @@ class TestDevonianSeries:
         tops = [epochs[n]["ma_top"] for n in self.EXPECTED]
         bases = [epochs[n]["ma_base"] for n in self.EXPECTED]
         assert max(bases) == 419.2  # Early Devonian ma_base = Devonian ma_base
-        assert min(tops) == 358.9   # Late Devonian ma_top = Devonian ma_top
+        assert min(tops) == 358.9  # Late Devonian ma_top = Devonian ma_top
 
     def test_early_devonian_ics_2023_values(self):
         epochs = _rows_by_rank("epoch")
@@ -353,8 +352,7 @@ class TestDevonianStages:
         for name in self.EXPECTED:
             parent = ages[name]["parent"]
             assert parent in devonian_series, (
-                f"{name} should parent to a Devonian series "
-                f"({devonian_series}); got {parent!r}"
+                f"{name} should parent to a Devonian series ({devonian_series}); got {parent!r}"
             )
 
     def test_famennian_anchors_devonian_top(self):
@@ -485,9 +483,7 @@ class TestClassifyAgeStringIntegration:
         existed; with the fix it now classifies to epoch rank with
         period=Ordovician."""
         c = classify_age_string("Early Ordovician")
-        assert c.rank == "epoch", (
-            f"Expected rank=epoch for 'Early Ordovician', got {c.rank}"
-        )
+        assert c.rank == "epoch", f"Expected rank=epoch for 'Early Ordovician', got {c.rank}"
         assert c.epoch == "Early Ordovician"
         assert c.period == "Ordovician"
 
@@ -533,9 +529,7 @@ class TestClassifyAgeStringIntegration:
         """REGRESSION GUARD: "Early Devonian" used to fall through to
         rank=period; the fix promotes it to epoch rank."""
         c = classify_age_string("Early Devonian")
-        assert c.rank == "epoch", (
-            f"Expected rank=epoch for 'Early Devonian', got {c.rank}"
-        )
+        assert c.rank == "epoch", f"Expected rank=epoch for 'Early Devonian', got {c.rank}"
         assert c.epoch == "Early Devonian"
         assert c.period == "Devonian"
 

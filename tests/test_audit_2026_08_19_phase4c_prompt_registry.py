@@ -154,9 +154,7 @@ class TestPromptRegistry:
         # Bump semantics: major for schema change, minor for wording,
         # patch for typos. We only check the general shape here.
         parts = PROMPT_REGISTRY_VERSION.lstrip("v").split(".")
-        assert len(parts) == 3, (
-            f"version {PROMPT_REGISTRY_VERSION!r} must be vMAJOR.MINOR.PATCH"
-        )
+        assert len(parts) == 3, f"version {PROMPT_REGISTRY_VERSION!r} must be vMAJOR.MINOR.PATCH"
         for part in parts:
             assert part.isdigit(), f"non-numeric version segment {part!r}"
 
@@ -423,9 +421,7 @@ class TestM3PromptsRetainFewShotFormat:
         # The example must reference the JSON shape Gemma now reads
         # (label, species, confidence, reasoning).
         for key in ("label", "species", "confidence", "reasoning"):
-            assert key in _MATCH_PANEL_SYSTEM, (
-                f"_MATCH_PANEL_SYSTEM missing output key {key!r}"
-            )
+            assert key in _MATCH_PANEL_SYSTEM, f"_MATCH_PANEL_SYSTEM missing output key {key!r}"
 
     def test_critique_system_has_fewshot_example(self):
         from rlpe.m3_engine import _CRITIQUE_SYSTEM

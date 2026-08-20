@@ -75,9 +75,7 @@ def _find_method(tree: ast.Module, class_name: str, method_name: str) -> ast.Fun
             for item in node.body:
                 if isinstance(item, ast.FunctionDef) and item.name == method_name:
                     return item
-    raise AssertionError(
-        f"could not find {class_name}.{method_name} in parsed module"
-    )
+    raise AssertionError(f"could not find {class_name}.{method_name} in parsed module")
 
 
 # ============================================================
@@ -125,9 +123,9 @@ def test_qbool_accepts_true_false_yes_no_1_0():
             f"_qbool({s!r}) should be True"
         )
         # bool() comparison shape
-        assert (
-            MainWindow._qbool(win, settings, "flag", default=False) is not False
-        ), f"_qbool({s!r}) should be truthy"
+        assert MainWindow._qbool(win, settings, "flag", default=False) is not False, (
+            f"_qbool({s!r}) should be truthy"
+        )
 
     for s in falsy_inputs:
         settings.setValue("flag", s)
@@ -158,8 +156,7 @@ def test_qbool_source_contains_on_string():
     fn = _find_method(tree, "MainWindow", "_qbool")
     body_src = ast.unparse(fn)
     assert '"on"' in body_src or "'on'" in body_src, (
-        "_qbool body does not include 'on' as a truthy value — "
-        "Phase 6A NIT-1 fix is missing."
+        "_qbool body does not include 'on' as a truthy value — Phase 6A NIT-1 fix is missing."
     )
     # Also: must NOT use the broken type=bool converter in actual code.
     # Qt converts "no" / "off" / "false" to True under type=bool, so
@@ -245,9 +242,7 @@ def test_theme_apply_calls_qsettings_sync():
         "_apply_theme does not call self._qsettings.sync() — "
         "theme choice may be lost on hard close."
     )
-    assert "setValue" in body_src, (
-        "_apply_theme does not call setValue(QS_KEY_THEME, theme)."
-    )
+    assert "setValue" in body_src, "_apply_theme does not call setValue(QS_KEY_THEME, theme)."
 
 
 @pytest.mark.skipif(not _HAS_PYSIDE6, reason="PySide6 not installed")
@@ -271,9 +266,7 @@ def test_theme_persists_across_qsettings_instance():
     # Read back with a brand-new instance
     s2 = QSettings(org, app_name)
     val = s2.value("ui/theme", "light")
-    assert str(val).lower() == "dark", (
-        f"theme persistence failed: wrote 'dark', read back {val!r}"
-    )
+    assert str(val).lower() == "dark", f"theme persistence failed: wrote 'dark', read back {val!r}"
 
     # Cleanup
     s2.clear()
@@ -389,8 +382,7 @@ def test_context_menu_qaction_count_stable_across_repeats(monkeypatch):
 
         # Also verify exec_ was actually invoked 10 times
         assert exec_call_count["n"] == 10, (
-            f"_show_context_menu did not call menu.exec_() 10 times; "
-            f"got {exec_call_count['n']}"
+            f"_show_context_menu did not call menu.exec_() 10 times; got {exec_call_count['n']}"
         )
     finally:
         jt.deleteLater()
@@ -419,12 +411,12 @@ def test_bbox_tooltip_uses_i18n_tr():
         "'h: '",
         '"family:"',
         "'family:'",
-        "f\"confidence:",
-        "f\"x:",
-        "f\"y:",
-        "f\"w:",
-        "f\"h:",
-        "f\"family:",
+        'f"confidence:',
+        'f"x:',
+        'f"y:',
+        'f"w:',
+        'f"h:',
+        'f"family:',
         "f'confidence:",
         "f'x:",
         "f'y:",
@@ -444,9 +436,7 @@ def test_bbox_tooltip_uses_i18n_tr():
         "preview.tooltip.coords_wh",
         "preview.tooltip.family",
     ):
-        assert key in src, (
-            f"_bbox_tooltip missing i18n key {key!r}"
-        )
+        assert key in src, f"_bbox_tooltip missing i18n key {key!r}"
 
 
 def test_bbox_tooltip_keys_exist_en():

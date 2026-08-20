@@ -64,10 +64,14 @@ class TestExpandUserPath:
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", "~/papers",
-            "--work-dir", str(tmp_path / "work"),
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                "~/papers",
+                "--work-dir",
+                str(tmp_path / "work"),
+            ]
+        )
         expected = Path(os.path.expanduser("~/papers"))
         assert ns.pdf_dir == expected, (
             f"--pdf-dir ~/papers must expand to {expected!r}, got {ns.pdf_dir!r}"
@@ -78,10 +82,14 @@ class TestExpandUserPath:
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", str(tmp_path / "pdfs"),
-            "--work-dir", "~/rlpe_work",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                str(tmp_path / "pdfs"),
+                "--work-dir",
+                "~/rlpe_work",
+            ]
+        )
         expected = Path(os.path.expanduser("~/rlpe_work"))
         assert ns.work_dir == expected, (
             f"--work-dir ~/rlpe_work must expand to {expected!r}, got {ns.work_dir!r}"
@@ -93,13 +101,20 @@ class TestExpandUserPath:
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", str(tmp_path / "pdfs"),
-            "--work-dir", str(tmp_path / "work"),
-            "--export-csv", "~/out.csv",
-            "--export-json", "~/out.json",
-            "--export-jsonl", "~/out.jsonl",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                str(tmp_path / "pdfs"),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--export-csv",
+                "~/out.csv",
+                "--export-json",
+                "~/out.json",
+                "--export-jsonl",
+                "~/out.jsonl",
+            ]
+        )
         for attr, want in (
             ("export_csv", "~/out.csv"),
             ("export_json", "~/out.json"),
@@ -116,10 +131,14 @@ class TestExpandUserPath:
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", str(tmp_path / "pdfs"),
-            "--work-dir", str(tmp_path / "work"),
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                str(tmp_path / "pdfs"),
+                "--work-dir",
+                str(tmp_path / "work"),
+            ]
+        )
         assert ns.pdf_dir == tmp_path / "pdfs"
         assert ns.work_dir == tmp_path / "work"
 
@@ -171,10 +190,14 @@ class TestExpandUserPath:
         pdf_dir.mkdir()
 
         parser = build_parser()
-        args = parser.parse_args([
-            "--pdf-dir", str(pdf_dir),
-            "--work-dir", str(tmp_path / "work"),
-        ])
+        args = parser.parse_args(
+            [
+                "--pdf-dir",
+                str(pdf_dir),
+                "--work-dir",
+                str(tmp_path / "work"),
+            ]
+        )
         # Stuff a raw "~/rlpe_work" string into work_dir, bypassing
         # the ExpandUserPath type= factory. The defensive branch
         # must expand it before the existence check runs.
@@ -197,9 +220,7 @@ class TestExpandUserPath:
         """Source guard: ``ExpandUserPath`` must be defined so a
         future refactor that drops it cannot silently regress NIT-1."""
         text = _CLI_PATH.read_text(encoding="utf-8")
-        assert "def ExpandUserPath" in text, (
-            "ExpandUserPath factory must be defined in cli.py"
-        )
+        assert "def ExpandUserPath" in text, "ExpandUserPath factory must be defined in cli.py"
         # And it must be used by --pdf-dir / --work-dir.
         assert "type=ExpandUserPath" in text, (
             "--pdf-dir / --work-dir / --export-* must use ExpandUserPath"
@@ -234,8 +255,7 @@ class TestDefaultConfigExample:
             "extra",
         ):
             assert key in payload, (
-                f"example config must document key {key!r}; "
-                f"got keys {list(payload)!r}"
+                f"example config must document key {key!r}; got keys {list(payload)!r}"
             )
 
     def test_ensure_default_config_creates_file(self, tmp_path):
@@ -293,20 +313,23 @@ class TestDefaultConfigExample:
         # after the config example has been written. We only care
         # that the example is dropped on the floor before the error.
         bad_pdf = tmp_path / "missing_pdfs"
-        with patch.object(sys, "argv", [
-            "rlpe",
-            "--pdf-dir", str(bad_pdf),
-            "--work-dir", str(tmp_path / "work"),
-        ]):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "rlpe",
+                "--pdf-dir",
+                str(bad_pdf),
+                "--work-dir",
+                str(tmp_path / "work"),
+            ],
+        ):
             rc = main()
 
         assert rc == 2  # UserError from missing pdf-dir
         # The example must have been written to the default location.
         example = sandbox_home / EXAMPLE_CONFIG_DIRNAME / EXAMPLE_CONFIG_FILENAME
-        assert example.exists(), (
-            "first-run must drop the example config at "
-            "$HOME/.rlpe/config.json"
-        )
+        assert example.exists(), "first-run must drop the example config at $HOME/.rlpe/config.json"
         # And it must be valid JSON.
         json.loads(example.read_text(encoding="utf-8"))
         captured = capsys.readouterr()
@@ -342,11 +365,15 @@ class TestDryRun:
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", str(tmp_path / "pdfs"),
-            "--work-dir", str(tmp_path / "work"),
-            "--dry-run",
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                str(tmp_path / "pdfs"),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--dry-run",
+            ]
+        )
         assert ns.dry_run is True
 
     def test_dry_run_default_false(self, tmp_path):
@@ -354,10 +381,14 @@ class TestDryRun:
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", str(tmp_path / "pdfs"),
-            "--work-dir", str(tmp_path / "work"),
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                str(tmp_path / "pdfs"),
+                "--work-dir",
+                str(tmp_path / "work"),
+            ]
+        )
         assert ns.dry_run is False
 
     def test_dry_run_exits_zero(self, tmp_path):
@@ -370,12 +401,18 @@ class TestDryRun:
         (pdf_dir / "stub.pdf").write_bytes(b"%PDF-1.4 stub")
         work_dir = tmp_path / "work"
 
-        with patch.object(sys, "argv", [
-            "rlpe",
-            "--pdf-dir", str(pdf_dir),
-            "--work-dir", str(work_dir),
-            "--dry-run",
-        ]):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "rlpe",
+                "--pdf-dir",
+                str(pdf_dir),
+                "--work-dir",
+                str(work_dir),
+                "--dry-run",
+            ],
+        ):
             # Patch the LOCAL reference; cli.py does
             # ``from .pipeline import RadiolarianPipeline`` so the name
             # lives in rlpe.cli's namespace.
@@ -396,20 +433,24 @@ class TestDryRun:
         (pdf_dir / "stub.pdf").write_bytes(b"%PDF-1.4 stub")
         work_dir = tmp_path / "work"
 
-        with patch.object(sys, "argv", [
-            "rlpe",
-            "--pdf-dir", str(pdf_dir),
-            "--work-dir", str(work_dir),
-            "--dry-run",
-        ]):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "rlpe",
+                "--pdf-dir",
+                str(pdf_dir),
+                "--work-dir",
+                str(work_dir),
+                "--dry-run",
+            ],
+        ):
             rc = main()
 
         assert rc == 0
         out = capsys.readouterr().out
         for needle in ("--pdf-dir", "--work-dir", "--ocr-backend", "dry-run"):
-            assert needle in out, (
-                f"--dry-run output must mention {needle!r}, got: {out!r}"
-            )
+            assert needle in out, f"--dry-run output must mention {needle!r}, got: {out!r}"
 
     def test_dry_run_subprocess(self, tmp_path):
         """End-to-end: ``python -m rlpe.cli --dry-run …`` must exit 0."""
@@ -435,8 +476,7 @@ class TestDryRun:
             timeout=30,
         )
         assert result.returncode == 0, (
-            f"--dry-run subprocess must exit 0, got {result.returncode}; "
-            f"stderr={result.stderr!r}"
+            f"--dry-run subprocess must exit 0, got {result.returncode}; stderr={result.stderr!r}"
         )
         assert "--pdf-dir" in result.stdout
 
@@ -445,16 +485,20 @@ class TestDryRun:
         (the point is to validate, not to skip validation)."""
         from rlpe.cli import main
 
-        with patch.object(sys, "argv", [
-            "rlpe",
-            "--pdf-dir", str(tmp_path / "missing"),
-            "--work-dir", str(tmp_path / "work"),
-            "--dry-run",
-        ]):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "rlpe",
+                "--pdf-dir",
+                str(tmp_path / "missing"),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--dry-run",
+            ],
+        ):
             rc = main()
-        assert rc == 2, (
-            f"--dry-run with missing --pdf-dir must exit 2, got {rc}"
-        )
+        assert rc == 2, f"--dry-run with missing --pdf-dir must exit 2, got {rc}"
 
 
 # ---------------------------------------------------------------------------
@@ -499,13 +543,9 @@ class TestFlushPrint:
         the user-facing print paths so a refactor that re-introduces
         raw ``print()`` fails this test."""
         text = _CLI_PATH.read_text(encoding="utf-8")
-        assert "def _flush_print" in text, (
-            "_flush_print helper must be defined in cli.py"
-        )
+        assert "def _flush_print" in text, "_flush_print helper must be defined in cli.py"
         # User-facing prints inside main() / _run_dry() must use it.
-        assert "_flush_print" in text, (
-            "_flush_print must be used in cli.py"
-        )
+        assert "_flush_print" in text, "_flush_print must be used in cli.py"
 
 
 # ---------------------------------------------------------------------------
@@ -523,11 +563,15 @@ class TestQuietVerbose:
 
         for flag in ("--quiet", "-q"):
             parser = build_parser()
-            ns = parser.parse_args([
-                "--pdf-dir", str(tmp_path / "pdfs"),
-                "--work-dir", str(tmp_path / "work"),
-                flag,
-            ])
+            ns = parser.parse_args(
+                [
+                    "--pdf-dir",
+                    str(tmp_path / "pdfs"),
+                    "--work-dir",
+                    str(tmp_path / "work"),
+                    flag,
+                ]
+            )
             assert ns.quiet is True, f"{flag} must set ns.quiet=True"
 
     def test_verbose_flag_parses(self, tmp_path):
@@ -536,11 +580,15 @@ class TestQuietVerbose:
 
         for flag in ("--verbose", "-v"):
             parser = build_parser()
-            ns = parser.parse_args([
-                "--pdf-dir", str(tmp_path / "pdfs"),
-                "--work-dir", str(tmp_path / "work"),
-                flag,
-            ])
+            ns = parser.parse_args(
+                [
+                    "--pdf-dir",
+                    str(tmp_path / "pdfs"),
+                    "--work-dir",
+                    str(tmp_path / "work"),
+                    flag,
+                ]
+            )
             assert ns.verbose is True, f"{flag} must set ns.verbose=True"
 
     def test_default_levels(self, tmp_path):
@@ -548,10 +596,14 @@ class TestQuietVerbose:
         from rlpe.cli import build_parser
 
         parser = build_parser()
-        ns = parser.parse_args([
-            "--pdf-dir", str(tmp_path / "pdfs"),
-            "--work-dir", str(tmp_path / "work"),
-        ])
+        ns = parser.parse_args(
+            [
+                "--pdf-dir",
+                str(tmp_path / "pdfs"),
+                "--work-dir",
+                str(tmp_path / "work"),
+            ]
+        )
         assert ns.quiet is False
         assert ns.verbose is False
 

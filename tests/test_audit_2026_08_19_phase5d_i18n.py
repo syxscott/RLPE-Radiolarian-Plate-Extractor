@@ -125,8 +125,7 @@ def test_main_window_registers_i18n_listener():
         "tab labels and window title won't refresh on language switch."
     )
     assert "_refresh_texts" in src, (
-        "MainWindow._build_ui does not call _refresh_texts — "
-        "initial tab labels may be wrong."
+        "MainWindow._build_ui does not call _refresh_texts — initial tab labels may be wrong."
     )
 
 
@@ -146,8 +145,7 @@ def test_run_tab_progress_uses_i18n_key():
         "fallback — must use i18n._tr('runtab.progress.working')."
     )
     assert "i18n._tr" in src, (
-        "RunTab._on_progress does not use i18n._tr — progress "
-        "fallback string is not localisable."
+        "RunTab._on_progress does not use i18n._tr — progress fallback string is not localisable."
     )
 
 
@@ -185,7 +183,14 @@ def test_run_tab_progress_live_progress_message_no_hardcoded_english():
     src = inspect.getsource(RunTab)
     # Hard-coded "Working…" was the M-18 bug. Catch any other
     # common English fallbacks ("Loading", "Processing") too.
-    bad_substrings = ('"Working…"', "'Working…'", '"Loading…"', "'Loading…'", '"Processing…"', "'Processing…'")
+    bad_substrings = (
+        '"Working…"',
+        "'Working…'",
+        '"Loading…"',
+        "'Loading…'",
+        '"Processing…"',
+        "'Processing…'",
+    )
     for bad in bad_substrings:
         assert bad not in src, (
             f"RunTab still has hard-coded progress string {bad!r}. "
@@ -251,7 +256,9 @@ def test_qfiledialog_titles_use_i18n(gui_file):
     # We accept filter strings ("Excel files (*.xlsx)") as bare — they
     # are file-type descriptors, not user-facing labels.
     for lineno, title in bare:
-        assert title.startswith(("PDF files", "Excel files", "JSON files", "CSV files", "Zip files", "All files")), (
+        assert title.startswith(
+            ("PDF files", "Excel files", "JSON files", "CSV files", "Zip files", "All files")
+        ), (
             f"{gui_file}:{lineno} QFileDialog has bare title {title!r} — "
             "wrap with i18n._tr('...') for language switch."
         )
@@ -311,10 +318,10 @@ def test_qmessagebox_text_uses_i18n(gui_file):
         if any(
             text.startswith(prefix)
             for prefix in (
-                "f\"{type",
+                'f"{type',
                 "f'{type",
                 "{type",
-                "f\"{error",
+                'f"{error',
                 "f'{error",
             )
         ):
@@ -366,9 +373,10 @@ def test_runtab_status_cancelled_key_exists_in_both():
         "ZH strings missing 'runtab.status.cancelled' — "
         "RunTab._on_failed shows ⟦runtab.status.cancelled⟧ in ZH mode."
     )
-    assert strings_en.STRINGS["runtab.status.cancelled"] != strings_zh_CN.STRINGS["runtab.status.cancelled"], (
-        "EN and ZH translations of 'runtab.status.cancelled' are identical"
-    )
+    assert (
+        strings_en.STRINGS["runtab.status.cancelled"]
+        != strings_zh_CN.STRINGS["runtab.status.cancelled"]
+    ), "EN and ZH translations of 'runtab.status.cancelled' are identical"
 
 
 def test_restab_export_xlsx_title_key_typo_fixed():
@@ -380,14 +388,13 @@ def test_restab_export_xlsx_title_key_typo_fixed():
     from rlpe.gui.main_window import MainWindow
 
     src = inspect.getsource(MainWindow._export_batch_xlsx)
-    assert 'restab.export.xlsx.title' not in src, (
+    assert "restab.export.xlsx.title" not in src, (
         "MainWindow._export_batch_xlsx still references the typo "
         "'restab.export.xlsx.title' (dots). The correct key is "
         "'restab.export.xlsx_title' (underscore)."
     )
-    assert 'restab.export.xlsx_title' in src, (
-        "MainWindow._export_batch_xlsx does not use the canonical "
-        "'restab.export.xlsx_title' key."
+    assert "restab.export.xlsx_title" in src, (
+        "MainWindow._export_batch_xlsx does not use the canonical 'restab.export.xlsx_title' key."
     )
 
 

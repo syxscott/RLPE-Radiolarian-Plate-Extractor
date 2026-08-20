@@ -113,7 +113,8 @@ def test_schema_drift_guard():
             )
 
     assert drift_lines == [], (
-        "Pydantic ↔ JSON Schema drift detected:\n" + "\n".join(drift_lines)
+        "Pydantic ↔ JSON Schema drift detected:\n"
+        + "\n".join(drift_lines)
         + "\n\nFix: regenerate the schema with "
         "`python -m rlpe.schema_dump` (or update the schema by hand) and "
         "re-commit. See commit `dda596c` for the previous paper_id fix."

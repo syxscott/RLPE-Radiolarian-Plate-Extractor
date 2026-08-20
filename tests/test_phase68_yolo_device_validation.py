@@ -152,7 +152,7 @@ class TestPhase68SourceGuard:
         assert "_VALID_YOLO_DEVICES" in src, "_VALID_YOLO_DEVICES reference missing"
         assert (
             "self.yolo_device not in _VALID_YOLO_DEVICES" in src
-            or 'self.yolo_device not in _VALID_YOLO_DEVICES' in src
+            or "self.yolo_device not in _VALID_YOLO_DEVICES" in src
         ), (
             "__post_init__ no longer validates yolo_device against _VALID_YOLO_DEVICES; "
             "typos in yolo_device will silently reach YOLO(...) and crash with "

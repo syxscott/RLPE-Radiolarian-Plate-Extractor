@@ -30,6 +30,7 @@ from .types import MatchResult
 try:
     from .m3_engine import get_prompt_registry
 except Exception:  # pragma: no cover - tolerate missing m3_engine in envs
+
     def get_prompt_registry() -> tuple[dict[str, str], str]:  # type: ignore[no-redef]
         """Stub fallback so this module imports without m3_engine.
 

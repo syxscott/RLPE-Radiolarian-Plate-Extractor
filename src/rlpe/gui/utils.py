@@ -351,8 +351,7 @@ def _tcp_port_lock(name: str) -> bool:
     # successfully, defeating the single-instance check. Use
     # SHA-256 → 2 bytes → int so the port is stable across runs.
     port = EPHEMERAL_PORT_START + (
-        int.from_bytes(hashlib.sha256(name.encode()).digest()[:2], "big")
-        & EPHEMERAL_PORT_RANGE
+        int.from_bytes(hashlib.sha256(name.encode()).digest()[:2], "big") & EPHEMERAL_PORT_RANGE
     )
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)

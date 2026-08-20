@@ -140,9 +140,7 @@ class TestM1MatchPanelFewShot:
         from rlpe.m3_engine import _MATCH_PANEL_SYSTEM
 
         for v in ("none", "cf.", "aff.", "ex gr.", "subgen.", "?"):
-            assert v in _MATCH_PANEL_SYSTEM, (
-                f"_MATCH_PANEL_SYSTEM missing enum value {v!r}"
-            )
+            assert v in _MATCH_PANEL_SYSTEM, f"_MATCH_PANEL_SYSTEM missing enum value {v!r}"
 
     def test_prompt_has_complete_example_with_cf_marker(self):
         """At least one Example must demonstrate cf. output with
@@ -189,9 +187,7 @@ class TestM1CritiqueFewShot:
         from rlpe.m3_engine import _CRITIQUE_SYSTEM
 
         for v in ("agree", "disagree", "uncertain"):
-            assert v in _CRITIQUE_SYSTEM, (
-                f"_CRITIQUE_SYSTEM missing verdict value {v!r}"
-            )
+            assert v in _CRITIQUE_SYSTEM, f"_CRITIQUE_SYSTEM missing verdict value {v!r}"
 
     def test_prompt_documents_open_nomenclature_strength(self):
         """M-1 baseline from Phase 1d: must reference the field."""
@@ -220,9 +216,7 @@ class TestM1CritiqueFewShot:
             "confidence",
             "reasoning",
         ):
-            assert field_name in _CRITIQUE_SYSTEM, (
-                f"_CRITIQUE_SYSTEM missing field {field_name!r}"
-            )
+            assert field_name in _CRITIQUE_SYSTEM, f"_CRITIQUE_SYSTEM missing field {field_name!r}"
 
 
 class TestM1PromptSize:
@@ -291,9 +285,7 @@ class TestM12GeoKeyWhitelist:
             "section_type",
             "link_source",
         ):
-            assert key in _GEO_KEY_WHITELIST, (
-                f"_GEO_KEY_WHITELIST missing required key {key!r}"
-            )
+            assert key in _GEO_KEY_WHITELIST, f"_GEO_KEY_WHITELIST missing required key {key!r}"
 
     def test_hallucinated_keys_are_dropped(self):
         from rlpe.llm_backends import _apply_geo_whitelist
@@ -314,9 +306,7 @@ class TestM12GeoKeyWhitelist:
             "depositional_environment",
             "tectonic_setting",
         ):
-            assert hallucinated not in out, (
-                f"{hallucinated!r} should have been dropped from {out}"
-            )
+            assert hallucinated not in out, f"{hallucinated!r} should have been dropped from {out}"
 
     def test_hallucinated_keys_log_warning(self, caplog):
         from rlpe.llm_backends import _apply_geo_whitelist
@@ -494,9 +484,7 @@ class TestM13MaRangeValidation:
 
         caplog.set_level(logging.WARNING, logger="rlpe.m3_engine")
         _validate_ma_range({"ma_top": 140, "ma_base": 120})
-        warnings = [
-            r.message for r in caplog.records if r.levelno >= logging.WARNING
-        ]
+        warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
         assert any("ma_top=140" in m and "ma_base=120" in m for m in warnings), (
             f"Expected WARNING with the bad range values, got {warnings}"
         )

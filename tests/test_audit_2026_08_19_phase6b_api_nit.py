@@ -112,9 +112,7 @@ class TestNIT1SplitCsvCap:
         raw = ",".join(f"id{i}" for i in range(10000))
         with pytest.raises(app_module.HTTPException) as exc_info:
             app_module._split_csv(raw, field_name="paper_ids")
-        assert exc_info.value.status_code == 400, (
-            f"expected 400, got {exc_info.value.status_code}"
-        )
+        assert exc_info.value.status_code == 400, f"expected 400, got {exc_info.value.status_code}"
         # Detail mentions the field name so the operator can see
         # which query parameter was the problem.
         assert "paper_ids" in str(exc_info.value.detail), (
@@ -187,9 +185,7 @@ class TestNIT2LimitOffsetValidation:
     def test_negative_limit_returns_400(self, app_module, client) -> None:
         """``?limit=-5`` must raise 400, not return an empty page."""
         r = client.get("/results?limit=-5")
-        assert r.status_code == 400, (
-            f"expected 400 for limit=-5, got {r.status_code}"
-        )
+        assert r.status_code == 400, f"expected 400 for limit=-5, got {r.status_code}"
         assert "limit" in r.json().get("detail", "").lower()
 
     def test_zero_limit_returns_400(self, app_module, client) -> None:
@@ -197,26 +193,20 @@ class TestNIT2LimitOffsetValidation:
         "is there a next page?" probe should hit the endpoint with
         ``limit=1`` and check whether they got a row back."""
         r = client.get("/results?limit=0")
-        assert r.status_code == 400, (
-            f"expected 400 for limit=0, got {r.status_code}"
-        )
+        assert r.status_code == 400, f"expected 400 for limit=0, got {r.status_code}"
 
     def test_limit_one_is_accepted(self, app_module, client) -> None:
         """``?limit=1`` must be accepted — it's the smallest valid
         value and the recommended "next page?" probe."""
         r = client.get("/results?limit=1")
-        assert r.status_code == 200, (
-            f"expected 200 for limit=1, got {r.status_code}: {r.text}"
-        )
+        assert r.status_code == 200, f"expected 200 for limit=1, got {r.status_code}: {r.text}"
         assert isinstance(r.json(), list)
 
     def test_negative_offset_returns_400(self, app_module, client) -> None:
         """``?offset=-1`` must raise 400. ``offset=0`` (first page)
         is fine, anything < 0 is a bug in the caller."""
         r = client.get("/results?offset=-1")
-        assert r.status_code == 400, (
-            f"expected 400 for offset=-1, got {r.status_code}"
-        )
+        assert r.status_code == 400, f"expected 400 for offset=-1, got {r.status_code}"
         assert "offset" in r.json().get("detail", "").lower()
 
     def test_limit_above_cap_returns_400(self, app_module, client) -> None:
@@ -225,16 +215,12 @@ class TestNIT2LimitOffsetValidation:
         pagination bugs invisible — a caller asking for 10000 rows
         should know it's being capped."""
         r = client.get("/results?limit=10000")
-        assert r.status_code == 400, (
-            f"expected 400 for limit=10000, got {r.status_code}"
-        )
+        assert r.status_code == 400, f"expected 400 for limit=10000, got {r.status_code}"
 
     def test_limit_at_cap_is_accepted(self, app_module, client) -> None:
         """``?limit=5000`` must be accepted — the cap is inclusive."""
         r = client.get("/results?limit=5000")
-        assert r.status_code == 200, (
-            f"expected 200 for limit=5000, got {r.status_code}"
-        )
+        assert r.status_code == 200, f"expected 200 for limit=5000, got {r.status_code}"
 
 
 # ---------------------------------------------------------------------------
@@ -293,9 +279,7 @@ class TestNIT3CORSSourceGuard:
         # on this API; auth is via the X-API-Key header when the
         # operator sets RLPE_API_KEY).
         creds = cors_mw.kwargs.get("allow_credentials")
-        assert creds is False, (
-            f"allow_credentials must be False, got {creds!r}"
-        )
+        assert creds is False, f"allow_credentials must be False, got {creds!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -313,9 +297,7 @@ class TestNIT4SecurityHeaders:
         hsts = r.headers.get("strict-transport-security")
         assert hsts is not None, "Strict-Transport-Security missing"
         assert "max-age=31536000" in hsts, f"unexpected HSTS value: {hsts!r}"
-        assert "includeSubDomains" in hsts, (
-            f"includeSubDomains missing from HSTS: {hsts!r}"
-        )
+        assert "includeSubDomains" in hsts, f"includeSubDomains missing from HSTS: {hsts!r}"
 
     def test_health_endpoint_has_csp(self, app_module, client) -> None:
         """The /health response must include CSP."""
@@ -323,9 +305,7 @@ class TestNIT4SecurityHeaders:
         assert r.status_code == 200
         csp = r.headers.get("content-security-policy")
         assert csp is not None, "Content-Security-Policy missing"
-        assert "default-src 'self'" in csp, (
-            f"unexpected CSP value: {csp!r}"
-        )
+        assert "default-src 'self'" in csp, f"unexpected CSP value: {csp!r}"
 
     def test_404_response_has_hsts_and_csp(self, app_module, client) -> None:
         """Even an unmatched-path response must carry the new
@@ -337,9 +317,7 @@ class TestNIT4SecurityHeaders:
         accepts either as long as the security headers are present.
         """
         r = client.get("/this-route-does-not-exist")
-        assert r.status_code in (404, 405), (
-            f"expected 404 or 405, got {r.status_code}"
-        )
+        assert r.status_code in (404, 405), f"expected 404 or 405, got {r.status_code}"
         assert r.headers.get("strict-transport-security") is not None
         assert r.headers.get("content-security-policy") is not None
 
@@ -369,9 +347,7 @@ class TestNIT4SecurityHeaders:
         assert r.headers.get("strict-transport-security") is not None
         assert r.headers.get("content-security-policy") is not None
 
-    def test_hsts_csp_also_present_on_export_error(
-        self, app_module, client
-    ) -> None:
+    def test_hsts_csp_also_present_on_export_error(self, app_module, client) -> None:
         """The 400 from ``_split_csv`` (NIT-1) is raised inside the
         endpoint body, so the security middleware still runs and
         the headers are present."""
@@ -405,13 +381,9 @@ class TestNIT5OptionsPreflight:
         # route added in phase 6b NIT-5 should kick in and return
         # 204. (With an Origin, the CORS middleware might return
         # 200 with CORS headers — also acceptable.)
-        assert r.status_code in (200, 204), (
-            f"expected 200 or 204 for OPTIONS, got {r.status_code}"
-        )
+        assert r.status_code in (200, 204), f"expected 200 or 204 for OPTIONS, got {r.status_code}"
 
-    def test_options_on_unmatched_route_returns_204(
-        self, app_module, client
-    ) -> None:
+    def test_options_on_unmatched_route_returns_204(self, app_module, client) -> None:
         """OPTIONS on a route that has no OPTIONS handler must
         still return 204 — this is the whole point of the fallback."""
         # /jobs/{id}/result has GET + OPTIONS handled by CORS only,
@@ -419,13 +391,10 @@ class TestNIT5OptionsPreflight:
         # return 204 (the fallback route catches ``/{path:path}``).
         r = client.options("/totally-bogus-path-here")
         assert r.status_code == 204, (
-            f"expected 204 for OPTIONS on unmatched path, got "
-            f"{r.status_code}: {r.text}"
+            f"expected 204 for OPTIONS on unmatched path, got {r.status_code}: {r.text}"
         )
 
-    def test_options_response_carries_security_headers(
-        self, app_module, client
-    ) -> None:
+    def test_options_response_carries_security_headers(self, app_module, client) -> None:
         """The 204 preflight response must carry HSTS + CSP, just
         like every other response."""
         r = client.options("/any-route")
@@ -461,14 +430,9 @@ class TestRegressionExportStillWorks:
         # The writer may succeed (200) or fail for missing deps
         # (500) — what matters is that the cap check passed, i.e.
         # the response is NOT 400.
-        assert r.status_code != 400, (
-            f"small CSV filter wrongly rejected: {r.status_code}: "
-            f"{r.text}"
-        )
+        assert r.status_code != 400, f"small CSV filter wrongly rejected: {r.status_code}: {r.text}"
 
-    def test_results_with_default_pagination_works(
-        self, app_module, client
-    ) -> None:
+    def test_results_with_default_pagination_works(self, app_module, client) -> None:
         """``GET /results`` with no params (defaults: limit=500,
         offset=0) must return 200 with a list."""
         r = client.get("/results")

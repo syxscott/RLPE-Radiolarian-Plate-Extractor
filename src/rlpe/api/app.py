@@ -136,6 +136,7 @@ def _resolve_cors_allowed_origins() -> list[str]:
         return list(_DEFAULT_CORS_ALLOWED_ORIGINS)
     return tokens
 
+
 RESULT_CACHE: dict[str, dict[str, Any]] = {}
 
 # Polling-interval constants. These were previously inlined as
@@ -549,7 +550,9 @@ FALLBACK_PENDING: dict[str, dict[str, Any]] = {}
 # so a server restart recovers the full state.
 import time as _time_for_pending
 
-FALLBACK_PENDING_TTL_SEC: int = 3600  # 1 hour — popup's max wait is 5 min, so stale by 1h means orphaned
+FALLBACK_PENDING_TTL_SEC: int = (
+    3600  # 1 hour — popup's max wait is 5 min, so stale by 1h means orphaned
+)
 
 
 def _purge_stale_fallback_pending() -> int:
@@ -775,6 +778,7 @@ def require_api_key(
             headers={"WWW-Authenticate": "ApiKey"},
         )
 
+
 if WEB_DIR is not None:
     # No-cache headers for the dev-mode static files so JS / CSS edits
     # propagate without the operator having to hard-refresh. Cache
@@ -845,7 +849,9 @@ def _load_existing_jobs_from_disk() -> int:
             # spamming at INFO.
             logger.warning(
                 "Skipping job %s: matches.jsonl could not be parsed (%s: %s)",
-                root.name, type(exc).__name__, exc,
+                root.name,
+                type(exc).__name__,
+                exc,
             )
             continue
         if not rows:
@@ -1094,9 +1100,7 @@ async def upload_pdf(
         try:
             cl = int(content_length)
         except ValueError:
-            raise HTTPException(
-                status_code=400, detail="Invalid Content-Length header."
-            )
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header.")
         if cl < 0 or cl > max_size:
             raise HTTPException(
                 status_code=413,

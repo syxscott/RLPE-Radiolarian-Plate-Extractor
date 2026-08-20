@@ -66,7 +66,7 @@ def _body_before_next_def(src: str, signature: str) -> str:
     or the next top-level class)."""
     idx = src.find(signature)
     assert idx != -1, f"signature {signature!r} not found"
-    after = src[idx + len(signature):]
+    after = src[idx + len(signature) :]
     next_class = re.search(r"\nclass |\nif __name__", after)
     if next_class is None:
         return after
@@ -142,12 +142,10 @@ class TestDiskScanRuntime:
         src = _read("src/rlpe/gui/jobs_tab.py")
         body = _body_before_next_def(src, "def load_recent_jobs_from_disk(self")
         assert "_DiskScanWorker(pending)" in body, (
-            "B-15 verify: load_recent_jobs_from_disk must "
-            "instantiate _DiskScanWorker"
+            "B-15 verify: load_recent_jobs_from_disk must instantiate _DiskScanWorker"
         )
         assert "self._disk_scan_worker = worker" in body, (
-            "B-15 verify: the worker must be captured on the instance "
-            "(PySide6 QThread GC footgun)"
+            "B-15 verify: the worker must be captured on the instance (PySide6 QThread GC footgun)"
         )
 
     def test_load_recent_jobs_wires_job_loaded_signal(self):
@@ -156,9 +154,7 @@ class TestDiskScanRuntime:
         worker is a black hole."""
         src = _read("src/rlpe/gui/jobs_tab.py")
         body = _body_before_next_def(src, "def load_recent_jobs_from_disk(self")
-        assert "job_loaded.connect(" in body, (
-            "B-15 verify: job_loaded signal must be connected"
-        )
+        assert "job_loaded.connect(" in body, "B-15 verify: job_loaded signal must be connected"
         assert "add_or_update_job" in body, (
             "B-15 verify: add_or_update_job must still be referenced "
             "(called from the job_loaded callback)"
@@ -183,16 +179,12 @@ class TestExportWorkerExists:
 
     def test_export_worker_is_qthread(self):
         src = _read("src/rlpe/gui/results_tab.py")
-        assert "class _ExportWorker(QThread)" in src, (
-            "M-15: _ExportWorker must subclass QThread"
-        )
+        assert "class _ExportWorker(QThread)" in src, "M-15: _ExportWorker must subclass QThread"
 
     def test_export_worker_emits_success_and_error_signals(self):
         src = _read("src/rlpe/gui/results_tab.py")
         body = _body_before_next_def(src, "class _ExportWorker(QThread)")
-        assert "Signal(str)" in body, (
-            "M-15: _ExportWorker must emit a Signal(str) (success path)"
-        )
+        assert "Signal(str)" in body, "M-15: _ExportWorker must emit a Signal(str) (success path)"
         # The error signal is named `error`; both `finished_with_success`
         # and `error` are Signal(str).
         assert "finished_with_success" in body
@@ -207,13 +199,12 @@ class TestExportWorkerExists:
         # the bare handlers.
         for fmt_io in (
             "write_xlsx(",  # xlsx branch
-            "json.dump(",   # json branch
+            "json.dump(",  # json branch
             "csv.DictWriter(",  # csv branch
             "write_dwca_zip(",  # dwca branch
         ):
             assert fmt_io in body, (
-                f"M-15: _ExportWorker.run() must call {fmt_io!r} "
-                f"for the corresponding format"
+                f"M-15: _ExportWorker.run() must call {fmt_io!r} for the corresponding format"
             )
 
     def test_export_worker_validates_format(self):
@@ -221,9 +212,7 @@ class TestExportWorkerExists:
         ``_run_export_worker`` can't silently fail."""
         src = _read("src/rlpe/gui/results_tab.py")
         body = _body_before_next_def(src, "class _ExportWorker(QThread)")
-        assert "_VALID_FMTS" in body, (
-            "M-15: _ExportWorker must declare a _VALID_FMTS allow-list"
-        )
+        assert "_VALID_FMTS" in body, "M-15: _ExportWorker must declare a _VALID_FMTS allow-list"
         assert "raise ValueError" in body, (
             "M-15: _ExportWorker.__init__ must raise ValueError on bad fmt"
         )
@@ -260,9 +249,7 @@ class TestExportFunctionsAreAsync:
         assert re.search(
             rf'_run_export_worker\(\s*"{fmt}"',
             body,
-        ), (
-            f"M-15: _export_{fmt} must pass the literal '{fmt}' to _run_export_worker"
-        )
+        ), f"M-15: _export_{fmt} must pass the literal '{fmt}' to _run_export_worker"
 
     def test_export_xlsx_delegates_to_worker(self):
         self._check_slot_uses_worker("xlsx")
@@ -283,17 +270,12 @@ class TestExportButtonsAreInstanceAttributes:
 
     def test_export_buttons_stored_on_instance(self):
         src = _read("src/rlpe/gui/results_tab.py")
-        for attr in ("_btn_export_xlsx", "_btn_export_json",
-                     "_btn_export_csv", "_btn_export_dwca"):
-            assert f"self.{attr}" in src, (
-                f"M-15: export buttons must be stored as self.{attr}"
-            )
+        for attr in ("_btn_export_xlsx", "_btn_export_json", "_btn_export_csv", "_btn_export_dwca"):
+            assert f"self.{attr}" in src, f"M-15: export buttons must be stored as self.{attr}"
 
     def test_run_export_worker_helper_exists(self):
         src = _read("src/rlpe/gui/results_tab.py")
-        assert "def _run_export_worker(" in src, (
-            "M-15: _run_export_worker() helper must exist"
-        )
+        assert "def _run_export_worker(" in src, "M-15: _run_export_worker() helper must exist"
 
     def test_run_export_worker_disables_buttons(self):
         src = _read("src/rlpe/gui/results_tab.py")
@@ -320,11 +302,8 @@ class TestExportButtonsAreInstanceAttributes:
         """The helper must re-enable all 4 export buttons."""
         src = _read("src/rlpe/gui/results_tab.py")
         body = _body_before_next_def(src, "def _re_enable_export_buttons(self")
-        for attr in ("_btn_export_xlsx", "_btn_export_json",
-                     "_btn_export_csv", "_btn_export_dwca"):
-            assert attr in body, (
-                f"M-15: _re_enable_export_buttons must re-enable {attr}"
-            )
+        for attr in ("_btn_export_xlsx", "_btn_export_json", "_btn_export_csv", "_btn_export_dwca"):
+            assert attr in body, f"M-15: _re_enable_export_buttons must re-enable {attr}"
         assert "setEnabled(True)" in body
 
 
@@ -373,8 +352,7 @@ class TestExportWorkerRuntime:
             _ExportWorker("xyz", {}, "/tmp/x", [])
 
     @pytest.mark.skipif(not _HAS_PYSIDE6, reason="PySide6 not installed")
-    def test_export_worker_emits_error_on_write_failure(self, tmp_path,
-                                                        monkeypatch):
+    def test_export_worker_emits_error_on_write_failure(self, tmp_path, monkeypatch):
         """If the writer raises, the worker must emit error(str), not
         propagate the exception (which would crash the host process)."""
         from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
@@ -404,9 +382,9 @@ class TestExportWorkerRuntime:
         assert errors, "error signal must fire on write failure"
         # The error message should describe the failure (FileNotFoundError
         # / OSError / etc.).
-        assert any(
-            token in errors[0] for token in ("FileNotFoundError", "OSError", "No such")
-        ), f"error message missing detail: {errors[0]!r}"
+        assert any(token in errors[0] for token in ("FileNotFoundError", "OSError", "No such")), (
+            f"error message missing detail: {errors[0]!r}"
+        )
 
 
 # ============================================================================
@@ -496,8 +474,7 @@ class TestNoSyncHttpCallsInGui:
         # any offenders here are genuinely outside a worker.
         assert not offenders, (
             "M-16: results_tab.py has sync network call(s) outside a "
-            "QThread worker:\n"
-            + "\n".join(f"  L{ln}: {l.strip()}" for ln, l in offenders)
+            "QThread worker:\n" + "\n".join(f"  L{ln}: {l.strip()}" for ln, l in offenders)
         )
 
     def test_jobs_tab_has_no_sync_http(self):
@@ -506,8 +483,7 @@ class TestNoSyncHttpCallsInGui:
         offenders = self._find_network_calls(src)
         assert not offenders, (
             "M-16: jobs_tab.py has sync network call(s) outside a "
-            "QThread worker:\n"
-            + "\n".join(f"  L{ln}: {l.strip()}" for ln, l in offenders)
+            "QThread worker:\n" + "\n".join(f"  L{ln}: {l.strip()}" for ln, l in offenders)
         )
 
     def test_all_gui_files_clean_of_sync_http(self):
@@ -521,9 +497,7 @@ class TestNoSyncHttpCallsInGui:
                 offenders_total.append((py.name, lineno, line.strip()))
         assert not offenders_total, (
             "M-16: sync network calls outside QThread workers found:\n"
-            + "\n".join(
-                f"  {name}:L{ln}: {l}" for name, ln, l in offenders_total
-            )
+            + "\n".join(f"  {name}:L{ln}: {l}" for name, ln, l in offenders_total)
         )
 
 
@@ -570,36 +544,22 @@ class TestPhase5ADiffIsApplied:
     """Make sure the Phase 5A changes are actually in the file."""
 
     def test_results_tab_has_export_worker_class(self):
-        assert "class _ExportWorker(QThread)" in _SRC_RESULTS_TAB.read_text(
-            encoding="utf-8"
-        )
+        assert "class _ExportWorker(QThread)" in _SRC_RESULTS_TAB.read_text(encoding="utf-8")
 
     def test_results_tab_has_run_export_worker(self):
-        assert "def _run_export_worker(" in _SRC_RESULTS_TAB.read_text(
-            encoding="utf-8"
-        )
+        assert "def _run_export_worker(" in _SRC_RESULTS_TAB.read_text(encoding="utf-8")
 
     def test_results_tab_has_re_enable_export_buttons(self):
-        assert "def _re_enable_export_buttons(self)" in _SRC_RESULTS_TAB.read_text(
-            encoding="utf-8"
-        )
+        assert "def _re_enable_export_buttons(self)" in _SRC_RESULTS_TAB.read_text(encoding="utf-8")
 
     def test_results_tab_has_disable_export_buttons(self):
-        assert "def _disable_export_buttons(self)" in _SRC_RESULTS_TAB.read_text(
-            encoding="utf-8"
-        )
+        assert "def _disable_export_buttons(self)" in _SRC_RESULTS_TAB.read_text(encoding="utf-8")
 
     def test_results_tab_has_re_enable_flip_buttons(self):
-        assert "def _re_enable_flip_buttons(self)" in _SRC_RESULTS_TAB.read_text(
-            encoding="utf-8"
-        )
+        assert "def _re_enable_flip_buttons(self)" in _SRC_RESULTS_TAB.read_text(encoding="utf-8")
 
     def test_jobs_tab_has_disk_scan_worker_class(self):
-        assert "class _DiskScanWorker(QThread)" in _SRC_JOBS_TAB.read_text(
-            encoding="utf-8"
-        )
+        assert "class _DiskScanWorker(QThread)" in _SRC_JOBS_TAB.read_text(encoding="utf-8")
 
     def test_jobs_tab_has_pending_disk_scan_class(self):
-        assert "class _PendingDiskScan:" in _SRC_JOBS_TAB.read_text(
-            encoding="utf-8"
-        )
+        assert "class _PendingDiskScan:" in _SRC_JOBS_TAB.read_text(encoding="utf-8")

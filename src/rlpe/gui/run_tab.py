@@ -281,9 +281,7 @@ class RunTab(QWidget):
             max_val=50,
             value=2,
         )
-        self._caption_window.setToolTip(
-            i18n._tr("runtab.label.caption_window.tooltip")
-        )
+        self._caption_window.setToolTip(i18n._tr("runtab.label.caption_window.tooltip"))
         basic_layout.addWidget(self._caption_window, row, 1)
         basic_layout.addWidget(tr_label("runtab.label.od_caption_window"), row, 2)
         self._od_caption_window = tr_spinbox(
@@ -293,9 +291,7 @@ class RunTab(QWidget):
             max_val=RANGE_OD_CAPTION_WINDOW[1],
             value=5,
         )
-        self._od_caption_window.setToolTip(
-            i18n._tr("runtab.label.od_caption_window.tooltip")
-        )
+        self._od_caption_window.setToolTip(i18n._tr("runtab.label.od_caption_window.tooltip"))
         basic_layout.addWidget(self._od_caption_window, row, 3)
         row += 1
 
@@ -890,7 +886,6 @@ class RunTab(QWidget):
                 # wait() raises RuntimeError if the thread has already
                 # finished. Safe to ignore.
                 pass
-
 
     @staticmethod
     def _make_job_id(pdf_path: str | Path) -> str:

@@ -91,9 +91,9 @@ class TestRateLimiterDefaultInterval:
         """Pin the source so a future edit can't silently flip it back."""
         src = _read("src/rlpe/paleodb.py")
         # The dataclass field default
-        assert (
-            "min_interval: float = 2.0" in src
-        ), "PaleoDB / _RateLimiter default min_interval must be 2.0 (B-4 fix)"
+        assert "min_interval: float = 2.0" in src, (
+            "PaleoDB / _RateLimiter default min_interval must be 2.0 (B-4 fix)"
+        )
         # Make sure the OLD 0.2 default is gone (it is allowed in non-default
         # contexts such as tests, but the only literal ``0.2`` should be the
         # test fixture's ``min_interval=0.0``-style bypass usage. We rely on
@@ -118,9 +118,7 @@ class TestWaitSpacing:
         # No prior call → gap is negative → no sleep happens.
         assert fake_clock.sleeps == []
 
-    def test_second_wait_sleeps_at_least_min_interval(
-        self, fake_clock: _FakeClock
-    ) -> None:
+    def test_second_wait_sleeps_at_least_min_interval(self, fake_clock: _FakeClock) -> None:
         limiter = _RateLimiter()  # min_interval == 2.0
         limiter.wait()
         # Advance clock by 0.1 s to force a real wait.
@@ -133,9 +131,7 @@ class TestWaitSpacing:
             f"wait() should sleep ~min_interval seconds; slept {fake_clock.sleeps[0]}"
         )
 
-    def test_three_waits_total_elapsed_matches_min_interval(
-        self, fake_clock: _FakeClock
-    ) -> None:
+    def test_three_waits_total_elapsed_matches_min_interval(self, fake_clock: _FakeClock) -> None:
         """3 successive ``wait()`` calls must collectively sleep
         at least ``2 × min_interval`` seconds (first call is free)."""
         limiter = _RateLimiter()
@@ -175,9 +171,7 @@ class TestPaleoDBDefaultInterval:
             "PaleoDB._limiter.min_interval must inherit the 2.0s default"
         )
 
-    def test_explicit_low_min_interval_is_still_supported(
-        self, tmp_path: Path
-    ) -> None:
+    def test_explicit_low_min_interval_is_still_supported(self, tmp_path: Path) -> None:
         """Operators may legitimately want a faster throughput in offline
         tests; ``min_interval=0.0`` must not be rejected — only the
         *default* needs to follow PBDB ToS."""
@@ -192,9 +186,9 @@ class TestPaleoDBDefaultInterval:
         assert init_idx != -1
         # The next ~400 chars should contain the min_interval kwarg with =2.0
         chunk = src[init_idx : init_idx + 600]
-        assert (
-            "min_interval: float = 2.0" in chunk
-        ), "PaleoDB.__init__ default min_interval must be 2.0 (B-4 fix)"
+        assert "min_interval: float = 2.0" in chunk, (
+            "PaleoDB.__init__ default min_interval must be 2.0 (B-4 fix)"
+        )
 
 
 # ============================================================================
@@ -211,8 +205,7 @@ class TestUserAgentEnvVar:
         monkeypatch.delenv("RLPE_PBDB_UA", raising=False)
         client = PaleoDB(cache_dir=tmp_path)
         assert "RLPE" in client._user_agent, (
-            f"Default User-Agent should self-identify as RLPE; "
-            f"got {client._user_agent!r}"
+            f"Default User-Agent should self-identify as RLPE; got {client._user_agent!r}"
         )
 
     def test_env_var_overrides_user_agent(
@@ -252,9 +245,7 @@ class TestUserAgentEnvVar:
             "PBDB User-Agent must be configurable via RLPE_PBDB_UA env var"
         )
         # And it must be read via ``os.environ.get`` (not e.g. a hard-coded value)
-        assert "os.environ.get" in src, (
-            "PBDB User-Agent must be sourced from os.environ.get(...)"
-        )
+        assert "os.environ.get" in src, "PBDB User-Agent must be sourced from os.environ.get(...)"
 
 
 # ============================================================================

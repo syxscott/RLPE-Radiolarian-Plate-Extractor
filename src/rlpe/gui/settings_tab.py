@@ -166,9 +166,7 @@ def _validate_api_url(url: str, *, allow_empty: bool = False) -> str | None:
 # Permit only known OCR language ISO codes (Phase 46 friendly names).
 # Free-form ``"en,ja,fr"`` is rejected by the regex on the QLineEdit,
 # but ``_save()`` re-checks to be safe.
-_ALLOWED_OCR_LANGS: frozenset[str] = frozenset(
-    code for code, _en, _zh in OCR_LANGUAGE_OPTIONS
-)
+_ALLOWED_OCR_LANGS: frozenset[str] = frozenset(code for code, _en, _zh in OCR_LANGUAGE_OPTIONS)
 
 
 def _validate_ocr_lang(text: str) -> str | None:
@@ -716,8 +714,7 @@ class SettingsTab(QWidget):
     # hex literal in two places made a future re-skin fragile.
     _INVALID_BORDER_COLOR = "#dc3545"
     _INVALID_BORDER_QSS = (
-        f"QLineEdit {{ border: 2px solid {_INVALID_BORDER_COLOR}; "
-        "border-radius: 3px; }"
+        f"QLineEdit {{ border: 2px solid {_INVALID_BORDER_COLOR}; border-radius: 3px; }}"
     )
     _VALID_BORDER_QSS = "QLineEdit {}"
 
@@ -946,10 +943,7 @@ class SettingsTab(QWidget):
                 return
         # GROBID URL: must be a parseable http(s) URL.
         if not self._grobid_url.hasAcceptableInput():
-            msg = (
-                "GROBID URL is invalid. Expected an http(s) URL like "
-                "'http://localhost:8070'."
-            )
+            msg = "GROBID URL is invalid. Expected an http(s) URL like 'http://localhost:8070'."
             self._log.warning(msg)
             QMessageBox.warning(
                 self,
@@ -972,9 +966,10 @@ class SettingsTab(QWidget):
             # ``hasAcceptableInput`` returns True for empty too — we
             # already checked empty above, so this only fires for the
             # non-empty branch.
-            if not self._pbdb_endpoint.hasAcceptableInput() or _validate_api_url(
-                pbdb_text, allow_empty=True
-            ) is None:
+            if (
+                not self._pbdb_endpoint.hasAcceptableInput()
+                or _validate_api_url(pbdb_text, allow_empty=True) is None
+            ):
                 msg = (
                     "PBDB endpoint is invalid. Expected an empty value "
                     "(uses default) or an http(s) URL like "

@@ -139,9 +139,7 @@ class TestB13UploadStreaming:
             )
         assert r.status_code == 413, r.text
 
-    def test_malformed_content_length_returns_400(
-        self, client, tmp_path: Path
-    ) -> None:
+    def test_malformed_content_length_returns_400(self, client, tmp_path: Path) -> None:
         """A garbage ``Content-Length`` header (e.g. ``"abc"``)
         must surface as 400 — not be silently swallowed. The
         previous version did ``except ValueError: pass`` which
@@ -160,9 +158,7 @@ class TestB13UploadStreaming:
         # server actually sees.
         assert r.status_code in (400, 413, 200), r.text
 
-    def test_malformed_content_length_via_raw_request(
-        self, client, tmp_path: Path
-    ) -> None:
+    def test_malformed_content_length_via_raw_request(self, client, tmp_path: Path) -> None:
         """Force the server to see a malformed ``Content-Length`` by
         using ``client.request`` with a body whose declared length
         is not parseable. We use a ``Transfer-Encoding: chunked``
@@ -272,9 +268,7 @@ class TestErrorTraceNotLeaked:
         assert r.status_code == 200, r.text
         body = r.json()
         # The SPA-facing payload must not contain a traceback.
-        assert "Traceback" not in r.text, (
-            "Traceback leaked in status response:\n" + r.text[:500]
-        )
+        assert "Traceback" not in r.text, "Traceback leaked in status response:\n" + r.text[:500]
         # And the in-memory entry must not have the field.
         with RESULT_LOCK:
             entry = RESULT_CACHE.get(jid, {})
@@ -333,9 +327,7 @@ class TestErrorTraceNotLeaked:
             "Pipeline failure handler should log the traceback server-side."
         )
 
-    def test_status_response_never_contains_traceback_on_failure(
-        self, client, app_module
-    ) -> None:
+    def test_status_response_never_contains_traceback_on_failure(self, client, app_module) -> None:
         """End-to-end: seed a failed job, fetch its status, and
         verify the response body never contains a Python
         traceback marker."""
@@ -356,10 +348,8 @@ class TestErrorTraceNotLeaked:
         r = client.get(f"/jobs/{jid}/status")
         assert r.status_code == 200, r.text
         text = r.text
-        for needle in ("Traceback", "File \"", "site-packages", "raise "):
-            assert needle not in text, (
-                f"Traceback leak detected (needle={needle!r}): {text[:400]}"
-            )
+        for needle in ("Traceback", 'File "', "site-packages", "raise "):
+            assert needle not in text, f"Traceback leak detected (needle={needle!r}): {text[:400]}"
 
 
 # ---------------------------------------------------------------------------
@@ -427,9 +417,11 @@ class TestContentDispositionSafety:
         a Set-Cookie response header. After sanitisation, the
         Content-Disposition filename should contain only safe
         characters (alnum, dot, dash, underscore) and no CR/LF."""
+
         # Stub the xlsx writer so the endpoint completes.
         def _fake_write_xlsx(run_output, panel_filter=None):  # noqa: ARG001
             return b"X"
+
         import rlpe.exporters.xlsx as xlsx_mod
 
         monkeypatch.setattr(xlsx_mod, "write_xlsx", _fake_write_xlsx)
@@ -479,8 +471,10 @@ class TestContentDispositionSafety:
         safe form. The resulting filename must contain no ``/`` or
         ``\\`` and must not coerce the browser to write outside
         the user's download folder."""
+
         def _fake_write_xlsx(run_output, panel_filter=None):  # noqa: ARG001
             return b"X"
+
         import rlpe.exporters.xlsx as xlsx_mod
 
         monkeypatch.setattr(xlsx_mod, "write_xlsx", _fake_write_xlsx)
@@ -526,8 +520,10 @@ class TestContentDispositionSafety:
         """A normal paper_id (``beccaro2006``) should appear in the
         filename unchanged. This guards against an over-eager
         sanitisation that strips legitimate characters."""
+
         def _fake_write_xlsx(run_output, panel_filter=None):  # noqa: ARG001
             return b"X"
+
         import rlpe.exporters.xlsx as xlsx_mod
 
         monkeypatch.setattr(xlsx_mod, "write_xlsx", _fake_write_xlsx)

@@ -598,18 +598,12 @@ def _bbox_tooltip(bbox: dict[str, Any]) -> str:
         parts.append(f"<b>{species}</b>")
     confidence = bbox.get("confidence")
     if isinstance(confidence, (int, float)):
-        parts.append(
-            i18n._tr("preview.tooltip.confidence").format(value=f"{confidence:.2f}")
-        )
+        parts.append(i18n._tr("preview.tooltip.confidence").format(value=f"{confidence:.2f}"))
     coords = bbox.get("bbox") or bbox.get("bounding_box")
     if coords and len(coords) == 4:
         x, y, w, h = coords
-        parts.append(
-            i18n._tr("preview.tooltip.coords_xy").format(x=f"{x:.0f}", y=f"{y:.0f}")
-        )
-        parts.append(
-            i18n._tr("preview.tooltip.coords_wh").format(w=f"{w:.0f}", h=f"{h:.0f}")
-        )
+        parts.append(i18n._tr("preview.tooltip.coords_xy").format(x=f"{x:.0f}", y=f"{y:.0f}"))
+        parts.append(i18n._tr("preview.tooltip.coords_wh").format(w=f"{w:.0f}", h=f"{h:.0f}"))
     family = (
         (bbox.get("metadata") or {}).get("paleodb", {}).get("taxonomy", {}).get("family")
         if bbox.get("metadata")

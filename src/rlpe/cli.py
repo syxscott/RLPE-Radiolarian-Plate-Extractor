@@ -150,9 +150,7 @@ def FloatRange(lo: float, hi: float):
                 f"expected a number, got {s!r} (must be between {lo} and {hi})"
             )
         if not (lo <= v <= hi):
-            raise argparse.ArgumentTypeError(
-                f"value {v} out of range [{lo}, {hi}]"
-            )
+            raise argparse.ArgumentTypeError(f"value {v} out of range [{lo}, {hi}]")
         return v
 
     return _validator
@@ -255,11 +253,7 @@ def ensure_default_config(path: Path | None = None) -> tuple[Path, bool]:
     written with a JSON validity check.
     """
 
-    target = (
-        Path(os.path.expanduser(str(path)))
-        if path is not None
-        else default_config_path()
-    )
+    target = Path(os.path.expanduser(str(path))) if path is not None else default_config_path()
     if target.exists():
         return target, False
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -268,9 +262,7 @@ def ensure_default_config(path: Path | None = None) -> tuple[Path, bool]:
     try:
         json.loads(target.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:  # pragma: no cover — defensive
-        raise RuntimeError(
-            f"default config template at {target} is not valid JSON: {exc}"
-        ) from exc
+        raise RuntimeError(f"default config template at {target} is not valid JSON: {exc}") from exc
     return target, True
 
 
@@ -829,27 +821,19 @@ def _validate_args(args: argparse.Namespace) -> None:
     # --pdf-dir must exist; a typo shouldn't silently produce zero
     # rows and an exit-0 that looks like success.
     if not args.pdf_dir.exists():
-        raise UserError(
-            f"--pdf-dir does not exist: {args.pdf_dir}"
-        )
+        raise UserError(f"--pdf-dir does not exist: {args.pdf_dir}")
     if not args.pdf_dir.is_dir():
-        raise UserError(
-            f"--pdf-dir is not a directory: {args.pdf_dir}"
-        )
+        raise UserError(f"--pdf-dir is not a directory: {args.pdf_dir}")
     if not any(args.pdf_dir.glob("*.pdf")):
         # Non-fatal by itself — the user might be running a re-import
         # where the PDFs have already been moved to work/. We only
         # warn; do not raise.
-        _flush_print(
-            f"WARNING: --pdf-dir {args.pdf_dir} contains no .pdf files"
-        )
+        _flush_print(f"WARNING: --pdf-dir {args.pdf_dir} contains no .pdf files")
     # --work-dir parent must be writable. ``ensure_dir`` will create
     # the leaf, but if the parent doesn't exist and we lack permission
     # we want a clean UserError, not a PermissionError traceback.
     if args.work_dir.parent and not args.work_dir.parent.exists():
-        raise UserError(
-            f"--work-dir parent does not exist: {args.work_dir.parent}"
-        )
+        raise UserError(f"--work-dir parent does not exist: {args.work_dir.parent}")
 
 
 def _maybe_load_config(args: argparse.Namespace) -> dict | None:
@@ -877,8 +861,7 @@ def _maybe_load_config(args: argparse.Namespace) -> dict | None:
         written_path, created = ensure_default_config(config_path)
         if created:
             _flush_print(
-                f"NOTE: wrote example config to {written_path} — "
-                f"edit it or pass --config <path>"
+                f"NOTE: wrote example config to {written_path} — edit it or pass --config <path>"
             )
         return None
     # Load via the existing config_io helper to inherit the coercion
@@ -889,8 +872,7 @@ def _maybe_load_config(args: argparse.Namespace) -> dict | None:
     except (ValueError, OSError) as exc:
         # Corrupt config must not block the CLI. Warn and continue.
         _flush_print(
-            f"WARNING: --config {config_path} could not be loaded "
-            f"(ignoring): {exc}",
+            f"WARNING: --config {config_path} could not be loaded (ignoring): {exc}",
             file=sys.stderr,
         )
         return None
@@ -1039,9 +1021,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     # OCR / SAM2 / GROBID stack long before they help throughput. A user
     # typo (e.g. ``--num-workers 0``) would otherwise crash the pool
     # at submit time. Silently clamping matches what most CLI tools do.
-    args.num_workers = max(
-        MIN_NUM_WORKERS, min(MAX_NUM_WORKERS, int(args.num_workers))
-    )
+    args.num_workers = max(MIN_NUM_WORKERS, min(MAX_NUM_WORKERS, int(args.num_workers)))
     # Resolve --use-gpu: explicit flag wins, else auto-detect CUDA.
     if args.use_gpu is None:
         try:

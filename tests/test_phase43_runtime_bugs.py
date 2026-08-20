@@ -87,8 +87,7 @@ def test_run_tab_on_thread_done_calls_quit_and_wait():
     # Also must guard with isRunning() to avoid draining a
     # not-yet-started thread.
     assert "isRunning" in src, (
-        "_on_thread_done must check isRunning() before quit()/wait()/"
-        "requestInterruption()"
+        "_on_thread_done must check isRunning() before quit()/wait()/requestInterruption()"
     )
 
 
@@ -109,8 +108,16 @@ def test_pipeline_grobid_path_calls_is_available_first():
 
     from rlpe.pipeline import RadiolarianPipeline
 
-    src = inspect.getsource(RadiolarianPipeline._process_one_pdf_grobid) + "\n" + inspect.getsource(
-        getattr(RadiolarianPipeline, "_process_one_pdf_grobid_impl", RadiolarianPipeline._process_one_pdf_grobid)
+    src = (
+        inspect.getsource(RadiolarianPipeline._process_one_pdf_grobid)
+        + "\n"
+        + inspect.getsource(
+            getattr(
+                RadiolarianPipeline,
+                "_process_one_pdf_grobid_impl",
+                RadiolarianPipeline._process_one_pdf_grobid,
+            )
+        )
     )
     assert "is_available" in src, (
         "_process_one_pdf_grobid must call is_available() before "
