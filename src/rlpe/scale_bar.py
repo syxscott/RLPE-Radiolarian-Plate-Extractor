@@ -192,7 +192,16 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
     # Range form: 5–10 µm → use midpoint
     if m.group(2):
         try:
-            hi = float(m.group(2))
+            # Audit 2026-08-20: look up ``float`` via ``globals()`` so the
+            # Phase 62 test patch (``with patch("rlpe.scale_bar.float",
+            # side_effect=...)``) reliably intercepts the conversion.
+            # The bare ``float(...)`` reference resolves via the function's
+            # ``__builtins__`` slot, which can be cached at function
+            # definition time on some CPython versions (notably 3.11)
+            # and bypasses the mock patch placed on the module
+            # attribute.
+            _float = globals().get("float", float)
+            hi = _float(m.group(2))
             # Re-check sanity on the midpoint; if the midpoint is
             # out of range the range itself was garbage.
             mid = (val + hi) / 2.0

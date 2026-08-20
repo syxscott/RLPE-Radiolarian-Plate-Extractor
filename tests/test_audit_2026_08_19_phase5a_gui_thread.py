@@ -117,9 +117,13 @@ class TestFlipVerifiedRuntime:
         """The helper must re-enable BOTH mark-verified buttons."""
         src = _read("src/rlpe/gui/results_tab.py")
         body = _body_before_next_def(src, "def _re_enable_flip_buttons(self")
-        # We expect both attributes to be re-enabled.
-        assert "_btn_mark_verified" in body
-        assert "_btn_mark_unverified" in body
+        # Audit 2026-08-20: F-2 test (test_gui_results_tab_phase_f2.py::
+        # TestMarkButtonNames) is the authoritative naming convention
+        # (``_mark_verified_btn`` / ``_mark_unverified_btn``). The earlier
+        # draft of this test asserted ``_btn_mark_verified`` which was
+        # the wrong attribute name — fix here to match the convention.
+        assert "_mark_verified_btn" in body
+        assert "_mark_unverified_btn" in body
         assert "setEnabled(True)" in body
 
 
