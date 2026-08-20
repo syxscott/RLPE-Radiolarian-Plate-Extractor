@@ -231,3 +231,67 @@ class TestF3WebSpaMagicNums:
             "showMiniMaxFallbackModal should not call console.info(...) "
             "in production"
         )
+
+    def test_no_inline_onclick_in_template_literal(self):
+        # Phase F-3 MINOR: the empty-state CTA "去上传 PDF" used an
+        # inline ``onclick="document.querySelector(...).click()"``
+        # attribute which is inconsistent with the rest of the file's
+        # event-delegation pattern. Now uses ``data-action="goto-upload"``.
+        js = _read("web/js/app.js")
+        # Strip JS line comments (``//...``) and block comments
+        # (``/* ... */``) before searching so historical references in
+        # comments don't trip the assertion.
+        js_stripped = re.sub(r"//[^\n]*", "", js)
+        js_stripped = re.sub(r"/\*[\s\S]*?\*/", "", js_stripped)
+        assert (
+            "onclick=\"document.querySelector('[data-tab=" not in js_stripped
+        ), (
+            "inline onclick for tab-switch should be replaced with data-action"
+        )
+        # And the delegation handler must include the new action.
+        # Capture the entire addEventListener body to be order-agnostic.
+        m = re.search(
+            r"document\.getElementById\('jobs-list'\)\?\.addEventListener\('click',"
+            r"\s*\(e\)\s*=>\s*\{([\s\S]*?)\n\}\);",
+            js,
+        )
+        assert m is not None, "jobs-list click handler block must exist"
+        body = m.group(1)
+        assert "'goto-upload'" in body, (
+            "click handler must dispatch the goto-upload action"
+        )
+
+    def test_inner_html_loop_replaced(self):
+        # Phase F-3 MINOR: ``populateResultFilter`` used
+        # ``filter.innerHTML += ...`` in a forEach which is O(n²).
+        # Replaced with array.join.
+        js = _read("web/js/app.js")
+        # Strip comments so historical references in our own audit
+        # comments don't trip the assertion.
+        js_stripped = re.sub(r"//[^\n]*", "", js)
+        js_stripped = re.sub(r"/\*[\s\S]*?\*/", "", js_stripped)
+        # The populateResultFilter function body must not contain the
+        # ``+=`` pattern.
+        m = re.search(
+            r"function\s+populateResultFilter\s*\([^)]*\)\s*\{(.*?)\n\}",
+            js_stripped,
+            re.DOTALL,
+        )
+        assert m is not None, "populateResultFilter function must be parseable"
+        body = m.group(1)
+        # ``innerHTML +=`` must NOT appear in the function body.
+        assert "innerHTML +=" not in body, (
+            "populateResultFilter must build HTML in an array and assign once"
+        )
+        # And the join pattern must be present.
+        assert ".join('')" in body
+
+    def test_upload_area_hint_css_extracted(self):
+        # Phase F-3 NIT: inline style on index.html lifted to a CSS class.
+        index_html = _read("web/index.html")
+        # The inline style for upload hint must be gone.
+        assert 'class="upload-area-hint"' in index_html
+        assert 'style="font-size: 0.78rem; color: var(--text-light); margin-top: 0.5rem;"' not in index_html
+        css = _read("web/css/style.css")
+        assert ".upload-area-hint" in css
+        assert "font-size: 0.78rem" in css

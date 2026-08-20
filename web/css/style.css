@@ -380,6 +380,14 @@ body {
     font-size: 0.85rem;
 }
 
+/* Phase F-3 NIT: lifted from inline ``style="..."`` on the upload
+   hint in index.html. */
+.upload-area-hint {
+    font-size: 0.78rem;
+    color: var(--text-light);
+    margin-top: 0.5rem;
+}
+
 /* ==================== File List ==================== */
 .file-list {
     margin-top: 1.5rem;

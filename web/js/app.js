@@ -862,7 +862,7 @@ function renderJobsList() {
             : `<div style="text-align: center; color: var(--text-muted); padding: 2.5rem 1rem;">
                 <p style="font-size: 1rem; margin-bottom: 0.5rem;">📋 还没有处理任务</p>
                 <p style="font-size: 0.875rem;">前往「上传处理」标签页，拖入 PDF 文件即可开始</p>
-                <button class="btn btn-primary btn-small" style="margin-top: 1rem;" onclick="document.querySelector('[data-tab=\\'upload\\']').click()">去上传 PDF</button>
+                <button class="btn btn-primary btn-small" style="margin-top: 1rem;" data-action="goto-upload">去上传 PDF</button>
             </div>`;
         return;
     }
@@ -951,6 +951,12 @@ document.getElementById('jobs-list')?.addEventListener('click', (e) => {
     else if (action === 'results') viewJobResults(jobId);
     else if (action === 'cancel') cancelJob(jobId, btn);
     else if (action === 'delete') deleteSingleJob(jobId);
+    // Phase F-3 MINOR: routed the empty-state "去上传 PDF" CTA
+    // through the same event delegation rather than an inline
+    // ``onclick="document.querySelector(...).click()"`` attribute.
+    else if (action === 'goto-upload') {
+        document.querySelector('[data-tab="upload"]')?.click();
+    }
 });
 
 // Delegated change listener for the per-row checkbox.
@@ -1686,10 +1692,18 @@ function populateResultFilter() {
 
     // Keep the first "All papers" option
     filter.innerHTML = '<option value="">全部论文</option>';
+    // Phase F-3 MINOR: ``innerHTML +=`` in a loop forces the browser to
+    // parse the entire option list on every iteration (O(n²) string
+    // concatenation + re-parse). Build the HTML in an array and
+    // assign once.
+    const optionParts = ['<option value="">全部论文</option>'];
     jobIds.forEach(jobId => {
         const shortId = jobId.substring(0, 12) + '...';
-        filter.innerHTML += `<option value="${escapeHtml(jobId)}">${escapeHtml(shortId)}</option>`;
+        optionParts.push(
+            `<option value="${escapeHtml(jobId)}">${escapeHtml(shortId)}</option>`
+        );
     });
+    filter.innerHTML = optionParts.join('');
 
     // Restore the previous selection if the corresponding option is still
     // present; otherwise reset to "全部论文". (Setting .value to a missing
