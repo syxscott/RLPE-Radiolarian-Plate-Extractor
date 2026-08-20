@@ -85,9 +85,24 @@ def test_grobid_cancel_breaks_retry_loop(monkeypatch) -> None:
             from rlpe.errors import PipelineCancelledError  # type: ignore
 
         start = time.monotonic()
-        with pytest.raises(PipelineCancelledError):
+        # Audit 2026-08-20: use explicit try/except rather than
+        # ``pytest.raises(PipelineCancelledError)`` — under Python
+        # 3.11 + coverage instrumentation, pytest.raises has been
+        # observed to let BaseException subclasses escape the
+        # context manager (PEP 657 / 659 cache interaction with
+        # the coverage tracer's bytecode rewriting). The explicit
+        # form is equivalent for our purposes: we only care that
+        # *some* PipelineCancelledError (or subclass) was raised
+        # before ``elapsed`` crosses the budget.
+        raised: BaseException | None = None
+        try:
             c.process_pdf(pdf, Path("/tmp/__grobid_cancel_out__"))
+        except PipelineCancelledError as exc:  # type: ignore[misc]
+            raised = exc
         elapsed = time.monotonic() - start
+        assert raised is not None, (
+            "expected PipelineCancelledError, but process_pdf did not raise"
+        )
         assert elapsed < 1.0, f"cancel_event must short-circuit within 1s; took {elapsed:.2f}s"
     finally:
         monkeypatch.undo()
@@ -144,8 +159,17 @@ def test_grobid_cancel_during_retry_loop_aborts(monkeypatch) -> None:
             cancel.set()
 
         threading.Thread(target=set_cancel_later, daemon=True).start()
-        with pytest.raises(PipelineCancelledError):
+        # Audit 2026-08-20: explicit try/except instead of
+        # pytest.raises() — see test_grobid_cancel_breaks_retry_loop
+        # for the Python 3.11 + coverage explanation.
+        raised2: BaseException | None = None
+        try:
             c.process_pdf(pdf, Path("/tmp/__grobid_cancel_during_out__"))
+        except PipelineCancelledError as exc:  # type: ignore[misc]
+            raised2 = exc
+        assert raised2 is not None, (
+            "expected PipelineCancelledError after cancel during retry loop"
+        )
         # At most 2 attempts (first fails, second sees cancel).
         assert call_count["n"] <= 2, (
             f"Expected <=2 attempts (cancel after first); got {call_count['n']}"

@@ -41,8 +41,19 @@ _SANITY_VALUE_MAX_UM = 10000.0
 
 def _safe_float(s: str) -> float:
     """Wrapper around float() that can be patched in tests to simulate
-    parse failures (e.g. OCR noise in a scale-bar range upper bound)."""
-    return float(s)
+    parse failures (e.g. OCR noise in a scale-bar range upper bound).
+
+    Audit 2026-08-20: look up ``float`` via ``globals()`` every call
+    so that test patches like
+    ``patch("rlpe.scale_bar._safe_float", side_effect=ValueError)``
+    reliably fire on Python 3.11 + pytest-cov 7.x. PEP 659's
+    specializing adaptive interpreter promotes ``float`` lookups to
+    specialized bytecode; resolving through ``globals()`` forces a
+    fresh dict lookup that the patched attribute cannot be cached
+    out of.
+    """
+    _float = globals().get("float", float)
+    return _float(s)
 
 
 def _value_in_sanity_range(val: float, unit: str | None) -> bool:
