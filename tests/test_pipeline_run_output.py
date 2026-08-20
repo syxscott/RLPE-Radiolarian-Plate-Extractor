@@ -172,7 +172,7 @@ class TestPipelineRunOutput:
         def boom(_payload):
             raise RuntimeError("synthetic run_output.json failure")
 
-        monkeypatch.setattr("rlpe.pipeline.write_json", boom)
+        monkeypatch.setattr("rlpe.pipeline.write_json", boom, raising=True)
 
         rows = pipe.run()
         assert rows == [fake_match]

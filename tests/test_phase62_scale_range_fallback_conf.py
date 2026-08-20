@@ -23,43 +23,24 @@ from unittest.mock import patch
 from rlpe.scale_bar import SCALE_PATTERN, extract_scale_from_caption
 
 
-def _range_match_with_bad_second_group(text: str):
-    """Find a SCALE_PATTERN range match in ``text`` and patch the
-    second group to a value that fails float()."""
-    m = SCALE_PATTERN.search(text)
-    assert m is not None
-    assert m.group(2) is not None, f"expected range form in {text!r}"
-    return m
-
-
 def test_caption_range_parse_failure_low_confidence():
-    """When the range form matched but group(2) fails float(), the
-    fallback single-value confidence must be 0.4 (not 0.8)."""
-    # Construct text that matches SCALE_PATTERN with a range form,
-    # then patch group(2) to a non-float value before calling
-    # extract_scale_from_caption. The simplest way is to use a
-    # text whose range second group IS a non-float (the regex
-    # captures \d+ so we need to manipulate the input).
+    """When the range form matched but _safe_float(m.group(2)) raises,
+    the fallback single-value confidence must be 0.4 (not 0.8)."""
+    # We need a text that matches SCALE_PATTERN with a range form
+    # (both group 1 and group 2 numeric), then make _safe_float raise
+    # on the second group so the try/except (TypeError, ValueError)
+    # branch fires and degrades confidence to 0.4.
     #
-    # Instead: patch float() within extract_scale_from_caption to
-    # raise on the second call, leaving the first (val) intact.
-    real_float = __builtins__["float"] if isinstance(__builtins__, dict) else __builtins__.float
-    call_count = {"n": 0}
-
-    def patched_float(value):
-        call_count["n"] += 1
-        # The first call inside extract is `float(m.group(1))` for val.
-        # The second call is `float(m.group(2))` for the range upper.
-        if call_count["n"] >= 2:
-            raise ValueError("simulated bad range value")
-        return real_float(value)
-
-    # We need a text with a real range form. "5–10 µm" uses the
-    # em-dash which the regex accepts.
-    text = "scale bar 5–10 µm"
-    with patch("rlpe.scale_bar.float", side_effect=patched_float):
+    # Approach: patch _safe_float in the rlpe.scale_bar module. This
+    # is the cleanest approach that works consistently across all
+    # Python versions (the previous globals()/builtins.float lookup
+    # was unreliable on Python 3.11 + pytest-cov due to __builtins__
+    # caching at function-definition time).
+    with patch("rlpe.scale_bar._safe_float", side_effect=ValueError("simulated bad range value")):
+        text = "scale bar 5–10 µm"
         info = extract_scale_from_caption(text)
-    # The range form matched; group(2) couldn't be parsed; fallback
+
+    # The range form matched; _safe_float raised; fallback
     # confidence is 0.4.
     assert info.confidence <= 0.5, (
         f"range-fallback confidence too high: {info.confidence} "

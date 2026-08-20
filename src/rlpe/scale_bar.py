@@ -39,6 +39,12 @@ _SANITY_VALUE_MIN_UM = 0.1
 _SANITY_VALUE_MAX_UM = 10000.0
 
 
+def _safe_float(s: str) -> float:
+    """Wrapper around float() that can be patched in tests to simulate
+    parse failures (e.g. OCR noise in a scale-bar range upper bound)."""
+    return float(s)
+
+
 def _value_in_sanity_range(val: float, unit: str | None) -> bool:
     """Return True if ``val`` (in ``unit``) is within the scale-bar
     sanity range. Used to reject catastrophic OCR misreads that
@@ -192,16 +198,8 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
     # Range form: 5–10 µm → use midpoint
     if m.group(2):
         try:
-            # Audit 2026-08-20: look up ``float`` via ``globals()`` so the
-            # Phase 62 test patch (``with patch("rlpe.scale_bar.float",
-            # side_effect=...)``) reliably intercepts the conversion.
-            # The bare ``float(...)`` reference resolves via the function's
-            # ``__builtins__`` slot, which can be cached at function
-            # definition time on some CPython versions (notably 3.11)
-            # and bypasses the mock patch placed on the module
-            # attribute.
-            _float = globals().get("float", float)
-            hi = _float(m.group(2))
+            # Use _safe_float so tests can reliably patch parse failures.
+            hi = _safe_float(m.group(2))
             # Re-check sanity on the midpoint; if the midpoint is
             # out of range the range itself was garbage.
             mid = (val + hi) / 2.0

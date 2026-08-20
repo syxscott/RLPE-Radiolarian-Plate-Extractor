@@ -47,7 +47,7 @@ def test_grobid_client_accepts_cancel_event_kwarg() -> None:
     )
 
 
-def test_grobid_cancel_breaks_retry_loop() -> None:
+def test_grobid_cancel_breaks_retry_loop(monkeypatch) -> None:
     """Bug 2.2 fix: pre-set cancel_event short-circuits the retry loop.
 
     Without the fix, ``process_pdf`` sleeps ``max_retries * timeout``
@@ -67,8 +67,7 @@ def test_grobid_cancel_breaks_retry_loop() -> None:
 
     import rlpe.grobid as grobid_mod
 
-    original_post = requests.post
-    grobid_mod.requests.post = fake_post
+    monkeypatch.setattr(grobid_mod.requests, "post", fake_post)
     try:
         c = GrobidClient(
             server_url="http://localhost:1",
@@ -91,11 +90,11 @@ def test_grobid_cancel_breaks_retry_loop() -> None:
         elapsed = time.monotonic() - start
         assert elapsed < 1.0, f"cancel_event must short-circuit within 1s; took {elapsed:.2f}s"
     finally:
-        grobid_mod.requests.post = original_post
+        monkeypatch.undo()
         Path("/tmp/__grobid_cancel_pdf__.pdf").unlink(missing_ok=True)
 
 
-def test_grobid_cancel_during_retry_loop_aborts() -> None:
+def test_grobid_cancel_during_retry_loop_aborts(monkeypatch) -> None:
     """Bug 2.2 fix: cancel set mid-loop aborts on the next iteration.
 
     The first attempt fails normally; the cancel event is set during
@@ -122,8 +121,7 @@ def test_grobid_cancel_during_retry_loop_aborts() -> None:
 
     import rlpe.grobid as grobid_mod
 
-    original_post = requests.post
-    grobid_mod.requests.post = fake_post
+    monkeypatch.setattr(grobid_mod.requests, "post", fake_post)
     try:
         c = GrobidClient(
             server_url="http://localhost:1",
@@ -153,7 +151,7 @@ def test_grobid_cancel_during_retry_loop_aborts() -> None:
             f"Expected <=2 attempts (cancel after first); got {call_count['n']}"
         )
     finally:
-        grobid_mod.requests.post = original_post
+        monkeypatch.undo()
         Path("/tmp/__grobid_cancel_during__.pdf").unlink(missing_ok=True)
 
 
