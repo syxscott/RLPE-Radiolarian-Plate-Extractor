@@ -62,6 +62,25 @@ from .utils import get_gui_logger
 # resolution is not user-visible at typical zoom levels.
 MAX_IMAGE_PIXELS = 50_000_000  # ~50 megapixels (e.g. 7000x7000 RGB ~ 147MB)
 MAX_PREVIEW_LONG_EDGE = 4096  # downsample to this for in-memory preview
+
+# Phase F-3 MINOR: extracted magic 1.15 as a named constant.
+# 1.15 ≈ 2^(1/6) — the same factor Microsoft Photo Viewer uses for
+# mouse-wheel zoom; one notch ≈ +15% which is the sweet spot between
+# fine control and rapid traversal.
+ZOOM_WHEEL_FACTOR = 1.15
+
+# Phase F-3 MINOR: bbox palette lifted from an inline list literal to
+# a module-level tuple. matplotlib's tab10 first 5 entries (blue /
+# green / red / purple / orange) — visually distinct on both light
+# and dark themes and colour-blind safe for the common deuteranopia /
+# protanopia profiles.
+BBOX_PALETTE: tuple[QColor, ...] = (
+    QColor("#1f77b4"),  # blue
+    QColor("#2ca02c"),  # green
+    QColor("#d62728"),  # red
+    QColor("#9467bd"),  # purple
+    QColor("#ff7f0e"),  # orange
+)
 # Pure warning threshold — we still have to open the file, but a
 # 200 MB+ image is worth a log line so a slow/heavy load is explainable.
 LARGE_FILE_WARN_BYTES = 200 * 1024 * 1024
@@ -348,14 +367,8 @@ class ImagePreviewWidget(QWidget):
         items = self._scene.items()
         if not items:
             return
-        # Colours cycle through a small palette
-        palette = [
-            QColor("#1f77b4"),  # blue
-            QColor("#2ca02c"),  # green
-            QColor("#d62728"),  # red
-            QColor("#9467bd"),  # purple
-            QColor("#ff7f0e"),  # orange
-        ]
+        # Colours cycle through the bbox palette (see BBOX_PALETTE).
+        palette = list(BBOX_PALETTE)
         font = QFont()
         font.setPointSize(10)
         font.setBold(True)
@@ -376,7 +389,12 @@ class ImagePreviewWidget(QWidget):
             pen = QPen(colour, 3)
             rect_item = QGraphicsRectItem(x, y, w, h)
             rect_item.setPen(pen)
-            rect_item.setBrush(QBrush(QColor(colour.red(), colour.green(), colour.blue(), 32)))
+            # Phase F-3 NIT: build the fill QColor by copying the
+            # stroke colour and setting alpha — cheaper and clearer
+            # than re-passing red/green/blue to a fresh QColor.
+            fill_colour = QColor(colour)
+            fill_colour.setAlpha(32)
+            rect_item.setBrush(QBrush(fill_colour))
             rect_item.setData(0, bbox)
             rect_item.setToolTip(_bbox_tooltip(bbox))
             self._scene.addItem(rect_item)
@@ -442,13 +460,13 @@ class _PreviewGraphicsView(QGraphicsView):
     # Zoom + pan
     # ------------------------------------------------------------------
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
-        """Wheel = zoom (1.15× per notch, anchored at cursor)."""
+        """Wheel = zoom (ZOOM_WHEEL_FACTOR per notch, anchored at cursor)."""
         # AngleDelta is the standard wheel event payload
         delta = event.angleDelta().y()
         if delta == 0:
             super().wheelEvent(event)
             return
-        factor = 1.15 if delta > 0 else 1 / 1.15
+        factor = ZOOM_WHEEL_FACTOR if delta > 0 else 1 / ZOOM_WHEEL_FACTOR
         self.zoom_by(factor)
         # Phase 44: accept the event so it doesn't propagate to
         # the parent QScrollArea (which would scroll the panel

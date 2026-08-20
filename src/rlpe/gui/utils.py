@@ -19,6 +19,13 @@ from .constants import LOG_FILE_NAME
 
 _GUI_LOGGER_NAME = "rlpe.gui"
 
+# Phase F-3 NIT: ephemeral port range start. IANA dynamic/private
+# port range (RFC 6335) is 49152-65535; we hash the lock name to pick
+# a deterministic port within that range so single-instance checks
+# work across GUI restarts.
+EPHEMERAL_PORT_START = 49152
+EPHEMERAL_PORT_RANGE = 0x3FFF  # 16383 — covers 49152..65535
+
 
 def get_gui_logger() -> logging.Logger:
     """Return the shared GUI logger, attaching a file handler on first call.
@@ -343,7 +350,10 @@ def _tcp_port_lock(name: str) -> bool:
     # pick different ports for the same lock name and both bind
     # successfully, defeating the single-instance check. Use
     # SHA-256 → 2 bytes → int so the port is stable across runs.
-    port = 49152 + (int.from_bytes(hashlib.sha256(name.encode()).digest()[:2], "big") & 0x3FFF)
+    port = EPHEMERAL_PORT_START + (
+        int.from_bytes(hashlib.sha256(name.encode()).digest()[:2], "big")
+        & EPHEMERAL_PORT_RANGE
+    )
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
     try:

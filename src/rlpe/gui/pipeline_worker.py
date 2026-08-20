@@ -392,7 +392,12 @@ class PipelineWorker(QThread):
         if hasattr(row, "model_dump"):
             try:
                 return row.model_dump()
-            except Exception:
+            except AttributeError:
+                # Phase F-3 NIT: was a bare ``except Exception: pass``
+                # which would silently swallow genuine validation
+                # errors. Only ``AttributeError`` (e.g. ``row`` is a
+                # v1 BaseModel without ``model_dump``) is expected;
+                # everything else surfaces and is logged below.
                 pass
         # Pydantic v1 / dataclass path.
         if hasattr(row, "to_dict"):

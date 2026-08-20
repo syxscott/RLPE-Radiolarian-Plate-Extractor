@@ -869,11 +869,18 @@ class MainWindow(QMainWindow):
             return
         try:
             if is_macos():
-                subprocess.Popen(["open", str(log_path)])
+                # Phase F-3 NIT: start_new_session=True detaches the
+                # viewer from the GUI process group so killing the
+                # GUI doesn't orphan the viewer.
+                subprocess.Popen(["open", str(log_path)], start_new_session=True)
             elif is_windows():
                 os.startfile(str(log_path))  # type: ignore[attr-defined]
             else:
-                subprocess.Popen(["xdg-open", str(log_path)])
+                # Linux: xdg-open + start_new_session (setsid) to avoid
+                # orphaned viewer if the GUI is killed.
+                subprocess.Popen(
+                    ["xdg-open", str(log_path)], start_new_session=True
+                )
         except Exception as exc:
             QMessageBox.warning(
                 self,

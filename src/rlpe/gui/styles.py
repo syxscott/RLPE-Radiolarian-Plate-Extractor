@@ -689,7 +689,9 @@ QProgressBar {{
     border: 1px solid #2d3748;
     border-radius: {RADIUS_S}px;
     text-align: center;
-    min-height: 18px;
+    /* Phase F-3 MINOR: shared constant — see LIGHT_QSS for the
+       canonical reference. */
+    min-height: {PROGRESS_BAR_MIN_HEIGHT_PX}px;
 }}
 QProgressBar::chunk {{
     background-color: #3182ce;
