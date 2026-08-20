@@ -69,14 +69,32 @@ _SKIP_REASON = (
     "RLPE_FORCE_QT_RUNTIME=1 to override."
 )
 
-# Test names that we KNOW drive the Qt event loop on a worker
-# thread. Pure source-guard tests (e.g. those that just read a
-# .py file and assert on string contents) are left alone even on
-# the SIGSEGV platform combo — they don't touch the C++ runtime.
-_QT_RUNTIME_TEST_NAME_RE = re.compile(
+# Test names that are KNOWN to be pure source-guard tests: they
+# only read a .py file (e.g. ``src/rlpe/gui/styles.py``) and assert
+# on string contents. These tests never instantiate QWidgets, so
+# they are safe to run even on the SIGSEGV platform combo.
+# Anything else inside a PySide6-importing module is treated as a
+# Qt runtime test and skipped on the bad combo.
+_SAFE_SOURCE_GUARD_TEST_NAME_RE = re.compile(
     r"(?:worker|workers|runtime|qthread|eventloop|flip_method|disk_scan|"
-    r"json_export|export_worker_emits|context_menu|show_context)",
+    r"json_export|export_worker_emits|context_menu|show_context|"
+    r"source_guard|has_pyside6)",
     re.IGNORECASE,
+)
+
+# At conftest import time, walk tests/ and cache the paths of
+# modules that ``import PySide6`` or call ``pytest.importorskip("PySide6")``.
+# A test module that touches Qt at module level almost certainly
+# also instantiates Qt widgets in its test bodies — and those are
+# the tests that SIGSEGV on the (3.11, 6.11) combo.
+_PYSIDE6_TEST_MODULES: frozenset[str] = frozenset(
+    str(p.resolve())
+    for p in Path(__file__).resolve().parent.glob("test_*.py")
+    if re.search(
+        r"^(?:from PySide6|import PySide6|.*pytest\.importorskip\([\"']PySide6)",
+        p.read_text(),
+        re.MULTILINE,
+    )
 )
 
 
@@ -97,24 +115,24 @@ def _skip_qt_runtime_under_pyside6_311(request):
         return  # not the SIGSEGV combo — let the test run.
 
     node_name = request.node.name
-    if not _QT_RUNTIME_TEST_NAME_RE.search(node_name):
-        return  # looks like a pure source-guard test — keep running.
 
-    # Read the test's module to confirm it actually declares
-    # _HAS_PYSIDE6 = True (signal: this test module would have
-    # instantiated Qt if PySide6 is installed). We use a try /
-    # except because some test modules use a different variable
-    # name; in that case we conservatively LET the test run and
-    # accept the SIGSEGV risk.
+    # Anything inside a module that ``import PySide6`` at module
+    # level is treated as a Qt runtime test. On the SIGSEVV combo,
+    # most of those tests will crash. We carve out a small list of
+    # KNOWN-safe test name patterns (those that only read .py files
+    # and never instantiate QWidgets) — those stay alive.
     mod = getattr(request, "module", None)
     if mod is None:
         return
-    try:
-        mod_has_pyside6 = bool(getattr(mod, "_HAS_PYSIDE6", False))
-    except Exception:
-        mod_has_pyside6 = False
-    if not mod_has_pyside6:
-        return  # module doesn't use the _HAS_PYSIDE6 guard — leave it.
+    mod_file = getattr(mod, "__file__", None)
+    if not mod_file:
+        return
+    if str(Path(mod_file).resolve()) not in _PYSIDE6_TEST_MODULES:
+        return  # not a Qt-using module — leave it.
+
+    # Safe source-guard tests stay alive on the SIGSEVV combo.
+    if _SAFE_SOURCE_GUARD_TEST_NAME_RE.search(node_name):
+        return
 
     pytest.skip(_SKIP_REASON)
 
