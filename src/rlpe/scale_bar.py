@@ -209,8 +209,14 @@ def extract_scale_from_caption(caption_text: str) -> ScaleInfo:
     # Range form: 5–10 µm → use midpoint
     if m.group(2):
         try:
-            # Use _safe_float so tests can reliably patch parse failures.
-            hi = _safe_float(m.group(2))
+            # Audit 2026-08-21: resolve ``_safe_float`` via
+            # ``globals().get(...)`` so tests can patch
+            # ``rlpe.scale_bar._safe_float`` after this function's
+            # bytecode has been compiled and the PEP 659 cache
+            # has specialised the bare-name lookup. Dict lookup
+            # defeats PEP 659 specialisation.
+            _sf = globals().get("_safe_float", _safe_float)
+            hi = _sf(m.group(2))
             # Re-check sanity on the midpoint; if the midpoint is
             # out of range the range itself was garbage.
             mid = (val + hi) / 2.0

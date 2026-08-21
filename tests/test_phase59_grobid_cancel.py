@@ -79,32 +79,28 @@ def test_grobid_cancel_breaks_retry_loop(monkeypatch) -> None:
         pdf = Path("/tmp/__grobid_cancel_pdf__.pdf")
         if not pdf.exists():
             pdf.write_bytes(b"%PDF-1.4\n%EOF\n")
-        # Audit 2026-08-20: import PipelineCancelledError from
-        # rlpe.grobid (the module that RAISES it) rather than
-        # rlpe.pipeline. Under pytest-cov 7.x + Python 3.11 the
-        # bytecode rewrite can cause rlpe.pipeline and rlpe.grobid
-        # to be re-instrumented independently, ending up with two
-        # different class objects. Catching by the raiser's class
-        # ensures we catch the actual exception that escaped.
-        PipelineCancelledError = grobid_mod.PipelineCancelledError
-
+        # Audit 2026-08-21: catch ``BaseException`` rather than the
+        # specific ``PipelineCancelledError`` class. Under pytest-cov
+        # 7.x + Python 3.11 the coverage tracer's bytecode rewriting
+        # has been observed to break the ``except SomeClass``
+        # handler's class-resolution path. ``except BaseException``
+        # is unconditional and survives the rewrite. Verify the
+        # class identity after the fact via ``type(exc)``.
         start = time.monotonic()
-        # Audit 2026-08-20: use explicit try/except rather than
-        # ``pytest.raises(PipelineCancelledError)`` — under Python
-        # 3.11 + coverage instrumentation, pytest.raises has been
-        # observed to let BaseException subclasses escape the
-        # context manager (PEP 657 / 659 cache interaction with
-        # the coverage tracer's bytecode rewriting). The explicit
-        # form is equivalent for our purposes: we only care that
-        # *some* PipelineCancelledError (or subclass) was raised
-        # before ``elapsed`` crosses the budget.
         raised: BaseException | None = None
         try:
             c.process_pdf(pdf, Path("/tmp/__grobid_cancel_out__"))
-        except PipelineCancelledError as exc:  # type: ignore[misc]
+        except BaseException as exc:  # noqa: BLE001
             raised = exc
         elapsed = time.monotonic() - start
         assert raised is not None, "expected PipelineCancelledError, but process_pdf did not raise"
+        # Audit 2026-08-21: re-resolve the class after the catch so
+        # the isinstance check is not itself subject to the same
+        # PEP 659 caching issues.
+        PCE = grobid_mod.PipelineCancelledError
+        assert isinstance(raised, PCE), (
+            f"expected PipelineCancelledError, got {type(raised).__name__}: {raised}"
+        )
         assert elapsed < 1.0, f"cancel_event must short-circuit within 1s; took {elapsed:.2f}s"
     finally:
         monkeypatch.undo()
@@ -161,15 +157,20 @@ def test_grobid_cancel_during_retry_loop_aborts(monkeypatch) -> None:
             cancel.set()
 
         threading.Thread(target=set_cancel_later, daemon=True).start()
-        # Audit 2026-08-20: explicit try/except instead of
-        # pytest.raises() — see test_grobid_cancel_breaks_retry_loop
-        # for the Python 3.11 + coverage explanation.
+        # Audit 2026-08-21: catch ``BaseException`` rather than the
+        # specific ``PipelineCancelledError`` class. Under pytest-cov
+        # 7.x + Python 3.11 the coverage tracer's bytecode rewriting
+        # has been observed to break the ``except SomeClass`` handler.
         raised2: BaseException | None = None
         try:
             c.process_pdf(pdf, Path("/tmp/__grobid_cancel_during_out__"))
-        except PipelineCancelledError as exc:  # type: ignore[misc]
+        except BaseException as exc:  # noqa: BLE001
             raised2 = exc
         assert raised2 is not None, "expected PipelineCancelledError after cancel during retry loop"
+        PCE = grobid_mod.PipelineCancelledError
+        assert isinstance(raised2, PCE), (
+            f"expected PipelineCancelledError, got {type(raised2).__name__}: {raised2}"
+        )
         # At most 2 attempts (first fails, second sees cancel).
         assert call_count["n"] <= 2, (
             f"Expected <=2 attempts (cancel after first); got {call_count['n']}"
