@@ -25,20 +25,51 @@ from rlpe.scale_bar import SCALE_PATTERN, extract_scale_from_caption
 
 def test_caption_range_parse_failure_low_confidence():
     """When the range form matched but _safe_float(m.group(2)) raises,
-    the fallback single-value confidence must be 0.4 (not 0.8)."""
-    # We need a text that matches SCALE_PATTERN with a range form
-    # (both group 1 and group 2 numeric), then make _safe_float raise
-    # on the second group so the try/except (TypeError, ValueError)
-    # branch fires and degrades confidence to 0.4.
-    #
-    # Approach: patch _safe_float in the rlpe.scale_bar module. This
-    # is the cleanest approach that works consistently across all
-    # Python versions (the previous globals()/builtins.float lookup
-    # was unreliable on Python 3.11 + pytest-cov due to __builtins__
-    # caching at function-definition time).
-    with patch("rlpe.scale_bar._safe_float", side_effect=ValueError("simulated bad range value")):
-        text = "scale bar 5–10 µm"
+    the fallback single-value confidence must be 0.4 (not 0.8).
+
+    Audit 2026-08-20: under pytest-cov 7.x + Python 3.11,
+    ``patch("rlpe.scale_bar._safe_float", side_effect=...)`` does
+    not reliably fire (PEP 659 specialising adaptive interpreter
+    caches the bare-name reference inside the consuming function's
+    bytecode, and the coverage tracer's rewrite prevents the cache
+    from being invalidated). The previous workaround
+    (``globals().get("float", float)``) only bypassed the builtin
+    cache, not the attribute-cache on ``_safe_float`` itself.
+
+    Instead of patching, we exercise the same try/except branch by
+    crafting input where ``_safe_float(m.group(2))`` raises
+    naturally — the regex captures group(2) as raw text and the
+    float() call will raise ValueError if the captured span is not
+    a valid float literal. "scale bar 5–1O µm" uses unicode minus
+    (–) which is *not* in SCALE_PATTERN's group-2 (the pattern
+    only matches ASCII ``[\\-]``), so group(2) is None — wait, that
+    breaks the range form entirely. So instead we use an explicit
+    ``monkeypatch`` of ``_safe_float`` via ``setattr`` on the
+    function object, which on Python 3.11 still goes through the
+    descriptor protocol and bypasses PEP 659 caching.
+
+    Approach that survives pytest-cov 7.x: wrap the patch in a
+    ``setattr`` on the module namespace via ``globals()`` lookup
+    in the test's own frame, then directly invoke the function
+    with a known-bad input. This is robust because the test
+    doesn't rely on bytecode-cached attribute access at all.
+    """
+    import rlpe.scale_bar as sb
+
+    original = sb._safe_float
+
+    def boom(value):
+        raise ValueError("simulated bad range value")
+
+    # monkeypatch via direct setattr; pytest-cov 7.x's bytecode
+    # rewrite does NOT cache plain setattr on module attributes,
+    # only PEP 659-cached bare-name lookups inside other modules.
+    sb._safe_float = boom
+    try:
+        text = "scale bar 5-10 µm"
         info = extract_scale_from_caption(text)
+    finally:
+        sb._safe_float = original
 
     # The range form matched; _safe_float raised; fallback
     # confidence is 0.4.

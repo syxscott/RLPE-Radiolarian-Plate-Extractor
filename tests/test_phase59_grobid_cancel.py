@@ -79,10 +79,14 @@ def test_grobid_cancel_breaks_retry_loop(monkeypatch) -> None:
         pdf = Path("/tmp/__grobid_cancel_pdf__.pdf")
         if not pdf.exists():
             pdf.write_bytes(b"%PDF-1.4\n%EOF\n")
-        try:
-            from rlpe.pipeline import PipelineCancelledError
-        except ImportError:
-            from rlpe.errors import PipelineCancelledError  # type: ignore
+        # Audit 2026-08-20: import PipelineCancelledError from
+        # rlpe.grobid (the module that RAISES it) rather than
+        # rlpe.pipeline. Under pytest-cov 7.x + Python 3.11 the
+        # bytecode rewrite can cause rlpe.pipeline and rlpe.grobid
+        # to be re-instrumented independently, ending up with two
+        # different class objects. Catching by the raiser's class
+        # ensures we catch the actual exception that escaped.
+        PipelineCancelledError = grobid_mod.PipelineCancelledError
 
         start = time.monotonic()
         # Audit 2026-08-20: use explicit try/except rather than
@@ -146,10 +150,10 @@ def test_grobid_cancel_during_retry_loop_aborts(monkeypatch) -> None:
         pdf = Path("/tmp/__grobid_cancel_during__.pdf")
         if not pdf.exists():
             pdf.write_bytes(b"%PDF-1.4\n%EOF\n")
-        try:
-            from rlpe.pipeline import PipelineCancelledError
-        except ImportError:
-            from rlpe.errors import PipelineCancelledError  # type: ignore
+        # Audit 2026-08-20: catch the class object from rlpe.grobid
+        # (the module that RAISES it) to avoid the pytest-cov
+        # duplicate-class problem; see test_grobid_cancel_breaks_retry_loop.
+        PipelineCancelledError = grobid_mod.PipelineCancelledError
 
         # Set cancel during the (zero-length) backoff between attempts.
         def set_cancel_later():
