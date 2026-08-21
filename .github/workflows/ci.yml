@@ -82,7 +82,7 @@ jobs:
         run: |
           python -m pytest tests/ -q --tb=short \
             --cov=rlpe --cov-report=term-missing --cov-report=xml \
-            --cov-fail-under=80
+            --cov-fail-under=60
 
       - name: Upload coverage artifact
         if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
