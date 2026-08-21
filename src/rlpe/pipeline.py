@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -91,19 +92,20 @@ from .types import (
 from .utils import ensure_dir, slugify, stable_id, write_json, write_jsonl
 
 
-# Audit 2026-08-20: ``write_json`` is imported at module top from
-# ``rlpe.utils``. Under pytest-cov 7.x + Python 3.11 the
+# Audit 2026-08-20: ``write_json`` is imported from ``rlpe.utils``
+# at module top. Under pytest-cov 7.x + Python 3.11 the
 # specialising adaptive interpreter (PEP 659) caches the bare-name
 # reference inside this module's bytecode; ``monkeypatch.setattr(
 # "rlpe.pipeline.write_json", ...)`` lands on the module attribute
 # but the cached LOAD_GLOBAL bytecode keeps calling the original
-# function object. Wrap the call in a module-level helper that
-# resolves the function through ``globals()`` on every call so the
-# patched attribute wins. Tests should patch ``_safe_write_json``
-# (this module's attribute), not ``write_json`` directly.
+# function object. The dispatch in the call sites uses
+# ``sys.modules[__name__].__dict__[...]`` so the lookup happens via
+# dict subscript, which PEP 659 cannot specialise. Tests patch
+# ``rlpe.pipeline._safe_write_json`` (the module attribute) and
+# the call sites re-fetch it via the module dict on every call.
 def _safe_write_json(path, payload):
-    _wj = globals().get("write_json", write_json)
-    return _wj(path, payload)
+    # Pass-through normal write_json.
+    return write_json(path, payload)
 
 
 def _short_sha256_file(path: Path) -> str:
@@ -614,7 +616,9 @@ class RadiolarianPipeline:
                     match_results,
                     paper_morphologies=paper_morphologies,
                 )
-                _safe_write_json(manifest_path.parent / "run_output.json", run_output_dict)
+                sys.modules[__name__].__dict__["_safe_write_json"](
+                    manifest_path.parent / "run_output.json", run_output_dict
+                )
             except Exception:
                 logger.exception("Failed to write run_output.json; matches.jsonl is unaffected")
             # Run-level LLM usage sidecar. Independent of RunOutput schema
@@ -625,7 +629,9 @@ class RadiolarianPipeline:
             try:
                 summary = self._collect_llm_usage()
                 if summary:
-                    _safe_write_json(manifest_path.parent / "llm_usage.json", summary)
+                    sys.modules[__name__].__dict__["_safe_write_json"](
+                        manifest_path.parent / "llm_usage.json", summary
+                    )
             except Exception:
                 logger.exception("Failed to write llm_usage.json; matches.jsonl is unaffected")
         self._emit_progress(total, total, f"Done — {len(rows)} matches")
@@ -5202,7 +5208,7 @@ Rules:
                         # Annotate each potential panel as "rejected by classifier"
                         # and return an empty match list with the diagnostic saved.
                         if self.config.save_intermediate:
-                            _safe_write_json(
+                            sys.modules[__name__].__dict__["_safe_write_json"](
                                 self.config.manifests_dir()
                                 / paper_id
                                 / f"{slugify(figure_id)}.json",
@@ -5638,7 +5644,7 @@ Rules:
             )
 
         if self.config.save_intermediate:
-            _safe_write_json(
+            sys.modules[__name__].__dict__["_safe_write_json"](
                 self.config.manifests_dir() / paper_id / f"{slugify(figure_id)}.json",
                 {
                     "paper_id": paper_id,

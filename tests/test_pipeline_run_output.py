@@ -172,15 +172,11 @@ class TestPipelineRunOutput:
         def boom(_payload):
             raise RuntimeError("synthetic run_output.json failure")
 
-        # Audit 2026-08-20: patch ``rlpe.pipeline._safe_write_json``
-        # (the indirection wrapper, not the bare ``write_json`` name).
-        # Under pytest-cov 7.x + Python 3.11 the specialising adaptive
-        # interpreter (PEP 659) caches ``write_json`` at the
-        # module-level import; ``monkeypatch.setattr("rlpe.pipeline.
-        # write_json", ...)`` lands on the attribute but the cached
-        # LOAD_GLOBAL bytecode keeps calling the original function.
-        # ``_safe_write_json`` resolves via ``globals().get()`` on every
-        # call, so patching it works reliably.
+        # Audit 2026-08-21: patch ``rlpe.pipeline._safe_write_json``
+        # on the module attribute. The consumer call sites in
+        # pipeline.py now dispatch via
+        # ``sys.modules[__name__].__dict__["_safe_write_json"]`` so
+        # the patched attribute wins regardless of PEP 659 caching.
         monkeypatch.setattr("rlpe.pipeline._safe_write_json", boom, raising=True)
 
         rows = pipe.run()

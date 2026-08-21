@@ -61,9 +61,10 @@ def test_caption_range_parse_failure_low_confidence():
     def boom(value):
         raise ValueError("simulated bad range value")
 
-    # monkeypatch via direct setattr; pytest-cov 7.x's bytecode
-    # rewrite does NOT cache plain setattr on module attributes,
-    # only PEP 659-cached bare-name lookups inside other modules.
+    # monkeypatch via direct setattr on the module's __dict__.
+    # The consumer in scale_bar.py now reads via
+    # ``sys.modules[__name__].__dict__["_safe_float"]`` so the
+    # patched attribute wins regardless of PEP 659 caching.
     sb._safe_float = boom
     try:
         text = "scale bar 5-10 µm"
