@@ -30,6 +30,12 @@ from PySide6.QtWidgets import QApplication
 
 _CURRENT_LANG: str = "zh_CN"
 _LISTENERS: list[Callable[[str], None]] = []
+# Audit 2026-09-01 CR-25: thread-safe language switching. See
+# ``set_language()``. Use ``RLock`` (not ``Lock``) so listener
+# callbacks may themselves call ``_tr()`` / ``set_language()``
+# without deadlocking.
+import threading as _threading
+_I18N_LOCK: _threading.RLock = _threading.RLock()
 
 
 def current_language() -> str:
@@ -48,19 +54,29 @@ def set_language(lang: str) -> None:
 
     Unknown codes are ignored. Switching to the current language
     is also a no-op.
+
+    Audit 2026-09-01 CR-25: previously the global ``_CURRENT_LANG``
+    + ``_LISTENERS`` mutation was not thread-safe — when the web
+    server's SSE worker invokes ``_tr()`` for a log message at the
+    same instant a user changes the language from the GUI, one
+    thread would see the new language while the other still saw the
+    old one, producing mixed-language output to the same response.
+    Acquire a module-level ``threading.RLock`` (RLock so listener
+    callbacks can themselves call ``_tr()`` without deadlocking).
     """
     global _CURRENT_LANG
-    if lang not in ("en", "zh_CN"):
-        return
-    if lang == _CURRENT_LANG:
-        return
-    _CURRENT_LANG = lang
-    _apply_registry()
-    for fn in list(_LISTENERS):
-        try:
-            fn(lang)
-        except Exception:
-            pass
+    with _I18N_LOCK:
+        if lang not in ("en", "zh_CN"):
+            return
+        if lang == _CURRENT_LANG:
+            return
+        _CURRENT_LANG = lang
+        _apply_registry()
+        for fn in list(_LISTENERS):
+            try:
+                fn(lang)
+            except Exception:
+                pass
     # Phase 39: re-text menu / toolbar QAction + QMenu objects
     # (they're not QWidgets so the registry's allWidgets() loop
     # misses them). Lazy import to avoid circular dependency with

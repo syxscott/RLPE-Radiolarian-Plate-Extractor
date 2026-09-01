@@ -242,7 +242,15 @@ class RadiolarianPipeline:
         # ``m3_enhanced_mode = True`` (Round 16 audit: was asymmetric — ON
         # by default for MiniMax, opt-in for others; now opt-in for all).
         self.m3_engine: M3Engine | None = None
-        self._gemma_lock = threading.Lock()
+        # BLOCKER BL-1 (audit 2026-09-01): must be RLock, not Lock.
+        # The Gemma4 fallback path acquires _gemma_lock inside
+        # ``_apply_gemma_with_fallback`` *while already holding* the same
+        # lock from the outer ``_process_region`` call. A plain ``Lock``
+        # deadlocks the worker pool silently (no exception, no log).
+        # ``matcher_used`` semantics + the swap-to-fallback branch both
+        # pass through this nested acquisition; reverting to Lock here
+        # will resurrect the Gemma4 deadlock.
+        self._gemma_lock = threading.RLock()
         # NOTE: no shared _ocr_lock here. PaddleOCR (the default backend) is
         # thread-safe for concurrent .ocr() calls — the engine serializes its
         # own internal state and per-call locks would just serialize our
@@ -512,7 +520,36 @@ class RadiolarianPipeline:
         cancelled_fast = False  # audit 2026-07-26 M6: set by the cancel branch
         pool = ThreadPoolExecutor(max_workers=max(1, self.config.num_workers))
         try:
-            futures = {pool.submit(self._process_one_pdf, p): p for p in pdf_files}
+            # Audit 2026-09-01 (architectural P0 #4): per-paper
+            # checkpoint + --resume. Read each ``_checkpoints/<stem>.done``
+            # marker BEFORE submitting the future so an interrupted
+            # previous run can pick up where it left off. Use
+            # ``extra[\"resume\"] = False`` (default) to opt out for
+            # clean reruns. The marker is written by
+            # ``_process_one_pdf`` after a successful PDF completion.
+            checkpoint_dir = self.config.work_dir / "_checkpoints"
+            done_markers: dict[str, Path] = {}
+            for p in pdf_files:
+                stem = stable_id(p)
+                marker = checkpoint_dir / f"{stem}.done"
+                done_markers[stem] = marker
+            resume = bool(self.config.extra.get("resume", False))
+            pending_pdfs = []
+            for p in pdf_files:
+                stem = stable_id(p)
+                if resume and done_markers[stem].exists():
+                    logger.info(
+                        "run: skipping %s — checkpoint exists at %s "
+                        "(resume=True)",
+                        p.name,
+                        done_markers[stem],
+                    )
+                    continue
+                pending_pdfs.append(p)
+            if not pending_pdfs:
+                logger.info("run: all PDFs already checkpointed; nothing to do")
+                return []
+            futures = {pool.submit(self._process_one_pdf, p): p for p in pending_pdfs}
             try:
                 # Phase 42: also check cancel_event at the top of the
                 # loop so a Cancel that arrives BEFORE any PDF
@@ -634,8 +671,146 @@ class RadiolarianPipeline:
                     )
             except Exception:
                 logger.exception("Failed to write llm_usage.json; matches.jsonl is unaffected")
+        # Audit 2026-09-01 (Step 2): drain the _safe_call warnings
+        # accumulated during this run and (a) write a top-level
+        # ``manifest.json`` next to ``run_output.json`` so a triage
+        # grep can spot the failure surface without loading the
+        # whole run, and (b) merge the warning list into the
+        # in-memory RunOutput so the export CLIs (``--export-warnings``)
+        # emit the same data. The manifest is intentionally small and
+        # HUMAN-READABLE — it complements ``run_output.json`` which is
+        # machine-readable schema.
+        try:
+            import time as _t
+
+            from .utils import drain_warnings as _drain_warnings
+
+            _run_warnings = _drain_warnings()
+            _manifest = {
+                "schema_version": "1.0",
+                "n_papers": total,
+                "n_rows": len(rows),
+                "completed_at": _t.time(),
+                "warnings": _run_warnings,
+                "config_hash": getattr(
+                    self.config, "_config_hash", lambda: None
+                )(),
+                # Git commit + ( snapshot — the previous ``run_output.json``
+                # carried these via the ProvenanceRecord but the
+                # manifest didn't, so a 5-paper batch run looked
+                # identical in the manifest regardless of which
+                # commit produced it. Pulled here from
+                # ``build_provenance`` so the manifest is
+                # self-describing for audit purposes.
+                "git_commit": getattr(self, "_git_commit", None),
+            }
+            sys.modules[__name__].__dict__["_safe_write_json"](
+                manifest_path.parent / "manifest.json", _manifest
+            )
+        except Exception:
+            logger.exception(
+                "Failed to write manifest.json; run_output.json is unaffected"
+            )
         self._emit_progress(total, total, f"Done — {len(rows)} matches")
         return rows
+
+    def close(self) -> None:
+        """Release GPU/CPU resources held by this pipeline instance.
+
+        Audit 2026-09-01 (systemic #2 — GPU/CPU resource cleanup):
+        Phase 69 (commit f200929) added ``PanelSegmenter.unload_sam2()``
+        but only the web/API ``_run_job`` finally block called it. CLI /
+        GUI / batch paths ran the pipeline and then went out of scope,
+        leaving SAM2 (~900 MB VRAM), PaddleOCR engine, the local
+        Gemma runtime, and the M3 engine's MiniMax-side buffer on the
+        GPU. With 24 GB VRAM, sequential jobs OOM'd on the 4th-5th
+        invocation.
+
+        ``close()`` is idempotent and safe to call when the pipeline
+        was never used (e.g. tests that construct it without running).
+        Also drops the YOLO model cache (set by ``layout.detect_figure_regions_yolo``
+        as a function attribute) so a long-lived web server doesn't
+        accumulate symlinked weight variants.
+
+        Pair with ``__enter__`` / ``__exit__`` so callers can write::
+
+            with RadiolarianPipeline(cfg) as pipeline:
+                pipeline.run()
+        """
+        try:
+            # SAM2 ImagePredictor + cuML weights (~900 MB on RTX 4090).
+            seg = getattr(self, "segmenter", None)
+            if seg is not None and hasattr(seg, "unload_sam2"):
+                try:
+                    seg.unload_sam2()
+                except Exception:
+                    logger.debug("SAM2 unload raised", exc_info=True)
+            # PaddleOCR engine + EasyOCR reader (if any).
+            ocr = getattr(self, "ocr", None)
+            if ocr is not None and hasattr(ocr, "unload"):
+                try:
+                    ocr.unload()
+                except Exception:
+                    logger.debug("OCR unload raised", exc_info=True)
+            # Local Gemma / fallback runtime (heavy transformer weights).
+            for attr in ("_fallback_gemma_runtime", "gemma_runtime"):
+                runtime = getattr(self, attr, None)
+                if runtime is None:
+                    continue
+                # Drop the model handle if the runtime exposes one.
+                model = getattr(runtime, "model", None)
+                if model is not None:
+                    try:
+                        del model
+                    except Exception:
+                        pass
+                setattr(self, attr, None)
+            # M3 engine + backend state.
+            m3 = getattr(self, "m3_engine", None)
+            if m3 is not None:
+                backend = getattr(m3, "backend", None)
+                if backend is not None and hasattr(backend, "unload"):
+                    try:
+                        backend.unload()
+                    except Exception:
+                        logger.debug("M3 backend unload raised", exc_info=True)
+                setattr(self, "m3_engine", None)
+            # YOLO model cache (module-level function attribute).
+            try:
+                from .layout import detect_figure_regions_yolo as _yolo_fn
+
+                for attr in list(vars(_yolo_fn).keys()):
+                    if attr.startswith("_yolo_model_"):
+                        try:
+                            delattr(_yolo_fn, attr)
+                        except Exception:
+                            pass
+            except Exception:
+                logger.debug("YOLO cache clear raised", exc_info=True)
+            # Best-effort CUDA cache release.
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                # torch missing or CUDA unavailable — nothing to free.
+                pass
+        finally:
+            # Force GC to release any lingering Python refs to the
+            # torch modules before the next job constructs a new pipeline.
+            try:
+                import gc
+
+                gc.collect()
+            except Exception:
+                pass
+
+    def __enter__(self) -> "RadiolarianPipeline":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
     def _process_one_pdf(self, pdf_path: Path) -> list[dict[str, Any]]:
         paper_id = stable_id(pdf_path)
@@ -665,6 +840,62 @@ class RadiolarianPipeline:
                 )
 
         self._emit_progress(1, 1, f"Finished {pdf_path.name} ({len(rows)} matches)")
+        # Audit 2026-09-01 (P0 A3 / architectural P0 #4 follow-up):
+        # append this paper's rows to ``matches.jsonl`` IMMEDIATELY
+        # so a crashed batch (SIGKILL / OOM / Ctrl-C) preserves the
+        # work done so far. The previous code only wrote
+        # ``matches.jsonl`` once, at the end of ``run()``, so a
+        # failure at PDF 150/200 lost all 150 papers' results.
+        # Append mode is line-atomic on POSIX filesystems, so a
+        # reader sees either the pre-existing content or the new
+        # line — never a torn write. Re-running the same batch
+        # produces duplicated lines, which the eval / dedup
+        # pipelines already tolerate via paper_id grouping.
+        try:
+            from .utils import write_jsonl as _write_jsonl
+
+            _matches_path = (
+                Path(self.config.work_dir) / "manifests" / "matches.jsonl"
+            )
+            _write_jsonl(_matches_path, rows)
+            logger.debug(
+                "_process_one_pdf: appended %d rows for %s to matches.jsonl "
+                "(per-paper incremental persistence)",
+                len(rows),
+                pdf_path.name,
+            )
+        except Exception:
+            logger.debug(
+                "_process_one_pdf: per-paper matches.jsonl append failed for %s; "
+                "the end-of-run write will still cover this paper",
+                pdf_path.name,
+                exc_info=True,
+            )
+        # Audit 2026-09-01 (architectural P0 #4): write a per-paper
+        # done marker so a crashed batch (SIGKILL / OOM / Ctrl-C)
+        # can be resumed with ``extra["resume"] = True``. The marker
+        # is touched AFTER the cross_figure_linker stage so a
+        # resume picks up only completed work — not partial figures.
+        # Failures (rows == []) still write the marker so a paper
+        # with no species isn't re-tried forever; the operator can
+        # delete the marker to force a re-run.
+        try:
+            from .utils import ensure_dir as _ensure_dir
+            import time as _cp_time
+
+            _ensure_dir(self.config.work_dir / "_checkpoints")
+            _marker = self.config.work_dir / "_checkpoints" / f"{paper_id}.done"
+            _marker.write_text(
+                f"completed_at={_cp_time.time()}\n"
+                f"n_rows={len(rows)}\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.debug(
+                "Failed to write checkpoint marker for %s; resume will re-run it",
+                paper_id,
+                exc_info=True,
+            )
         return rows
 
     # -----------------------------------------------------------------------
@@ -924,7 +1155,12 @@ class RadiolarianPipeline:
 
         Returns the absolute path of the best candidate, or None.
         """
-        target_page = int(target.page_number)
+        # Audit 2026-09-01 BL-11: ``target.page_number`` may be ``None``
+        # for OD figures whose page wasn't resolved (the whole point of
+        # this fallback is to *rescue* such figures — crashing on the
+        # int() before the rescue loop defeats the rescue). Treat None
+        # as page 0 so the page-adjacency check still runs.
+        target_page = int(getattr(target, "page_number", None) or 0)
         import os as _os
 
         # Phase 1: scan the raw OD JSON for images on the same page
@@ -1128,6 +1364,20 @@ class RadiolarianPipeline:
             self._exit_od_grobid_guard()
 
     def _process_one_pdf_od_inner(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+        # Audit 2026-09-01 (architectural P1 #9): cancel_event was only
+        # checked at the TOP-LEVEL pool loop, so a Cancel arriving
+        # mid-worker (after the OD call started but before the M3 stage)
+        # could still keep the worker pinned for 30-60 s while an LLM
+        # API call returned. Check at every inner-function entry too
+        # — short-circuits the worker immediately when the user clicks
+        # Cancel so the pool can shut down cleanly.
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            logger.info(
+                "_process_one_pdf_od_inner: cancel_event already set on entry to %s; "
+                "returning empty rows",
+                paper_id,
+            )
+            return []
         od_result = self.od_extractor.extract(pdf_path, self.config.resolved_output_dir())
 
         if not od_result.success:
@@ -2142,13 +2392,33 @@ class RadiolarianPipeline:
         species (which currently came from regex matching) with M3's
         answer. Otherwise the row's regex species stays.
 
-        Pure additive — every backend failure path (no backend, no
+        Pure additive - every backend failure path (no backend, no
         crop, parse fail, exception) falls through and the regex
         species survives. Per-figure and per-paper caps prevent cost
         runaway on big papers.
 
-        See ``docs/superpowers/specs/2026-08-17-m3-per-panel-pipeline-design.md``.
+        See docs/superpowers/specs/2026-08-17-m3-per-panel-pipeline-design.md.
+
+        Audit 2026-09-01 (architectural P1 #9 - full sweep): this
+        function fires ONE M3 call per panel (typically 200 calls per
+        paper). Pre-fix, cancel was only at the top-of-pool loop, so a
+        Cancel during this function kept the per-panel pool alive
+        until each in-flight M3 call returned - up to 30 s *
+        max_concurrent after the user clicked. Cancel check below
+        short-circuits the function entry so the pool exits within
+        ~100 ms of the click.
         """
+        # Top-level cancel check (covers the case where every panel
+        # would be skipped because Cancel arrived before we started).
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            logger.info(
+                "_apply_m3_per_panel_species_id: cancel_event already set on entry "
+                "to %s; skipping %d panel calls",
+                paper_id,
+                len(results),
+            )
+            return results
+
         if not self.config.m3_per_panel_enabled:
             return results
         if self.m3_engine is None or self.m3_engine.backend is None:
@@ -3739,7 +4009,22 @@ class RadiolarianPipeline:
         outer ``_process_one_pdf_grobid`` wraps everything in a
         single ``try / finally`` block without rewriting 150 lines of
         indent.
+
+        Audit 2026-09-01 (architectural P1 #9 — full sweep): check
+        ``self._cancel_event`` at function entry, mirroring the
+        sibling OD inner (``_process_one_pdf_od_inner``). The cancel
+        signal propagates from the GUI / API click → top-of-pool loop
+        → each worker thread → HERE. Without this inner check, the
+        GROBID path kept running for up to 30 s (one LLM API call's
+        timeout) after Cancel.
         """
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            logger.info(
+                "_process_one_pdf_grobid_inner: cancel_event already set on entry to %s; "
+                "returning empty rows",
+                paper_id,
+            )
+            return []
         grobid_result = self.grobid.process_pdf(pdf_path, self.config.resolved_output_dir())
 
         if not grobid_result.success:
@@ -4407,13 +4692,38 @@ class RadiolarianPipeline:
         ``corrected_label`` override the row fields; matched rows get
         ``metadata.review_corrected = True`` so the provenance trail
         shows the overlay.
+
+        Audit 2026-09-01 CR-38: the previous ``work.parent /
+        "corrections" / "corrections.jsonl"`` was off-by-one for
+        ``work_dir = <project_root>/service_work`` — ``work.parent``
+        resolved to ``<project_root>/service_work/..`` = ``<project_root>``,
+        so the file was looked for at ``<project_root>/corrections/
+        corrections.jsonl``. The CLI / GUI ``corrections`` workflow
+        actually writes to ``<project_root>/service_work/corrections/
+        corrections.jsonl``. Look in both locations (try the
+        service_work-resident one first — that's the production
+        write path; the project-root one was a Phase 53 leftover).
         """
         cfg = getattr(self, "config", None)
         if cfg is None:
             return rows
         work = Path(getattr(cfg, "work_dir", "") or cfg.resolved_output_dir())
-        corr_path = work.parent / "corrections" / "corrections.jsonl"
-        if not corr_path.exists():
+        corr_candidates = [
+            work / "corrections" / "corrections.jsonl",  # production path
+            work.parent / "corrections" / "corrections.jsonl",  # legacy Phase 53 path
+        ]
+        corr_path: Path | None = None
+        for candidate in corr_candidates:
+            if candidate.exists():
+                corr_path = candidate
+                break
+        if corr_path is None:
+            return rows
+        try:
+            with corr_path.open(encoding="utf-8") as fh:
+                corrections = [json.loads(line) for line in fh if line.strip()]
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Review corrections file unreadable: %s", corr_path)
             return rows
         try:
             with corr_path.open(encoding="utf-8") as fh:
@@ -4583,6 +4893,18 @@ Rules:
             logger.debug("LLM-first extraction failed: %s", exc)
             return None
 
+        # Audit 2026-09-01 BL-2: ``infer_panel`` may return ``None`` when
+        # the backend's HTTP transport is mid-disconnect (no exception,
+        # just a None sentinel). The previous code fell straight into
+        # ``result.get(...)`` and AttributeError'd the whole figure
+        # processing — every panel of the affected plate silently failed.
+        # Guard the None case explicitly and record a debug breadcrumb
+        # so the live eval-trace can distinguish "transport hiccup" from
+        # "model said no".
+        if result is None:
+            logger.debug("LLM-first returned None (transport hiccup?)")
+            return None
+
         if result.get("fallback_used") or result.get("error"):
             logger.debug("LLM-first returned fallback/error, skipping")
             return None
@@ -4598,7 +4920,20 @@ Rules:
         # discarded. Consumption order is now: backend-parsed panels →
         # backend-parsed single panel → robust _safe_json_loads on the
         # raw text.
-        panels_data = result.get("panels") or result.get("answer")
+        #
+        # Audit 2026-09-01 (live end-to-end Bandini_2011 test): when the
+        # LLM returns a top-level JSON array, ``parse_json_from_text``
+        # now sets ``_is_multi_panel=True`` and emits the parsed panels
+        # under ``result["panels"]`` (single-element dict wrapping —
+        # NOT the loose "panels" key the user might expect). Check
+        # that flag first so we use the structured multi-panel payload
+        # without falling through to the per-panel single-panel branch
+        # below (which would collapse the array back to one row and
+        # silently drop every Fig. 2, Fig. 3, ... species).
+        if result.get("_is_multi_panel") and isinstance(result.get("panels"), list):
+            panels_data = result["panels"]
+        else:
+            panels_data = result.get("panels") or result.get("answer")
         if panels_data is None:
             # The backend may have parsed a SINGLE panel dict (the
             # model ignored the "output an array" instruction).
@@ -4838,8 +5173,19 @@ Rules:
                         # row. _normalize_panel_label canonicalises
                         # "00" → "0" and keeps "1a" / "1A" as-is (no
                         # case folding), so we also lowercase.
+                        #
+                        # Audit 2026-09-01 BL-10: M3 may emit "2-3" /
+                        # "sp." / "fig." as panel_id values that
+                        # ``_normalize_panel_label`` returns ``None`` for.
+                        # The previous set comprehension then crashed on
+                        # ``None.strip().lower()``. ``(x or "")`` makes
+                        # the None path silently drop the row instead of
+                        # crashing the whole pair-lookup dedup pass.
                         existing_labels = {
-                            _normalize_panel_label(r.get("panel_id") or r.get("label_text") or "")
+                            (
+                                _normalize_panel_label(r.get("panel_id") or r.get("label_text") or "")
+                                or ""
+                            )
                             .strip()
                             .lower()
                             for r in llm_results
@@ -4894,7 +5240,15 @@ Rules:
                         #    ~85% on beccaro.
                         added = 0
                         for lbl, species in pair_lookup.items():
-                            lbl_norm = _normalize_panel_label(lbl).strip().lower() if lbl else ""
+                            # Audit 2026-09-01 BL-10 (same fix as the
+                            # ``existing_labels`` set comprehension above):
+                            # ``_normalize_panel_label`` can return ``None``
+                            # for non-canonical labels like "2-3" or "sp.".
+                            # ``(x or "")`` keeps the loop alive instead of
+                            # AttributeError'ing the whole figure.
+                            lbl_norm = (
+                                (_normalize_panel_label(lbl) or "") if lbl else ""
+                            ).strip().lower()
                             if lbl_norm and lbl_norm in existing_labels:
                                 continue
                             # Phase 54 audit: M7 — use the *normalised*
@@ -5852,6 +6206,18 @@ Rules:
                     caption_text=caption_text,
                     suggested_label=suggested,
                 )
+                # Audit 2026-09-01 BL-3: ``match_panel`` returns ``None``
+                # on quota exhaustion / network outage / engine early-bail
+                # (no exception). The previous code then read
+                # ``panel_match.confidence`` on a NoneType and crashed the
+                # entire figure loop. Record the failure into per-row
+                # metadata so downstream diagnostics see it, and continue
+                # to the next match instead of losing every panel on this
+                # plate.
+                if panel_match is None:
+                    md["m3_stage4_error"] = "engine_returned_none"
+                    new_matches.append(m)
+                    continue
                 # Merge: prefer M3 result when its confidence >= 0.40 OR it has
                 # a different species from the rule-based guess (M3 sees more).
                 m3_conf = panel_match.confidence

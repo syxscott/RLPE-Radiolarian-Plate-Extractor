@@ -137,7 +137,18 @@ def _safe_json_loads(text: str) -> Any:
     text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
     # 1) Whole text
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        # Audit 2026-09-01: also wrap a top-level array into its first
+        # dict element so callers that expect a single-object return
+        # value keep working. M3 occasionally emits ``[{"sections":
+        # [...]}]`` at the top level; previously the caller got a
+        # ``list`` and crashed on ``result["sections"]``.
+        if isinstance(parsed, list) and parsed:
+            first = parsed[0]
+            if isinstance(first, dict):
+                return first
+        if isinstance(parsed, dict):
+            return parsed
     except Exception:
         pass
     # 2) First array match
@@ -2720,6 +2731,14 @@ class M3Engine:
         # preserves the legacy behaviour (plain ``time.sleep``) so this
         # is purely additive.
         self._cancel_event = cancel_event
+        # Audit 2026-09-01 CR-21: per-engine lock for the
+        # read-modify-write of the backend's sampling attributes
+        # (temperature / max_output_tokens / thinking_budget_tokens).
+        # Multiple worker threads may call ``_apply_config_sampling_params``
+        # concurrently; without this lock, two threads can stomp on
+        # each other's temperature setting mid-flight, producing
+        # nondeterministic output. See ``_apply_config_sampling_params``.
+        self._sampling_lock = threading.Lock()
         # Stage toggles. Default: all on.
         for i in range(1, 6):
             self.config.setdefault(f"m3_stage_{i}", True)
@@ -2742,25 +2761,39 @@ class M3Engine:
         The backend classes (llm_backends) expose ``temperature``,
         ``max_output_tokens`` and ``thinking_budget_tokens`` fields;
         setting them here is the only place the config knobs are
-        consumed (audit 2026-07-31: previously dead keys)."""
-        temp = self.config.get("m3_temperature")
-        if temp is not None and hasattr(self.backend, "temperature"):
-            try:
-                self.backend.temperature = float(temp)
-            except (TypeError, ValueError):
-                pass
-        thinking = self.config.get("m3_thinking_budget")
-        if thinking is not None and hasattr(self.backend, "thinking_budget_tokens"):
-            try:
-                self.backend.thinking_budget_tokens = int(thinking)
-            except (TypeError, ValueError):
-                pass
-        max_out = self.config.get("m3_max_output_tokens")
-        if max_out is not None and hasattr(self.backend, "max_output_tokens"):
-            try:
-                self.backend.max_output_tokens = int(max_out)
-            except (TypeError, ValueError):
-                pass
+        consumed (audit 2026-07-31: previously dead keys).
+
+        Audit 2026-09-01 CR-21: the previous implementation wrote
+        ``self.backend.temperature = ...`` / ``max_output_tokens = ...``
+        directly on the shared backend instance. The M3Engine is
+        invoked concurrently from per-panel worker threads (the
+        ``_apply_m3_per_panel_species_id`` enrichment loop), so two
+        panels running side-by-side could each set ``temperature`` to
+        different values — the result was nondeterministic sampling
+        (one panel would see temperature=0.4, the next would see
+        temperature=0.7 mid-flight). Wrap each setter in
+        ``self._sampling_lock`` so the read-modify-write of the
+        backend's sampling attributes is atomic per-call.
+        """
+        with self._sampling_lock:
+            temp = self.config.get("m3_temperature")
+            if temp is not None and hasattr(self.backend, "temperature"):
+                try:
+                    self.backend.temperature = float(temp)
+                except (TypeError, ValueError):
+                    pass
+            thinking = self.config.get("m3_thinking_budget")
+            if thinking is not None and hasattr(self.backend, "thinking_budget_tokens"):
+                try:
+                    self.backend.thinking_budget_tokens = int(thinking)
+                except (TypeError, ValueError):
+                    pass
+            max_out = self.config.get("m3_max_output_tokens")
+            if max_out is not None and hasattr(self.backend, "max_output_tokens"):
+                try:
+                    self.backend.max_output_tokens = int(max_out)
+                except (TypeError, ValueError):
+                    pass
         # Skip stage-4 per-panel matching if caption parser found zero pairs.
         # Default True: when no caption pairs were extracted, M3 stage 4 has
         # no candidate species list to choose from, so its visual-only mode
@@ -2945,7 +2978,21 @@ class M3Engine:
             if not labels or not species:
                 continue
             if isinstance(labels, str):
-                labels = _expand_label_range(labels)
+                # Audit 2026-09-01 BL-20: the LLM sometimes emits a
+                # **comma-separated string** like "1-3, 5, 8". The
+                # previous code fed the entire string into
+                # ``_expand_label_range`` which only handles a single
+                # "A-Z" / "1-9" range — the result was a single label
+                # "1-3, 5, 8" that matched every panel on the plate,
+                # inflating image-verified F1 by counting one
+                # caption-pair as several. Split on commas first, then
+                # expand each segment individually.
+                labels = [
+                    lab
+                    for seg in labels.split(",")
+                    for lab in _expand_label_range(seg)
+                    if lab.strip()
+                ]
             elif not isinstance(labels, list):
                 continue
             labels = [str(x).strip() for x in labels if str(x).strip()]
@@ -4748,7 +4795,14 @@ _LABEL_RANGE_RE = re.compile(r"^\s*([A-Za-z0-9]+)\s*[-–~]\s*([A-Za-z0-9]+)\s*$
 
 
 def _expand_label_range(s: str) -> list[str]:
-    """Expand 'A-D' / '3-5' to ['A','B','C','D']; pass through if not a range."""
+    """Expand 'A-D' / '3-5' to ['A','B','C','D']; pass through if not a range.
+
+    Audit 2026-09-01 BL-21: the previous implementation used
+    ``range(int(a), int(b) + 1)`` which returns an empty list when
+    ``int(a) > int(b)`` — silently dropping the entire panel's species
+    association. The LLM sometimes emits "Z-A" / "9-3" (reverse order).
+    Normalise to ascending order before iterating.
+    """
     m = _LABEL_RANGE_RE.match(s)
     if not m:
         return [s.strip()] if s.strip() else []
@@ -4756,12 +4810,16 @@ def _expand_label_range(s: str) -> list[str]:
     # Letters
     if len(a) == 1 and len(b) == 1 and a.isalpha() and b.isalpha():
         if a.isupper() and b.isupper():
-            return [chr(c) for c in range(ord(a), ord(b) + 1)]
+            lo, hi = sorted([ord(a), ord(b)])
+            return [chr(c) for c in range(lo, hi + 1)]
         if a.islower() and b.islower():
-            return [chr(c) for c in range(ord(a), ord(b) + 1)]
+            lo, hi = sorted([ord(a), ord(b)])
+            return [chr(c) for c in range(lo, hi + 1)]
     # Digits
     if a.isdigit() and b.isdigit():
-        return [str(i) for i in range(int(a), int(b) + 1)]
+        ia, ib = int(a), int(b)
+        lo, hi = sorted([ia, ib])
+        return [str(i) for i in range(lo, hi + 1)]
     return [s]
 
 

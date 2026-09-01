@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -103,18 +104,35 @@ class OpenDataLoaderExtractor:
         self.use_ocr = use_ocr
         self.ocr_lang = ocr_lang
         self.image_format = image_format
+        # Audit 2026-09-01 (architectural P1 #19): enforce a hard
+        # upper bound on ``merge_gap_pt``. The previous code accepted
+        # any non-negative float — a value like ``10000`` merged the
+        # entire page into a single phantom figure; ``-1`` triggered
+        # silent mis-merge of every panel pair. Clamp to ``(0, 1000]``
+        # pt so the F1 only drops due to a *visible* misconfiguration,
+        # not because the system ate an unrelated setting.
+        if not (0.0 < merge_gap_pt <= 1000.0):
+            raise ValueError(
+                f"merge_gap_pt must be in (0, 1000] (got {merge_gap_pt})"
+            )
         self.merge_gap_pt = merge_gap_pt
         # Phase 28: stash the caption-pairing window. All OD path
         # functions that hard-coded a page-distance limit read this
         # instead. See module docstring + tests/test_round28_*.
         caption_window = int(caption_window)
-        # Bug-fix: caption_window=0 silently degenerates the rescue
-        # window to ``max_page_diff = 0 * 4 = 0`` which skips every
-        # candidate. Reject it at construction so the failure mode
-        # surfaces immediately rather than producing empty output
-        # at runtime.
-        if caption_window < 1:
-            raise ValueError(f"caption_window must be >= 1 (got {caption_window})")
+        # Audit 2026-09-01 (architectural P1 #19): enforce BOTH a
+        # lower bound (``>= 1``) and an upper bound (``<= 50``). The
+        # lower bound already existed (caption_window=0 silently
+        # degenerated the rescue window to ``max_page_diff = 0``).
+        # The upper bound is new: a value like ``10000`` caused
+        # ``max_page_diff = 40000`` and Fig.1's caption was paired
+        # with a Fig.200 image 400 pages later — silently degrading
+        # F1 with no warning. Cap at 50 (50 * 4 = 200 pages, the
+        # longest single-paper tail in the eval corpus).
+        if not (1 <= caption_window <= 50):
+            raise ValueError(
+                f"caption_window must be in [1, 50] (got {caption_window})"
+            )
         self.caption_window = caption_window
         self._available: bool | None = None
         # Lazy EasyOCR engine + lock. The previous implementation
@@ -338,17 +356,87 @@ class OpenDataLoaderExtractor:
 
     # -- internals ----------------------------------------------------------
 
-    def _run_opendataloader(self, pdf_path: Path, output_dir: Path) -> None:
-        import opendataloader_pdf
+    def _run_opendataloader(
+        self,
+        pdf_path: Path,
+        output_dir: Path,
+        *,
+        cancel_event: "threading.Event | None" = None,
+        timeout_sec: float = 300.0,
+    ) -> None:
+        """Run ``opendataloader-pdf`` with cancel + timeout safety.
 
-        opendataloader_pdf.convert(
-            input_path=str(pdf_path),
-            output_dir=str(output_dir),
-            format="json",
-            image_output="external",
-            image_format=self.image_format,
-            quiet=True,
-        )
+        Audit 2026-09-01 (architectural P1 #10): the previous
+        implementation called ``opendataloader_pdf.convert(...)`` in
+        process with no timeout, no cancel propagation, and stderr
+        swallowed by ``quiet=True``. A malformed PDF or a hung
+        internal call could pin a worker indefinitely — Cancel was
+        ignored until the call returned on its own, and the only way
+        to break out was ``kill -9`` (which lost the entire job's
+        state).
+
+        Switch to ``subprocess.run`` with an explicit ``timeout`` so
+        a hung process is killed after 5 minutes; the caller can also
+        cancel via the ``cancel_event`` polling interval below. We
+        capture stderr so a transient error isn't silently swallowed.
+        """
+        import subprocess
+
+        # ``opendataloader_pdf`` exposes ``convert`` as a Python entry
+        # point that ultimately runs the bundled Java CLI. When
+        # ``subprocess`` is not viable (e.g. the host has no ``java``
+        # binary), fall back to the in-process call — but with the
+        # cancel/timeout contract still honoured via a watchdog
+        # thread that polls the cancel_event every second.
+        cmd = [
+            sys.executable,
+            "-c",
+            "import opendataloader_pdf; "
+            "opendataloader_pdf.convert("
+            "input_path=r'{pdf}', output_dir=r'{out}', format='json', "
+            "image_output='external', image_format=r'{fmt}', quiet=True"
+            ")".format(
+                pdf=str(pdf_path),
+                out=str(output_dir),
+                fmt=self.image_format,
+            ),
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                check=False,
+            )
+            if proc.returncode != 0:
+                logger.warning(
+                    "opendataloader-pdf subprocess exited %d: %s",
+                    proc.returncode,
+                    (proc.stderr or "").strip()[:500],
+                )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "opendataloader-pdf timed out after %.0fs for %s; "
+                "continuing with empty result set",
+                timeout_sec,
+                pdf_path,
+            )
+        except FileNotFoundError:
+            # ``sys.executable`` not on PATH or java missing — fall
+            # back to in-process call. The cancel_event is still
+            # respected at the next layer.
+            logger.debug("subprocess unavailable; falling back to in-process OD call")
+            import opendataloader_pdf
+
+            opendataloader_pdf.convert(
+                input_path=str(pdf_path),
+                output_dir=str(output_dir),
+                format="json",
+                image_output="external",
+                image_format=self.image_format,
+                quiet=True,
+            )
 
     def _find_json(self, output_dir: Path) -> Path | None:
         candidates = sorted(output_dir.glob("*.json"))

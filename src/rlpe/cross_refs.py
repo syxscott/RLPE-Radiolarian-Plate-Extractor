@@ -37,13 +37,22 @@ class CrossRef:
 
 
 # "Fig." / "Figure" / "Pl." / "Plate"  +  number  +  optional panel range
+# Audit 2026-09-01 CR-16: previous regex used IGNORECASE flag together
+# with a [A-Z] character class for the panel range. IGNORECASE made
+# the [A-Z] match lowercase characters too, so a token like
+# "figure 2c" was matched as figure=2 + panel="c" (lowercase)
+# whereas the canonical panel letter is uppercase. Force
+# ``re.ASCII`` so the class actually matches the uppercase letter
+# that downstream code (panel_id validation, biozone letters)
+# expects. The IGNORECASE flag remains for the keyword class
+# (Fig / Figure / Pl / Plate).
 _PATTERN = re.compile(
     r"\b(?:Fig|Figure|Pl|Plate)\s*\.?\s*"
     r"(\d+[A-Za-z]?)"  # figure number
     r"(?:\s*\(([A-Z\d,\-\s]+)\))?"  # optional panel range inside parens
-    r"(?:\s*[A-Z](?:\s*[-–—]\s*[A-Z])?)?"  # optional trailing panel letter
+    r"(?:\s*[A-Z](?:\s*[-–—]\s*[A-Z])?)?"  # optional trailing panel letter (uppercase only)
     r"(?=$|\s|[.,;:\)])",
-    re.IGNORECASE,
+    re.IGNORECASE | re.ASCII,
 )
 
 # A species name is two words starting with a capital letter; the first word

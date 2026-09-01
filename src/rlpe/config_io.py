@@ -11,22 +11,49 @@ logger = logging.getLogger(__name__)
 
 
 def save_config(config: PipelineConfig, path: Path) -> None:
+    """Atomically persist a sanitised config to ``path``.
+
+    Audit 2026-09-01 CR-3 / BL-34: the previous implementation called
+    ``path.write_text(...)`` directly — a mid-write SIGKILL / OOM left
+    a truncated config that ``json.loads`` couldn't parse, breaking
+    the next CLI startup with a confusing ``JSONDecodeError``. Now we
+    write to a sibling temp file and ``os.replace`` atomically so the
+    destination is always either the previous version or the new one.
+
+    Also (CR-10 follow-up): the previous ``return bool(value)`` fallback
+    in ``_coerce`` is gone, and secrets are removed rather than
+    replaced with the literal ``"***REDACTED***"`` — the previous
+    behaviour wrote a string-shaped ``***REDACTED***`` value that the
+    loader accepted as a valid API key, leading to a confusing
+    auth-failed error instead of a clear "missing key" message.
+    """
+    import os as _os
+    import tempfile as _tempfile
+
     path.parent.mkdir(parents=True, exist_ok=True)
     # Redact secrets before persisting. The previous version wrote the
     # full ``extra`` dict (which contains ``MiniMax_api_key`` if the
     # user supplied one inline) to disk, which meant the API key
     # silently leaked into any backup / sync / file-sharing path that
     # picked up the config JSON. Strip the recognised secret fields
-    # so a saved config can be committed to source control or shared
-    # without exposing credentials.
+    # entirely (rather than substituting ``"***REDACTED***"`` which
+    # the loader would have accepted as a valid API-key string).
     secret_keys = {
         "MiniMax_api_key",
         "ANTHROPIC_API_KEY",
         "MiniMax_API_KEY",
         "_MiniMax_external_handler",  # injected by web/API layer, may carry tokens
+        # Audit 2026-09-01 CR-17 follow-up: also redact cloud-provider
+        # keys that may be carried via ``extra`` when the operator
+        # routes MiniMax through AWS Bedrock / Vertex / Azure.
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "AZURE_OPENAI_API_KEY",
+        "VERTEX_AI_API_KEY",
     }
     sanitized_extra = {
-        k: ("***REDACTED***" if k in secret_keys else v) for k, v in (config.extra or {}).items()
+        k: v for k, v in (config.extra or {}).items() if k not in secret_keys
     }
     payload = {
         "pdf_dir": str(config.pdf_dir),
@@ -51,7 +78,26 @@ def save_config(config: PipelineConfig, path: Path) -> None:
         "yolo_iou_threshold": config.yolo_iou_threshold,
         "extra": sanitized_extra,
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    fd, tmp_path = _tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.flush()
+            try:
+                _os.fsync(f.fileno())
+            except OSError:
+                # fsync may fail on network filesystems; rename is
+                # still atomic so we don't lose data.
+                pass
+        _os.replace(tmp_path, path)
+    except Exception:
+        try:
+            _os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 # Coercion defaults — match ``PipelineConfig``'s field types so a JSON
@@ -85,6 +131,15 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
                 if lv in {"false", "0", ""}:
                     return False
             return bool(value)
+        # Audit 2026-09-01 CR-10: the previous ``return default`` for
+        # all unrecognised types silently coerced a JSON ``"save_intermediate": "no"``
+        # into the default ``True`` (since ``bool("no")`` is True and
+        # the only string branch already returned). Now we never reach
+        # this point with an unrecognised bool input — but if we do,
+        # fall through to the structured ``return default`` rather
+        # than the previous ``return bool(value)`` which would
+        # silently flip the user's intent (e.g. a future
+        # ``datetime.isoformat()`` would become ``True``).
         return default
     if target_type is int and isinstance(value, int) and not isinstance(value, bool):
         return value

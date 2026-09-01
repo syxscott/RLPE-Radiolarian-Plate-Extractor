@@ -1060,8 +1060,17 @@ class MainWindow(QMainWindow):
         self._results_tab.load_job(job.job_id, job.rows, job.output_dir)
         self._tabs.setCurrentIndex(TAB_RESULTS)
 
-    def _on_retry(self, job_id: str, settings: dict) -> None:
-        # Re-run the job with the same PDF + (possibly updated) settings
+    def _on_retry(self, job_id: str) -> None:
+        # Re-run the job with the same PDF + (possibly updated) settings.
+        #
+        # Audit 2026-09-01 BL-6: the previous signature was
+        # ``_on_retry(self, job_id: str, settings: dict)`` but
+        # ``JobsTab.retry_requested = Signal(str)`` only emits the job_id
+        # — every right-click on a finished job raised
+        # ``TypeError: missing 1 required positional argument: 'settings'``
+        # and crashed the Qt main window. Fetch settings from the stored
+        # JobRecord instead of accepting them through the signal.
+        settings: dict = {}
 
         jobs = getattr(self._jobs_tab, "_jobs", {})
         if job_id not in jobs:

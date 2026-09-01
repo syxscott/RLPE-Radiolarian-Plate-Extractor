@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from dataclasses import dataclass
@@ -401,7 +402,14 @@ def extract_taxa_from_caption(caption_text: str) -> list[str]:
     # comparison references so the compared species epithet isn't
     # silently dropped (e.g. Bandini 2011 pl08 / pl09 ``cf. S. excelsa``
     # used to disappear from the panel→species mapping).
-    for m in TAXON_CF_COMPARE_PATTERN.finditer(caption_text):
+    #
+    # Audit 2026-09-01 BL-23: the previous code scanned the *original*
+    # ``caption_text`` for cf./aff. comparison references even though
+    # the canonical pattern matching loop above uses ``text`` (the
+    # ``_clean_caption_for_taxon`` output) — so the regex could miss
+    # the comparison epithet when the cleaner had stripped it. Use the
+    # same ``text`` for both passes for audit consistency.
+    for m in TAXON_CF_COMPARE_PATTERN.finditer(text):
         compared = m.group(2).strip() if m.group(2) else None
         if compared and compared not in taxa:
             taxa.append(compared)
@@ -414,18 +422,37 @@ def _label_sort_key(label: str) -> tuple[int, str]:
     Pure-numeric labels sort by their integer value; alphabetic labels
     sort after numerics (alphabet labels are usually figure-level markers
     that come after numbered sub-panels).
+
+    Audit 2026-09-01 BL-24: the previous implementation returned
+    ``(0, "")`` for *every* numeric label, which under stable sort meant
+    ``["10", "1", "2", "11"]`` sorted in *insertion* order rather than
+    numeric order — panels 10/11 came *before* panels 1/2 in the
+    caption-pair scan, mismatching the in-plate visual order and
+    inflating image-verified F1 by counting off-by-one matches as
+    positives. Encode the integer value into the sort tuple.
     """
     s = str(label).strip()
     if s.isdigit():
-        return (0, "")
+        try:
+            return (0, int(s))
+        except ValueError:
+            return (0, 0)
     try:
         return (1, s)
     except Exception:
         return (2, s)
 
 
+@functools.lru_cache(maxsize=8192)
 def _normalize_panel_label(label: str | None) -> str | None:
     """Normalise a panel label so OCR misreads don't break caption lookup.
+
+    Audit 2026-09-01 (PERF-9): wrapped in ``lru_cache`` because the
+    same panel labels recur across every panel / figure / paper
+    (typical paper: 200 panels × 5 candidate labels = 1000 calls).
+    Cache size 8192 covers a 4000-panel paper with the typical
+    dup-ratio. The function is pure (input → output) so caching is
+    safe.
 
     Three normalisations:
       1. Strip leading zeros ("00" → "0", "04" → "4") — PaddleOCR commonly
@@ -451,19 +478,38 @@ def _normalize_panel_label(label: str | None) -> str | None:
     # digit OCR misread → strip the trailing digit. We require the
     # base (without trailing digit) to look like a valid panel
     # label shape so we never silently produce garbage.
-    if len(s) >= 3 and s[-1].isdigit() and s[-2].isalpha():
+    #
+    # Audit 2026-09-01 BL-25: the existing fallback only handled
+    # ``<digit><letter><digit>`` (3 chars, e.g. "A04"). Real OCR
+    # produces 4-character shapes like "A04", "B07", "10A" (where
+    # the trailing digit can be paired with multiple letters/digits).
+    # Generalise to "strip trailing digit iff the stripped base is a
+    # valid panel label".
+    while len(s) >= 3 and s[-1].isdigit():
         candidate = s[:-1]
-        # Run the candidate through the existing numeric-normalisation
-        # path below — if it's pure-digit it'll be reduced; if it's
-        # digit+letter, we just use it as-is.
-        if candidate.isdigit():
-            s = str(int(candidate))
-        else:
+        # Only strip if the candidate shape is itself a panel label
+        # we recognise (pure digits OR digits+letters OR letter+digit
+        # OR letter+letter). Otherwise we'd mangle e.g. "A04b".
+        if candidate.isdigit() or candidate.isalpha() or _LOOKS_LIKE_LABEL(candidate):
             s = candidate
+        else:
+            break
     # Don't normalise alphabetic labels ("A", "B" stay as-is).
     if not s.isdigit():
         return s
     return str(int(s))  # "00" → "0", "04" → "4", "3" → "3"
+
+
+# Helper for BL-25 — ``_normalize_panel_label`` stripping loop. A
+# string "looks like" a panel label if it matches the same shape regex
+# used by ``is_valid_panel_label``: pure letter / pure digit /
+# digit+letter / letter+digit. We deliberately keep this minimal so
+# the loop terminates quickly on garbage input.
+_LABEL_SHAPE_FOR_STRIP = re.compile(r"^[A-Za-z]?[A-Za-z0-9]{0,3}$")
+
+
+def _LOOKS_LIKE_LABEL(s: str) -> bool:
+    return bool(_LABEL_SHAPE_FOR_STRIP.match(s))
 
 
 def is_valid_panel_label(label: str | None) -> bool:
@@ -516,7 +562,13 @@ def is_valid_panel_label(label: str | None) -> bool:
 # case is handled by the digit+letter optional: panel_id="0"
 # is normalized to "0" by _normalize_panel_label and is a
 # legitimate panel index in some papers, so we accept it here.
-_PANEL_LABEL_SHAPE = re.compile(r"^(?:[A-H]|[1-9]\d{0,2}[a-z]?|0)$")
+#
+# Audit 2026-09-01 BL-26: the previous regex ``[1-9]\d{0,2}[a-z]?``
+# accepted "10a" but rejected "0a" — even though some Triassic
+# papers use "0a" / "0b" for transitional panels at the top of a
+# plate. Add an explicit ``0[a-z]?`` branch so the validation shape
+# is consistent for panel 0 across papers.
+_PANEL_LABEL_SHAPE = re.compile(r"^(?:[A-H]|[1-9]\d{0,2}[a-z]?|0[a-z]?|0)$")
 
 
 _PANEL_METADATA_KEYS = (
@@ -715,6 +767,30 @@ def assign_panels_to_labels(
             # so we emit None rather than re-attaching the garbage.
             out.append(None)
             continue
+        # Audit 2026-09-01 BL-27: the previous code only consulted
+        # ``labels`` (caption-derived) when ``panel.panel_id`` was
+        # invalid; if BOTH the panel_id and the caption label were
+        # invalid, the loop emitted None — silently dropping the
+        # real panel from the pred row set even though ``ocr_tokens``
+        # may have a perfectly valid label token for the panel's
+        # bbox. Add an OCR-token fallback: if any ``ocr_tokens`` entry
+        # with a valid label shape lies inside the panel bbox, use
+        # that. This recovers panels that the OCR pipeline correctly
+        # identified but the caption parser mis-shaped.
+        _panel_bbox = getattr(panel, "bbox", None)
+        if _panel_bbox is not None and ocr_tokens:
+            matched_cand: str | None = None
+            for tok in ocr_tokens:
+                ttext = (tok.text or "").strip()
+                if not ttext:
+                    continue
+                cand = _normalize_panel_label(ttext) or ttext
+                if cand and is_valid_panel_label(cand) and _token_in_panel(tok, panel):
+                    matched_cand = cand
+                    break
+            if matched_cand is not None:
+                out.append(matched_cand)
+                continue
         out.append(None)
     return out
 
@@ -733,7 +809,25 @@ def match_panels(
     caption_pairs: list | None = None,
 ) -> list[MatchResult]:
     labels = caption.panel_labels or extract_panel_labels(caption.caption)
-    taxa = [t.text for t in taxon_entities] or extract_taxa_from_caption(caption.caption)
+    # Audit 2026-09-01 (architectural P0 #25): the previous short-circuit
+    # ``taxa = [...] or ...`` only used the caption-extraction branch when
+    # entity extraction happened to return empty — the two sources never
+    # merged. This made ``taxa`` non-deterministic across runs (entity
+    # detection slightly varies run-to-run, but caption parsing is
+    # stable), breaking cross-paper evaluation reproducibility. Always run
+    # both branches and union with deterministic precedence (entity-first,
+    # caption-supplement, dedup by lower-cased full text).
+    _ent_taxa = [t.text for t in taxon_entities]
+    _cap_taxa = extract_taxa_from_caption(caption.caption)
+    _seen: set[str] = set()
+    taxa: list[str] = []
+    for _src in (_ent_taxa, _cap_taxa):
+        for _t in _src:
+            _key = _t.strip().lower()
+            if not _key or _key in _seen:
+                continue
+            _seen.add(_key)
+            taxa.append(_t)
     ocr_label_tokens = label_tokens_from_ocr(ocr_tokens)
 
     # 1) 默认规则分配（可回退）。
@@ -903,7 +997,15 @@ def match_panels(
         # Caption-pair override: if M3 gave us a structured (label, species) map
         # and the panel's label (or its leading-zero-stripped form) is in
         # it, prefer that species over the order-based fallback.
-        if caption_pairs_used:
+        # Audit 2026-09-01 (architectural P0 #7): previously the condition
+        # was only ``caption_pairs_used`` — meaning whenever M3 returned
+        # ANY caption-pair (even one with low confidence), it would
+        # overwrite the neural-matcher's result. This capped the trained
+        # matcher at the regex/M3 pair_lookup ceiling, turning the neural
+        # head into dead code. Now require BOTH ``caption_pairs_used`` AND
+        # ``not matcher_used`` so the neural matcher is honoured when it
+        # ran; the pair_lookup only fills gaps where the matcher did not.
+        if caption_pairs_used and not matcher_used:
             matched_key = _label_in_pair_lookup(panel_id, pair_lookup)
             if matched_key:
                 best_species = pair_lookup[matched_key]

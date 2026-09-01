@@ -31,6 +31,16 @@ class LocalParserResult:
     paper_metadata: PaperMetadata | None = None
     success: bool = True
     error: str | None = None
+    # Audit 2026-09-01 CR-20: the previous LocalParserResult had
+    # no ``confidence`` field, so callers that branched on
+    # ``result.confidence`` to decide between GROBID fallback and
+    # local-only paths were silently using the default ``False``
+    # branch (the field doesn't exist → AttributeError OR a
+    # hard-coded 0.55 guess). Add an explicit confidence float
+    # defaulting to 0.55 (matches the historical implicit
+    # threshold) so the GROBID-vs-local decision is auditable in
+    # the result object.
+    confidence: float = 0.55
 
 
 # ---- heuristic patterns ---------------------------------------------------

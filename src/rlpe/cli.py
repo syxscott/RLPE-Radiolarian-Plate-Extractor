@@ -225,8 +225,26 @@ EXAMPLE_CONFIG_BODY = json.dumps(
         "yolo_iou_threshold": 0.45,
         "extra": {
             "deterministic": False,
-            "data_outbound_policy": "api_full",
-            "use_opendataloader": False,
+            # Audit 2026-09-01 (architectural P1 #21): align the CLI
+            # default with the web/API default (``api_redacted``) so
+            # the same paper run via either entry point has the same
+            # privacy posture. Previously the CLI sent full payloads
+            # (including redacted-secrets rule) to the M3 API while
+            # the web UI redacted — meaning a CLI user running the
+            # same paper saw different F1 numbers from the same
+            # paper depending on the entry point (data_outbound_policy
+            # changes the prompt format which changes the species
+            # matches).
+            "data_outbound_policy": "api_redacted",
+            # Audit 2026-09-01 (architectural P1 #21): align CLI
+            # default with web/API (``True``). The CLI's previous
+            # ``False`` default silently disabled OpenDataLoader for
+            # every CLI invocation — meaning CLI users got GROBID-only
+            # caption extraction while web users got OD+GROBID
+            # hybrid. Two users evaluating the same paper on the same
+            # commit therefore measured different caption-quality
+            # metrics depending on which entry point they used.
+            "use_opendataloader": True,
             "use_paleodb": False,
         },
     },
@@ -335,8 +353,20 @@ def build_parser() -> argparse.ArgumentParser:
     # :func:`ExpandUserPath` so ``--work-dir ~/foo`` resolves to the
     # user's home directory instead of being treated as a literal
     # relative path named ``~``.
-    p.add_argument("--pdf-dir", type=ExpandUserPath, required=True)
-    p.add_argument("--work-dir", type=ExpandUserPath, required=True)
+    # Audit 2026-09-01 BL-22: previously ``required=True`` for ``--pdf-dir``
+    # and ``--work-dir`` made the config-file fallback at lines 906-911
+    # dead code — ``getattr(args, "pdf_dir", None)`` was always set
+    # (argparse pre-fills required args from sys.argv[1:] before
+    # ``_maybe_load_config`` runs) so the config's pdf_dir / work_dir /
+    # output_dir fields never reached the user-facing behaviour. Users
+    # who tried to drive RLPE entirely from a config file silently lost
+    # their config and the CLI complained about missing args. Now both
+    # flags are optional with ``default=None`` so the config-file
+    # branch can fill them in, and ``_validate_args`` raises a clear
+    # ``UserError`` when neither the CLI flag nor the config supplied a
+    # value.
+    p.add_argument("--pdf-dir", type=ExpandUserPath, default=None)
+    p.add_argument("--work-dir", type=ExpandUserPath, default=None)
     p.add_argument("--output-dir", type=ExpandUserPath, default=None)
     # Audit 2026-08-19 Phase 6C (NIT-5): quiet / verbose flag pair.
     # ``--quiet`` (``-q``) trumps ``--verbose`` (``-v``) if both are

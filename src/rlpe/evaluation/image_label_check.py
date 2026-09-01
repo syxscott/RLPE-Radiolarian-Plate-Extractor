@@ -93,24 +93,57 @@ def _resolve_panel_path(panel_path: str, root: Path) -> Path | None:
     if len(parts) < 3 or "panel_" not in parts[-1]:
         return None
     tail = Path(*parts[-3:])
+    # Audit 2026-09-01 CR-33: the previous implementation built the
+    # glob pattern by string-formatting the unescaped paper_id /
+    # figure_id components. A paper_id containing a ``*`` or ``[``
+    # (extremely unusual, but possible for a synthetic / adversarial
+    # PDF) would match unintended paths under ``work/`` — a glob
+    # injection that could surface as an info-disclosure vector in
+    # the web UI's ``/jobs/{id}/results`` endpoint. Escape the
+    # user-controlled components with ``glob.escape`` so the only
+    # ``*`` in the pattern is the literal ``work/*`` (a controlled
+    # directory).
+    import glob as _glob
+
+    safe_paper = _glob.escape(tail.parent.parent.name)
+    safe_fig = _glob.escape(tail.parent.name)
+    safe_panel = _glob.escape(tail.name)
     candidates = list(
-        root.glob(f"work/*/panels/{tail.parent.parent.name}/{tail.parent.name}/{tail.name}")
+        root.glob(
+            f"work/*/panels/{safe_paper}/{safe_fig}/{safe_panel}"
+        )
     )
     if not candidates:
         # Some runs (e.g. work/beccaro_only_out) put panels under an
         # extra ``output/`` segment. Try that layout too.
         candidates = list(
             root.glob(
-                f"work/*/output/panels/{tail.parent.parent.name}/{tail.parent.name}/{tail.name}"
+                f"work/*/output/panels/{safe_paper}/{safe_fig}/{safe_panel}"
             )
         )
     if not candidates:
-        candidates = list(root.glob(f"work/*/panels/{tail.parent.parent.name}/**/{tail.name}"))
+        candidates = list(root.glob(f"work/*/panels/{safe_paper}/**/{safe_panel}"))
     if not candidates:
         candidates = list(
-            root.glob(f"work/*/output/panels/{tail.parent.parent.name}/**/{tail.name}")
+            root.glob(f"work/*/output/panels/{safe_paper}/**/{safe_panel}")
         )
-    return candidates[0] if candidates else None
+    if not candidates:
+        return None
+    # Audit 2026-09-01 BL-32: ``root.glob`` returns matches in
+    # filesystem-order, which on some filesystems is creation order
+    # and on others is hash-of-name order — neither is stable across
+    # runs. The image-label-check rate then jitters by 1-3 pp run to
+    # run because different ``candidates[0]`` carries different mtime
+    # / size / OCR results. Sort by mtime (most-recently-modified
+    # first) so the selected candidate is deterministic and matches
+    # the most recent run for that paper.
+    try:
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        # If stat() fails (broken symlink, race) fall back to path
+        # order — better than crashing the whole eval.
+        candidates.sort()
+    return candidates[0]
 
 
 def run_image_label_check(
@@ -191,16 +224,66 @@ def run_image_label_check(
             except Exception:
                 continue
             try:
-                tokens = reader.readtext(arr)
+                _ocr_tokens = reader.readtext(arr)
             except Exception:
                 continue
-            nums = [t[1].strip() for t in tokens if _NUM_RE.match(t[1].strip())]
+            # Audit 2026-09-01 BL-33: keep the full token list (incl.
+            # tokens without a leading digit) so we can identify
+            # scale-bar candidates later in the loop. The previous
+            # code dropped them and then had no way to tell
+            # "100µm" apart from "100".
+            tokens = [t[1].strip() for t in _ocr_tokens]
+            nums = [t for t in tokens if _NUM_RE.match(t)]
             if current_meta is not None:
                 cache[cache_key] = current_meta + [nums]
         if not nums:
             continue
         st.n_ocr_has_label += 1
-        first = nums[0]
+        # Audit 2026-09-01 BL-33: the previous code compared the
+        # OCR's *first* numeric token against the pred panel_id, but
+        # the first number in a panel's image is almost always the
+        # scale-bar magnitude ("100", "50 µm", "10 mm") rather than
+        # the panel label. On wever2006 the rate therefore hovered
+        # around 8-12 % — far below reality — and the sweep reports
+        # said "image_label_match_rate is unreliable" without
+        # identifying the root cause.
+        #
+        # Strategy: pick the *last* numeric token (panel labels are
+        # conventionally the right-most number in OCR left-to-right
+        # layouts). If multiple numbers are present AND the token list
+        # has a scale-bar unit ("µm"/"mm"/"cm"), drop the unit and use
+        # the next-to-last number. This handles both single-number
+        # panels ("3") and dual-number panels ("100µm 3").
+        if "tokens" in locals() and len(tokens) >= 2 and any(
+            u in " ".join(tokens).lower() for u in ("µm", "mm", "cm", "μm")
+        ):
+            # Walk back from the right; the first numeric token that
+            # is NOT followed by a unit glyph is the panel label.
+            unit_set = ("µm", "mm", "cm", "μm")
+            last_unit_idx = max(
+                (
+                    i for i, tok in enumerate(tokens)
+                    if any(u in tok.lower() for u in unit_set)
+                ),
+                default=-1,
+            )
+            # Find the first pure-numeric token to the LEFT of the
+            # scale-bar position.
+            candidate_nums = [
+                int(tok.rstrip(".,:;")) for tok in tokens[:last_unit_idx]
+                if _NUM_RE.match(tok)
+            ]
+            if candidate_nums:
+                first = candidate_nums[-1]
+            else:
+                # Scale-bar only, no panel label found — skip rather
+                # than count a false positive.
+                continue
+        elif len(nums) >= 2:
+            # No scale-bar glyphs but ≥2 numbers: pick the LAST one.
+            first = int(nums[-1].rstrip(".,:;"))
+        else:
+            first = int(nums[0].rstrip(".,:;"))
         pred_label = (p.get("panel_id") or "").strip()
         if first == pred_label:
             st.n_image_label_match += 1

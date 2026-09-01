@@ -88,8 +88,21 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
     """Build a single occurrence row, all values as strings."""
     pm = panel.paper_metadata
     geo = panel.metadata.geology_links[0] if panel.metadata.geology_links else None
-    parts = [panel.paper_id, panel.figure_id, panel.panel_id or "_"]
-    occ_id = ":".join(p for p in parts if p)
+    # Audit 2026-09-01 BL-31: the previous occurrenceID construction
+    # joined ``paper_id`` / ``figure_id`` / ``panel_id`` with ":", but
+    # dropped any empty value silently. When ``paper_id=""`` AND
+    # ``figure_id=""`` (the legacy / "figure-only" paper metadata path),
+    # the resulting ID collapsed to just ``panel_id`` — two panels on
+    # different papers with the same panel_id then collided and the
+    # DwC-A archive rejected the second one. Replace each empty
+    # component with the literal ``"(unknown)"`` so every
+    # occurrenceID is globally unique.
+    parts = [
+        panel.paper_id or "(unknown)",
+        panel.figure_id or "(unknown)",
+        panel.panel_id or "_",
+    ]
+    occ_id = ":".join(parts)
     media = panel.panel_path or ""
     # Phase 58 Plan 1.2 (Bug 1.2): prefer modern_latitude/longitude when
     # present, fall back to legacy latitude/longitude. Round 25+

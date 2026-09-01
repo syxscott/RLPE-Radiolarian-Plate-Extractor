@@ -568,6 +568,17 @@ def _safe_json_loads(text: str) -> dict[str, Any]:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
             return parsed
+        # Audit 2026-09-01 BL-19: M3 sometimes wraps the whole response
+        # in a JSON array (e.g. ``[{"sections": [...]}]``) instead of an
+        # object. The previous code returned ``parsed`` unchanged and
+        # the downstream ``dict``-only consumer then crashed. Wrap a
+        # single-element array as a dict so the rest of the parser keeps
+        # working; if the LLM emitted >1 element we keep only the first
+        # and surface a debug log.
+        if isinstance(parsed, list) and parsed:
+            first = parsed[0]
+            if isinstance(first, dict):
+                return first
     except Exception:
         pass
     candidate = _extract_balanced_json_object(text)

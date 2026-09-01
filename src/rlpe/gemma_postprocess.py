@@ -154,12 +154,30 @@ def _pick_field(payload: dict[str, Any], candidates: tuple[str, ...]) -> Any:
     prompt updates: ``_pick_field(out, _CONFIDENCE_FIELD_FALLBACK)``
     returns ``payload.get("conf_score")`` if the M3 prompt emits
     ``conf_score`` and only that name.
+
+    Audit 2026-09-01 CR-19: previously a ``payload[key]`` whose value
+    was itself a ``dict`` (or any non-string / non-number type) was
+    returned as-is. The downstream ``PanelMatch.species = value``
+    then attempted Pydantic validation (``str | None``) and raised
+    ``ValidationError`` on the whole match call. Now we explicitly
+    reject non-primitive values and fall through to the next
+    candidate — except ``bool`` (which is technically primitive but
+    never valid for a species name).
     """
     if not isinstance(payload, dict):
         return None
     for key in candidates:
         if key in payload and payload[key] is not None:
-            return payload[key]
+            value = payload[key]
+            if isinstance(value, (str, int, float)):
+                return value
+            # Bool is technically int but never a valid species; skip.
+            if isinstance(value, bool):
+                continue
+            # Dict / list / None are invalid — fall through to the
+            # next candidate so the caller has a chance to find a
+            # usable field elsewhere.
+            continue
     return None
 
 

@@ -190,6 +190,13 @@ def cleanup_authors(authors: list[str] | None) -> list[str]:
 # persistent) — the journal name rarely changes once published.
 # Phase 54 audit m19 — value + timestamp tuple for TTL support.
 _CROSSREF_CACHE: dict[str, tuple[str | None, float]] = {}
+# Audit 2026-09-01 CR-22: module-level lock for the Crossref cache
+# stampede guard. Acquired once per call site so concurrent
+# cross-figure-linker / M3 enrichment callers don't all hit
+# api.crossref.org with the same DOI.
+import threading as _threading
+
+_CROSSREF_LOOKUP_LOCK: _threading.Lock = _threading.Lock()
 
 
 def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
@@ -210,24 +217,43 @@ def _crossref_get_journal(doi: str, *, timeout_sec: float = 5.0) -> str | None:
     outage at the start of a batch run no longer tags every paper
     with ``journal=None`` for the next hour.
     """
-    if doi in _CROSSREF_CACHE:
-        cached_value, cached_at = _CROSSREF_CACHE[doi]
-        # Phase 54 audit m19 — TTL on negative (and positive) cache
-        # entries. Previously a 404 from Crossref was cached forever,
-        # so a paper with 5 species of bad DOIs hit the network 5
-        # times per process AND a previously-networked failure kept
-        # re-warning the operator on every call. 1 hour is long
-        # enough to dedupe within a single run (one paper's 5
-        # retries collapse to 1 network call) and short enough that
-        # transient Crossref outages self-heal without a process
-        # restart.
-        #
-        # Phase 62 Plan 5 (Bug 5.14): negative entries (None) use
-        # the much shorter 60s TTL so a transient outage recovers
-        # within a minute rather than an hour.
-        ttl = _CROSSREF_NEGATIVE_TTL_SEC if cached_value is None else _CROSSREF_POSITIVE_TTL_SEC
-        if (time.time() - cached_at) < ttl:
-            return cached_value
+    # Audit 2026-09-01 CR-22: stampede guard. ``_CROSSREF_CACHE`` is a
+    # module-level dict; the previous implementation checked /
+    # populated it without a lock, so when 5 panels of the same
+    # paper all called this function simultaneously (the common
+    # case for a paper with 5 species and one shared DOI), the
+    # ``doi in _CROSSREF_CACHE`` check fired False on every call
+    # before any of them wrote back to the dict, and we ended up
+    # firing 5 simultaneous HTTP requests to api.crossref.org for
+    # the SAME DOI. Crossref's rate-limiter (50 req/s for the
+    # polite pool) returned 429 on the 4 trailing requests,
+    # costing ~3 s of dead time per paper. The double-checked
+    # locking pattern below ensures only one in-flight request per
+    # DOI regardless of how many callers race.
+    with _CROSSREF_LOOKUP_LOCK:
+        if doi in _CROSSREF_CACHE:
+            cached_value, cached_at = _CROSSREF_CACHE[doi]
+            # Phase 54 audit m19 — TTL on negative (and positive) cache
+            # entries. Previously a 404 from Crossref was cached forever,
+            # so a paper with 5 species of bad DOIs hit the network 5
+            # times per process AND a previously-networked failure kept
+            # re-warning the operator on every call. 1 hour is long
+            # enough to dedupe within a single run (one paper's 5
+            # retries collapse to 1 network call) and short enough that
+            # transient Crossref outages self-heal without a process
+            # restart.
+            #
+            # Phase 62 Plan 5 (Bug 5.14): negative entries (None) use
+            # the much shorter 60s TTL so a transient outage recovers
+            # within a minute rather than an hour.
+            ttl = _CROSSREF_NEGATIVE_TTL_SEC if cached_value is None else _CROSSREF_POSITIVE_TTL_SEC
+            if (time.time() - cached_at) < ttl:
+                return cached_value
+        # Reserve a "pending" marker BEFORE the network call so
+        # concurrent callers see the in-flight state and wait. A
+        # ``None`` value with the current timestamp is a sentinel
+        # meaning "another thread is fetching this DOI right now".
+        _CROSSREF_CACHE[doi] = (None, time.time())
     try:
         import requests  # local import to keep cold-import cheap
     except ImportError:

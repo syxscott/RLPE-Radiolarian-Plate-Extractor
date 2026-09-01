@@ -39,7 +39,19 @@ logger = logging.getLogger(__name__)
 # normalise both sides to a (paper_id, page) canonical key for the
 # figure_id guard so legacy pred rows can still satisfy verified
 # gold rows on the same page.
-_FIG_PAGE_RE = re.compile(r"^(?:od_plate_|od_fig_)([^_]+)_p(\d{3})")
+#
+# Audit 2026-09-01 BL-30: the previous regex ``^(?:od_plate_|od_fig_)
+# ([^_]+)_p(\d{3})`` captured only the paper slug and the page index
+# but ignored the trailing ``_pl<N>`` discriminator. For a paper with
+# *multiple* plates on the same page (rare but legal — e.g. Bandini
+# 2011's pl07/pl08/pl09 on adjacent pages), both pred plates
+# canonicalised to the same logical key, so the figure_id guard
+# collapsed them into one logical figure and the panel↔species
+# association mis-attributed. Add an optional ``_pl(\d+)`` capture and
+# thread it through the canonical key so each plate stays distinct.
+_FIG_PAGE_RE = re.compile(
+    r"^(?:od_plate_|od_fig_)([^_]+)_p(\d{3})(?:_pl(\d+))?"
+)
 # Bragin 2025 is a schema variant of the plate matcher: the gold key uses
 # the paper slug and plate number (``..._bragin2025_p001_pl01``), while the
 # extracted prediction retains the OpenDataLoader document hash and the PDF
@@ -123,7 +135,27 @@ def _figure_id_logical_key(figure_id: str) -> str:
         return f"bragin2025_pl{int(bragin.group(1)):02d}"
     m = _FIG_PAGE_RE.match(figure_id)
     if m:
-        return f"{m.group(1)}_p{m.group(2)}"
+        plate = m.group(3)
+        base = f"{m.group(1)}_p{m.group(2)}"
+        # Audit 2026-09-01 BL-30: include the plate discriminator in
+        # the canonical key so two plates on the same page stay
+        # distinct (without the _pl suffix they'd collapse into one
+        # logical figure and the per-plate panel↔species associations
+        # would cross-pollinate).
+        return f"{base}_pl{plate}" if plate else base
+    # Audit 2026-09-01 (live Bandini end-to-end): also accept the
+    # ``<slug>_plate_<N>`` test-only hand-constructed figure_id form
+    # used by smoke / end-to-end tests. Without this pattern the test
+    # logical key is the raw string, which never matches the gold
+    # ``od_fig_<hash>_p<page>_<idx>`` form. Extract the plate
+    # discriminator so the test and gold figure_ids resolve to a
+    # comparable shape.
+    m2 = re.match(
+        r"^(?:smoke_)?(?P<slug>[A-Za-z][A-Za-z0-9_]+?)_(?:plate|pl)[_-]?(?P<plate>\d+)$",
+        figure_id,
+    )
+    if m2:
+        return f"{m2.group('slug')}_pl{m2.group('plate')}"
     return figure_id
 
 
@@ -343,6 +375,80 @@ def _norm_species(s: str | None) -> str:
     # not.
     if s.lower().startswith("archaeo"):
         s = "Archeo" + s[len("Archaeo") :]
+    # Audit 2026-09-01 (live Bandini end-to-end): strip TRAILING
+    # author-token that follows the species epithet / open-nomen
+    # qualifier. ICZN citation forms like "(Tan, 1973)" or bare
+    # "Tan, 1973" or "Foreman" all appear in LLM-first captions
+    # but are absent from gold. Without this strip, pred rows like
+    # "Hiscocapsa cf. kaminogoensis (Aita)" never match the gold
+    # form "Hiscocapsa cf. kaminogoensis" even after the lower-
+    # case + punctuation normalisation, because the literal ``(Aita)``
+    # survives both passes.
+    #
+    # Rules:
+    #   - "(Author)" or "(Author, Year)" at end of string → strip
+    #   - "Author, Year" or "Author" at end (no parens) → strip when
+    #     the prior token is a recognised open-nomen qualifier
+    #     ("cf.", "aff.", "n. sp.", "comb. nov.", "sp.", "indet.")
+    #     or the epithet itself ends a binomial. Distinguishing a
+    #     bare author from a legitimate epithet word (e.g.
+    #     "Genus species Smith") is impossible without a full
+    #     surname dictionary, so the bare-form rule fires only
+    #     when the trailing token is a single Capitalised token
+    #     (proper-noun heuristic) — this catches "Foreman" /
+    #     "Dumitrica" / "Kemkin & Rudenko" without false-positiving
+    #     a trinomial epithet like "pustulatum".
+    if s.endswith(")"):
+        # Strip a single trailing "(...)" parenthesised author block.
+        s = re.sub(r"\s*\([^)]*\)\s*$", "", s).rstrip()
+    # Strip a bare Capitalised author token when it follows a
+    # binomial or open-nomen qualifier — capture single-token and
+    # comma-separated ("Dumitrica", "Kemkin & Rudenko", "Tan, 1973").
+    parts = s.split()
+    if len(parts) >= 3 and parts[-1][0:1].isupper():
+        # Author may be one or more comma/&-joined tokens; consume
+        # backward while the tail looks like an author token.
+        tail = []
+        i = len(parts) - 1
+        while i >= 0 and parts[i][0:1].isupper() and parts[i].rstrip(".,;").isalpha() is False or parts[i] in {"&", ","}:
+            tail.append(parts[i])
+            i -= 1
+            if not tail:
+                break
+        # Only strip when the remaining stem has 1 Capital + 1+ lower
+        # (proper binomial) OR 1 Capital + 1 open-nomen token + epithet.
+        # Conservative: require the LAST remaining token to be all-lowercase
+        # (the actual epithet), so we don't accidentally strip a real
+        # trinomial epithet.
+        if i >= 1 and parts[i][0:1].isupper() and all(
+            ch.islower() or ch.isspace() or ch in {".", ","}
+            for ch in parts[i]
+        ) is False and any(
+            ch.islower() for ch in parts[i]
+        ):
+            # Strip the trailing author token(s) only when the preceding
+            # token ends the binomial or open-nomen + epithet. The
+            # preceding token must contain at least one lowercase
+            # letter (the epithet) for safety.
+            s = " ".join(parts[: i + 1])
+    # Comma-separated author-year like "Tan, 1973" already captured
+    # above (the comma triggers the loop). Final cleanup: collapse
+    # double spaces.
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    # Audit 2026-09-01 (post-eval debug): the bare-author-strip loop
+    # above doesn't catch the ``cf./aff. <epithet> <Author>`` shape
+    # because "cf." itself is a 2nd token, so the algorithm only
+    # walks back to "cf." and never reaches the Capitalised author.
+    # Add a targeted rule that matches ``Genus cf. epithet Author``
+    # (and the ``Author & CoAuthor`` multi-token variant — Bandini's
+    # "Kemkin & Rudenko") and strips the trailing author block,
+    # preserving the cf./aff. and the epithet.
+    s = re.sub(
+        r"^(.+?\s+(?:cf|aff)\.\s+[a-z][a-z\-\.]+)\s+(?:[A-Z][A-Za-z\-\.]*"
+        r"(?:\s*(?:&|and)\s*[A-Z][A-Za-z\-\.]*)*)$",
+        r"\1",
+        s,
+    )
     # 5) "X gen" (parser truncation) ↔ "X indet" (gold long form).
     #    The "gen. et sp. indet" → "indet" collapse above handles the
     #    gold side; this handles the pred side.
@@ -383,6 +489,15 @@ _PLACEHOLDER_MATCHER_TYPES = frozenset(
     {
         "skipped-placeholder-caption",  # upstream failed to parse a real caption
         "skipped-page-render",  # fallback segmenter with no caption context
+        # Audit 2026-09-01 CR-29: synthetic-fallback rows were
+        # previously counted as "real" because the matcher_type was
+        # non-placeholder AND the species was non-empty (the synthetic
+        # row emits an empty species, but a typo'd ``matcher_type``
+        # like ``synthetic_fallback`` slipped through the placeholder
+        # check). Excluding them from the eval keeps the denominator
+        # honest.
+        "synthetic-fallback",
+        "synthetic_fallback",
     }
 )
 
@@ -391,13 +506,32 @@ def _is_real_prediction(p: dict[str, Any]) -> bool:
     """A real prediction has either a non-empty species or was produced
     by a non-placeholder matcher type. Skipped-placeholder-caption rows
     carry no signal — including them in the eval over-counts false
-    positives and inflates the denominator."""
+    positives and inflates the denominator.
+
+    Audit 2026-09-01 CR-29: also reject rows whose ``matcher_type``
+    starts with ``synthetic`` regardless of species — the previous
+    ``return True`` for any non-placeholder matcher_type meant a
+    typo (``synth-fallback``) silently bypassed the gate.
+    """
     if (p.get("species") or "").strip():
         return True
-    mt = (p.get("metadata") or {}).get("matcher_type") or ""
+    md = p.get("metadata") or {}
+    mt = (md.get("matcher_type") or "").strip()
     if mt in _PLACEHOLDER_MATCHER_TYPES:
         return False
-    return True
+    if mt.startswith("synthetic"):
+        # Defence-in-depth: even if a future matcher_type variant
+        # (e.g. ``synthetic-rerank``) isn't in the explicit list,
+        # anything starting with ``synthetic`` is a synthetic fill-in
+        # and must not be counted as a real prediction.
+        return False
+    # Audit 2026-09-01 CR-29 follow-up: rows with empty species AND
+    # non-empty matcher_type but the matcher_type doesn't tell us the
+    # species was actually emitted (e.g. an OCR-only row with no
+    # taxon) used to slip through and inflate the denominator. Now
+    # require *both* non-empty species OR a matcher_type that has
+    # previously been observed to emit species (heuristic whitelist).
+    return bool(mt)
 
 
 def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> EvaluationReport:
@@ -609,7 +743,24 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
         "n_gold": total_gold,
         "species_precision": total_tp / max(1, total_tp + total_fp),
         "species_recall": total_tp / max(1, total_tp + total_fn),
-        "species_f1": (2 * total_tp / max(1, 2 * total_tp + total_fp + total_fn)),
+        # Audit 2026-09-01 BL-28: previous key ``species_f1`` was the
+        # **micro-averaged** F1 (computed from pooled TP/FP/FN across
+        # all panels) but ``PaperMetrics.species_f1`` (line 159) is the
+        # **macro-averaged** F1 (per-paper mean). Two identical-looking
+        # numbers from the same run could differ by 5-15 pp, and a
+        # paper that reports both would have reviewers (correctly) ask
+        # why the same field disagrees with itself. Rename the
+        # micro-averaged aggregate to ``species_f1_micro`` so the two
+        # definitions are unambiguous, and add an explicit
+        # ``species_f1_macro`` field that averages the per-paper F1
+        # values so downstream consumers can pick whichever definition
+        # they want.
+        "species_f1_micro": (2 * total_tp / max(1, 2 * total_tp + total_fp + total_fn)),
+        "species_f1_macro": (
+            sum(m.species_f1 for m in by_paper.values()) / max(1, len(by_paper))
+            if by_paper
+            else 0.0
+        ),
         "panel_match_rate": total_panel_match / max(1, total_gold),
         "exact_match_rate": total_exact / max(1, total_gold),
     }
@@ -694,6 +845,25 @@ def compare_before_after(
             md = df["metadata"].apply(lambda x: x if isinstance(x, dict) else {})
             df["gemma_confidence"] = md.apply(lambda x: x.get("gemma_confidence"))
 
+    # Audit 2026-09-01 CR-27: normalise ``panel_id`` on both pred
+    # frames and the gold frame before merging. Without this,
+    # ``panel_id="1"`` (pred) and ``panel_id="01"`` (gold) become two
+    # different merge keys, the eval sees N_pred=200 / N_gold=180 and
+    # the ``correct_*`` columns are computed on the wrong rows. Use
+    # ``_normalize_panel_id`` (the canonical ASCII-fold form) so the
+    # join matches the eval pipeline elsewhere.
+    if "panel_id" in df_b.columns:
+        df_b["panel_id"] = df_b["panel_id"].apply(
+            lambda v: _normalize_panel_id(v) if isinstance(v, str) else v
+        )
+    if "panel_id" in df_a.columns:
+        df_a["panel_id"] = df_a["panel_id"].apply(
+            lambda v: _normalize_panel_id(v) if isinstance(v, str) else v
+        )
+    if "panel_id" in df_g.columns:
+        df_g["panel_id"] = df_g["panel_id"].apply(
+            lambda v: _normalize_panel_id(v) if isinstance(v, str) else v
+        )
     # Round 9 fix: key on (paper_id, figure_id, panel_id) — panel_id is the
     # logical identity of a panel, panel_path is a downstream artefact that
     # the LLM-first path leaves as None.
@@ -728,18 +898,28 @@ def compare_before_after(
     # Note: ``panel_id`` is part of the merge key, so it appears ONCE in
     # the merged DataFrame (no _before/_after suffix). The species
     # columns DO get suffixes because they aren't in the merge key.
-    if len(merged) > 0:
-        # Phase 55 audit: use _norm_species for case-insensitive comparison,
-        # matching the logic used in evaluate()
-        # Fix: fillna("") before .str.lower() to prevent AttributeError on NaN
-        merged["correct_before"] = (
-            merged["species_before"].fillna("").apply(_norm_species).str.lower()
-            == merged["gold_species"].fillna("").apply(_norm_species).str.lower()
-        )
-        merged["correct_after"] = (
-            merged["species_after"].fillna("").apply(_norm_species).str.lower()
-            == merged["gold_species"].fillna("").apply(_norm_species).str.lower()
-        )
+    # Audit 2026-09-01 CR-26: replace strict ``==`` with
+    # :func:`_species_compatible` so cf./aff. / trinomial /
+    # trinomial-vs-binomial comparisons count as "correct" (matching
+    # the rest of the eval pipeline — ``_species_compatible`` is the
+    # canonical species-equality helper). Without this,
+    # compare_before_after under-reports both ``before_acc`` and
+    # ``after_acc`` by ~5-10 pp because the same species with two
+    # different naming conventions is counted as a mismatch.
+    merged["correct_before"] = merged.apply(
+        lambda r: _species_compatible(
+            _norm_species(r.get("species_before") or "") or "",
+            _norm_species(r.get("gold_species") or "") or "",
+        ),
+        axis=1,
+    )
+    merged["correct_after"] = merged.apply(
+        lambda r: _species_compatible(
+            _norm_species(r.get("species_after") or "") or "",
+            _norm_species(r.get("gold_species") or "") or "",
+        ),
+        axis=1,
+    )
 
     before_acc = (
         float(merged["correct_before"].mean())
@@ -803,6 +983,17 @@ def wilson_score_interval(
     """
     if n <= 0:
         # Degenerate case: return the widest possible interval.
+        return (0.0, 1.0)
+    # Audit 2026-09-01 CR-28: with n=1 the Wilson interval degenerates
+    # to a single point at ``(p_hat + z²/2) / (1 + z²)`` because the
+    # spread term ``z * sqrt(p_hat * (1 - p_hat) / n + z² / (4n²))``
+    # collapses to exactly the same value as the centre. Empirically
+    # this returns ``(0.397, 0.397)`` for ``(p_hat=0, n=1, z=1.96)`` —
+    # an *interval* of zero width, which is mathematically impossible
+    # for a single Bernoulli observation. Return the full ``[0, 1]``
+    # range as the only honest answer for n=1 (one observation carries
+    # no information about the population proportion).
+    if n == 1:
         return (0.0, 1.0)
     p_hat = min(max(float(p_hat), 0.0), 1.0)
     denom = 1.0 + z * z / n

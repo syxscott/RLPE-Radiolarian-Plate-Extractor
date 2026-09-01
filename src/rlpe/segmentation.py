@@ -310,30 +310,48 @@ class PanelSegmenter:
         return sub_bboxes
 
     def _segment_with_sam2(self, image: np.ndarray, predictor) -> list[PanelCandidate]:
+        # Audit 2026-09-01 (systemic #1 — the highest-impact BLOCKER):
+        # SAM2ImagePredictor is **single-image stateful**. ``set_image(rgb)``
+        # populates an internal feature cache that ``predict`` reads from.
+        # Multiple workers sharing one ``PanelSegmenter`` (``run()`` uses
+        # ``ThreadPoolExecutor(num_workers)``) would otherwise race: one
+        # worker calls ``set_image`` while another worker is mid-``predict``
+        # → the second worker reads the first worker's features and returns
+        # a bbox drawn against the wrong image. There is **no exception**;
+        # the only symptom is silently-wrong ``PanelCandidate`` bboxes that
+        # ``match_panels`` then uses as ground truth. Historically this is
+        # the prime suspect behind the 24 % image-verified F1 ceiling on
+        # 9-paper eval.
+        #
+        # Lock the **inference** too, not just lazy-init. Init lock is
+        # released before this function is entered, so a fresh acquisition
+        # here does not nest. Inference overhead is dominated by GPU, so
+        # the lock contention is negligible.
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         try:
-            predictor.set_image(rgb)
-            point_prompts, box_prompts = self._generate_sam2_prompts(image)
-            candidates: list[PanelCandidate] = []
+            with self._lock:
+                predictor.set_image(rgb)
+                point_prompts, box_prompts = self._generate_sam2_prompts(image)
+                candidates: list[PanelCandidate] = []
 
-            # 1) 点提示：更适合细碎目标。
-            for x, y in point_prompts[: self.config.max_point_prompts]:
-                masks, scores, _ = predictor.predict(
-                    point_coords=np.array([[x, y]], dtype=np.float32),
-                    point_labels=np.array([1], dtype=np.int32),
-                    multimask_output=True,
-                )
-                candidates.extend(self._masks_to_candidates(masks, scores, method="sam2-point"))
+                # 1) 点提示：更适合细碎目标。
+                for x, y in point_prompts[: self.config.max_point_prompts]:
+                    masks, scores, _ = predictor.predict(
+                        point_coords=np.array([[x, y]], dtype=np.float32),
+                        point_labels=np.array([1], dtype=np.int32),
+                        multimask_output=True,
+                    )
+                    candidates.extend(self._masks_to_candidates(masks, scores, method="sam2-point"))
 
-            # 2) 框提示：提升对整块panel区域的召回。
-            for box in box_prompts[: self.config.max_box_prompts]:
-                masks, scores, _ = predictor.predict(
-                    box=np.array(box, dtype=np.float32),
-                    multimask_output=True,
-                )
-                candidates.extend(self._masks_to_candidates(masks, scores, method="sam2-box"))
+                # 2) 框提示：提升对整块panel区域的召回。
+                for box in box_prompts[: self.config.max_box_prompts]:
+                    masks, scores, _ = predictor.predict(
+                        box=np.array(box, dtype=np.float32),
+                        multimask_output=True,
+                    )
+                    candidates.extend(self._masks_to_candidates(masks, scores, method="sam2-box"))
 
-            candidates = self._deduplicate_candidates(candidates)
+                candidates = self._deduplicate_candidates(candidates)
             candidates.sort(key=lambda c: (c.bbox[1], c.bbox[0]))
             return candidates or self._segment_with_opencv(image)
         except Exception:

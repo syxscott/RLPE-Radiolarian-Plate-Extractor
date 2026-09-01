@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SCHEMA_VERSION = "1.2.0"
 
@@ -229,6 +229,36 @@ class FigureRecord(BaseModel):
     caption_source: str | None = None
     image_path: str | None = None
     bbox: list[int] | None = Field(default=None, min_length=4, max_length=4)
+
+    # Audit 2026-09-01 CR-12: enforce non-negative, non-zero bbox.
+    # The previous schema accepted ``[-5, -5, 0, 0]`` — negative
+    # coordinates AND a zero-area dimension. Downstream
+    # export / GBIF submit rejected these silently (the row was
+    # just dropped), inflating the false-negative rate. Now we
+    # reject any bbox with ``min < 0`` or ``max == min`` (zero
+    # width OR zero height — a true 0×0 panel is always a
+    # detector mis-fire, never a real specimen).
+    @field_validator("bbox")
+    @classmethod
+    def _validate_bbox(cls, v: list[int] | None) -> list[int] | None:
+        if v is None:
+            return v
+        if len(v) != 4:
+            raise ValueError(
+                f"bbox must be exactly 4 ints [x, y, w, h] or [x1, y1, x2, y2]; "
+                f"got {v!r}"
+            )
+        if any(int(x) < 0 for x in v):
+            raise ValueError(f"bbox must not contain negative coordinates; got {v!r}")
+        if v[2] <= 0 or v[3] <= 0:
+            # Treat ``[x, y, w, h]`` form (zero width/height) and
+            # ``[x1, y1, x2, y2]`` form (x2 <= x1) uniformly.
+            raise ValueError(
+                f"bbox must have positive width AND height (or x2 > x1); "
+                f"got {v!r}"
+            )
+        return [int(x) for x in v]
+
     scale_bar: ScaleBarRecord | None = None
     panel_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -651,6 +681,57 @@ class RunOutput(BaseModel):
     morphologies: list[MorphologyRecord] = Field(default_factory=list)
     warnings: list[WarningRecord] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _enforce_unique_ids(self) -> "RunOutput":
+        """Audit 2026-09-01 CR-14: enforce ID uniqueness across the
+        four primary dimensions (paper_id / figure_id /
+        (paper_id, figure_id, panel_id)). The previous schema accepted
+        silently — eval scripts that group by ``paper_id`` to compute
+        F1 then double-counted the duplicated rows.
+
+        We deduplicate *in place* on the parsed object rather than
+        rejecting so legacy / manually-edited gold files with
+        duplicate entries still load (the duplicates are dropped
+        with a WARNING — not a hard failure).
+        """
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+
+        def _dedup_keep_first(items: list, key_fn, label: str) -> list:
+            seen: set = set()
+            deduped: list = []
+            for it in items:
+                k = key_fn(it)
+                if k in seen:
+                    _logger.warning(
+                        "RunOutput: dropping duplicate %s with key %r",
+                        label,
+                        k,
+                    )
+                    continue
+                seen.add(k)
+                deduped.append(it)
+            return deduped
+
+        # Dedup papers by paper_id.
+        self.papers = _dedup_keep_first(
+            self.papers, lambda p: p.paper_id, "PaperRecord"
+        )
+        # Dedup figures by (paper_id, figure_id).
+        self.figures = _dedup_keep_first(
+            self.figures,
+            lambda f: (f.paper_id, f.figure_id),
+            "FigureRecord",
+        )
+        # Dedup panels by (paper_id, figure_id, panel_id).
+        self.panels = _dedup_keep_first(
+            self.panels,
+            lambda p: (p.paper_id, p.figure_id, p.panel_id),
+            "PanelRecord",
+        )
+        return self
+
 
 def emit_json_schema(target: Path) -> Path:
     """Write the canonical JSON Schema for ``RunOutput`` to ``target``.
@@ -667,8 +748,29 @@ def emit_json_schema(target: Path) -> Path:
         "PanelRecord entries. Downstream views (analysis/ML/archive) are "
         "projections of this shape."
     )
-    with open(target, "w", encoding="utf-8") as f:
-        json.dump(schema, f, indent=2, sort_keys=True, ensure_ascii=False)
+    # Audit 2026-09-01 CR-2 / BL-34: write atomically via temp + rename
+    # so a mid-write SIGKILL never leaves a truncated JSON Schema file.
+    import os as _os
+    import tempfile as _tempfile
+
+    fd, tmp_path = _tempfile.mkstemp(
+        dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+    )
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(schema, f, indent=2, sort_keys=True, ensure_ascii=False)
+            f.flush()
+            try:
+                _os.fsync(f.fileno())
+            except OSError:
+                pass
+        _os.replace(tmp_path, target)
+    except Exception:
+        try:
+            _os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     return target
 
 

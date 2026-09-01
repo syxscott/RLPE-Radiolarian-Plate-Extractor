@@ -317,15 +317,19 @@ def detect_scale_bar_length_px(image: np.ndarray) -> float | None:
     lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=20, maxLineGap=5)
     if lines is None:
         return None
-    # Round 25 audit: ``cv2.HoughLinesP`` returns a 2-D array of
-    # shape ``(N, 4)`` in OpenCV >=5 (verified empirically against
-    # OpenCV 5.0.0 on this machine). Older docs / older OpenCV show
-    # the historical 3-D ``(1, N, 4)``. Indexing ``lines[:, 0, :]``
-    # on the 2-D shape raised ``IndexError: too many indices for
-    # array``. Normalise on entry so both shapes yield a flat
+    # Round 25 audit (re-fixed in audit 2026-09-01): ``cv2.HoughLinesP``
+    # returns a 2-D array of shape ``(N, 4)`` in OpenCV >=5. Older docs /
+    # older OpenCV show the historical 3-D ``(1, N, 4)``. Indexing
+    # ``lines[:, 0, :]`` on the 3-D shape returns ``(4,)`` (single row,
+    # only the first line's endpoints) — silently mis-computes
+    # ``um_per_px`` and corrupts PBDB coordinate radii. Use ``lines[0]``
+    # (squeeze axis 0) or ``reshape(-1, 4)`` so both shapes yield a flat
     # ``(N, 4)`` array we can iterate.
     if lines.ndim == 3:
-        lines = lines[:, 0, :]
+        lines = lines[0]
+    elif lines.ndim == 1:
+        # Defensive: some OpenCV forks return a flat ``(4,)`` if N=1.
+        lines = lines.reshape(1, 4)
     if lines.ndim != 2 or lines.shape[-1] != 4:
         return None
     best = 0.0

@@ -856,9 +856,20 @@ class RunTab(QWidget):
         self._status_label.setProperty("status", "running")
         self._log.info("Starting job %s on %s", self._current_job_id, pdf)
         # Phase F-2 (M-10/M-16): emit the actual output_dir so MainWindow
-        # can record it on JobRecord. output_dir = <out_path>/output;
-        # worker.work_dir = <out_path>/work.
-        output_dir = str(out_path / "output")
+        # can record it on JobRecord. output_dir = <out_path>/work;
+        # PipelineWorker sets ``cfg.output_dir = self._work_dir`` (see
+        # pipeline_worker.py:312-313) and ``resolved_output_dir()`` is what
+        # every ``ensure_dir(...)`` and ``cv2.imwrite(...)`` actually
+        # creates files under — so the JobRecord.output_dir MUST match
+        # ``out_path / "work"``, NOT ``out_path / "output"``.
+        #
+        # Audit 2026-09-01 BL-5: the previous ``out_path / "output"`` was
+        # the legacy (CLI / single-PDF) layout where the worker wrote
+        # directly under ``<user_dir>/output``. The GUI worker code path
+        # changed in Phase F-2 to nest under ``work/``, but RunTab kept
+        # the old string → every GUI-launched job's "Open output
+        # directory" button pointed at a non-existent path.
+        output_dir = str(out_path / "work")
         self.job_started.emit(self._current_job_id, pdf, output_dir)
         self._worker.start()
 

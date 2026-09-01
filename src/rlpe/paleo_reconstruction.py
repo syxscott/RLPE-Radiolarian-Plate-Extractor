@@ -845,6 +845,28 @@ def _load_seton2012_from_external(path: str | os.PathLike) -> int:
         # ``_interpolate_euler`` walks the table in ascending age
         # order (youngest -> oldest). GPlates .rot files store rows
         # in either order, so we sort here to be safe.
+        #
+        # Audit 2026-09-01 BL-18: an external .rot file with no
+        # recognised plate IDs would have produced ``by_plate == {}``
+        # and the previous code simply didn't iterate; but if a
+        # partially-matched file (e.g. only plate 901) is loaded, the
+        # ``for name, rows in by_plate.items()`` loop reaches ``name``
+        # whose original ``EULER_POLES[name]`` had the curated
+        # Seton-2012 data — and ``rows=[]`` would *clobber* the curated
+        # data with an empty list. All downstream
+        # ``reconstruct_paleo_position`` calls for that plate then
+        # silently return None and ``enrich_geology_record`` only logs
+        # a WARNING. Guard with ``if not rows: continue`` so the
+        # curated data is preserved unless the operator supplied real
+        # rows.
+        if not rows:
+            logger.warning(
+                "paleo_reconstruction: %r file matched no rotation rows "
+                "for plate %r — leaving curated Seton-2012 table intact.",
+                p,
+                name,
+            )
+            continue
         EULER_POLES[name] = sorted(rows, key=lambda r: r[0])
         merged += 1
         logger.info(

@@ -578,7 +578,20 @@ class PaleoDB:
                 # Phase 55 audit: PBDB uses "cc2" for ISO country codes. "cc" is
                 # not a PBDB field — remove it from the alias chain.
                 country_code = _alias("cc2")
-                country_raw = _alias("cc2", "country")
+                # Audit 2026-09-01 BL-17: the previous code was
+                # ``country_raw = _alias("cc2", "country")`` — both args
+                # passed to ``_alias`` mean "accept EITHER key", so the
+                # result was always the cc2 value (which on modern PBDB
+                # is always present). The Round 25 backwards-compat
+                # branch (``elif country is None and country_raw and
+                # len(country_raw) > 2: country = country_raw``) was
+                # therefore dead code — it could never fire. Now we look
+                # up the two keys *separately*: ``country_raw`` first
+                # tries the cc2 code, then falls back to a pre-resolved
+                # full-name ``country`` field on legacy payloads.
+                country_raw = _alias("cc2")
+                if country_raw is None:
+                    country_raw = _alias("country")
                 country = _iso_to_country(country_code) if country_code else None
                 # Round 25 backwards compat: if the payload already carries
                 # a full country name (not a 2-letter ISO code), pass it

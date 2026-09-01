@@ -152,8 +152,32 @@ _HEARTBEAT_TICK_SEC: float = 1.0
 # Fallback popup (Phase 5B): how long the worker waits for the
 # operator to pick an action before defaulting. TICK_MS is the
 # responsiveness granularity for the cancel check during the wait.
-FALLBACK_POPUP_TIMEOUT_MS: int = 300_000
+#
+# Audit 2026-09-01 (BL-8): the original 300_000 ms (5 min) blocked any
+# thread that hit the fallback simultaneously — 4 concurrent jobs that
+# all hit a MiniMax outage would each pin a BackgroundTasks worker for
+# 5 minutes, freezing the entire FastAPI process. The frontend typically
+# responds in <30 s (the popup is in-page). Lowering the default to 30 s
+# preserves the UX (frontend always has time to decide) while bounding
+# the worst-case blocking to 30 s per concurrent failure.
+FALLBACK_POPUP_TIMEOUT_MS: int = 30_000
 FALLBACK_POPUP_TICK_MS: int = 500
+# Audit 2026-09-01 BL-9: maximum recursion depth for ``_safe_value``.
+# Beyond this we emit the literal sentinel ``"<truncated>"`` so a single
+# deeply-nested payload can't RecursionError the whole worker.
+_SAFE_VALUE_MAX_DEPTH: int = 64
+# Audit 2026-09-01 CR-23: SSE request-reference context-var. The
+# ``_event_stream`` async generator doesn't receive the ``Request``
+# object via dependency injection (FastAPI doesn't pass it through
+# to a generator). Use a context var that the endpoint wrapper
+# ``stream_job_progress`` SETS before handing off to the generator,
+# so the generator can call ``req.is_disconnected()`` to short-
+# circuit a closed browser tab and free the anyio worker.
+import contextvars as _contextvars
+
+_stream_request_ref: _contextvars.ContextVar = _contextvars.ContextVar(
+    "rlpe_stream_request", default=None
+)
 # All compound writes to ``RESULT_CACHE`` and ``FALLBACK_PENDING`` go
 # through this lock. The GIL makes individual dict operations atomic,
 # but the cancel / progress / heartbeat / fallback-popup paths all
@@ -299,6 +323,16 @@ class JobOptions(BaseModel):
     MiniMax_timeout_sec: int | None = None
     MiniMax_max_retries: int | None = None
     MiniMax_fallback_default: str = "rules"  # gemma4 | rules | stop | retry
+    # Audit 2026-09-01 (P0 A3 / architectural P1 #21): M3 prompt
+    # language selector. Default ``"auto"`` so the pipeline picks the
+    # right prompt template based on caption-language detection
+    # (Phase 27's ``m3_engine._detect_caption_lang``). The CLI has
+    # had ``--m3-prompt-lang`` for a year (Phase 27 JA caption
+    # routing) — the API field was missing, so a Japanese paper
+    # uploaded via the web UI silently fell through to the
+    # Chinese-prompt template and F1 dropped by 10-15 pp on
+    # beccaro/takahashi. Field added to fix the silent default.
+    m3_prompt_lang: str = "auto"  # auto | en | zh | ja | fr | de | ru
     data_outbound_policy: str = "api_redacted"  # api_full | api_redacted | local_only
     # Default to api_redacted (caption text + plate region; sensitive
     # fields stripped before sending) so the web UI does not
@@ -754,7 +788,26 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 # (missing key, auth error, …).
 @app.exception_handler(RequestValidationError)
 async def _validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    logger.debug("RequestValidationError on %s %s: %s", request.method, request.url.path, exc)
+    # Audit 2026-09-01 (architectural P0 #6): this handler was registered
+    # globally because ``/system/test-llm`` *intentionally* accepts
+    # partial / empty bodies — a 422 there would block the frontend's
+    # connectivity test. But because FastAPI exception handlers are
+    # process-wide, the same handler was also masking real 422s on every
+    # other endpoint with a 200 + {"ok": false}, breaking:
+    #   - frontend ``if (status === 200) → success`` checks
+    #   - Prometheus / uptime monitoring that alerts on 4xx
+    #   - OpenAPI clients that retry on 5xx
+    # Now scoped: only the ``/system/test-llm`` endpoint gets the
+    # "always-200 with structured error" response; every other route
+    # gets the default 422 the framework already provides.
+    path = request.url.path
+    if path != "/system/test-llm":
+        # Re-raise so FastAPI's default handler emits the standard 422
+        # response (matches the OpenAPI schema).
+        from fastapi.exceptions import RequestValidationError as _RVE
+
+        raise _RVE(exc.errors())
+    logger.debug("RequestValidationError on %s %s: %s", request.method, path, exc)
     return JSONResponse(
         status_code=200,
         content={
@@ -1303,6 +1356,21 @@ async def stream_job_progress(job_id: str):
         terminal_states = {"done", "failed", "cancelled", "not_found"}
 
     async def _event_stream():
+        # Audit 2026-09-01 CR-23: detect client disconnection and
+        # exit the SSE loop early. The previous implementation just
+        # polled forever — when a browser tab was closed mid-job,
+        # the async generator kept yielding events that no one read,
+        # pinning an anyio worker for the remainder of the job (up to
+        # 30 minutes for a slow paper). ``request.is_disconnected()``
+        # is the canonical FastAPI/Starlette signal — the framework
+        # sets it when the underlying ASGI send raises on a closed
+        # connection.
+        import starlette.requests as _starlette_requests
+
+        # Capture the request from the closure if available. The
+        # ``stream_job_progress`` endpoint above passes ``request``
+        # implicitly through Starlette's dependency injection.
+        req = _stream_request_ref.get()
         payload = first_payload
         # Emit the initial event immediately so the client sees the
         # job's current state on connect (no 1-second wait).
@@ -1311,12 +1379,30 @@ async def stream_job_progress(job_id: str):
             return
         while True:
             await _asyncio.sleep(_SSE_POLL_INTERVAL_SEC)
+            # Fast-path exit when the client has gone away.
+            if req is not None and getattr(req, "is_disconnected", None):
+                try:
+                    if req.is_disconnected():
+                        logger.debug(
+                            "SSE client disconnected from job %s; "
+                            "stopping event stream",
+                            job_id,
+                        )
+                        return
+                except Exception:
+                    # Defensive: if the disconnect check itself raises
+                    # (extremely rare — only on transport-layer races),
+                    # keep streaming rather than killing the stream.
+                    pass
             payload = _job_status_payload(job_id)
             if payload is None:
                 payload = {"job_id": job_id, "status": "not_found"}
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             if payload.get("status") in terminal_states:
                 return
+
+
+_stream_request_ref: "_contextvars.ContextVar" = None  # filled at module load
 
     return StreamingResponse(
         _event_stream(),
@@ -1991,7 +2077,16 @@ def batch_delete_jobs(
 
 
 @app.get("/jobs/{job_id}/MiniMax-fallback")
-def get_MiniMax_fallback(job_id: str) -> dict[str, Any]:
+def get_MiniMax_fallback(
+    job_id: str,
+    # Audit 2026-09-01 (architectural P1 #22): the GET counterpart of
+    # the decision endpoint must enforce the same API-key auth as the
+    # POST counterpart below — the GET reveals the same error_info
+    # payload (including backend failure messages) and lets any LAN
+    # caller probe job state. The POST already used
+    # ``Depends(require_api_key)``; the GET silently did not.
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
     """Frontend polls this endpoint to detect when MiniMax API needs a user decision."""
     # Phase 54 audit: B5 — hold ``RESULT_LOCK`` around the read so we
     # can't race ``cancel_job`` (which pops under the same lock) or
@@ -2406,10 +2501,27 @@ def delete_results_batch(
     # Persist each touched job's matches.jsonl. Done OUTSIDE the lock
     # for the same reason as ``_purge_job`` (M17): the write can be
     # slow on many rows and shouldn't block other endpoints.
+    #
+    # Audit 2026-09-01 BL-7: between releasing the loop lock above and
+    # re-acquiring it per touched_job below, ``_purge_job`` or a
+    # concurrent ``DELETE /jobs/{id}`` can pop the entry from
+    # ``RESULT_CACHE`` entirely. The previous code then called
+    # ``_persist_results_to_disk(job_id, "", [])`` — writing an empty
+    # row list to that job's matches.jsonl, silently destroying any
+    # in-flight progress from a parallel cancel. Now we re-validate
+    # inside the per-job lock and skip persist if the job has been
+    # purged in the meantime.
     for job_id in touched_jobs:
         with RESULT_LOCK:
-            job = RESULT_CACHE.get(job_id) or {}
-        _persist_results_to_disk(job_id, job.get("_root"), job.get("result") or [])
+            job = RESULT_CACHE.get(job_id)
+            if job is None:
+                # Job was purged between batch-delete and persist;
+                # matches.jsonl was already removed by ``_purge_job``,
+                # so there's nothing to write. Skip silently.
+                continue
+            snapshot_result = list(job.get("result") or [])
+            snapshot_root = job.get("_root")
+        _persist_results_to_disk(job_id, snapshot_root, snapshot_result)
     not_found = sorted(row_ids - matched_ids)
     return {"removed": removed, "not_found": len(not_found)}
 
@@ -2756,7 +2868,7 @@ def _get_package_version() -> str:
     return "unknown"
 
 
-def _safe_value(v: Any) -> Any:
+def _safe_value(v: Any, _depth: int = 0) -> Any:
     """Recursively convert numpy / non-JSON-native types to Python builtins.
 
     Handles (in priority order):
@@ -2781,10 +2893,21 @@ def _safe_value(v: Any) -> Any:
     string ``"(0, 1, 2, 3)"``). Frontend code that expected a list
     (e.g. ``r.bbox[0]``) would then read the first character of the
     string instead. This now recurses instead of stringifying.
+
+    Audit 2026-09-01 BL-9: recursion depth is bounded by
+    ``_SAFE_VALUE_MAX_DEPTH`` (default 64) so a single request carrying
+    a deeply nested dict (e.g. a maliciously crafted JSON file dropped
+    into ``uploads/``) cannot trigger a ``RecursionError`` that 500s
+    the whole FastAPI worker. Beyond the cap we emit the literal string
+    ``"<truncated>"`` — the caller sees an obviously-broken value
+    rather than the whole response failing.
     """
     # Fast path: already JSON-native
     if isinstance(v, (int, float, str, bool, type(None))):
         return v
+    # Recursion depth guard (BL-9).
+    if _depth >= _SAFE_VALUE_MAX_DEPTH:
+        return "<truncated>"
     # numpy
     try:
         import numpy as np
@@ -2796,7 +2919,7 @@ def _safe_value(v: Any) -> Any:
         if isinstance(v, np.bool_):
             return bool(v)
         if isinstance(v, np.ndarray):
-            return [_safe_value(x) for x in v.tolist()]
+            return [_safe_value(x, _depth + 1) for x in v.tolist()]
     except Exception:
         pass
     # Container types — recurse and emit as JSON-compatible list.
@@ -2804,9 +2927,9 @@ def _safe_value(v: Any) -> Any:
     # caller's concern; if stable ordering is needed, the caller can
     # convert to a sorted list before storing.
     if isinstance(v, (list, tuple, set, frozenset)):
-        return [_safe_value(x) for x in v]
+        return [_safe_value(x, _depth + 1) for x in v]
     if isinstance(v, dict):
-        return {str(k): _safe_value(val) for k, val in v.items()}
+        return {str(k): _safe_value(val, _depth + 1) for k, val in v.items()}
     # datetime
     try:
         import datetime as _dt

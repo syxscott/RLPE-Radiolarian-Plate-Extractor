@@ -419,6 +419,11 @@ class PipelineConfig:
         # Phase 38: warn (don't raise) for unknown extra-config keys.
         # A typo like ``minimax_api_key`` (lowercase) silently produces
         # a config that ignores the value.
+        # Audit 2026-09-01 (Step 2): when ``RLPE_STRICT_EXTRA=1`` (or the
+        # ``strict_extra`` env override is set on the JobOptions
+        # wrapper), HARD-FAIL on unknown keys. The default behaviour
+        # remains a warning to preserve backwards compatibility with
+        # operator configs that pre-date some of the typed fields.
         unknown = set(self.extra.keys()) - _KNOWN_EXTRA_KEYS
         if unknown:
             # Phase 38: offer Levenshtein-style suggestions so users
@@ -432,6 +437,15 @@ class PipelineConfig:
                     suggestions.append(f"{u!r} → did you mean {matches[0]!r}?")
                 else:
                     suggestions.append(repr(u))
+            strict = (
+                __import__("os").environ.get("RLPE_STRICT_EXTRA", "0") == "1"
+            )
+            if strict:
+                raise ValueError(
+                    f"Unknown extra config keys (strict mode): {sorted(unknown)}. "
+                    f"Hints: {'; '.join(suggestions)}. "
+                    f"Set RLPE_STRICT_EXTRA=0 to fall back to warning-only."
+                )
             logger.warning(
                 "Unknown extra config keys (typo?): %s%s",
                 sorted(unknown),

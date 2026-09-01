@@ -359,8 +359,19 @@ def detect_figure_regions_yolo(
     # fallback region, not []. Returning [] silently drops the page from
     # the output; the fullpage fallback preserves the page with a
     # kind="page" region so downstream caption routing can still match it.
+    #
+    # Audit 2026-09-01 (systemic #1 — YOLO half): ultralytics ``YOLO``
+    # shares a CUDA context + model weights across instances; concurrent
+    # inference is **not** thread-safe (no exception, but bounding boxes
+    # can be attributed to the wrong page). Add a separate inference
+    # lock so the load lock above can be released for the duration of the
+    # (slow) inference. Lock contention is negligible vs. GPU time.
+    _infer_lock_attr = "_yolo_infer_lock"
+    if not hasattr(detect_figure_regions_yolo, _infer_lock_attr):
+        setattr(detect_figure_regions_yolo, _infer_lock_attr, threading.Lock())
     try:
-        results = model(image_path, verbose=False, conf=conf, iou=iou)
+        with getattr(detect_figure_regions_yolo, _infer_lock_attr):
+            results = model(image_path, verbose=False, conf=conf, iou=iou)
     except Exception as exc:
         import logging
 

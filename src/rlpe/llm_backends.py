@@ -190,6 +190,22 @@ _API_KEY_PATTERNS = (
     re.compile(r"(?<![A-Za-z0-9_])sk-ant-(?!api03-)[A-Za-z0-9]{16,}"),
     re.compile(r"(?<![A-Za-z0-9_])sk-proj-[A-Za-z0-9]{16,}"),
     re.compile(r"(?<![A-Za-z0-9_])sk-cp-[A-Za-z0-9]{16,}"),
+    # Audit 2026-09-01 CR-17: extend the redaction set to cover the
+    # cloud-provider credentials that the operator may inject into
+    # ``extra`` when routing MiniMax via AWS Bedrock / Vertex /
+    # Azure. Without these patterns, an AKIA / ya29 / Azure key
+    # embedded in the run would be persisted verbatim into
+    # ``matches.jsonl`` and exposed via the public-facing
+    # ``/jobs/{id}/results`` endpoint — a cloud-credential leak
+    # masquerading as a science-data file.
+    # AWS access key id (20 uppercase alnum chars, starts with AKIA/ASIA/AROA/AIDA/ANPA/ANVA/AGPA).
+    re.compile(r"\b(?:AKIA|ASIA|AROA|AIDA|ANPA|ANVA|AGPA)[A-Z0-9]{16}\b"),
+    # Google OAuth refresh token (``ya29.<base64>``).
+    re.compile(r"\bya29\.[A-Za-z0-9_-]{20,}\b"),
+    # Azure OpenAI / Cognitive Services key (32 lowercase hex chars).
+    re.compile(r"\b[a-f0-9]{32}\b(?=.*Azure)"),
+    # Stripe live key (sk_live_<24+>).
+    re.compile(r"\bsk_live_[A-Za-z0-9]{20,}\b"),
 )
 
 
@@ -314,6 +330,19 @@ def _validate_llm_host(host: str) -> str:
             f"LLM host {host!r} has no hostname; refusing to connect "
             f"(SSRF guard). Set RLPE_LLM_ALLOW_ANY_HOST=1 to override."
         )
+    # Audit 2026-09-01 CR-18: reject IPv6 zone-id suffixes (``%eth0``,
+    # ``%12``) — Python's ``ipaddress.ip_address`` raises on the raw
+    # form, but downstream DNS resolution libraries may strip the
+    # zone and route the request to a link-local / cloud-metadata
+    # endpoint on the *original* interface. Block at the boundary so
+    # the operator never silently hits the AWS / GCP metadata service.
+    if "%" in hostname:
+        raise ValueError(
+            f"LLM host {host!r} carries an IPv6 zone-id ('%'-suffix); "
+            f"refusing to connect (SSRF guard). Use the bare IPv6 address "
+            f"or its DNS hostname instead. Set RLPE_LLM_ALLOW_ANY_HOST=1 "
+            f"to override."
+        )
     # Try to parse as an IP literal. If it isn't, the host is a DNS
     # name and we can't enumerate its addresses without a DNS lookup
     # (which itself can be an SSRF vector) — accept it and let the
@@ -383,7 +412,26 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
     # 1) Try the whole cleaned text first
     try:
         obj = json.loads(cleaned)
-        if isinstance(obj, dict):
+        if isinstance(obj, list):
+            # Audit 2026-09-01 (live end-to-end test on Bandini_2011
+            # via MiniMax-M3): M3 returns the FULL multi-panel output
+            # as a top-level JSON array — e.g. ``[{"label":"1",
+            # "species":"Genus species A"}, {"label":"2", ...}, ...]``.
+            # The previous implementation normalised only the FIRST
+            # element of the array (line "Use the first object in the
+            # array" below), discarding all subsequent panels. That
+            # silently capped the LLM-first pipeline at exactly 1 row
+            # per figure — collapsing the F1 ceiling to the proportion
+            # of plates that contain a Fig. 1 species. Detect the array
+            # path FIRST and normalise every element so the multi-
+            # panel contract flows through.
+            norm: list[dict[str, Any]] = []
+            for item in obj:
+                if isinstance(item, dict):
+                    norm.append(_normalize_panel_dict(item))
+            if norm:
+                return {"_is_multi_panel": True, "panels": norm}
+        elif isinstance(obj, dict):
             return _normalize_panel_dict(obj)
     except Exception:
         pass
@@ -394,10 +442,18 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
         try:
             arr = json.loads(arr_match.group(0))
             if isinstance(arr, list) and arr:
-                # Use the first object in the array
-                first = next((x for x in arr if isinstance(x, dict)), None)
-                if first is not None:
-                    return _normalize_panel_dict(first)
+                # Audit 2026-09-01 (live Bandini test): the previous
+                # implementation normalised only the FIRST element of
+                # the array (line "Use the first object in the array")
+                # — silently dropping every subsequent panel. Now
+                # normalise every element so a 31-panel Bandini_2011
+                # caption round-trips as 31 MatchResults rather than 1.
+                items = [x for x in arr if isinstance(x, dict)]
+                if items:
+                    if len(items) == 1:
+                        return _normalize_panel_dict(items[0])
+                    norm = [_normalize_panel_dict(it) for it in items]
+                    return {"_is_multi_panel": True, "panels": norm}
         except Exception:
             pass
 
@@ -767,6 +823,44 @@ def _apply_geo_whitelist(item: dict[str, Any]) -> dict[str, Any]:
 
 class BaseLLMBackend:
     backend_name = "base"
+
+    def __init__(self) -> None:
+        # Audit 2026-09-01 (PERF-18): shared HTTP session per backend
+        # instance. The previous implementation called
+        # ``requests.post(...)`` directly, so every M3 / Anthropic /
+        # Ollama inference rebuilt a fresh TCP connection (DNS +
+        # TLS + HTTP handshake) — typically 80-200 ms per call. A
+        # typical paper issues 200+ LLM calls; that's 16-40 seconds
+        # of pure connection overhead per paper. The session is
+        # pool-backed via ``HTTPAdapter`` so concurrent workers can
+        # share connections without serialization.
+        import requests as _requests
+        from requests.adapters import HTTPAdapter as _HTTPAdapter
+
+        self._session = _requests.Session()
+        _adapter = _HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=20,
+            max_retries=0,  # backend classes handle retry policy themselves
+        )
+        self._session.mount("http://", _adapter)
+        self._session.mount("https://", _adapter)
+
+    def close(self) -> None:
+        """Release the HTTP session's connection pool.
+
+        Audit 2026-09-01 (systemic #2 follow-up): called from
+        :meth:`RadiolarianPipeline.close` so the connection pool's
+        sockets are returned to the OS on ``run()`` exit (otherwise
+        the pool keeps the file descriptors alive until process
+        exit).
+        """
+        if hasattr(self, "_session") and self._session is not None:
+            try:
+                self._session.close()
+            except Exception:
+                pass
+            self._session = None
 
     def infer_panel(
         self,

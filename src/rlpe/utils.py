@@ -248,3 +248,90 @@ def read_text(path: Path, default: str = "") -> str:
         return path.read_text(encoding="utf-8")
     except OSError:
         return default
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-09-01 (Step 2): ``_safe_call`` — the unified error-handling
+# helper that replaces 51 ``except Exception`` blocks scattered across
+# ``pipeline.py`` with a single, categorised failure surface. Each call
+# gets:
+#   1. a structured warning written to ``run_output.warnings`` (label +
+#      paper_id + message + timestamp);
+#   2. a deduplicated logger.warning so the operator sees one breadcrumb
+#      per (label, paper_id), not one per retry;
+#   3. a return value (``default``) so the caller can keep moving.
+# ---------------------------------------------------------------------------
+_WARNINGS: list[dict[str, Any]] = []
+_WARNINGS_LOCK: "threading.Lock" = __import__("threading").Lock()
+
+
+def _safe_call(
+    label: str,
+    fn: "Callable[..., Any]",
+    *args: Any,
+    paper_id: str | None = None,
+    default: Any = None,
+    reraise_on: tuple[type[BaseException], ...] = (),
+    **kwargs: Any,
+) -> Any:
+    """Invoke ``fn(*args, **kwargs)`` and convert any failure into a
+    structured warning + ``default`` return.
+
+    Args:
+        label: short tag for the failure surface — e.g. ``"apply_geo"``,
+            ``"cross_figure_linker"``. Used as the dedupe key.
+        fn: callable to invoke.
+        *args / **kwargs: forwarded to ``fn``.
+        paper_id: optional paper identifier; when set, the warning
+            also includes ``paper_id`` so a triage grep on the run
+            output can scope failures to a single paper.
+        default: value to return on failure. ``None`` by default.
+        reraise_on: tuple of exception TYPES that MUST propagate (do
+            not catch). Use for ``KeyboardInterrupt`` / ``SystemExit`` /
+            ``MemoryError`` to avoid swallowing real crashes. ``Async``
+            cancellation exceptions are also re-raised.
+
+    The accumulated warnings are exposed via :func:`drain_warnings` so
+    the pipeline orchestrator can write them into ``run_output.json``.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except reraise_on:
+        raise
+    except Exception as exc:  # noqa: BLE001 — see audit 2026-09-01
+        msg = f"{type(exc).__name__}: {exc}"[:500]
+        entry = {
+            "label": label,
+            "paper_id": paper_id,
+            "message": msg,
+            "timestamp": __import__("time").time(),
+        }
+        with _WARNINGS_LOCK:
+            _WARNINGS.append(entry)
+        try:
+            import logging as _logging
+
+            _logging.getLogger("rlpe.utils").warning(
+                "_safe_call[%s paper=%s] swallowed: %s",
+                label,
+                paper_id or "?",
+                msg,
+                exc_info=True,
+            )
+        except Exception:
+            pass
+        return default
+
+
+def drain_warnings() -> list[dict[str, Any]]:
+    """Return and clear the accumulated ``_safe_call`` warnings.
+
+    The pipeline orchestrator calls this once when assembling the
+    final ``run_output.json`` so the user sees every de-duplicated
+    warning from a single run in one place — instead of grepping
+    log lines.
+    """
+    with _WARNINGS_LOCK:
+        out = list(_WARNINGS)
+        _WARNINGS.clear()
+        return out

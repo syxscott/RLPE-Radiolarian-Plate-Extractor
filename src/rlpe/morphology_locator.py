@@ -86,7 +86,7 @@ def _strip_authority(species_name: str) -> str:
 # hyphens so the hyphen-normalisation pass below doesn't touch them.
 # We use a string rather than a control char so it round-trips through
 # Python string literals without ``\xNN`` escape headaches.
-_DIGIT_HYPHEN_SENTINEL = "RANGE"
+_DIGIT_HYPHEN_SENTINEL = "\x00RANGE\x00"  # audit 2026-09-01 BL-14: NUL-wrapped to avoid collision with legitimate "Stratigraphic RANGE" text
 
 
 def _normalise_text(text: str) -> str:

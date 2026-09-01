@@ -130,6 +130,31 @@ def normalize_species(s: str | None) -> str:
     return out
 
 
+# Audit 2026-09-01 BL-29: restricted fold table — only characters
+# that are KNOWN to confuse in the panel_id OCR path. The previous full
+# NFKD + encode("ascii","ignore") round-trip silently destroyed the
+# distinction between "Æ"/"AE", "Ø"/"O", "Œ"/"OE" etc. and caused
+# FN matches on Nordic / French papers. Limit the fold to typographic
+# variants that OCR engines mis-read: smart quotes, the micro sign vs.
+# "u" prefix, the various hyphen variants, non-breaking space.
+_OCR_CONFUSION_TRANSLATION = str.maketrans(
+    {
+        "“": '"',
+        "”": '"',
+        "‘": "'",
+        "’": "'",
+        " ": " ",
+        "‐": "-",
+        "‑": "-",
+        "‒": "-",
+        "–": "-",
+        "—": "-",
+        "−": "-",
+        "µ": "u",  # OCR frequently renders µm as "u m"
+    }
+)
+
+
 def _normalize_panel_id(s: str) -> str:
     """Layer A: normalise a single panel_id token for comparison.
 
@@ -141,7 +166,35 @@ def _normalize_panel_id(s: str) -> str:
     here, so a single token always flows through this function as-is.
     """
     stripped = s.strip()
-    ascii_folded = unicodedata.normalize("NFKD", stripped).encode("ascii", "ignore").decode("ascii")
+    # Audit 2026-09-01 (live Bandini end-to-end): strip the "Fig. N"
+    # / "Plate N" / "pl. N" / "図版 N" prefix when present so the
+    # gold-side label "1" matches the pred-side label "Fig. 1". The
+    # previous implementation kept both forms verbatim, costing the
+    # 9-paper eval roughly 30-50 % panel-match on any paper that
+    # uses the canonical "Fig. N" caption convention. The prefix
+    # patterns are anchored at string start and tolerate an optional
+    # trailing space; "Fig N" (no dot) and "Figure N" are both
+    # covered.
+    stripped = re.sub(
+        r"^(?:fig(?:ure)?s?\.?|pl(?:ate)?s?\.?|図版)\s*",
+        "",
+        stripped,
+        flags=re.IGNORECASE,
+    )
+    # Audit 2026-09-01 BL-29: the previous ``NFKD + encode("ascii",
+    # "ignore")`` round-trip folded legitimate Nordic / French
+    # diacritics ("Æ" / "Ø" / "Œ") into their ASCII lookalikes
+    # ("AE" / "O" / "OE"), which then silently mismatched a
+    # properly-spelled gold panel_id (e.g. gold="Æ", pred="Ae" → FN).
+    # Restrict the fold to the OCR-only confusion set (curly quotes
+    # / micro sign / minus sign variants) so author and taxon names
+    # with diacritics keep their identity.
+    ocr_safe = stripped.translate(_OCR_CONFUSION_TRANSLATION)
+    ascii_folded = (
+        unicodedata.normalize("NFKD", ocr_safe)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
     return ascii_folded.lower()
 
 

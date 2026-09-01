@@ -85,3 +85,7 @@ uploads/*.log
 # Local-only development scratch scripts (created by the
 # agent during iterative edits; safe to remove).
 scratch_*.py
+
+# User-provided PDF folders
+经典放射虫论文/
+

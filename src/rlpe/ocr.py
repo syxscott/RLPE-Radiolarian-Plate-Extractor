@@ -208,7 +208,23 @@ class OCRBackend:
         tokens: list[OCRToken] = []
         try:
             if self.backend == "paddleocr":
-                result = engine.ocr(image, cls=True)
+                # Audit 2026-09-01 (live test): PaddleOCR 3.x removed
+                # the ``cls=`` keyword from ``PaddleOCR.predict()``.
+                # The 2.x-compatible call ``engine.ocr(image, cls=True)``
+                # raises ``TypeError: PaddleOCR.predict() got an
+                # unexpected keyword argument 'cls'`` on PaddleOCR 3.5
+                # (installed in this env). Drop the kwarg entirely —
+                # the orientation classification is no longer exposed
+                # via this API in 3.x; rely on the engine's default
+                # behaviour. ``use_angle_cls=True`` (the 2.x
+                # constructor flag) is preserved.
+                try:
+                    result = engine.ocr(image)
+                except TypeError as _te:
+                    # Some 3.x preview releases still accept cls=.
+                    if 'cls' not in str(_te):
+                        raise
+                    result = engine.ocr(image, cls=True)
                 # Phase 38: paddleocr 2.x returns [ [box, (text, conf)], ... ]
                 # but paddleocr 3.x returns a different structure (a list
                 # of dicts with 'rec_texts', 'rec_scores', 'dt_polys').
@@ -291,7 +307,19 @@ class OCRBackend:
         if isinstance(result, (tuple, list)) and len(result) >= 1 and isinstance(result[0], list):
             for line in result[0]:
                 try:
-                    if isinstance(line, (list, tuple)) and len(line) == 2:
+                    # Audit 2026-09-01 BL-13: PaddleOCR 2.x newer point
+                    # releases (≥2.7) and 3.x previews emit a 3-tuple
+                    # ``(box, text, conf)`` per line instead of the
+                    # historic 2-tuple ``(box, (text, conf))``. The
+                    # previous ``len(line) == 2`` branch silently
+                    # dropped every such line, returning ``tokens=[]``
+                    # for entire plates — no warning, no error. Add a
+                    # 3-tuple branch that unpacks the three fields
+                    # directly.
+                    if isinstance(line, (list, tuple)) and len(line) == 3:
+                        box, text, conf = line
+                        out.append((box, str(text), float(conf)))
+                    elif isinstance(line, (list, tuple)) and len(line) == 2:
                         box, payload = line
                         if isinstance(payload, (list, tuple)) and len(payload) == 2:
                             text, conf = payload

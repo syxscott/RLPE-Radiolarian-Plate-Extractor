@@ -34,6 +34,30 @@ _RLPE_PROJECT_OVERRIDE_KEYS: frozenset[str] = frozenset(
 )
 
 
+def _unquote(value: str) -> str:
+    """Strip matched outer quote pair from a value.
+
+    Audit 2026-09-01 CR-3 follow-up: the previous implementation
+    ``value.strip().strip('"').strip("'")`` ran BOTH quote strips
+    unconditionally, so ``"foo'bar"`` ended up with the inner ``'``
+    gone AND the outer ``"`` gone — silently mangling any value that
+    contained embedded apostrophes. Strip ONLY when the value is
+    wrapped in a matching pair, and also handle escape sequences
+    ``\\n`` / ``\\t`` / ``\\\\`` / ``\\"`` (the standard .env
+    convention).
+    """
+    if not value:
+        return value
+    v = value.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+        body = v[1:-1]
+    else:
+        body = v
+    # Decode standard backslash escapes — \", \\, \n, \r, \t
+    body = body.replace("\\\"", '"').replace("\\\\", "\\").replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t")
+    return body
+
+
 def load_env_file(
     env_path: str | Path,
     *,
@@ -45,6 +69,16 @@ def load_env_file(
     Returns the number of keys actually set. ``force_override``
     defaults to the ``RLPE_FORCE_ENV_OVERRIDE`` env var; when None is
     passed explicitly the caller controls it (tests).
+
+    Audit 2026-09-01 CR-6 / CR-7 / CR-8 (env_loader fixes):
+      * ``export FOO=bar`` prefix support — POSIX shells accept it and
+        Notepad-style Windows editors often prepend it; the previous
+        code would silently treat ``export FOO`` as the env-var name.
+      * UTF-8 BOM tolerance — Notepad on Windows writes a leading
+        ``﻿`` byte; the previous code would attach it to the
+        first key name. Open with ``utf-8-sig`` so the BOM is stripped.
+      * Matched-pair quote handling + backslash escape sequences —
+        see :func:`_unquote`.
     """
     path = Path(env_path)
     if not path.exists():
@@ -54,14 +88,18 @@ def load_env_file(
     project_keys = override_keys if override_keys is not None else _RLPE_PROJECT_OVERRIDE_KEYS
     set_count = 0
     try:
-        with path.open(encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+        with path.open(encoding="utf-8-sig") as f:
+            for raw_line in f:
+                # Support ``export FOO=bar`` syntax — strip the
+                # leading ``export `` keyword if present.
+                line = raw_line.strip()
+                if line.startswith("export "):
+                    line = line[len("export ") :].lstrip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 key, _, value = line.partition("=")
                 key = key.strip()
-                value = value.strip().strip('"').strip("'")
+                value = _unquote(value)
                 if not key:
                     continue
                 should_override = force_override or key in project_keys or key not in os.environ
