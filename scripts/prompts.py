@@ -8,12 +8,12 @@ gold references). They instruct the LLM to:
 - Skip non-radiolarian specimens
 
 Prompts are intentionally generic so the eval set doesn't leak into
-the prompt design.
+the prompt design. Markers are word-boundary regexes to avoid
+false-positives like "plate of food" routing to the SEM template.
 """
 from __future__ import annotations
 
 import re
-from typing import Tuple
 
 _BASE_OUTPUT_FORMAT = (
     "Return strict JSON array of objects with fields "
@@ -21,9 +21,24 @@ _BASE_OUTPUT_FORMAT = (
     '[{"label": "1", "species": "Genus species", "confidence": 0.9}, ...].'
 )
 
-_RANGE_CHART_MARKERS = ("distribution", "range chart", "biozone", "stratigraphic range")
-_SEM_PLATE_MARKERS = ("scanning electron", "plate", "marker =", "bar =")
-_MAP_MARKERS = ("location", "map", "schematic map", "geographic")
+# Markers are word-boundary regexes (not plain strings) to avoid
+# false positives like "plate of food" matching the SEM template.
+_RANGE_CHART_MARKERS = (
+    re.compile(r"\b(?:distribution|range\s*chart|biozone|stratigraphic\s*range)\b", re.IGNORECASE),
+)
+_SEM_PLATE_MARKERS = (
+    # "scanning electron" is the strongest signal (very specific).
+    re.compile(r"\bscanning\s+electron\b", re.IGNORECASE),
+    # "Plate 5" / "Plate V" / "Plate III" — word boundary + plate-number suffix.
+    re.compile(r"\bplate\s+[ivxlcdm0-9]+\b", re.IGNORECASE),
+    # "Marker = X" / "Bar = Y" are anchor strings (very specific).
+    re.compile(r"\bmarker\s*=", re.IGNORECASE),
+    re.compile(r"\bbar\s*=", re.IGNORECASE),
+)
+_MAP_MARKERS = (
+    re.compile(r"\b(?:location|geographic)\b", re.IGNORECASE),
+    re.compile(r"\b(?:schematic\s*)?map\b", re.IGNORECASE),
+)
 
 
 def _build_prompt(goal: str, special: str) -> str:
@@ -72,15 +87,17 @@ _PREDICATE_PATTERNS = (
 )
 
 
-def select_prompt(caption: str) -> str:
+def select_prompt(caption: str | None) -> str:
     """Pick the most appropriate prompt template by caption keywords.
 
-    Falls back to GENERIC_PROMPT if no markers match.
+    Falls back to GENERIC_PROMPT if no markers match, or if the
+    input is None/empty (e.g. missing GROBID caption).
     """
-    cap_lower = caption.lower()
+    if caption is None or not caption.strip():
+        return GENERIC_PROMPT
     for prompt, markers in _PREDICATE_PATTERNS:
-        for marker in markers:
-            if marker in cap_lower:
+        for pattern in markers:
+            if pattern.search(caption):
                 return prompt
     return GENERIC_PROMPT
 

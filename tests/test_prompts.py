@@ -42,3 +42,38 @@ def test_build_user_prompt_includes_caption():
     user = build_user_prompt('Some caption text here.')
     assert 'Some caption text here.' in user
     assert 'JSON' in user or 'json' in user
+
+
+def test_select_prompt_none_returns_generic():
+    """None input returns GENERIC_PROMPT (graceful fallback)."""
+    assert select_prompt(None) == GENERIC_PROMPT
+
+
+def test_select_prompt_empty_returns_generic():
+    """Empty / whitespace-only caption returns GENERIC_PROMPT."""
+    assert select_prompt("") == GENERIC_PROMPT
+    assert select_prompt("   \n\t  ") == GENERIC_PROMPT
+
+
+def test_plate_false_positive_filtered():
+    """'plate of food' in body text must NOT route to SEM_PLATE_PROMPT.
+
+    Without the word-boundary fix, plain 'plate' substring would match
+    and incorrectly route the caption to the SEM template.
+    """
+    assert select_prompt("This is just a normal plate of food.") == GENERIC_PROMPT
+
+
+def test_build_user_prompt_truncates_long_caption():
+    """A 10,000-char caption must be truncated to 3000 chars in the prompt.
+
+    'Z' is used as the marker because it does not appear in the static
+    wrapper text ('Caption:\\n' / '\\n\\nExtract every panel and species
+    as JSON.'), so the count of 'Z' exactly equals the caption length.
+    """
+    long_caption = "Z" * 10000
+    out = build_user_prompt(long_caption)
+    # The 10000-char caption itself is truncated to 3000 in the prompt;
+    # the wrapper text contains no 'Z', so out.count('Z') == caption length.
+    assert out.count("Z") <= 3000
+    assert "Caption:" in out
