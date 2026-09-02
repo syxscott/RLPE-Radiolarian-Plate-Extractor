@@ -238,34 +238,17 @@ print('[KEY CLEANED]')
 # point estimate, then derives a 95% bootstrap CI by resampling
 # papers with replacement. ``run_5fold_cv`` performs 5-fold CV over
 # the paper list and reports per-fold + aggregate F1.
-import json
 import statistics
 import random
-from pathlib import Path
+import numpy as np
 from typing import Any, Tuple
+from rlpe.evaluation.metrics import _norm_species, _species_compatible
 
 
 def load_split(path: str | Path) -> dict[str, list[str]]:
     """Load train/test split from a JSON file."""
     with open(path) as f:
         return json.load(f)
-
-
-def _paper_f1(preds: list[dict], gold: list[dict]) -> float:
-    """Compute species F1 for a single paper."""
-    from rlpe.evaluation.metrics import _norm_species, _species_compatible
-    pred_sp = {(_norm_species(p.get('species')), p.get('figure_id'), p.get('panel_id'))
-              for p in preds if p.get('species')}
-    gold_sp = {(_norm_species(g.get('species')), g.get('figure_id'), g.get('panel_id'))
-              for g in gold if g.get('species')}
-    tp = sum(1 for k in pred_sp & gold_sp)
-    fp = len(pred_sp - gold_sp)
-    fn = len(gold_sp - pred_sp)
-    if tp == 0:
-        return 0.0
-    p = tp / (tp + fp)
-    r = tp / (tp + fn)
-    return 2 * p * r / (p + r)
 
 
 def compute_aggregate_with_ci(
@@ -278,21 +261,25 @@ def compute_aggregate_with_ci(
 
     Returns (f1_micro, (ci_low, ci_high)).
     """
-    # Group by paper
+    # Group by paper. Predict all papers that appear in either preds or
+    # gold, so a prediction on a paper without gold rows still counts
+    # as an FP (rather than being silently dropped).
     by_paper: dict[str, tuple[list, list]] = {}
     for g in gold:
         by_paper.setdefault(g.get('paper_id', ''), ([], []))[1].append(g)
     for p in preds:
-        paper = p.get('paper_id', '')
-        if paper in by_paper:
-            by_paper[paper][0].append(p)
+        pid = p.get('paper_id', '')
+        if not pid:
+            continue
+        if pid not in by_paper:
+            by_paper[pid] = ([], [])
+        by_paper[pid][0].append(p)
     papers = list(by_paper.keys())
 
     def f1_micro() -> float:
         total_tp = total_fp = total_fn = 0
         for p in papers:
             pp, gp = by_paper[p]
-            from rlpe.evaluation.metrics import _norm_species, _species_compatible
             pset = {(_norm_species(x.get('species')), x.get('figure_id'), x.get('panel_id'))
                     for x in pp if x.get('species')}
             gset = {(_norm_species(x.get('species')), x.get('figure_id'), x.get('panel_id'))
@@ -311,15 +298,14 @@ def compute_aggregate_with_ci(
 
     rng = random.Random(seed)
     point = f1_micro()
-    if not papers:
-        return 0.0, (0.0, 0.0)
+    if not papers or n_bootstrap <= 0:
+        return point, (point, point)
     bootstraps: list[float] = []
     for _ in range(n_bootstrap):
         sample = rng.choices(papers, k=len(papers))
         bt = total_fp_b = total_fn_b = 0
         for p in sample:
             pp, gp = by_paper[p]
-            from rlpe.evaluation.metrics import _norm_species
             pset = {(_norm_species(x.get('species')), x.get('figure_id'), x.get('panel_id'))
                     for x in pp if x.get('species')}
             gset = {(_norm_species(x.get('species')), x.get('figure_id'), x.get('panel_id'))
@@ -333,8 +319,9 @@ def compute_aggregate_with_ci(
         r_v = bt / (bt + total_fn_b)
         bootstraps.append(2 * p_v * r_v / (p_v + r_v) if (p_v + r_v) > 0 else 0.0)
     bootstraps.sort()
-    lo = bootstraps[int(0.025 * n_bootstrap)]
-    hi = bootstraps[int(0.975 * n_bootstrap)]
+    n_b = len(bootstraps)
+    lo = bootstraps[int(0.025 * n_b)]
+    hi = bootstraps[int(0.975 * n_b)]
     return point, (lo, hi)
 
 
@@ -344,19 +331,24 @@ def run_5fold_cv(
     all_papers: list[str],
     n_folds: int = 5,
 ) -> dict[str, Any]:
-    """Run 5-fold cross-validation. Returns per-fold and aggregate F1."""
+    """Run 5-fold cross-validation. Returns per-fold and aggregate F1.
+
+    Each fold reports the F1 of the held-out test fold (the unseen
+    generalization slice), not the train complement. Folds are produced
+    via ``numpy.array_split`` so an N-paper corpus always yields
+    exactly ``n_folds`` folds regardless of divisibility.
+    """
     rng = random.Random(42)
     papers = sorted(all_papers)
     rng.shuffle(papers)
-    fold_size = max(1, len(papers) // n_folds)
-    folds = [papers[i:i+fold_size] for i in range(0, len(papers), fold_size)]
+    folds: list[list[str]] = [list(f) for f in np.array_split(papers, n_folds) if len(f) > 0]
     fold_metrics = []
     for i, fold in enumerate(folds):
-        train_papers = [p for p in papers if p not in fold]
-        preds = [x for p in train_papers for x in preds_by_paper.get(p, [])]
-        gold = [x for p in train_papers for x in gold_by_paper.get(p, [])]
+        # Score the HELD-OUT fold (test slice), not the train complement.
+        preds = [x for p in fold for x in preds_by_paper.get(p, [])]
+        gold = [x for p in fold for x in gold_by_paper.get(p, [])]
         f1, ci = compute_aggregate_with_ci(preds, gold, n_bootstrap=100)
-        fold_metrics.append({'fold': i, 'papers': fold, 'f1': f1, 'ci': ci})
+        fold_metrics.append({'fold': i, 'papers': list(fold), 'f1': f1, 'ci': ci})
     f1s = [m['f1'] for m in fold_metrics]
     return {
         'folds': fold_metrics,
