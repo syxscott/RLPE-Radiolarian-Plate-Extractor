@@ -24,6 +24,9 @@ def parse_open_nomenclature(species: str | None) -> tuple[str | None, str | None
     'Genus aff. species' → ('Genus species', 'aff.')
     'Genus species'      → ('Genus species', None)
     """
+    if species is None:
+        return None, None
+    species = species.strip()
     if not species:
         return None, None
     qual_match = _QUALIFIER_RE.search(species)
@@ -35,7 +38,7 @@ def parse_open_nomenclature(species: str | None) -> tuple[str | None, str | None
 
 
 _PANEL_PREFIX_RE = re.compile(
-    r"^\s*(?:Figs?|Pls?|Plate|Plates|表|図版)\.?\s*",
+    r"^\s*(?:Figs?|Plates|Plate|Pl|表|図版)\.?\s*",
     re.IGNORECASE,
 )
 
@@ -52,6 +55,7 @@ def dedup_panels(panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop exact duplicates by (paper_id, figure_id, panel_id, species).
 
     When duplicates exist, keep the one with highest confidence.
+    On ties (same key, same confidence), the first encountered row is kept.
     """
     best_by_key: dict[tuple, dict[str, Any]] = {}
     for p in panels:
