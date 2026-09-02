@@ -12,6 +12,10 @@ from __future__ import annotations
 import re
 from typing import Optional, Pattern
 
+# Shared binomial pattern + denylist (single source of truth, prevents
+# drift vs. text_extract).
+from binomial_utils import _BINOMIAL_RE, _BINOMIAL_DENY
+
 # Scoring weights
 ANCHOR_SCORE = 10
 DENSE_BINOMIAL_SCORE = 5
@@ -42,15 +46,6 @@ _PLATE_ANCHOR_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-# Binomial pattern: "Genus species" (Genus capitalized, species lowercase 3+ chars).
-_BINOMIAL_RE = re.compile(r"\b[A-Z][a-z]{3,}\s+[a-z]{3,}\b")
-# Deny-list: common English words that should NOT count as binomials.
-_BINOMIAL_DENY = {
-    'species', 'genera', 'genus', 'sample', 'samples', 'individual',
-    'individuals', 'figure', 'figures', 'table', 'caption', 'locality',
-    'localities', 'text', 'word', 'words', 'material', 'materials',
-    'section', 'plate', 'many', 'most', 'several', 'each',
-}
 # Plate terminator markers (typical end of a real caption).
 _TERMINATORS = ("Sample", "Loc.", "Marker =", "Scale", "Bar =")
 

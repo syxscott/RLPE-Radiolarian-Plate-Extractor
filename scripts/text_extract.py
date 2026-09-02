@@ -6,26 +6,15 @@ fallback / supplement to M3 plate-mode extraction.
 """
 from __future__ import annotations
 
-import re
+import bisect
 from pathlib import Path
 from typing import Any
 
 import pymupdf
 
-# Word-boundary binomial pattern: 'Genus species' (lowercase, 3+ chars each).
-# Same regex as caption_fixer so extractor + caption-fixer agree on
-# what's a "binomial".
-_BINOMIAL_RE = re.compile(r"\b([A-Z][a-z]{3,})\s+([a-z]{3,})\b")
-
-# Deny-list: common English phrases that look like binomials but aren't
-# taxa. Same list as caption_fixer._BINOMIAL_DENY (kept in sync — if you
-# update one, update the other).
-_BINOMIAL_DENY = frozenset({
-    'species', 'genera', 'genus', 'sample', 'samples', 'individual',
-    'individuals', 'figure', 'figures', 'table', 'caption', 'locality',
-    'localities', 'text', 'word', 'words', 'material', 'materials',
-    'section', 'plate', 'many', 'most', 'several', 'each',
-})
+# Shared binomial pattern + denylist (single source of truth, prevents
+# drift vs. caption_fixer).
+from binomial_utils import _BINOMIAL_RE, _BINOMIAL_DENY
 
 
 def _normalize_species(genus: str, species: str) -> str:
@@ -49,7 +38,7 @@ def extract_species_from_text(
         page_num         : int
         char_offset      : int   (offset in concatenated text)
         context_50char  : str   (±50 chars around the match)
-        extraction_method: 'regex_list'
+        extraction_method: 'text_regex'
     """
     pdf_path = Path(pdf_path)
     if paper_id is None:
@@ -73,17 +62,16 @@ def extract_species_from_text(
     seen: set[tuple[str, int]] = set()  # (normalized_species, page_num)
     out: list[dict[str, Any]] = []
     for m in _BINOMIAL_RE.finditer(full_text):
-        genus = m.group(1)
-        species_word = m.group(2)
+        # Split the matched span on whitespace to recover Genus + species
+        # word (the regex has no capture groups, so callers down-stream use
+        # m.group(0) and split here).
+        genus, species_word = m.group(0).split()
         if species_word.lower() in _BINOMIAL_DENY:
             continue
         norm = _normalize_species(genus, species_word)
-        # Compute page_num from absolute offset.
+        # Compute page_num from absolute offset (O(log n) via bisect).
         abs_start = m.start()
-        page_num = 1
-        for i, off in enumerate(page_offsets, start=1):
-            if abs_start >= off:
-                page_num = i
+        page_num = bisect.bisect_right(page_offsets, abs_start)
         key = (norm, page_num)
         if key in seen:
             continue
@@ -97,6 +85,6 @@ def extract_species_from_text(
             'page_num': page_num,
             'char_offset': abs_start,
             'context_50char': full_text[ctx_start:ctx_end],
-            'extraction_method': 'regex_list',
+            'extraction_method': 'text_regex',
         })
     return out
