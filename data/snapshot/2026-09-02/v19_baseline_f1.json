@@ -1,0 +1,20 @@
+{
+  "v19_original_f1": 0.84,
+  "v19_re_measured_f1": 0.0748502994011976,
+  "v19_re_measured_ci_low": 0.0,
+  "v19_re_measured_ci_high": 0.12987012987012989,
+  "n_preds": 56,
+  "n_gold": 612,
+  "papers": [
+    "bandini2011",
+    "baumgartner2008",
+    "beccaro2006",
+    "boughdiri2007",
+    "bragin2025",
+    "danelian2006",
+    "feng2007",
+    "hollis2006",
+    "pouille2014"
+  ],
+  "date": "2026-09-02"
+}

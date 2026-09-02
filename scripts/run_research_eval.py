@@ -26,6 +26,16 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'src'))
 sys.path.insert(0, str(REPO / 'scripts'))
 
+# Load .env early so the key is available even if a downstream import
+# (gold_eval_anchored) clears os.environ at import time.
+try:
+    from dotenv import load_dotenv, find_dotenv
+    _env_file = find_dotenv(usecwd=True) or str(REPO / '.env')
+    if Path(_env_file).exists():
+        load_dotenv(_env_file, override=False)
+except Exception:
+    pass
+
 import pymupdf
 from PIL import Image
 from rlpe.llm_backends import MiniMaxM3Backend
@@ -157,6 +167,20 @@ def main():
 
     split = load_split(args.split)
     print(f'Split: {len(split["train"])} train + {len(split["test"])} test')
+
+    # Re-load .env if a sibling import (gold_eval_anchored) cleared the key
+    # at its own import time.  Reading the file directly avoids re-running
+    # dotenv (which only loads on first call).
+    if not os.environ.get('ANTHROPIC_API_KEY'):
+        env_file = REPO / '.env'
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                line = line.strip()
+                if line.startswith('ANTHROPIC_API_KEY=') and '=' in line:
+                    val = line.split('=', 1)[1].strip().strip('"').strip("'")
+                    if val:
+                        os.environ['ANTHROPIC_API_KEY'] = val
+                    break
 
     backend = MiniMaxM3Backend(
         api_key=os.environ['ANTHROPIC_API_KEY'],
