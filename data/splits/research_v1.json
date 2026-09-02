@@ -1,0 +1,7 @@
+{
+  "version": "v1",
+  "created": "2026-09-02",
+  "train": ["bandini2011", "beccaro2006", "boughdiri2007", "bragin2025", "danelian2006", "hollis2006"],
+  "test":  ["baumgartner2008", "feng2007", "pouille2014"],
+  "notes": "Train 6 papers: 4 marine + 2 pelagic. Test 3 papers: includes baumgartner2008 (high-F1 1.0 baseline) + feng2007 (漏抽) + pouille2014 (over-gen). baumgartner2008 in test = generalization reality check."
+}
