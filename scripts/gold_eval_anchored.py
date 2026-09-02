@@ -227,3 +227,139 @@ print(f'\npreds saved to /tmp/gold_eval_v4_preds.jsonl')
 for k in ['ANTHROPIC_API_KEY']:
     os.environ.pop(k, None)
 print('[KEY CLEANED]')
+
+
+# === Added for research-grade eval (Task 5) ===
+#
+# These helpers do NOT depend on the import-time LLM backend above.
+# They are pure-Python, import-light, and safe to call from unit
+# tests. ``load_split`` reads a JSON split file. ``compute_aggregate_
+# with_ci`` groups predictions + gold by paper, computes micro F1
+# point estimate, then derives a 95% bootstrap CI by resampling
+# papers with replacement. ``run_5fold_cv`` performs 5-fold CV over
+# the paper list and reports per-fold + aggregate F1.
+import json
+import statistics
+import random
+from pathlib import Path
+from typing import Any, Tuple
+
+
+def load_split(path: str | Path) -> dict[str, list[str]]:
+    """Load train/test split from a JSON file."""
+    with open(path) as f:
+        return json.load(f)
+
+
+def _paper_f1(preds: list[dict], gold: list[dict]) -> float:
+    """Compute species F1 for a single paper."""
+    from rlpe.evaluation.metrics import _norm_species, _species_compatible
+    pred_sp = {(_norm_species(p.get('species')), p.get('figure_id'), p.get('panel_id'))
+              for p in preds if p.get('species')}
+    gold_sp = {(_norm_species(g.get('species')), g.get('figure_id'), g.get('panel_id'))
+              for g in gold if g.get('species')}
+    tp = sum(1 for k in pred_sp & gold_sp)
+    fp = len(pred_sp - gold_sp)
+    fn = len(gold_sp - pred_sp)
+    if tp == 0:
+        return 0.0
+    p = tp / (tp + fp)
+    r = tp / (tp + fn)
+    return 2 * p * r / (p + r)
+
+
+def compute_aggregate_with_ci(
+    preds: list[dict],
+    gold: list[dict],
+    n_bootstrap: int = 1000,
+    seed: int = 42,
+) -> Tuple[float, Tuple[float, float]]:
+    """Compute micro F1 with 95% bootstrap CI.
+
+    Returns (f1_micro, (ci_low, ci_high)).
+    """
+    # Group by paper
+    by_paper: dict[str, tuple[list, list]] = {}
+    for g in gold:
+        by_paper.setdefault(g.get('paper_id', ''), ([], []))[1].append(g)
+    for p in preds:
+        paper = p.get('paper_id', '')
+        if paper in by_paper:
+            by_paper[paper][0].append(p)
+    papers = list(by_paper.keys())
+
+    def f1_micro() -> float:
+        total_tp = total_fp = total_fn = 0
+        for p in papers:
+            pp, gp = by_paper[p]
+            from rlpe.evaluation.metrics import _norm_species, _species_compatible
+            pset = {(_norm_species(x.get('species')), x.get('figure_id'), x.get('panel_id'))
+                    for x in pp if x.get('species')}
+            gset = {(_norm_species(x.get('species')), x.get('figure_id'), x.get('panel_id'))
+                    for x in gp if x.get('species')}
+            tp = len(pset & gset)
+            fp = len(pset - gset)
+            fn = len(gset - pset)
+            total_tp += tp; total_fp += fp; total_fn += fn
+        if total_tp == 0:
+            return 0.0
+        p_val = total_tp / (total_tp + total_fp)
+        r_val = total_tp / (total_tp + total_fn)
+        if p_val + r_val == 0:
+            return 0.0
+        return 2 * p_val * r_val / (p_val + r_val)
+
+    rng = random.Random(seed)
+    point = f1_micro()
+    if not papers:
+        return 0.0, (0.0, 0.0)
+    bootstraps: list[float] = []
+    for _ in range(n_bootstrap):
+        sample = rng.choices(papers, k=len(papers))
+        bt = total_fp_b = total_fn_b = 0
+        for p in sample:
+            pp, gp = by_paper[p]
+            from rlpe.evaluation.metrics import _norm_species
+            pset = {(_norm_species(x.get('species')), x.get('figure_id'), x.get('panel_id'))
+                    for x in pp if x.get('species')}
+            gset = {(_norm_species(x.get('species')), x.get('figure_id'), x.get('panel_id'))
+                    for x in gp if x.get('species')}
+            tp = len(pset & gset); fp = len(pset - gset); fn = len(gset - pset)
+            bt += tp; total_fp_b += fp; total_fn_b += fn
+        if bt == 0:
+            bootstraps.append(0.0)
+            continue
+        p_v = bt / (bt + total_fp_b)
+        r_v = bt / (bt + total_fn_b)
+        bootstraps.append(2 * p_v * r_v / (p_v + r_v) if (p_v + r_v) > 0 else 0.0)
+    bootstraps.sort()
+    lo = bootstraps[int(0.025 * n_bootstrap)]
+    hi = bootstraps[int(0.975 * n_bootstrap)]
+    return point, (lo, hi)
+
+
+def run_5fold_cv(
+    preds_by_paper: dict[str, list[dict]],
+    gold_by_paper: dict[str, list[dict]],
+    all_papers: list[str],
+    n_folds: int = 5,
+) -> dict[str, Any]:
+    """Run 5-fold cross-validation. Returns per-fold and aggregate F1."""
+    rng = random.Random(42)
+    papers = sorted(all_papers)
+    rng.shuffle(papers)
+    fold_size = max(1, len(papers) // n_folds)
+    folds = [papers[i:i+fold_size] for i in range(0, len(papers), fold_size)]
+    fold_metrics = []
+    for i, fold in enumerate(folds):
+        train_papers = [p for p in papers if p not in fold]
+        preds = [x for p in train_papers for x in preds_by_paper.get(p, [])]
+        gold = [x for p in train_papers for x in gold_by_paper.get(p, [])]
+        f1, ci = compute_aggregate_with_ci(preds, gold, n_bootstrap=100)
+        fold_metrics.append({'fold': i, 'papers': fold, 'f1': f1, 'ci': ci})
+    f1s = [m['f1'] for m in fold_metrics]
+    return {
+        'folds': fold_metrics,
+        'mean_f1': statistics.mean(f1s) if f1s else 0.0,
+        'std_f1': statistics.stdev(f1s) if len(f1s) > 1 else 0.0,
+    }
