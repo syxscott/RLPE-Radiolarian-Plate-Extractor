@@ -4,7 +4,7 @@ sys.path.insert(0, 'scripts')
 import re
 import pymupdf
 from pathlib import Path
-from caption_fixer import select_caption, score_paragraph, _ANCHOR_N_RE_TEMPLATE
+from caption_fixer import select_caption, score_paragraph, _ANCHOR_N_RE_TEMPLATE, count_plate_anchors, has_plate_captions
 
 def test_anchor_plate_5_paragraph_selected():
     """Paragraph starting with 'Plate 5' is selected over shorter non-anchored."""
@@ -95,3 +95,42 @@ def test_binomial_deny_list_filters_english():
     # are scored, English phrases are not.
     assert cap is not None
     assert 'Plate 5' in cap
+
+
+def test_anchor_matches_mid_text_fig_ref():
+    """After Fix A, 'as shown in Fig. 5' mid-sentence should anchor a block."""
+    text = """Plate 1
+Real caption here.
+as shown in Fig. 5 above, another related discussion continues
+for several more pages in this section.
+Plate 2
+Different caption."""
+    # Both plates should now be recognized as anchor lines.
+    assert count_plate_anchors(text) >= 2
+
+
+def test_count_plate_anchors_distinct_anchors():
+    """count_plate_anchors returns the number of distinct Plate/Fig anchors."""
+    text = """Plate 1
+caption A
+Plate 1 again
+Plate 2
+caption B
+Fig. 3
+caption C
+Plate 1 yet again
+"""
+    # 3 distinct anchors: "Plate 1", "Plate 2", "Fig. 3"
+    # (Plate 1 appears 3 times but counts once)
+    assert count_plate_anchors(text) == 3
+
+
+def test_has_plate_captions_true():
+    assert has_plate_captions("Plate 1\nSome text.\nPlate 2\nMore text.", min_count=2) is True
+    assert has_plate_captions("Plate 1\nSome text.", min_count=1) is True
+
+
+def test_has_plate_captions_false():
+    """No plate anchors → False."""
+    assert has_plate_captions("This is just body text without any plate references.", min_count=1) is False
+    assert has_plate_captions("Plate 1\nSome text.", min_count=2) is False

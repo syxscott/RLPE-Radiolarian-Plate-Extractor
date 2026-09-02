@@ -23,14 +23,23 @@ MAX_PARA_LEN = 20000
 # Anchor pattern for BLOCK SPLITTING: only Plate-level markers start a
 # new block. "Fig. N" inside a caption is just a figure reference, not a
 # new caption. Allow optional leading zero: "Plate 05" matches target_plate=5.
+# Use re.MULTILINE so ^ matches start of any line (mid-text references
+# like "as shown in Fig. 5 above" can also serve as anchors).
 _ANCHOR_LINE_RE = re.compile(
     r"^\s*(?:Plate|Pl|表|図版)\.?\s*0?\d+\b",
-    re.IGNORECASE,
+    re.IGNORECASE | re.MULTILINE,
 )
 # Anchor pattern: any line containing Plate N / Fig N (for the gold lookup).
 _ANCHOR_N_RE_TEMPLATE = (
     r"^\s*(?:Plate|Pl|Fig|表|図版)\.?\s*"
     r"0?{n}\b"
+)
+# Wider anchor pattern used by pre-screen helpers below; matches Plate /
+# Fig / Pl. / Japanese 表・図版 at the start of any line. Mirrors the
+# flag set on _ANCHOR_LINE_RE above (IGNORECASE | MULTILINE).
+_PLATE_ANCHOR_RE = re.compile(
+    r"^\s*(?:Figs?|Plate|Plates|Pl|表|図版)\.?\s*0?\d+\b",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 # Binomial pattern: "Genus species" (Genus capitalized, species lowercase 3+ chars).
@@ -134,3 +143,18 @@ def select_caption(
                 best = block
                 best_score = score
     return best
+
+
+def count_plate_anchors(text: str) -> int:
+    """Return the number of distinct Plate/Fig anchors in `text`.
+
+    Useful for pre-screening PDFs to skip those with no plate-style
+    captions (e.g. editorials, short research notes, range charts that
+    don't use Plate N naming).
+    """
+    return len(set(m.group(0).strip() for m in _PLATE_ANCHOR_RE.finditer(text)))
+
+
+def has_plate_captions(text: str, min_count: int = 1) -> bool:
+    """Return True if `text` contains at least `min_count` plate-style anchors."""
+    return count_plate_anchors(text) >= min_count
