@@ -314,3 +314,50 @@ class TestStatusField:
         d = result.to_dict()
         assert d["status"] == "ok"
         assert d["error_message"] is None
+
+
+# =====================================================================
+# Audit 2026-09-03 (BLOCKER-#8): 1-char Levenshtein tolerance removed
+# =====================================================================
+# The historical ``diffs <= 1`` tolerance silently mis-paired sibling
+# species that differ by exactly one letter. Cryptocapsa tecta (Haeckel)
+# and Cryptocapsa texta (Hinde) are separated by a single letter but
+# are distinct species in De Wever 2001. The 1-char tolerance linked
+# them, contaminating the panel → sample → PBDB attribution.
+
+class TestSpeciesMatchToleranceTightened:
+    """BLOCKER-#8 regression suite."""
+
+    def test_cryptocapsa_tecta_texta_no_match(self):
+        from rlpe.range_chart_extractor import _species_match
+        # Same genus, 1-letter-different epithets — must NOT match.
+        assert _species_match("Cryptocapsa tecta", "Cryptocapsa texta") is False
+
+    def test_parvicingula_jamesi_jonesi_no_match(self):
+        from rlpe.range_chart_extractor import _species_match
+        # Different epithets that differ by 1 letter at the start.
+        assert _species_match("Parvicingula jamesi", "Parvicingula jonesi") is False
+
+    def test_exact_match_still_works(self):
+        from rlpe.range_chart_extractor import _species_match
+        assert _species_match("Archaeodictyomitra vulgaris", "Archaeodictyomitra vulgaris") is True
+
+    def test_different_genus_no_match(self):
+        from rlpe.range_chart_extractor import _species_match
+        assert _species_match("Archaeodictyomitra vulgaris", "Pseudodictyomitra vulgaris") is False
+
+    def test_bare_genus_match_still_works(self):
+        """The bare-genus disambiguation case is preserved — the
+        audit fix removed the 1-char tolerance but did NOT remove
+        the legitimate bare-genus match (the 2nd-word requirement
+        was always preserved)."""
+        from rlpe.range_chart_extractor import _species_match
+        assert _species_match("Archaeodictyomitra", "Archaeodictyomitra vulgaris") is True
+        assert _species_match("Archaeodictyomitra vulgaris", "Archaeodictyomitra") is True
+
+    def test_two_letter_difference_still_no_match(self):
+        """The previous code accepted ``diffs <= 1``; the new code
+        requires exact epithet equality. A 2+ char difference was
+        already correctly rejected; verify the regression."""
+        from rlpe.range_chart_extractor import _species_match
+        assert _species_match("Cryptocapsa tecta", "Cryptocapsa magna") is False

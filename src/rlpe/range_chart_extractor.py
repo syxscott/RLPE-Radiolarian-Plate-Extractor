@@ -1045,11 +1045,25 @@ def _species_match(rc_species: str, panel_species: str) -> bool:
         e1, e2 = a_parts[1], b_parts[1]
         if e1 == e2:
             return True
-        # 1-char Levenshtein-ish tolerance for short epithets.
-        if len(e1) >= 5 and len(e2) >= 5:
-            diffs = sum(1 for x, y in zip(e1, e2) if x != y)
-            if diffs <= 1 and abs(len(e1) - len(e2)) <= 1:
-                return True
+        # Audit 2026-09-03 (BLOCKER-#8): the previous 1-char tolerance
+        # (``diffs <= 1``) silently mis-paired sibling species that
+        # differ by exactly one letter, e.g. ``Cryptocapsa tecta``
+        # vs. ``Cryptocapsa texta`` (De Wever 2001 separates these
+        # as distinct species) and ``Parvicingula jamesi`` vs.
+        # ``Parvicingula jonesi`` (Bandini 2011). When range-chart
+        # noise created a "link" between the chart species and the
+        # wrong sibling on the panel, the wrong occurrence was
+        # attributed to the chart species' sample — corrupting
+        # downstream PBDB / GBIF submissions.
+        # The same-genus disambiguation in
+        # ``build_geology_links_for_panels`` already handles the
+        # case where the panel is a bare genus with >=2 chart
+        # siblings, so removing this tolerance does NOT regress
+        # the bare-genus case. Tightened to exact epithet match.
+        # (If OCR noise dominates, the upstream
+        # ``_normalize_ocr_chars`` in ocr_corrections handles
+        # the l/1 / I/l / long-vowel class of confusions before
+        # the string ever reaches here.)
     return False
 
 

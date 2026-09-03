@@ -71,6 +71,7 @@ remains untouched so the research-grade F1 number stays honest.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # ---------------------------------------------------------------------------
 # Global substring corrections
@@ -238,10 +239,90 @@ def _build_correction_regex() -> re.Pattern[str]:
 _CORRECTION_RE = _build_correction_regex()
 
 
+# ---------------------------------------------------------------------------
+# Character-level OCR normaliser (BLOCKER-#6 fix)
+# ---------------------------------------------------------------------------
+# The :data:`CORRECTIONS` table is locked to 2 substring entries by
+# audit 2026-08-01 C5 (see ``tests/test_audit_2026_08_01_ocr_corrections_lock.py``)
+# and that lock is preserved. Character-pair confusions (l↔1, I↔l,
+# long-vowel marks ā→a, etc.) are a SEPARATE concern handled here, as
+# a pre-pass to the C5 substring layer. Putting these into
+# :data:`CORRECTIONS` would (a) bloat the table from 2 to ~12 entries
+# and (b) trigger false positives on tokens like "iuncus" where the
+# leading i is a legitimate Latin letter. Context guards below
+# (look-behind / look-ahead to letter boundaries) are what make the
+# rule safe.
+#
+# Deliberately NOT in scope (kept for a future paper-whitelist pass):
+#   * ``rn ↔ m``  — too aggressive in Latin (e.g. ``internus``,
+#     ``cornutus`` would be mistreated).
+#   * ``0 ↔ O``   — covered by the post-OCR taxon normaliser
+#     ``pipeline._norm_species`` which already deals with case
+#     folding.
+#   * Greek letters ``α β γ`` — the LLM caption parser already
+#     handles those via ``greek_or_capital_pattern``; mixing them
+#     here would double-correct.
+
+_DIGIT_ONE_RE = re.compile(r"(?<=[A-Za-z])1")
+_CAPITAL_I_RE = re.compile(r"(?<=[a-z])I(?=[a-z])")
+_LONG_VOWEL_MAP = str.maketrans({
+    "ā": "a", "Ā": "A",
+    "ē": "e", "Ē": "E",
+    "ī": "i", "Ī": "I",
+    "ō": "o", "Ō": "O",
+    "ū": "u", "Ū": "U",
+    "ȳ": "y", "Ȳ": "Y",
+})
+
+
+def _normalize_ocr_chars(s: str) -> str:
+    """Apply character-level OCR noise corrections that DO NOT touch
+    taxonomy semantics. Only triggers when the context supports the
+    substitution (e.g. ``1`` between two letters becomes ``l``, but
+    ``iuncus`` is left alone because the leading ``i`` is at a word
+    edge, not a word-medial position).
+
+    The two regex rules below are deliberately conservative — the
+    look-around constraints rule out the most common false-positive
+    paths (numeric identifiers like "Fig 1", year tokens like "1991",
+    and all-caps acronyms like "ITIS").
+
+    Parameters
+    ----------
+    s:
+        The input species string (already .strip()'d).
+
+    Returns
+    -------
+    The normalised string. The original is returned unchanged when
+    no rule fires.
+    """
+    # 1. Unicode NFC normalisation — collapses "a" + combining-macron
+    #    back into "ā" (the precomposed form), so the long-vowel
+    #    table below maps the right codepoint.
+    s = unicodedata.normalize("NFC", s)
+    # 2. Long-vowel marks → base vowel. ICZN accepts the
+    #    unmacronised form as a subsequent spelling, so this is a
+    #    safe correction that brings together "Archaeodictyomitrā"
+    #    (with macron) and "Archaeodictyomitra" (without).
+    s = s.translate(_LONG_VOWEL_MAP)
+    # 3. ``1`` between two letters → ``l``. Anchored so "1" at a
+    #    word edge (e.g. "Fig 1", "sp. 1") is left alone.
+    s = _DIGIT_ONE_RE.sub("l", s)
+    # 4. Capital ``I`` between two lowercase letters → ``l``. This
+    #    is the classic OCR confusion "lI" vs "ll"; the look-around
+    #    rules out all-caps acronyms ("ITA", "IBT") which should
+    #    keep the I.
+    s = _CAPITAL_I_RE.sub("l", s)
+    return s
+
+
 def apply_corrections(species_str: str | None, paper_id: str | None = None) -> str:
     """Apply the OCR-correction layer to a single species string.
 
     Order of operations:
+      0. Character-level normaliser (BLOCKER-#6): Unicode NFC +
+         long-vowel strip + l↔1 / I↔l in word-medial positions.
       1. If ``paper_id`` is in :data:`PAPER_WHITELIST`, apply each
          (pred -> gold) substitution in declaration order. The first
          matching ``pred_substring in species_str`` wins; later
@@ -271,6 +352,12 @@ def apply_corrections(species_str: str | None, paper_id: str | None = None) -> s
     if not species_str:
         return ""
     s = species_str.strip()
+    # Pass 0 (BLOCKER-#6): character-level normalisation. The C5 lock
+    # on :data:`CORRECTIONS` is preserved — character-level confusions
+    # live in a separate, look-around-guarded layer that runs BEFORE
+    # the C5 substring rules so that "Sponguru1" reaches
+    # "Spongurul" before any paper-specific rule can see it.
+    s = _normalize_ocr_chars(s)
     # Paper-specific whitelist first — paper conventions beat global rules.
     # audit 2026-07-31: entries are (regex_pattern, replacement); the
     # old plain-substring semantics re-fired on already-correct strings

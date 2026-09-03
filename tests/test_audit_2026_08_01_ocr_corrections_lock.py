@@ -20,9 +20,19 @@ _LOCKED_KEYS = ("Archaeodictyomitracf ", "Transhsuumcf ")
 class TestOCRCorrectionsContract:
     """C5: CORRECTIONS is intentionally minimal — lock the contract.
 
-    Character-pair OCR confusions (l<->1, O<->0, rn<->m, ...) are handled
-    downstream in ``pipeline._norm_species``, NOT here. These tests fail
-    loudly if a future contributor grows or shrinks the dict silently.
+    The :data:`CORRECTIONS` substring table is locked to 2 entries.
+    Character-level OCR confusions (l↔1, I↔l, long-vowel marks) are
+    handled by a SEPARATE pre-pass function
+    ``_normalize_ocr_chars`` (added 2026-09-03 audit BLOCKER-#6) with
+    look-around guards. The character confusions that were
+    historically NOT in this layer (``0↔O`` and ``rn↔m``) remain
+    downstream in ``pipeline._norm_species``; adding them to
+    :data:`CORRECTIONS` would bloat the table from 2 to ~12 entries
+    and trigger false positives on tokens like "iuncus" or
+    "P0lacsekia".
+
+    These tests fail loudly if a future contributor grows or shrinks
+    the dict silently.
     """
 
     def test_two_existing_rules(self):
