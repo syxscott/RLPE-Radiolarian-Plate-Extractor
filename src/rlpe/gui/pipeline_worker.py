@@ -58,9 +58,18 @@ class PipelineWorker(QThread):
     # log_line(line)
     log_line = Signal(str)
     # result_row(row_dict)
-    result_row = Signal("PyVariant")
-    # finished_ok(results_list)
-    finished_ok = Signal("PyVariant")
+    # ``result_row`` (one panel row) and ``finished_ok`` (whole
+    # result list) carry Pydantic-v2 model_dump() output which
+    # contains datetimes, Decimal, and other types that PySide6's
+    # QVariant marshalling can refuse to marshal across QThread
+    # boundaries. ``Signal(object)`` is the documented PySide6
+    # fallback for "any Python object"; the original choice
+    # ``Signal("PyVariant")`` triggers ``TypeError: Unknown
+    # argument type #1 used in call of meta function (that may
+    # be a signal): PyVariant`` when the wrapped object is a
+    # complex pydantic dict (audit 2026-09-03 zhang2014 GUI run).
+    result_row = Signal(object)
+    finished_ok = Signal(object)
     # failed(error_message)
     failed = Signal(str)
 
