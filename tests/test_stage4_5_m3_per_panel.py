@@ -67,6 +67,7 @@ class _StubPipeline:
     """Minimal stand-in: bind the unbound method and provide config."""
 
     def __init__(self, cfg: PipelineConfig):
+        import threading
         from types import SimpleNamespace
 
         from rlpe.pipeline import RadiolarianPipeline
@@ -76,6 +77,12 @@ class _StubPipeline:
         # second guard (m3_engine.backend) does NOT short-circuit and the
         # actual Task 3 loop body gets exercised by skip-rows tests.
         self.m3_engine = SimpleNamespace(backend=SimpleNamespace(backend_name="stub"))
+        # Audit 2026-09-03 (CI regression): Phase 42 cooperative
+        # cancellation polling means the pipeline reads
+        # ``self._cancel_event.is_set()``. Provide a real
+        # ``threading.Event`` so the stub has the attribute without
+        # restructuring every test that constructs _StubPipeline.
+        self._cancel_event = threading.Event()
         self._apply_m3_per_panel_species_id = (
             RadiolarianPipeline._apply_m3_per_panel_species_id.__get__(self, RadiolarianPipeline)
         )

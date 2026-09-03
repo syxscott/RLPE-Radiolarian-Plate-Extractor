@@ -191,21 +191,27 @@ def test_job_options_thinking_defaults_off():
     )
 
 
-def test_dataclass_data_outbound_policy_is_api_full():
-    """Phase 61 Plan 4 (Bug 4.11): the default for
-    ``data_outbound_policy`` flipped from ``api_redacted`` to
-    ``api_full`` so M3 vision gets full-resolution morphology details.
-    Operators working with sensitive preprints can still opt back in
-    via ``--data-outbound-policy api_redacted``.
+def test_dataclass_data_outbound_policy_is_api_redacted():
+    """Audit 2026-09-03 (BLOCKER-#2 fix): the default for
+    ``data_outbound_policy`` flipped from ``api_full`` to
+    ``api_redacted`` so a fresh pipeline run does NOT silently
+    ship full-resolution images + verbatim captions to MiniMax.
+    Operators who need the historical full-resolution behaviour
+    must opt in explicitly via the new CLI flag
+    ``--i-understand-data-leaves-my-machine`` (which sets
+    ``RLPE_DATA_OUTBOUND_OPT_IN=1``).
     """
     import inspect
 
     from rlpe.llm_backends import MiniMaxM3Backend
 
     field = MiniMaxM3Backend.__dataclass_fields__["data_outbound_policy"]
-    assert field.default == "api_full", (
+    assert field.default == "api_redacted", (
         f"MiniMaxM3Backend.data_outbound_policy defaults to {field.default!r}; "
-        f"Phase 61 Plan 4 requires 'api_full' so M3 vision sees full-res images."
+        f"Audit 2026-09-03 (BLOCKER-#2 fix) requires 'api_redacted' as "
+        f"the safe default. Operators opt in to 'api_full' via "
+        f"--i-understand-data-leaves-my-machine (which sets "
+        f"RLPE_DATA_OUTBOUND_OPT_IN=1)."
     )
 
 
