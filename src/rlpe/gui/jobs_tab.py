@@ -963,6 +963,17 @@ class JobsTab(QWidget):
                 finished_at=time.time(),
                 rows=list(rows),
             )
+            # Audit 2026-09-03 22:16 zhang2014: log so the operator
+            # can see in the GUI log that the placeholder was created
+            # and the job is now in the table.
+            try:
+                import logging as _lg
+                _lg.getLogger("rlpe.gui.jobs_tab").info(
+                    "mark_done: created placeholder for unknown id %s (rows=%d)",
+                    job_id, len(rows),
+                )
+            except Exception:
+                pass
         job = self._jobs[job_id]
         job.status = STATUS_DONE
         job.rows = rows
