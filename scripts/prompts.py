@@ -79,6 +79,19 @@ GENERIC_PROMPT = _build_prompt(
             "to identify the item; panel_id = same.",
 )
 
+TEXT_MODE_PROMPT = _build_prompt(
+    goal="Given a radiolarian paper's full text (no plate figures available), "
+         "extract every radiolarian species mentioned in the text along with its location.",
+    special="Output one row per species, with 'location' describing the page or section. "
+            "label = the species name; panel_id = the page or section identifier. "
+            "If the paper is not about Radiolaria, set species=null.",
+)
+
+
+def select_text_mode_prompt(caption: str) -> str:
+    """Always returns TEXT_MODE_PROMPT (caller has already decided to use text mode)."""
+    return TEXT_MODE_PROMPT
+
 
 _PREDICATE_PATTERNS = (
     (RANGE_CHART_PROMPT, _RANGE_CHART_MARKERS),
