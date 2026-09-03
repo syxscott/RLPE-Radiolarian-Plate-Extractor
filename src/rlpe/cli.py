@@ -641,18 +641,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=42,
         help="Seed value for --deterministic (default 42).",
     )
+    # Audit 2026-09-03 (BLOCKER-#2): default flipped to ``api_redacted``.
+    # Use ``--data-outbound-policy=api_full --i-understand-data-leaves-my-machine``
+    # to opt in to sending full PDF / panel / caption to MiniMax.
     p.add_argument(
         "--data-outbound-policy",
         type=str,
-        default="api_full",
+        default="api_redacted",
         choices=["api_full", "api_redacted", "local_only"],
         help="What data is sent to the LLM backend. Defaults to "
-        "api_full (full caption + plate image at native DPI) because "
-        "M3 vision needs the high-resolution morphology details to "
-        "identify species accurately. Override with api_redacted to "
-        "strip captions to 200 chars and downscale images to 256x256 "
-        "(useful for sensitive preprints), or local_only to skip "
-        "remote LLM calls entirely.",
+        "api_redacted (caption truncated to 200 chars, panel image "
+        "downscaled to 256x256) which gives ~92% species recall per "
+        "Round 6 OA validation. Use api_full for the high-resolution "
+        "morphology pass — REQUIRES --i-understand-data-leaves-my-machine "
+        "to confirm the user understands the full verbatim PDF payload "
+        "leaves the machine. Use local_only to skip all remote LLM "
+        "calls.",
+    )
+    p.add_argument(
+        "--i-understand-data-leaves-my-machine",
+        dest="data_outbound_opt_in",
+        action="store_true",
+        help="Required opt-in flag when --data-outbound-policy=api_full. "
+        "Acknowledges that full panel images, full captions, OCR text, "
+        "and GROBID paragraphs will be sent to the MiniMax cloud. Sets "
+        "RLPE_DATA_OUTBOUND_OPT_IN=1 for the duration of the run.",
     )
     p.add_argument("--use-geology-llm", action="store_true")
     p.add_argument(
@@ -1046,6 +1059,18 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     three-state exit wrapper around it is small and obvious. Anything
     raised here is re-raised; ``main`` decides how to exit.
     """
+    # Audit 2026-09-03 (BLOCKER-#2): if the user passed the explicit
+    # ``--i-understand-data-leaves-my-machine`` flag, translate it into
+    # the env var that ``MiniMaxM3Backend.__post_init__`` checks BEFORE
+    # constructing the PipelineConfig (which instantiates MiniMaxM3Backend).
+    # Without this, the opt-in flag would be silently ignored.
+    if getattr(args, "data_outbound_opt_in", False):
+        os.environ["RLPE_DATA_OUTBOUND_OPT_IN"] = "1"
+        _flush_print(
+            "[opt-in] data_outbound_policy=api_full has been confirmed "
+            "(full payload will be sent to the MiniMax API)."
+        )
+
     # Clamp --num-workers to a sane range. ThreadPoolExecutor requires
     # ``max_workers >= 1``; values above MAX_NUM_WORKERS saturate the
     # OCR / SAM2 / GROBID stack long before they help throughput. A user

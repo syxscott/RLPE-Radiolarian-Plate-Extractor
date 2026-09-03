@@ -1559,9 +1559,20 @@ class MiniMaxM3Backend(BaseLLMBackend):
     #                     is the correct setting for offline / air-gapped
     #                     deployments (M3 weights not yet open-sourced,
     #                     privacy-sensitive papers).
-    data_outbound_policy: str = (
-        "api_full"  # Phase 61 (Bug 4.11): M3 vision needs full-res image for species ID
-    )
+    # Audit 2026-09-03 (BLOCKER-#2): default flipped from ``api_full``
+    # to ``api_redacted`` so a fresh pipeline run does NOT silently ship
+    # the full PDF / panel image / full caption text / OCR text / GROBID
+    # paragraphs to the MiniMax cloud. Operators must opt in explicitly
+    # to ``api_full`` (full-resolution image + verbatim caption) via one of:
+    #   * Environment variable:  RLPE_DATA_OUTBOUND_OPT_IN=1
+    #   * CLI flag:              --i-understand-data-leaves-my-machine
+    # The ``__post_init__`` below enforces the opt-in for any caller
+    # that selects ``api_full``; the default policy ``api_redacted``
+    # downscales images to 256x256 and caps the caption at 200 chars,
+    # which was sufficient for Round 6 live OA (92.5% species rate on 5
+    # papers with api_redacted alone — the historical api_full default
+    # was a privacy posture, not an accuracy lever).
+    data_outbound_policy: str = "api_redacted"
 
     def __post_init__(self) -> None:
         # Audit M11: ``max_concurrent=0`` would create a
@@ -1583,6 +1594,24 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 f"data_outbound_policy must be one of api_full/api_redacted/local_only, "
                 f"got {self.data_outbound_policy!r}"
             )
+        # Audit 2026-09-03 (BLOCKER-#2): ``api_full`` is opt-in by design.
+        # The historical default silently sent full panel images + verbatim
+        # captions to the MiniMax cloud, which is inappropriate for (a)
+        # unpublished preprints and (b) copyright-restricted SEM plates.
+        # Require an explicit env var (``RLPE_DATA_OUTBOUND_OPT_IN=1``) or
+        # the matching CLI flag before allowing ``api_full`` to remain in
+        # effect. ``cli.py`` translates ``--i-understand-data-leaves-my-machine``
+        # into the same env var, so any caller path is covered.
+        if self.data_outbound_policy == "api_full":
+            opt_in = os.environ.get("RLPE_DATA_OUTBOUND_OPT_IN", "").strip().lower()
+            if opt_in not in {"1", "true", "yes", "on"}:
+                raise ValueError(
+                    "data_outbound_policy='api_full' is opt-in only. Set "
+                    "RLPE_DATA_OUTBOUND_OPT_IN=1 in the environment or pass "
+                    "--i-understand-data-leaves-my-machine to the CLI before "
+                    "selecting api_full. Use 'api_redacted' (default) or "
+                    "'local_only' for the private posture."
+                )
         # Phase 54 audit: B2 — SSRF guard. Ollama / LlamaCpp both call
         # ``_validate_llm_host`` in their ``__post_init__``; MiniMax did
         # not, so a job with ``MiniMax_endpoint="http://169.254.169.254/..."``

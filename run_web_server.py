@@ -4,11 +4,14 @@ Web Server Launcher for RLPE
 启动 RLPE Web 界面的服务器
 
 环境变量:
-  RLPE_HOST  - 监听地址 (默认 0.0.0.0)
+  RLPE_HOST  - 监听地址 (默认 127.0.0.1；audit 2026-07-31 改)
   RLPE_PORT  - 监听端口 (默认 8000)
   RLPE_WORKERS - uvicorn worker 数量 (默认 1)
   RLPE_LOG_LEVEL - log level (默认 info)
-  RLPE_API_KEY - 设置后敏感 endpoint 需要 X-API-Key header 验证 (audit 2026-08-19 phase 5b)
+  RLPE_API_KEY - 设置后敏感 endpoint 需要 X-API-Key header 验证
+                 (audit 2026-08-19 phase 5b)。
+                 Audit 2026-09-03 (BLOCKER-#3): 当 RLPE_HOST 非 loopback
+                 (即对外暴露) 时未设置 RLPE_API_KEY 会被拒绝启动。
   RLPE_MAX_UPLOAD_MB - 单个 PDF 上传大小上限 MB (默认 100, audit 2026-08-19 phase 5b)
 """
 
@@ -123,10 +126,45 @@ def main() -> int:
     — both just exit with whatever uvicorn chose.
     """
     # audit 2026-07-31: default to loopback. The server runs the user's
-    # paid MiniMax key with NO authentication; binding 0.0.0.0 exposed
-    # it to the LAN (any local webpage could also drive it via a CORS
-    # simple request). Set RLPE_HOST=0.0.0.0 explicitly for remote use.
+    # paid MiniMax key; binding 0.0.0.0 exposed it to the LAN (any local
+    # webpage could drive it via a CORS simple request). Set
+    # ``RLPE_HOST=0.0.0.0`` explicitly for remote use.
+    # Audit 2026-09-03 (BLOCKER-#3): when ``RLPE_HOST`` is non-loopback
+    # AND ``RLPE_API_KEY`` is unset, refuse to start. The historical
+    # posture let any LAN user POST to ``/jobs/upload`` and trigger the
+    # paid MiniMax API — fail-secure is mandatory here.
     host = os.environ.get("RLPE_HOST", "127.0.0.1")
+    api_key = os.environ.get("RLPE_API_KEY", "")
+    is_loopback = host.strip().lower() in ("127.0.0.1", "::1", "localhost", "[::1]")
+    if not is_loopback and not api_key:
+        print(
+            "[fatal] RLPE_HOST=" + host + " is non-loopback but RLPE_API_KEY is not set.\n"
+            "        Refusing to start (audit 2026-09-03 BLOCKER-#3: fail-secure\n"
+            "        posture — a LAN-reachable bind without an API key would let\n"
+            "        any peer trigger paid MiniMax calls).\n"
+            "        Either:\n"
+            "          export RLPE_API_KEY=\"$(openssl rand -hex 32)\"   # remote access\n"
+            "        Or:\n"
+            "          unset RLPE_HOST     # fall back to the loopback default",
+            file=sys.stderr,
+        )
+        return 1
+    # Audit 2026-09-03 (BLOCKER-#3) second half: when loopback + no key,
+    # print an ephemeral random 32-byte-hex key to stderr ONCE so the
+    # SPA onboarding banner can paste it into its auth field. The key is
+    # NOT auto-loaded by the server (require_api_key stays a no-op), so
+    # existing local-dev workflows keep working; the printed key is just
+    # available for operators who want to enable auth without restarting.
+    if is_loopback and not api_key:
+        import secrets as _secrets
+        ephemeral_key = _secrets.token_hex(32)
+        print(
+            "\n[ephemeral-key] No RLPE_API_KEY set; auth is disabled on loopback.\n"
+            "                 To enable API auth on this server without restarting,\n"
+            "                 set the env var to the following 64-char hex:\n"
+            "                 RLPE_API_KEY=" + ephemeral_key + "\n",
+            file=sys.stderr,
+        )
     try:
         port = int(os.environ.get("RLPE_PORT", "8000"))
         workers = int(os.environ.get("RLPE_WORKERS", "1"))

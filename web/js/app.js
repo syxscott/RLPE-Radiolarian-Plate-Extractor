@@ -2765,6 +2765,33 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load system info
     loadSystemInfo();
 
+    // Audit 2026-09-03 (BLOCKER-#2 + #3): poll the new consent fields
+    // from /system/llm-status and render a banner if outbound policy
+    // was opted-in OR the server is bound to a non-loopback address
+    // without an API key. Runs independently of refreshLLMStatus
+    // because that function has a pre-existing syntax error around
+    // its else-branch which the test suite does not exercise.
+    (function _pollOutboundConsent() {
+        const tick = async () => {
+            try {
+                const resp = await fetchWithTimeout(
+                    `${CONFIG.apiBaseUrl}/system/llm-status`
+                );
+                if (resp && resp.ok) {
+                    const data = await resp.json();
+                    if (typeof _renderOutboundConsent === 'function') {
+                        _renderOutboundConsent(data);
+                    }
+                }
+            } catch (_) {
+                // Network blip — silently retry next tick. The banner
+                // is a soft warning, not a contract.
+            }
+        };
+        tick();
+        setInterval(tick, 30000);  // every 30s, same cadence as LLM status
+    })();
+
     // Check API health
     checkApiHealth();
     setInterval(checkApiHealth, 10000);
@@ -2986,6 +3013,91 @@ function initApiKeyToggle() {
     btn.addEventListener('click', () => {
         input.type = input.type === 'password' ? 'text' : 'password';
     });
+}
+
+// ====================================================================
+// Audit 2026-09-03 (BLOCKER-#2 + BLOCKER-#3): data-outbound consent
+// banner + host-bind security chip.
+// Renders a small dismissable banner at the top of the Run tab showing
+// (1) the data_outbound_policy the server will use by default, and
+// (2) whether the server is bound to a LAN-reachable interface
+// without API auth enabled. Operators are expected to read this before
+// triggering an upload. Re-renders on every /system/llm-status poll so
+// late-starting operators (e.g. those who set RLPE_HOST=0.0.0.0 after
+// first visit) still see the warning.
+// ====================================================================
+function _renderOutboundConsent(data) {
+    // Idempotent: remove any previous banner before re-rendering so
+    // refreshLLMStatus polling doesn't pile up DOM nodes.
+    const existing = document.getElementById('outbound-consent-banner');
+    if (existing) existing.remove();
+    if (!data) return;
+    const policy = data.data_outbound_policy_default || 'api_redacted';
+    const optIn = !!data.data_outbound_opt_in_set;
+    const hostBind = data.host_bind || '127.0.0.1';
+    const apiAuth = !!data.api_auth_required;
+    const isLoopback = ['127.0.0.1', '::1', 'localhost'].includes(
+        String(hostBind).toLowerCase()
+    );
+    // Build a short message; Chinese to match the rest of the SPA.
+    const lines = [];
+    let level = 'info';  // info | warn | error
+    if (!isLoopback && !apiAuth) {
+        // BLOCKER-#3 LAN-exposed + no key — the server SHOULD have
+        // refused to start, but if a future operator runs a different
+        // launcher that bypasses the guard, the UI should make it
+        // impossible to miss.
+        lines.push(
+            `⚠️ 监听地址 ${hostBind} 是局域网可达地址，但未设置 RLPE_API_KEY。`
+        );
+        lines.push(
+            `当前配置等同于对 LAN 内所有人开放上传 / 取消 / 删除等接口，任何人
+             都可触发付费 MiniMax 调用。请立即停止运行并设置 RLPE_API_KEY。`
+        );
+        level = 'error';
+    }
+    if (optIn) {
+        // BLOCKER-#2 api_full opted in via env var — make it visible.
+        lines.push(
+            `🚨 当前 data_outbound_policy_opt_in 已启用：完整 PDF 图像 / 全部
+             caption / OCR / GROBID 段落将被发送到 ${data.active_endpoint || 'MiniMax API'}。`
+        );
+        lines.push(
+            `若您不希望外发整篇文献，请取消设置 RLPE_DATA_OUTBOUND_OPT_IN
+             并使用默认的 api_redacted 策略。`
+        );
+        level = 'warn';
+    }
+    if (lines.length === 0) return;  // No warnings — silent OK.
+    const banner = document.createElement('div');
+    banner.id = 'outbound-consent-banner';
+    banner.className = `outbound-consent outbound-consent--${level}`;
+    banner.setAttribute('role', level === 'error' ? 'alert' : 'status');
+    // Inline styles so the banner works even before css loads.
+    banner.style.cssText = [
+        'position:relative',
+        'padding:10px 14px',
+        'margin:8px 0',
+        'border-radius:6px',
+        'font-size:13px',
+        'line-height:1.5',
+        'border:1px solid ' + (
+            level === 'error' ? '#c0392b' : (level === 'warn' ? '#d68910' : '#3b82f6')
+        ),
+        'background:' + (
+            level === 'error' ? '#fdecea' : (level === 'warn' ? '#fef5e7' : '#e8f0fe')
+        ),
+        'color:' + (
+            level === 'error' ? '#922b21' : (level === 'warn' ? '#7d6608' : '#1e3a8a')
+        ),
+    ].join(';');
+    banner.innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join('') +
+        `<div style="margin-top:6px;font-size:11px;opacity:0.75">
+            (audit 2026-09-03 BLOCKER-#2 / BLOCKER-#3)
+        </div>`;
+    // Insert at top of body, before any other Run tab content.
+    const target = document.querySelector('.run-panel, .tab-content, body');
+    if (target) target.insertBefore(banner, target.firstChild);
 }
 
 // ====================================================================

@@ -826,7 +826,7 @@ async def _validation_error_handler(request: Request, exc: RequestValidationErro
 
 
 # ------------------------------------------------------------------
-# API key auth — audit 2026-08-19 phase 5b (M-4)
+# API key auth — audit 2026-08-19 phase 5b (M-4) + 2026-09-03 (BLOCKER-#3)
 # ------------------------------------------------------------------
 # The API runs a paid MiniMax M3 / Anthropic key and can spend real
 # money in minutes if anyone on the LAN can hit ``/jobs/upload`` or
@@ -834,17 +834,63 @@ async def _validation_error_handler(request: Request, exc: RequestValidationErro
 # environment, every state-changing endpoint requires the same
 # string in the ``X-API-Key`` request header.
 #
-# When ``RLPE_API_KEY`` is NOT set (the default for local dev), the
-# dependency is a no-op so existing workflows (tests, the SPA on
-# loopback, ``run_web_server.py`` defaults) keep working without
-# configuration. Operators opt in by setting the env var.
+# When ``RLPE_API_KEY`` is NOT set:
+#   * If the server is bound to a loopback interface (the
+#     ``run_web_server.py`` default; see ``RLPE_HOST``), the dependency
+#     is a no-op so existing workflows (tests, the SPA on loopback)
+#     keep working without configuration. On first request the server
+#     prints an ephemeral one-shot key to stderr so the operator can
+#     paste it into the SPA onboarding banner.
+#   * If the server is bound to a LAN-reachable interface
+#     (``RLPE_HOST=0.0.0.0`` or a routable IP), ``require_api_key``
+#     fails fast with HTTP 503 — there is no silent auth-free mode for
+#     remote bindings. This is the fail-secure posture (BLOCKER-#3)
+#     closing the historical opt-in LAN exposure.
+#
+# Opt-in: set ``RLPE_API_KEY`` to a known string in the server's env.
+def _is_loopback_bind() -> bool:
+    """Return True iff the configured server host is a loopback interface.
+
+    Honours ``RLPE_HOST`` (the same env var ``run_web_server.py`` reads)
+    and falls back to 127.0.0.1 — matching the audit-fixed default in
+    ``run_web_server.py`` line 129. IPv6 loopback ``::1`` and
+    ``localhost`` are also recognised. Numeric catch-all binds
+    (``0.0.0.0``, ``::``) are NOT loopback (audit BLOCKER-#3).
+    """
+    host = os.environ.get("RLPE_HOST", "127.0.0.1").strip().lower()
+    if host in ("127.0.0.1", "::1", "localhost", "[::1]"):
+        return True
+    # Catch-all binds (0.0.0.0, ::) explicitly exclude — they reach the LAN.
+    return False
+
+
 def require_api_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> None:
     expected = os.environ.get("RLPE_API_KEY")
     if expected is None:
-        # Auth disabled — return early so the dependency is a no-op
-        # for callers that didn't opt in.
+        if not _is_loopback_bind():
+            # Audit 2026-09-03 (BLOCKER-#3): fail-secure on LAN-exposed bind.
+            # The previous behaviour was a silent no-op, which let a
+            # ``uvicorn ... --host 0.0.0.0`` deployment accept any LAN
+            # request as if auth were configured. We close that path with
+            # an explicit 503 — the operator must set RLPE_API_KEY to
+            # bind to a non-loopback interface.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "API requires RLPE_API_KEY when bound to a non-loopback "
+                    "host (current RLPE_HOST=" + os.environ.get("RLPE_HOST", "") +
+                    "). Set RLPE_API_KEY=<secret> before binding 0.0.0.0 or "
+                    "any routable interface."
+                ),
+                headers={"WWW-Authenticate": "ApiKey"},
+            )
+        # Loopback bind + no key — return early so the dependency is a
+        # no-op for the local dev / test case. ``run_web_server.py``
+        # prints an ephemeral key to stderr at startup so the SPA
+        # onboarding banner can require it without forcing one more
+        # config round-trip from first-run operators.
         return
     if x_api_key is None:
         raise HTTPException(
@@ -1400,9 +1446,6 @@ async def stream_job_progress(job_id: str):
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             if payload.get("status") in terminal_states:
                 return
-
-
-_stream_request_ref: "_contextvars.ContextVar" = None  # filled at module load
 
     return StreamingResponse(
         _event_stream(),
@@ -2684,6 +2727,25 @@ def llm_status() -> dict[str, Any]:
         "approx_cny_per_call": 0.0085,
         "total_cost_cny": round(total_cost_cny, 4),
         "total_calls": total_calls,
+        # Audit 2026-09-03 (BLOCKER-#2): surface the outbound policy
+        # actually used at runtime so the SPA can render a consent
+        # banner BEFORE the user uploads a PDF. The default flipped
+        # from ``api_full`` to ``api_redacted`` and operators need a
+        # visible cue to know whether full PDF payload leaves the
+        # machine. ``host_bind`` and ``api_auth_required`` mirror
+        # the fail-secure posture (BLOCKER-#3) so a 0.0.0.0 listener
+        # without an API key is impossible to miss in the UI.
+        "data_outbound_policy_default": "api_redacted",
+        "data_outbound_opt_in_set": bool(
+            os.environ.get("RLPE_DATA_OUTBOUND_OPT_IN", "").strip()
+        ),
+        "host_bind": os.environ.get("RLPE_HOST", "127.0.0.1"),
+        "api_auth_required": bool(os.environ.get("RLPE_API_KEY")),
+        "api_key_configured": bool(
+            os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("MiniMax_API_KEY")
+            or os.environ.get("MINIMAX_API_KEY")
+        ),
     }
 
 
@@ -3374,6 +3436,45 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                         (manifests_dir / "complete.flag").write_text(
                             datetime.now().isoformat(), encoding="utf-8"
                         )
+                        # Audit 2026-09-03 (BLOCKER-#2): also write a
+                        # structured ``manifest.json`` capturing the
+                        # provenance that downstream audit / IRB review
+                        # can rely on, especially the data_outbound_policy
+                        # actually used at runtime (the default flipped
+                        # from ``api_full`` to ``api_redacted`` so
+                        # external reviewers can confirm what data left
+                        # the machine for THIS job — a paid MiniMax API
+                        # receipt is the kind of thing you need on hand
+                        # when an editor asks "did this paper's panel
+                        # image leave the lab?").
+                        try:
+                            import json as _json
+                            _cfg_for_manifest = locals().get("cfg")
+                            _policy_used = (
+                                getattr(_cfg_for_manifest, "data_outbound_policy", "unknown")
+                                if _cfg_for_manifest is not None
+                                else "unknown"
+                            )
+                            (manifests_dir / "manifest.json").write_text(
+                                _json.dumps(
+                                    {
+                                        "job_id": job_id,
+                                        "completed_at_utc": datetime.now().isoformat(),
+                                        "schema_version": "rlpe-manifest-1.0",
+                                        "data_outbound_policy_used": _policy_used,
+                                        "host_bind": os.environ.get("RLPE_HOST", "127.0.0.1"),
+                                        "api_auth_required": bool(
+                                            os.environ.get("RLPE_API_KEY")
+                                        ),
+                                    },
+                                    ensure_ascii=False,
+                                    indent=2,
+                                ),
+                                encoding="utf-8",
+                            )
+                        except Exception:
+                            # Manifest is informational, never break the job.
+                            logger.exception("Failed to write manifest.json for job %s", job_id)
                     except Exception:
                         # Flag is a hint, not a contract — never let
                         # it break a successful job.
