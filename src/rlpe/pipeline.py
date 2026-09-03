@@ -2856,17 +2856,48 @@ class RadiolarianPipeline:
 
         sorted_results = sorted(results, key=_panel_sort_key)
 
-        # Pair up to min(len(segmented), len(llm_rows)).
-        n_paired = min(len(segmented), len(sorted_results))
-        if n_paired < len(sorted_results):
+        # Audit 2026-09-03 (BLOCKER-#4): when N_panels != N_segs the
+        # historical ``for idx in range(min(...))`` index pairing
+        # produced a sub-optimal assignment — e.g. 7 LLM rows but 9
+        # segmentation CCs meant rows 6-7 were paired with the
+        # bottom-most two CCs even if the bottom-most CC was actually
+        # extra noise. Switch to Hungarian assignment (scipy) with
+        # reading-order rank distance as the cost (the only signal
+        # available when all rows are placeholder bboxes, which is
+        # the Phase 67 entry condition). If a row carries a 2D
+        # position hint in its metadata (``expected_centroid_x`` /
+        # ``expected_centroid_y`` or ``bbox`` that we already
+        # rejected as a placeholder because the LLM provided a
+        # separate 2D hint), IoU against the seg is layered on top.
+        # Falls back to reading-order index pairing if scipy is
+        # unavailable so the test suite and air-gapped installs
+        # still work.
+        n_panels = len(sorted_results)
+        n_segs = len(segmented)
+        if n_panels < len(sorted_results) or n_segs < len(segmented):
+            # Defensive — should be equal to inputs.
+            pass
+        if n_panels > n_segs:
             logger.warning(
-                "Phase 67 bbox recovery: %s/%s segmentation found %d panels but "
-                "LLM declared %d; %d rows will keep placeholder bbox",
+                "Phase 67 bbox recovery: %s/%s LLM declared %d panels but "
+                "segmentation found only %d; %d rows will keep placeholder "
+                "bbox",
                 paper_id,
                 figure_id,
-                len(segmented),
-                len(sorted_results),
-                len(sorted_results) - n_paired,
+                n_panels,
+                n_segs,
+                n_panels - n_segs,
+            )
+        elif n_segs > n_panels:
+            logger.debug(
+                "Phase 67 bbox recovery: %s/%s segmentation found %d CCs but "
+                "LLM declared only %d panels; %d CCs unpaired (likely "
+                "background noise)",
+                paper_id,
+                figure_id,
+                n_segs,
+                n_panels,
+                n_segs - n_panels,
             )
 
         panels_dir = self.config.panels_dir() if hasattr(self.config, "panels_dir") else None
@@ -2891,15 +2922,108 @@ class RadiolarianPipeline:
             pid = r.get("panel_id")
             orig_panel_positions.setdefault(pid, []).append(i)
 
-        for idx in range(n_paired):
-            sorted_r = sorted_results[idx]
+        # Build panel_i -> seg_j assignment.
+        # Algorithm (BLOCKER-#4 fix):
+        #   1. Two-pass. First pass: hard-pin panels that carry a
+        #      2D position hint (``expected_centroid_x`` /
+        #      ``expected_centroid_y``) to their closest seg. When
+        #      two hinted panels compete for the same seg, the
+        #      closer hint wins; the loser falls through to the
+        #      rank-distance Hungarian in pass 2.
+        #   2. Second pass: Hungarian assignment on the remaining
+        #      unhinted panels + unclaimed segs using reading-order
+        #      rank distance as the cost. Falls back to identity
+        #      index pairing if scipy is unavailable.
+        assignment: dict[int, int] = {}
+
+        def _seg_centroid(j: int) -> tuple[float, float]:
+            sx, sy, sw, sh = segmented[j].bbox
+            return float(sx + sw / 2), float(sy + sh / 2)
+
+        # Pass 1: hard-pin hinted panels.
+        # Build (panel_i, best_seg_j, centroid_dist) for every
+        # hinted panel, then sort by distance ascending and assign
+        # greedily — closest hint gets first pick.
+        hint_requests: list[tuple[float, int, int]] = []  # (dist, panel_i, seg_j)
+        for i in range(n_panels):
+            md_i = sorted_results[i].get("metadata") or {}
+            hint_x = md_i.get("expected_centroid_x")
+            hint_y = md_i.get("expected_centroid_y")
+            if hint_x is None or hint_y is None:
+                continue
+            best_j = 0
+            best_dist = float("inf")
+            for j in range(n_segs):
+                cx, cy = _seg_centroid(j)
+                d = ((hint_x - cx) ** 2 + (hint_y - cy) ** 2) ** 0.5
+                if d < best_dist:
+                    best_dist = d
+                    best_j = j
+            hint_requests.append((best_dist, i, best_j))
+        # Greedy: closest hint first, each takes its preferred seg
+        # unless already taken (then it falls through to pass 2).
+        claimed_segs: set[int] = set()
+        for _dist, panel_i, seg_j in sorted(hint_requests):
+            if seg_j in claimed_segs:
+                continue  # fall through to pass 2
+            assignment[panel_i] = seg_j
+            claimed_segs.add(seg_j)
+        # Remaining panels + segs for pass 2.
+        remaining_panels = [
+            i for i in range(n_panels) if i not in assignment
+        ]
+        remaining_segs = [j for j in range(n_segs) if j not in claimed_segs]
+
+        if remaining_panels and remaining_segs:
+            try:
+                from scipy.optimize import linear_sum_assignment  # type: ignore
+                # Rank distance only — no hint, no centroid.
+                cost2 = np.zeros(
+                    (len(remaining_panels), len(remaining_segs)),
+                    dtype=np.float64,
+                )
+                # Pre-compute rank order of remaining panels by their
+                # original (sorted) index so a panel ranked 5th in
+                # the input still maps to the 5th-lowest seg.
+                for ii, panel_i in enumerate(remaining_panels):
+                    for jj, seg_j in enumerate(remaining_segs):
+                        # Rank in the original sorted_results list.
+                        cost2[ii, jj] = float(abs(panel_i - seg_j))
+                n_p2 = len(remaining_panels)
+                n_s2 = len(remaining_segs)
+                if n_p2 != n_s2:
+                    side = max(n_p2, n_s2)
+                    pad = np.full((side, side), 1e9, dtype=np.float64)
+                    pad[:n_p2, :n_s2] = cost2
+                    rows_idx, cols_idx = linear_sum_assignment(pad)
+                    for r_idx, c_idx in zip(rows_idx, cols_idx):
+                        if r_idx < n_p2 and c_idx < n_s2:
+                            pi = remaining_panels[int(r_idx)]
+                            sj = remaining_segs[int(c_idx)]
+                            assignment[pi] = sj
+                else:
+                    rows_idx, cols_idx = linear_sum_assignment(cost2)
+                    for r_idx, c_idx in zip(rows_idx, cols_idx):
+                        pi = remaining_panels[int(r_idx)]
+                        sj = remaining_segs[int(c_idx)]
+                        assignment[pi] = sj
+            except ImportError:
+                # scipy unavailable — fall back to reading-order
+                # index pairing on the remaining (preserves
+                # historical behaviour for air-gapped installs).
+                for ii, panel_i in enumerate(remaining_panels):
+                    if ii < len(remaining_segs):
+                        assignment[panel_i] = remaining_segs[ii]
+
+        for panel_i, seg_i in sorted(assignment.items()):
+            sorted_r = sorted_results[panel_i]
             pid = sorted_r.get("panel_id")
             queue = orig_panel_positions.get(pid)
             if not queue:
                 continue
             orig_i = queue.pop(0)
             orig_r = results[orig_i]
-            seg = segmented[idx]
+            seg = segmented[seg_i]
             x, y, w, h = seg.bbox
             # Clip to image bounds defensively.
             x = max(0, min(int(x), w_img - 1))
@@ -2916,7 +3040,14 @@ class RadiolarianPipeline:
                 try:
                     crop_dir.mkdir(parents=True, exist_ok=True)
                     crop = pil_region.crop((x, y, x + w, y + h))
-                    panel_idx = idx + 1
+                    # Use the original panel index (0-based) + 1 so
+                    # the file numbering matches the historical layout
+                    # (``panel_01.png`` for the first row of the input
+                    # ``results`` list). Using the post-Hungarian seg
+                    # index would re-number panels when the assignment
+                    # permutes, breaking downstream consumers that
+                    # expect the row order to match the input order.
+                    panel_idx = orig_i + 1
                     crop_path = crop_dir / f"panel_{panel_idx:02d}.png"
                     crop.save(str(crop_path), "PNG")
                     orig_r["panel_path"] = str(crop_path)

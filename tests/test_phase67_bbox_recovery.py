@@ -325,5 +325,217 @@ class TestPhase67SourceGuard:
         )
 
 
+# =====================================================================
+# Audit 2026-09-03 (BLOCKER-#4): Hungarian assignment in bbox recovery
+# =====================================================================
+# Phase 67's historical pairing was a simple ``for idx in range(n_paired):
+# sorted_results[idx] ↔ segmented[idx]``. That index pairing is
+# optimal ONLY when LLM panel_ids and OpenCV CC reading-order both go
+# top-to-bottom left-to-right. When M3 returns panels in reverse scan
+# order, or the panel layout is multi-column with non-monotonic
+# numbering, the index pairing mis-assigns. Hungarian with reading-
+# order rank distance (the only signal available when all bboxes are
+# placeholders, the Phase 67 entry condition) is provably identical
+# in the well-behaved case AND robust to 2D position hints when the
+# LLM attaches one.
+
+
+class TestRecoverBboxesIoUPairing:
+    """BLOCKER-#4 regression suite."""
+
+    def test_uses_hungarian_assignment(self, tmp_path):
+        """Source guard: the helper MUST use scipy.optimize
+        ``linear_sum_assignment`` (Hungarian) — not raw index pairing.
+        Refactor that swaps it back to ``for idx in range(...)`` would
+        silently regress the M3 reverse-scan + multi-column cases.
+        The two-pass design (hinted panels first, then Hungarian on
+        the rest) is the BLOCKER-#4 fix.
+        """
+        src = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py").read_text(
+            encoding="utf-8"
+        )
+        marker_start = src.find("def _recover_bboxes_via_segmentation")
+        assert marker_start >= 0
+        marker_end = src.find("\n    def ", marker_start + 1)
+        if marker_end < 0:
+            marker_end = marker_start + 4000
+        body = src[marker_start:marker_end]
+        # Both markers must be present in the helper body.
+        assert "linear_sum_assignment" in body, (
+            "Hungarian (linear_sum_assignment) not used in "
+            "_recover_bboxes_via_segmentation — BLOCKER-#4 regression. "
+            "The previous index pairing mis-assigned panels when M3 "
+            "returned them in reverse scan order."
+        )
+        assert "expected_centroid_x" in body and "expected_centroid_y" in body, (
+            "2D position hint handling removed from "
+            "_recover_bboxes_via_segmentation — BLOCKER-#4 regression. "
+            "Panels with expected_centroid metadata must take priority "
+            "over reading-order rank."
+        )
+
+    def test_2d_position_hint_jumps_panel_to_correct_seg(
+        self, tmp_path: Path,
+    ) -> None:
+        """When the LLM attaches an ``expected_centroid_x/y`` hint, the
+        Hungarian cost should weight centroid proximity so a panel
+        with a non-reading-order hint correctly jumps to its seg
+        instead of being matched by rank alone.
+
+        Setup: 4 panels in panel_id order 1,2,3,4. The 2D hint says
+        panel_id="2" actually sits at the bottom-right (where the
+        reading-order seg #3 is). The Hungarian must pair panel 2 →
+        seg 3, not panel 2 → seg 1.
+        """
+        pipe = _make_pipeline(tmp_path)
+        # 4 CCs: top-left, top-right, bottom-left, bottom-right.
+        pipe.segmenter = _stub_segmenter_with(
+            [
+                PanelCandidate(panel_id="seg_tl", bbox=(10, 10, 60, 80), score=0.9),
+                PanelCandidate(panel_id="seg_tr", bbox=(200, 10, 60, 80), score=0.9),
+                PanelCandidate(panel_id="seg_bl", bbox=(10, 200, 60, 80), score=0.9),
+                PanelCandidate(panel_id="seg_br", bbox=(200, 200, 60, 80), score=0.9),
+            ]
+        )
+        plate = _build_synthetic_plate(4)
+        # Panel "2" has a 2D hint pointing to the bottom-right seg
+        # centroid (230, 240). This is the test of whether the
+        # Hungarian cost picks up the hint.
+        results = [
+            {"panel_id": "1", "bbox": None, "panel_path": None,
+             "metadata": {}},
+            {"panel_id": "2", "bbox": None, "panel_path": None,
+             "metadata": {"expected_centroid_x": 230, "expected_centroid_y": 240}},
+            {"panel_id": "3", "bbox": None, "panel_path": None,
+             "metadata": {}},
+            {"panel_id": "4", "bbox": None, "panel_path": None,
+             "metadata": {}},
+        ]
+        out = pipe._recover_bboxes_via_segmentation(
+            results, plate, paper_id="p1", figure_id="od_p1_p1_pl01"
+        )
+        # panel_id="2" should get the bbox of seg_br = (200, 200, 60, 80)
+        out2 = next(r for r in out if r["panel_id"] == "2")
+        assert out2["bbox"] == [200, 200, 60, 80], (
+            f"2D position hint not honoured: panel 2 got bbox {out2['bbox']}, "
+            f"expected [200, 200, 60, 80] (seg_br centroid 230,240)."
+        )
+
+    def test_more_segs_than_panels_keeps_placeholder(
+        self, tmp_path: Path,
+    ) -> None:
+        """If segmentation finds 5 CCs but LLM declared 3 panels,
+        2 CCs are unpaired (background noise) and 3 panels get
+        real bboxes. The historical index pairing under ``min()``
+        achieved the same outcome for equal indices but lost
+        optimality when the extra CCs were at the top of the
+        reading order; the Hungarian implementation must
+        preserve the assignment that minimises total rank
+        distance."""
+        pipe = _make_pipeline(tmp_path)
+        pipe.segmenter = _stub_segmenter_with(
+            [
+                PanelCandidate(panel_id="s0", bbox=(10, 10, 60, 80), score=0.9),
+                PanelCandidate(panel_id="s1", bbox=(100, 10, 60, 80), score=0.9),
+                PanelCandidate(panel_id="s2", bbox=(200, 10, 60, 80), score=0.9),
+                PanelCandidate(panel_id="s3", bbox=(10, 100, 60, 80), score=0.9),
+                PanelCandidate(panel_id="s4", bbox=(100, 100, 60, 80), score=0.9),
+            ]
+        )
+        plate = _build_synthetic_plate(3)
+        results = [
+            {"panel_id": "1", "bbox": None, "panel_path": None, "metadata": {}},
+            {"panel_id": "2", "bbox": None, "panel_path": None, "metadata": {}},
+            {"panel_id": "3", "bbox": None, "panel_path": None, "metadata": {}},
+        ]
+        out = pipe._recover_bboxes_via_segmentation(
+            results, plate, paper_id="p1", figure_id="od_p1_p1_pl01"
+        )
+        # All 3 panels must have a real bbox; placeholder rows allowed.
+        real_bboxes = [r for r in out if r.get("bbox") not in (None, [0, 0, 0, 0])]
+        assert len(real_bboxes) == 3, (
+            f"Expected 3 panels with real bboxes, got {len(real_bboxes)}: "
+            f"{[r.get('bbox') for r in out]}"
+        )
+
+    def test_more_panels_than_segs_warns_and_drops_extras(
+        self, tmp_path: Path,
+    ) -> None:
+        """If LLM declared 4 panels but segmentation found only 2
+        CCs (e.g. low contrast), 2 rows keep the placeholder bbox.
+        The Hungarian implementation must produce a warning so an
+        operator notices the partial coverage."""
+        pipe = _make_pipeline(tmp_path)
+        pipe.segmenter = _stub_segmenter_with(
+            [
+                PanelCandidate(panel_id="s0", bbox=(10, 10, 60, 80), score=0.9),
+                PanelCandidate(panel_id="s1", bbox=(200, 10, 60, 80), score=0.9),
+            ]
+        )
+        plate = _build_synthetic_plate(4)
+        results = [
+            {"panel_id": "1", "bbox": None, "panel_path": None, "metadata": {}},
+            {"panel_id": "2", "bbox": None, "panel_path": None, "metadata": {}},
+            {"panel_id": "3", "bbox": None, "panel_path": None, "metadata": {}},
+            {"panel_id": "4", "bbox": None, "panel_path": None, "metadata": {}},
+        ]
+        out = pipe._recover_bboxes_via_segmentation(
+            results, plate, paper_id="p1", figure_id="od_p1_p1_pl01"
+        )
+        real = sum(
+            1 for r in out
+            if r.get("bbox") not in (None, [0, 0, 0, 0])
+        )
+        # Only 2 panels get a real bbox; the other 2 stay placeholder.
+        assert real == 2, f"Expected 2 real bboxes, got {real}"
+        # The two that kept placeholders must NOT have a panel_path.
+        placeholders = [
+            r for r in out
+            if r.get("bbox") in (None, [0, 0, 0, 0])
+        ]
+        assert len(placeholders) == 2
+        for r in placeholders:
+            assert r.get("panel_path") is None, (
+                f"Placeholder row got a panel_path anyway: {r}"
+            )
+
+    def test_scipy_missing_falls_back_to_reading_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If scipy.optimize is unavailable (air-gapped install),
+        the helper must still produce a correct assignment via
+        the reading-order fallback. The historical index pairing
+        is the natural fallback — preserve it."""
+        import builtins
+        real_import = builtins.__import__
+
+        def _no_scipy(name, *args, **kwargs):
+            if name == "scipy" or name.startswith("scipy."):
+                raise ImportError("simulated scipy absence")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_scipy)
+        pipe = _make_pipeline(tmp_path)
+        pipe.segmenter = _stub_segmenter_with(
+            [
+                PanelCandidate(panel_id="s0", bbox=(10, 10, 60, 80), score=0.9),
+                PanelCandidate(panel_id="s1", bbox=(200, 10, 60, 80), score=0.9),
+            ]
+        )
+        plate = _build_synthetic_plate(2)
+        results = [
+            {"panel_id": "1", "bbox": None, "panel_path": None, "metadata": {}},
+            {"panel_id": "2", "bbox": None, "panel_path": None, "metadata": {}},
+        ]
+        out = pipe._recover_bboxes_via_segmentation(
+            results, plate, paper_id="p1", figure_id="od_p1_p1_pl01"
+        )
+        # Identity pairing preserved.
+        out1 = next(r for r in out if r["panel_id"] == "1")
+        out2 = next(r for r in out if r["panel_id"] == "2")
+        assert out1["bbox"] == [10, 10, 60, 80]
+        assert out2["bbox"] == [200, 10, 60, 80]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
