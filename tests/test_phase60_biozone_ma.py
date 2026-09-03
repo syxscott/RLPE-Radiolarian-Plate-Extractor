@@ -14,10 +14,17 @@ that mapping the biostratigraphy column on the Web UI / xlsx export
 could not position the samples on the Ma axis.
 
 Phase 60 Plan 3 fix: ``_BIOZONE_TO_MA`` table maps a curated set of
-Baumgartner 1984 / O'Dogherty / Hollis standard zones to ``(ma_top,
-ma_base)`` tuples. ``lookup_biozone_ma(name)`` returns the bounds or
-``None`` for unknown zones — unknown zones are flagged ``unknown_biozone``
-rather than invented.
+Baumgartner 1984 / O'Dogherty / Hollis standard zones to
+``BiozoneMa`` NamedTuples (top_ma, base_ma, confidence).
+``lookup_biozone_ma(name)`` returns the NamedTuple or ``None`` for
+unknown zones — unknown zones are flagged ``unknown_biozone`` rather
+than invented.
+
+Audit 2026-09-03 (BLOCKER-#7) added a ``confidence`` field so
+downstream consumers (PBDB exporter, find_ages_in_text) can
+distinguish well-anchored zones (0.95 for UAZ 1-12) from interpolated
+zones (0.5 for UAZ 13-21). A ``lookup_biozone_ma_legacy`` shim
+returns the historical 2-tuple for callers that haven't migrated.
 """
 
 from __future__ import annotations
@@ -28,8 +35,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlpe.stratigraphy import (  # noqa: E402
+    BiozoneMa,
     _BIOZONE_TO_MA,
     lookup_biozone_ma,
+    lookup_biozone_ma_legacy,
 )
 
 
@@ -42,7 +51,7 @@ def test_biozone_table_nonempty():
 
 def test_biozone_to_ma_lookup():
     """At least 5 well-known biozones from Baumgartner 1984 / Hollis
-    must resolve to a numeric ``(ma_top, ma_base)`` tuple."""
+    must resolve to a numeric ``(ma_top, ma_base)`` NamedTuple."""
     # Baumgartner 1984 standard radiolarian zones (subset).
     # References: Baumgartner et al. (1984) "A Middle Jurassic to
     # Early Cretaceous radiolarian zonation based on Unitary
@@ -67,10 +76,15 @@ def test_biozone_to_ma_lookup():
     for name, exp_top, exp_base in cases:
         out = lookup_biozone_ma(name)
         assert out is not None, f"{name!r} not found in biozone table"
-        ma_top, ma_base = out
-        # Tolerate ±5 Ma drift from Baumgartner / Hollis original tables
-        # because the curated table rounds to stage boundaries and the
-        # ICS Ma values themselves have ±0.5 Ma uncertainty.
+        # Audit 2026-09-03 (BLOCKER-#7): return type is now BiozoneMa
+        # (top_ma, base_ma, confidence). Tolerate ±5 Ma drift from
+        # Baumgartner / Hollis original tables because the curated
+        # table rounds to stage boundaries and the ICS Ma values
+        # themselves have ±0.5 Ma uncertainty.
+        assert isinstance(out, BiozoneMa), (
+            f"{name!r} returned {type(out).__name__}, expected BiozoneMa"
+        )
+        ma_top, ma_base = out.top_ma, out.base_ma
         assert abs(ma_top - exp_top) <= 5.0, f"{name!r}: ma_top={ma_top} expected ~{exp_top}"
         assert abs(ma_base - exp_base) <= 5.0, f"{name!r}: ma_base={ma_base} expected ~{exp_base}"
 
@@ -90,6 +104,65 @@ def test_lookup_handles_trailing_zone_word():
     assert a is not None
     assert b is not None
     assert a == b
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-09-03 (BLOCKER-#7): confidence propagation
+# ---------------------------------------------------------------------------
+
+
+def test_uaz_1_to_12_high_confidence():
+    """UAZ 1-12 are calibrated against ICS 2023 stage boundaries —
+    confidence must be 0.95 (the highest tier in the table)."""
+    for i in range(1, 13):
+        bm = lookup_biozone_ma(f"UAZ {i}")
+        assert bm is not None, f"UAZ {i} not found"
+        assert bm.confidence == 0.95, (
+            f"UAZ {i} confidence={bm.confidence}, expected 0.95 "
+            "(calibrated against ICS 2023 stages)"
+        )
+
+
+def test_uaz_13_to_21_low_confidence():
+    """UAZ 13-21 are spaced evenly over the 145-123 Ma interval
+    with the source comments explicitly marking them "(approx.)" —
+    confidence must be 0.5 so downstream consumers (PBDB exporter)
+    can fall back to section-measured ages."""
+    for i in range(13, 22):
+        bm = lookup_biozone_ma(f"UAZ {i}")
+        assert bm is not None, f"UAZ {i} not found"
+        assert bm.confidence == 0.5, (
+            f"UAZ {i} confidence={bm.confidence}, expected 0.5 "
+            "(spaced evenly — marked (approx.) in source comments)"
+        )
+
+
+def test_legacy_shim_returns_plain_tuple():
+    """``lookup_biozone_ma_legacy`` returns the historical 2-tuple
+    for backward-compat with code that does
+    ``ma_top, ma_base = lookup_biozone_ma(name)``."""
+    out = lookup_biozone_ma_legacy("UAZ 1")
+    assert out == (172.0, 174.7)
+    # Plain tuple, not NamedTuple.
+    assert type(out) is tuple
+    # Unknown zones propagate as None.
+    assert lookup_biozone_ma_legacy("BOGUS 9999") is None
+
+
+def test_age_classification_carries_confidence():
+    """When find_ages_in_text sees a UAZ 17 in free text, the
+    resulting AgeClassification must carry confidence 0.5 so
+    downstream consumers can detect the (approx.) zones."""
+    from rlpe.stratigraphy import find_ages_in_text
+    out = find_ages_in_text("Sample S1 from UAZ 17 zone in the Valanginian.")
+    # Find the biozone classification.
+    biozone = [c for c in out if c.rank == "biozone"]
+    assert biozone, f"No biozone classification in {out}"
+    biozone = biozone[0]
+    assert biozone.confidence < 0.7, (
+        f"UAZ 17 (approx.) AgeClassification confidence={biozone.confidence}, "
+        "expected < 0.7 so PBDB exporter triggers section-based fallback"
+    )
 
 
 if __name__ == "__main__":

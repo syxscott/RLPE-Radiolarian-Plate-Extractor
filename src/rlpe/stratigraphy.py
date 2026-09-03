@@ -24,7 +24,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 # ---------------------------------------------------------------------------
 # Local ICS chart (subset).  Each row has:
@@ -1732,7 +1732,37 @@ def _pbdb_lookup(body: str) -> dict[str, Any] | None:
 # occurrence aggregation. Unknown zones return ``None`` from the
 # lookup helper — the operator sees the unmatched zone name + a
 # ``biozone_unknown`` warning instead of invented bounds.
-_BIOZONE_TO_MA: dict[str, tuple[float, float]] = {
+#
+# Audit 2026-09-03 (BLOCKER-#7): each entry now carries a
+# ``confidence`` value (0.0-1.0) so downstream consumers
+# (AgeClassification, PBDB exporter, find_ages_in_text) can
+# distinguish between well-anchored UAZ 1-12 (Baumgartner et al.
+# 1995 table, confidence=0.95) and the evenly-interpolated UAZ
+# 13-21 (confidence=0.5, marked "(approx.)" in the comments). The
+# 0.5 confidence lets the PBDB exporter use a section-based
+# fallback (which carries the actual measured age) instead of the
+# zone midpoint when the operator submits the occurrence.
+class BiozoneMa(NamedTuple):
+    """Ma bounds + calibration confidence for a biozone entry.
+
+    ``confidence`` reflects how well the (top, base) Ma values are
+    anchored in the published chronostratigraphic literature:
+
+      * 0.95: zones whose boundaries are tabulated against a stage
+        (e.g. Baumgartner et al. 1995 UAZ 1-12 against ICS stages).
+      * 0.85: zones whose stage assignment is widely accepted but
+        boundary Ma is calibrated against a different reference
+        (e.g. Pessagno Zones A/B/C from O'Dogherty 1994).
+      * 0.50: zones whose Ma is interpolated rather than calibrated
+        (e.g. UAZ 13-21 — "(approx.)" in the source comments).
+    """
+
+    top_ma: float
+    base_ma: float
+    confidence: float = 0.85
+
+
+_BIOZONE_TO_MA: dict[str, BiozoneMa] = {
     # Baumgartner et al. 1995 Unitary Association Zones (UAZones95,
     # UAZ 1-21), Middle Jurassic to Lower Cretaceous radiolarian
     # biochronology of Tethys (Mém. Géol. Lausanne 23).
@@ -1758,52 +1788,56 @@ _BIOZONE_TO_MA: dict[str, tuple[float, float]] = {
     # original UAZones95 chart for zone-level boundaries.
     # Ma bounds follow the ICS 2023 stage boundaries used in
     # ``_ICS_ROWS`` above.
-    "UAZ 1": (172.0, 174.7),  # early–middle Aalenian
-    "UAZ 2": (170.9, 172.0),  # late Aalenian
-    "UAZ 3": (169.3, 170.9),  # early–middle Bajocian
-    "UAZ 4": (167.7, 169.3),  # late Bajocian
-    "UAZ 5": (166.2, 167.7),  # latest Bajocian–early Bathonian
-    "UAZ 6": (165.0, 166.2),  # middle Bathonian
-    "UAZ 7": (163.0, 165.3),  # late Bathonian–early Callovian
-    "UAZ 8": (158.0, 163.0),  # middle Callovian–early Oxfordian
-    "UAZ 9": (156.0, 158.5),  # middle–late Oxfordian
-    "UAZ 10": (152.0, 156.0),  # late Oxfordian–early Kimmeridgian
-    "UAZ 11": (147.5, 152.0),  # late Kimmeridgian–early Tithonian
-    "UAZ 12": (145.0, 147.5),  # early Tithonian
-    "UAZ 13": (142.6, 145.0),  # late Tithonian (approx.)
-    "UAZ 14": (140.2, 142.6),  # latest Tithonian–early Berriasian (approx.)
-    "UAZ 15": (137.8, 140.2),  # Berriasian (approx.)
-    "UAZ 16": (135.4, 137.8),  # late Berriasian–early Valanginian (approx.)
-    "UAZ 17": (133.0, 135.4),  # Valanginian (approx.)
-    "UAZ 18": (130.6, 133.0),  # late Valanginian–early Hauterivian (approx.)
-    "UAZ 19": (128.2, 130.6),  # Hauterivian (approx.)
-    "UAZ 20": (125.8, 128.2),  # late Hauterivian (approx.)
-    "UAZ 21": (123.4, 125.8),  # Hauterivian–Barremian boundary (approx.)
+    "UAZ 1": BiozoneMa(172.0, 174.7, confidence=0.95),  # early–middle Aalenian
+    "UAZ 2": BiozoneMa(170.9, 172.0, confidence=0.95),  # late Aalenian
+    "UAZ 3": BiozoneMa(169.3, 170.9, confidence=0.95),  # early–middle Bajocian
+    "UAZ 4": BiozoneMa(167.7, 169.3, confidence=0.95),  # late Bajocian
+    "UAZ 5": BiozoneMa(166.2, 167.7, confidence=0.95),  # latest Bajocian–early Bathonian
+    "UAZ 6": BiozoneMa(165.0, 166.2, confidence=0.95),  # middle Bathonian
+    "UAZ 7": BiozoneMa(163.0, 165.3, confidence=0.95),  # late Bathonian–early Callovian
+    "UAZ 8": BiozoneMa(158.0, 163.0, confidence=0.95),  # middle Callovian–early Oxfordian
+    "UAZ 9": BiozoneMa(156.0, 158.5, confidence=0.95),  # middle–late Oxfordian
+    "UAZ 10": BiozoneMa(152.0, 156.0, confidence=0.95),  # late Oxfordian–early Kimmeridgian
+    "UAZ 11": BiozoneMa(147.5, 152.0, confidence=0.95),  # late Kimmeridgian–early Tithonian
+    "UAZ 12": BiozoneMa(145.0, 147.5, confidence=0.95),  # early Tithonian
+    # UAZ 13-21 (Tithonian → Barremian) are calibrated to UAZones95
+    # but the Ma bounds are evenly interpolated over the 145-123 Ma
+    # interval — confidence=0.5 flags them as "use the section-based
+    # age in PBDB submissions, NOT the zone midpoint" (BLOCKER-#7).
+    "UAZ 13": BiozoneMa(142.6, 145.0, confidence=0.5),  # late Tithonian (approx.)
+    "UAZ 14": BiozoneMa(140.2, 142.6, confidence=0.5),  # latest Tithonian–early Berriasian (approx.)
+    "UAZ 15": BiozoneMa(137.8, 140.2, confidence=0.5),  # Berriasian (approx.)
+    "UAZ 16": BiozoneMa(135.4, 137.8, confidence=0.5),  # late Berriasian–early Valanginian (approx.)
+    "UAZ 17": BiozoneMa(133.0, 135.4, confidence=0.5),  # Valanginian (approx.)
+    "UAZ 18": BiozoneMa(130.6, 133.0, confidence=0.5),  # late Valanginian–early Hauterivian (approx.)
+    "UAZ 19": BiozoneMa(128.2, 130.6, confidence=0.5),  # Hauterivian (approx.)
+    "UAZ 20": BiozoneMa(125.8, 128.2, confidence=0.5),  # late Hauterivian (approx.)
+    "UAZ 21": BiozoneMa(123.4, 125.8, confidence=0.5),  # Hauterivian–Barremian boundary (approx.)
     # Hollis 1997 NZ Late Cretaceous radiolarian zones
     # Buryella clinata Zone: Thanetian (late Paleocene), ~56-59 Ma
     # (corrected: was incorrectly set to Wuchiapingian ~254-259 Ma)
-    "Buryella clinata Zone": (56.0, 59.0),  # Thanetian
-    "Cryptocephalus nigricae Zone": (83.6, 86.3),  # Coniacian–Santonian
+    "Buryella clinata Zone": BiozoneMa(56.0, 59.0, confidence=0.85),  # Thanetian
+    "Cryptocephalus nigricae Zone": BiozoneMa(83.6, 86.3, confidence=0.85),  # Coniacian–Santonian
     # O'Dogherty 1994 Betic Cordillera zones (mid-Cretaceous subset)
     # P1-7 fix: corrected to ICS 2023 stage boundaries.
     # Valanginian: 139.8-132.6 Ma; Hauterivian: 132.6-125.77 Ma
     # Barremian: 125.77-121.4 Ma; Aptian: 121.4-113.0 Ma; Albian: 113.0-100.5 Ma
-    "Pessagno Zone A": (125.77, 132.6),  # Hauterivian
-    "Pessagno Zone B": (121.4, 125.77),  # Barremian (lower Aptian boundary at 125.77)
-    "Pessagno Zone C": (113.0, 121.4),  # Aptian
+    "Pessagno Zone A": BiozoneMa(125.77, 132.6, confidence=0.85),  # Hauterivian
+    "Pessagno Zone B": BiozoneMa(121.4, 125.77, confidence=0.85),  # Barremian (lower Aptian boundary at 125.77)
+    "Pessagno Zone C": BiozoneMa(113.0, 121.4, confidence=0.85),  # Aptian
     # Legacy radiolarian zonation (Riedel & Sanfilippo 1978)
     # — commonly cited in older bandini / pouille papers.
     # Buryella tetradica Zone: Coniacian-Santonian (Late Cretaceous), ~83-89 Ma
     # (corrected: was incorrectly set to Olenekian-Anisian ~247-251 Ma)
-    "Buryella tetradica Zone": (83.6, 89.0),  # Coniacian–Santonian
-    "Triassocampe deweveri Zone": (208.5, 227.0),  # Carnian–Norian
+    "Buryella tetradica Zone": BiozoneMa(83.6, 89.0, confidence=0.85),  # Coniacian–Santonian
+    "Triassocampe deweveri Zone": BiozoneMa(208.5, 227.0, confidence=0.85),  # Carnian–Norian
     # Bare-name aliases (no trailing "Zone") so callers that already
     # stripped the suffix don't pay an extra re-lookup cost. Both
     # forms resolve to the same (ma_top, ma_base) tuple.
-    "Buryella clinata": (56.0, 59.0),  # Thanetian (corrected)
-    "Cryptocephalus nigricae": (83.6, 86.3),
-    "Buryella tetradica": (83.6, 89.0),  # Coniacian–Santonian (corrected)
-    "Triassocampe deweveri": (208.5, 227.0),
+    "Buryella clinata": BiozoneMa(56.0, 59.0, confidence=0.85),  # Thanetian (corrected)
+    "Cryptocephalus nigricae": BiozoneMa(83.6, 86.3, confidence=0.85),
+    "Buryella tetradica": BiozoneMa(83.6, 89.0, confidence=0.85),  # Coniacian–Santonian (corrected)
+    "Triassocampe deweveri": BiozoneMa(208.5, 227.0, confidence=0.85),
     # ------------------------------------------------------------------
     # RP zones (Radiolarian Paleogene — Sanfilippo & Nigrini 1998)
     # Cenozoic low-latitude radiolarian biochronology, Paleocene
@@ -1830,51 +1864,51 @@ _BIOZONE_TO_MA: dict[str, tuple[float, float]] = {
     # RP21 = Holocene (cosmopolitan flourish).
     # Ma bounds given as (ma_top, ma_base); ma_top is the younger,
     # ma_base is the older boundary in Ma (smaller number = younger).
-    "RP1": (30.0, 34.0),  # Early Oligocene
-    "RP2": (24.0, 30.0),
-    "RP3": (22.0, 24.0),
-    "RP4": (21.0, 22.0),
-    "RP5": (18.5, 21.0),
-    "RP6": (17.0, 18.5),  # Burdigalian
-    "RP7": (14.5, 17.0),  # latest Burdigalian–Langhian
-    "RP8": (12.5, 14.5),  # Serravallian
-    "RP9": (11.0, 12.5),
-    "RP10": (9.5, 11.0),
-    "RP11": (8.5, 9.5),  # Tortonian
-    "RP12": (7.5, 8.5),
-    "RP13": (6.5, 7.5),
-    "RP14": (5.5, 6.5),  # Messinian/Zanclean
-    "RP15": (4.5, 5.5),
-    "RP16": (3.5, 4.5),
-    "RP17": (2.5, 3.5),  # Piacenzian
-    "RP18": (1.8, 2.5),  # Gelasian
-    "RP19": (1.0, 1.8),  # Calabrian
-    "RP20": (0.5, 1.0),  # Middle Pleistocene
-    "RP21": (0.0, 0.5),  # Late Pleistocene–Holocene
+    "RP1": BiozoneMa(30.0, 34.0, confidence=0.85),  # Early Oligocene
+    "RP2": BiozoneMa(24.0, 30.0, confidence=0.85),
+    "RP3": BiozoneMa(22.0, 24.0, confidence=0.85),
+    "RP4": BiozoneMa(21.0, 22.0, confidence=0.85),
+    "RP5": BiozoneMa(18.5, 21.0, confidence=0.85),
+    "RP6": BiozoneMa(17.0, 18.5, confidence=0.85),  # Burdigalian
+    "RP7": BiozoneMa(14.5, 17.0, confidence=0.85),  # latest Burdigalian–Langhian
+    "RP8": BiozoneMa(12.5, 14.5, confidence=0.85),  # Serravallian
+    "RP9": BiozoneMa(11.0, 12.5, confidence=0.85),
+    "RP10": BiozoneMa(9.5, 11.0, confidence=0.85),
+    "RP11": BiozoneMa(8.5, 9.5, confidence=0.85),  # Tortonian
+    "RP12": BiozoneMa(7.5, 8.5, confidence=0.85),
+    "RP13": BiozoneMa(6.5, 7.5, confidence=0.85),
+    "RP14": BiozoneMa(5.5, 6.5, confidence=0.85),  # Messinian/Zanclean
+    "RP15": BiozoneMa(4.5, 5.5, confidence=0.85),
+    "RP16": BiozoneMa(3.5, 4.5, confidence=0.85),
+    "RP17": BiozoneMa(2.5, 3.5, confidence=0.85),  # Piacenzian
+    "RP18": BiozoneMa(1.8, 2.5, confidence=0.85),  # Gelasian
+    "RP19": BiozoneMa(1.0, 1.8, confidence=0.85),  # Calabrian
+    "RP20": BiozoneMa(0.5, 1.0, confidence=0.85),  # Middle Pleistocene
+    "RP21": BiozoneMa(0.0, 0.5, confidence=0.85),  # Late Pleistocene–Holocene
     # RP-zone "Biozone" trailing-word form (Sanfilippo & Nigrini 1998
     # writes both "RP6" and "RP6 Biozone" interchangeably). Stored as
     # plain aliases so we don't pay a per-lookup regex strip cost.
-    "RP1 Biozone": (30.0, 34.0),
-    "RP2 Biozone": (24.0, 30.0),
-    "RP3 Biozone": (22.0, 24.0),
-    "RP4 Biozone": (21.0, 22.0),
-    "RP5 Biozone": (18.5, 21.0),
-    "RP6 Biozone": (17.0, 18.5),
-    "RP7 Biozone": (14.5, 17.0),
-    "RP8 Biozone": (12.5, 14.5),
-    "RP9 Biozone": (11.0, 12.5),
-    "RP10 Biozone": (9.5, 11.0),
-    "RP11 Biozone": (8.5, 9.5),
-    "RP12 Biozone": (7.5, 8.5),
-    "RP13 Biozone": (6.5, 7.5),
-    "RP14 Biozone": (5.5, 6.5),
-    "RP15 Biozone": (4.5, 5.5),
-    "RP16 Biozone": (3.5, 4.5),
-    "RP17 Biozone": (2.5, 3.5),
-    "RP18 Biozone": (1.8, 2.5),
-    "RP19 Biozone": (1.0, 1.8),
-    "RP20 Biozone": (0.5, 1.0),
-    "RP21 Biozone": (0.0, 0.5),
+    "RP1 Biozone": BiozoneMa(30.0, 34.0, confidence=0.85),
+    "RP2 Biozone": BiozoneMa(24.0, 30.0, confidence=0.85),
+    "RP3 Biozone": BiozoneMa(22.0, 24.0, confidence=0.85),
+    "RP4 Biozone": BiozoneMa(21.0, 22.0, confidence=0.85),
+    "RP5 Biozone": BiozoneMa(18.5, 21.0, confidence=0.85),
+    "RP6 Biozone": BiozoneMa(17.0, 18.5, confidence=0.85),
+    "RP7 Biozone": BiozoneMa(14.5, 17.0, confidence=0.85),
+    "RP8 Biozone": BiozoneMa(12.5, 14.5, confidence=0.85),
+    "RP9 Biozone": BiozoneMa(11.0, 12.5, confidence=0.85),
+    "RP10 Biozone": BiozoneMa(9.5, 11.0, confidence=0.85),
+    "RP11 Biozone": BiozoneMa(8.5, 9.5, confidence=0.85),
+    "RP12 Biozone": BiozoneMa(7.5, 8.5, confidence=0.85),
+    "RP13 Biozone": BiozoneMa(6.5, 7.5, confidence=0.85),
+    "RP14 Biozone": BiozoneMa(5.5, 6.5, confidence=0.85),
+    "RP15 Biozone": BiozoneMa(4.5, 5.5, confidence=0.85),
+    "RP16 Biozone": BiozoneMa(3.5, 4.5, confidence=0.85),
+    "RP17 Biozone": BiozoneMa(2.5, 3.5, confidence=0.85),
+    "RP18 Biozone": BiozoneMa(1.8, 2.5, confidence=0.85),
+    "RP19 Biozone": BiozoneMa(1.0, 1.8, confidence=0.85),
+    "RP20 Biozone": BiozoneMa(0.5, 1.0, confidence=0.85),
+    "RP21 Biozone": BiozoneMa(0.0, 0.5, confidence=0.85),
     # ------------------------------------------------------------------
     # RN zones (Riedel & Sanfilippo 1978) — older low-latitude
     # Cenozoic radiolarian zonation, used in pre-1998 papers and still
@@ -1885,40 +1919,40 @@ _BIOZONE_TO_MA: dict[str, tuple[float, float]] = {
     # RN1 = Holocene–Late Pleistocene; RN17 = Aptian (~118-127 Ma).
     # RN4 = Tortonian (commonly cited in Mediterranean Miocene papers).
     # RN6 = Chattian–Rupelian (commonly cited in Oligocene papers).
-    "RN1": (0.0, 1.8),
-    "RN2": (1.8, 5.0),
-    "RN3": (5.0, 9.0),
-    "RN4": (9.0, 15.0),
-    "RN5": (15.0, 22.0),
-    "RN6": (22.0, 30.0),
-    "RN7": (30.0, 39.0),
-    "RN8": (39.0, 50.0),
-    "RN9": (50.0, 56.0),  # Thanetian
-    "RN10": (56.0, 65.0),  # Selandian–Danian
-    "RN11": (65.0, 74.0),  # Maastrichtian
-    "RN12": (74.0, 84.0),  # Campanian
-    "RN13": (84.0, 92.0),  # Santonian–Coniacian
-    "RN14": (92.0, 100.0),  # Cenomanian–Turonian
-    "RN15": (100.0, 110.0),  # Albian
-    "RN16": (110.0, 118.0),  # Aptian
-    "RN17": (118.0, 127.0),  # Aptian–Barremian
-    "RN1 Biozone": (0.0, 1.8),
-    "RN2 Biozone": (1.8, 5.0),
-    "RN3 Biozone": (5.0, 9.0),
-    "RN4 Biozone": (9.0, 15.0),
-    "RN5 Biozone": (15.0, 22.0),
-    "RN6 Biozone": (22.0, 30.0),
-    "RN7 Biozone": (30.0, 39.0),
-    "RN8 Biozone": (39.0, 50.0),
-    "RN9 Biozone": (50.0, 56.0),
-    "RN10 Biozone": (56.0, 65.0),
-    "RN11 Biozone": (65.0, 74.0),
-    "RN12 Biozone": (74.0, 84.0),
-    "RN13 Biozone": (84.0, 92.0),
-    "RN14 Biozone": (92.0, 100.0),
-    "RN15 Biozone": (100.0, 110.0),
-    "RN16 Biozone": (110.0, 118.0),
-    "RN17 Biozone": (118.0, 127.0),
+    "RN1": BiozoneMa(0.0, 1.8, confidence=0.85),
+    "RN2": BiozoneMa(1.8, 5.0, confidence=0.85),
+    "RN3": BiozoneMa(5.0, 9.0, confidence=0.85),
+    "RN4": BiozoneMa(9.0, 15.0, confidence=0.85),
+    "RN5": BiozoneMa(15.0, 22.0, confidence=0.85),
+    "RN6": BiozoneMa(22.0, 30.0, confidence=0.85),
+    "RN7": BiozoneMa(30.0, 39.0, confidence=0.85),
+    "RN8": BiozoneMa(39.0, 50.0, confidence=0.85),
+    "RN9": BiozoneMa(50.0, 56.0, confidence=0.85),  # Thanetian
+    "RN10": BiozoneMa(56.0, 65.0, confidence=0.85),  # Selandian–Danian
+    "RN11": BiozoneMa(65.0, 74.0, confidence=0.85),  # Maastrichtian
+    "RN12": BiozoneMa(74.0, 84.0, confidence=0.85),  # Campanian
+    "RN13": BiozoneMa(84.0, 92.0, confidence=0.85),  # Santonian–Coniacian
+    "RN14": BiozoneMa(92.0, 100.0, confidence=0.85),  # Cenomanian–Turonian
+    "RN15": BiozoneMa(100.0, 110.0, confidence=0.85),  # Albian
+    "RN16": BiozoneMa(110.0, 118.0, confidence=0.85),  # Aptian
+    "RN17": BiozoneMa(118.0, 127.0, confidence=0.85),  # Aptian–Barremian
+    "RN1 Biozone": BiozoneMa(0.0, 1.8, confidence=0.85),
+    "RN2 Biozone": BiozoneMa(1.8, 5.0, confidence=0.85),
+    "RN3 Biozone": BiozoneMa(5.0, 9.0, confidence=0.85),
+    "RN4 Biozone": BiozoneMa(9.0, 15.0, confidence=0.85),
+    "RN5 Biozone": BiozoneMa(15.0, 22.0, confidence=0.85),
+    "RN6 Biozone": BiozoneMa(22.0, 30.0, confidence=0.85),
+    "RN7 Biozone": BiozoneMa(30.0, 39.0, confidence=0.85),
+    "RN8 Biozone": BiozoneMa(39.0, 50.0, confidence=0.85),
+    "RN9 Biozone": BiozoneMa(50.0, 56.0, confidence=0.85),
+    "RN10 Biozone": BiozoneMa(56.0, 65.0, confidence=0.85),
+    "RN11 Biozone": BiozoneMa(65.0, 74.0, confidence=0.85),
+    "RN12 Biozone": BiozoneMa(74.0, 84.0, confidence=0.85),
+    "RN13 Biozone": BiozoneMa(84.0, 92.0, confidence=0.85),
+    "RN14 Biozone": BiozoneMa(92.0, 100.0, confidence=0.85),
+    "RN15 Biozone": BiozoneMa(100.0, 110.0, confidence=0.85),
+    "RN16 Biozone": BiozoneMa(110.0, 118.0, confidence=0.85),
+    "RN17 Biozone": BiozoneMa(118.0, 127.0, confidence=0.85),
 }
 
 
@@ -1948,13 +1982,21 @@ _BIOZONE_RE = re.compile(
 )
 
 
-def lookup_biozone_ma(name: str | None) -> tuple[float, float] | None:
-    """Look up the (ma_top, ma_base) for a named biozone.
+def lookup_biozone_ma(name: str | None) -> BiozoneMa | None:
+    """Look up the (ma_top, ma_base, confidence) for a named biozone.
 
-    Returns ``None`` if the name is missing, empty, or not in the
-    curated table. The helper is case-insensitive and tolerates a
-    trailing ``Zone`` / ``Subzone`` so ``"Buryella clinata"`` and
+    Returns a :class:`BiozoneMa` (top_ma, base_ma, confidence) if the
+    name resolves, or ``None`` if it is missing, empty, or not in
+    the curated table. The helper is case-insensitive and tolerates
+    a trailing ``Zone`` / ``Subzone`` so ``"Buryella clinata"`` and
     ``"Buryella clinata Zone"`` resolve to the same bounds.
+
+    The ``confidence`` value (audit 2026-09-03 BLOCKER-#7) lets
+    downstream consumers distinguish well-anchored zones (0.95 for
+    UAZ 1-12 against ICS 2023 stages) from interpolated zones (0.5
+    for UAZ 13-21, marked "(approx.)" in the source comments). The
+    PBDB exporter uses a confidence < 0.7 as the signal to fall
+    back to the section-measured age rather than the zone midpoint.
 
     Unknown zones are intentionally returned as ``None`` rather than
     inventing bounds — the caller is expected to surface the
@@ -1985,7 +2027,7 @@ def lookup_biozone_ma(name: str | None) -> tuple[float, float] | None:
         lo, hi = int(m.group(2)), int(m.group(3))
         if lo > hi:
             lo, hi = hi, lo
-        tops, bases = [], []
+        tops, bases, confs = [], [], []
         for i in range(lo, hi + 1):
             bounds = _BIOZONE_TO_MA.get(f"{prefix} {i}")
             if bounds is None:
@@ -1994,9 +2036,17 @@ def lookup_biozone_ma(name: str | None) -> tuple[float, float] | None:
                 bounds = _BIOZONE_TO_MA.get(f"{prefix}{i}")
             if bounds is None:
                 return None  # unknown zone in range → conservative None
-            tops.append(bounds[0])
-            bases.append(bounds[1])
-        return (min(tops), max(bases))
+            tops.append(bounds.top_ma)
+            bases.append(bounds.base_ma)
+            confs.append(bounds.confidence)
+        # For a range, the union interval uses the most conservative
+        # confidence (minimum) so a span that includes an UAZ 13-21
+        # zone is flagged as approximate.
+        return BiozoneMa(
+            top_ma=min(tops),
+            base_ma=max(bases),
+            confidence=min(confs),
+        )
     # Phase 3E audit 2026-08-19 (Bug M-8): normalise the single-zone
     # form so ``RP 6`` and ``RP6`` both resolve to the same bounds.
     # The table is heterogeneous:
@@ -2035,6 +2085,24 @@ def lookup_biozone_ma(name: str | None) -> tuple[float, float] | None:
         if key.lower() == lower:
             return val
     return None
+
+
+def lookup_biozone_ma_legacy(name: str | None) -> tuple[float, float] | None:
+    """Backward-compat shim: returns ``(ma_top, ma_base)`` as a plain
+    2-tuple instead of a :class:`BiozoneMa` NamedTuple.
+
+    Added 2026-09-03 (BLOCKER-#7) so older call sites that do
+    ``top, base = lookup_biozone_ma(name)`` continue to work without
+    source changes — the new function returns a 3-element
+    ``BiozoneMa(top_ma, base_ma, confidence)`` which would unpack
+    differently and break those callers. New code should call
+    :func:`lookup_biozone_ma` directly and use the NamedTuple's
+    ``.confidence`` attribute.
+    """
+    bm = lookup_biozone_ma(name)
+    if bm is None:
+        return None
+    return (bm.top_ma, bm.base_ma)
 
 
 def find_ages_in_text(text: str) -> list[AgeClassification]:
@@ -2101,7 +2169,7 @@ def find_ages_in_text(text: str) -> list[AgeClassification]:
             bounds = lookup_biozone_ma(tag)
             if bounds is None:
                 continue
-            ma_top, ma_base = bounds
+            ma_top, ma_base = bounds.top_ma, bounds.base_ma
             # Canonicalise the zone name: strip trailing "Biozone"
             # / "Zone" / "Subzone" so downstream code can compare
             # ``age`` strings without worrying about that suffix.
@@ -2118,7 +2186,15 @@ def find_ages_in_text(text: str) -> list[AgeClassification]:
                     epoch=None,
                     age=f"biozone:{canonical}",
                     rank="biozone",
-                    confidence=0.85,
+                    # Audit 2026-09-03 (BLOCKER-#7): carry the
+                    # biozone's calibration confidence so a PBDB
+                    # exporter can use a section-measured age as
+                    # fallback when this drops below 0.7 (e.g. UAZ
+                    # 13-21 entries). The previous hardcoded 0.85
+                    # silently treated UAZ 13-21 as well-anchored
+                    # when the source comments explicitly flag them
+                    # as "(approx.)".
+                    confidence=bounds.confidence,
                     ma_top=ma_top,
                     ma_base=ma_base,
                     ma_mid=(ma_top + ma_base) / 2.0,

@@ -343,6 +343,28 @@ _PALEO_KEYWORDS_GEO = (
     "in pleistocene",
     "in the pleistocene",
     "pleistocene",
+    # Audit 2026-09-03 (BLOCKER-#9): British English spellings used in
+    # De Wever 2001, O'Dogherty 1994, Hollis 1997 and other classical
+    # radiolarian literature. The American spellings above (paleo*,
+    # ceno*) are kept so existing matches still work; the British
+    # variants below are added because the previous list only
+    # matched the American forms, causing 56 Ma occurrences in
+    # "during the Palaeocene" text to be misclassified as modern
+    # coordinates (corrupting downstream GBIF submissions).
+    "palaeogeographic", "palaeolatitude", "palaeolongitude",
+    "palaeocene", "in the palaeocene", "in palaeocene",
+    "palaeogene", "in the palaeogene", "in palaeogene",
+    "palaeozoic", "in the palaeozoic", "in palaeozoic",
+    "palaeontological",
+    "cainozoic", "in the cainozoic", "in cainozoic",
+    "caenozoic", "in the caenozoic", "in caenozoic",
+    # French spellings (De Wever 2001 et al.) — these need to be
+    # matched case-insensitively too; the regex below uses
+    # ``re.IGNORECASE`` so the literal accents pass through. Adding
+    # them as plain strings lets the |alternation| work without
+    # extra compilation.
+    "paléocène", "paléogène", "paléozoïque",
+    "mésozoïque", "cénozoïque", "cainozoïque",
 )
 
 
