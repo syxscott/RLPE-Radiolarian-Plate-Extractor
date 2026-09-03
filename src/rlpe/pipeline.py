@@ -1461,6 +1461,54 @@ class RadiolarianPipeline:
         # None instead of [] when the Java pairing stage fails).
         figures = list(figures or [])
 
+        # Audit 2026-09-03 (silent failure fix): when OD returned 0
+        # figures AND every kid in the kids tree is a "paragraph"
+        # (no "Figure" / "Image" / "Figure-Image" / "Figure-Caption"
+        # type), the pipeline silently produces 0 rows downstream
+        # because no figure→caption pairing succeeded. This is the
+        # "zhang2014" failure mode reported on 2026-09-03 — 40
+        # panel crops were generated but ``matches.jsonl`` was 0
+        # lines and ``manifest.warnings`` was ``[]``. Emit a
+        # structured warning so the operator (and the GUI Results
+        # tab) can see WHY the run produced no species rows instead
+        # of staring at an empty Results tab wondering whether the
+        # pipeline crashed or never started.
+        if not figures:
+            try:
+                from .utils import _WARNINGS, _WARNINGS_LOCK  # noqa: PLC0415
+                kids_tree = (od_result.json_data or {}).get("kids") or []
+                kids_types = [
+                    k.get("Type") or k.get("type")
+                    for k in kids_tree
+                    if isinstance(k, dict)
+                ]
+                figure_types = {
+                    t for t in kids_types
+                    if t and "figure" in str(t).lower() or t and "image" in str(t).lower()
+                }
+                if not figure_types and kids_tree:
+                    _warning_msg = (
+                        f"OpenDataLoader returned 0 figures AND 0 "
+                        f"figure-type elements in the kids tree for "
+                        f"{paper_id} ({len(kids_tree)} paragraph-only kids). "
+                        f"This PDF likely uses a non-standard figure layout "
+                        f"(phylogenetic tree / line drawing only) — "
+                        f"species matching will produce 0 rows."
+                    )
+                    entry = {
+                        "label": "od_zero_figure_metadata",
+                        "paper_id": paper_id,
+                        "message": _warning_msg,
+                        "timestamp": time.time(),
+                    }
+                    with _WARNINGS_LOCK:
+                        _WARNINGS.append(entry)
+                    logger.warning(_warning_msg)
+            except Exception:
+                # Never let a warning-emit failure cascade — this is a
+                # best-effort diagnostic, not a critical control flow.
+                pass
+
         # Geology / fulltext — collect taxon entities from all captions.
         all_taxon_names: list[str] = []
         for pair in figures:

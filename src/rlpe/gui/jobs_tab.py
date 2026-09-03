@@ -665,6 +665,93 @@ class JobsTab(QWidget):
                         complete_flag=cli_work / "output" / "manifests" / "complete.flag",
                     )
                 )
+        # Audit 2026-09-03 (BLOCKER user-reported): scan the user's
+        # configured ``last_pdf_dir`` and ``last_export_dir`` (read
+        # from QSettings so this works without changing MainWindow's
+        # JobsTab ctor signature) for PySide6-GUI output patterns.
+        # The PySide6 GUI writes to ``<pdf_dir>/<stem>/work/manifests/``
+        # AND ``<last_export_dir>/<stem>_rlpe_out/work/output/`` —
+        # neither of which the legacy service_work/ or project root
+        # work/ scan would find. Without this, every PySide6 run
+        # against a user-specified output_dir is invisible to the
+        # Jobs tab until the operator re-opens the run inside the
+        # same GUI session — exactly the "I ran it but the Results
+        # tab is empty" failure mode reported on 2026-09-03.
+        try:
+            from PySide6.QtCore import QSettings
+            from .constants import (
+                APP_AUTHOR,
+                APP_NAME,
+                QS_KEY_LAST_DIR,
+                QS_KEY_LAST_EXPORT_DIR,
+            )
+            _qsettings = QSettings(APP_AUTHOR, APP_NAME)
+            # Collect the set of PDF-side and export-side roots to
+            # scan. We dedupe via a resolved path set so the same
+            # subdir isn't loaded twice when last_pdf_dir and
+            # last_export_dir coincide (common for ad-hoc tests).
+            user_roots: set[Path] = set()
+            for _key in (QS_KEY_LAST_DIR, QS_KEY_LAST_EXPORT_DIR):
+                _raw = str(_qsettings.value(_key, "") or "").strip()
+                if not _raw:
+                    continue
+                _p = Path(_raw)
+                if _p.exists() and _p.is_dir():
+                    user_roots.add(_p.resolve())
+            # The PySide6 GUI writes single-PDF runs to
+            # ``<last_pdf_dir>/<stem>/work/manifests/matches.jsonl``
+            # so scan each immediate child of last_pdf_dir.
+            # Batch runs write to
+            # ``<last_export_dir>/<stem>_rlpe_out/work/output/manifests/matches.jsonl``
+            # so scan each ``*_rlpe_out`` child of last_export_dir.
+            # We also walk one level deeper (children of children)
+            # so a paper staged in ``<last_pdf_dir>/<author>/<stem>/``
+            # still gets picked up.
+            for _root in user_roots:
+                try:
+                    _children = list(_root.iterdir())
+                except OSError:
+                    continue
+                # Single-PDF outputs (<root>/<stem>/work/manifests/...)
+                for _child in _children:
+                    if not _child.is_dir():
+                        continue
+                    _mp = _child / "work" / "manifests" / "matches.jsonl"
+                    if _mp.exists():
+                        # Stable jid derived from the absolute path
+                        # so re-running the same PDF twice produces the
+                        # same jid (and the JobsTab dedupes rows).
+                        import hashlib as _hl
+                        _jid = "user_" + _hl.md5(
+                            str(_mp.resolve()).encode()
+                        ).hexdigest()[:12]
+                        pending.append(
+                            _PendingDiskScan(
+                                jid=_jid,
+                                root=_child,
+                                matches_path=_mp,
+                                complete_flag=_child / "work" / "manifests" / "complete.flag",
+                            )
+                        )
+                    # Batch outputs (<root>/<stem>_rlpe_out/work/output/...)
+                    _batch = _child / "work" / "output" / "manifests" / "matches.jsonl"
+                    if _batch.exists():
+                        import hashlib as _hl
+                        _jid = "user_batch_" + _hl.md5(
+                            str(_batch.resolve()).encode()
+                        ).hexdigest()[:12]
+                        pending.append(
+                            _PendingDiskScan(
+                                jid=_jid,
+                                root=_child / "work",
+                                matches_path=_batch,
+                                complete_flag=_child / "work" / "output" / "manifests" / "complete.flag",
+                            )
+                        )
+        except ImportError:
+            # PySide6 not installed (running tests headless) — skip
+            # the user-root scan rather than crash the test suite.
+            pass
 
         if not pending:
             # Phase F-1 (B-3): emit scan_finished([]) so callers
