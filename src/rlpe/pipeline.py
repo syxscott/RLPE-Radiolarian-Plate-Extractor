@@ -683,6 +683,47 @@ class RadiolarianPipeline:
         try:
             import time as _t
 
+            # Audit 2026-09-03 (BLOCKER-#2 follow-up #2): the
+            # operator's 21:39 zhang2014 re-run had ``n_rows=0`` but
+            # ``warnings=[]`` because OpenDataLoader *did* extract 6
+            # images and 2 captions — the bug was downstream in the
+            # figure-caption pairing or panel-matching stage where
+            # no row survived. The OD-only check we added earlier
+            # (`if not figures: emit warning`) is insufficient when
+            # figures exist but every downstream stage rejects them.
+            # Emit a catch-all warning here whenever we processed
+            # papers yet produced 0 rows — that covers the pairing,
+            # matching, species-name-resolution, and OD-FIGURE-
+            # EMPTY failure modes in one place. The operator will see
+            # ``pipeline_finished_zero_rows`` in ``manifest.warnings``
+            # and immediately know that the run did NOT fail at the
+            # ``finished_ok.emit`` layer (PySide6 GUI sees status=done)
+            # but also did NOT produce usable data.
+            if total > 0 and not rows:
+                try:
+                    from .utils import _WARNINGS as _W, _WARNINGS_LOCK as _L
+                    _w_msg = (
+                        f"Pipeline processed {total} PDF(s) but produced "
+                        f"0 result rows. Downstream figure-caption pairing, "
+                        f"panel-matching, or species-name resolution may "
+                        f"have rejected every detected figure. Check "
+                        f"work/od_output/ for the structural tree and "
+                        f"``matches.jsonl`` (likely empty) for the actual "
+                        f"stage that produced zero output."
+                    )
+                    with _L:
+                        _W.append(
+                            {
+                                "label": "pipeline_finished_zero_rows",
+                                "paper_id": None,
+                                "message": _w_msg,
+                                "timestamp": _t.time(),
+                            }
+                        )
+                    logger.warning(_w_msg)
+                except Exception:
+                    pass
+
             from .utils import drain_warnings as _drain_warnings
 
             _run_warnings = _drain_warnings()
