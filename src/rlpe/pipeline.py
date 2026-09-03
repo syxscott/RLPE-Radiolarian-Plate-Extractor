@@ -1486,15 +1486,44 @@ class RadiolarianPipeline:
                     t for t in kids_types
                     if t and "figure" in str(t).lower() or t and "image" in str(t).lower()
                 }
-                if not figure_types and kids_tree:
+                # Two distinct silent-failure shapes both produce
+                # ``matches.jsonl: 0 行`` AND ``manifest.warnings: []``:
+                #
+                # (a) ``json_data is None`` — the OD Java subprocess
+                #     exited non-zero so no structural tree was
+                #     returned (this is what happened for the
+                #     2026-09-03 zhang2014 GUI re-run; the previous
+                #     CLI run had succeeded and left the JSON on disk
+                #     but this run produced no JSON at all).
+                # (b) ``json_data`` exists but every kid is a
+                #     ``paragraph`` and no Figure / Image / Figure-
+                #     Caption type is present (true PDF-without-plates
+                #     case — phylogenetic tree paper).
+                #
+                # Both leave the operator staring at an empty
+                # Results tab. Emit one structured warning per case.
+                if not od_result.json_data:
+                    _warning_msg = (
+                        f"OpenDataLoader returned NO JSON structural "
+                        f"tree for {paper_id} (error="
+                        f"{od_result.error or 'unknown'}). Species "
+                        f"matching produced 0 figures and 0 rows. The "
+                        f"Java OD subprocess may have failed — check "
+                        f"work/od_output/ for diagnostic logs."
+                    )
+                elif not figure_types and kids_tree:
                     _warning_msg = (
                         f"OpenDataLoader returned 0 figures AND 0 "
                         f"figure-type elements in the kids tree for "
-                        f"{paper_id} ({len(kids_tree)} paragraph-only kids). "
-                        f"This PDF likely uses a non-standard figure layout "
-                        f"(phylogenetic tree / line drawing only) — "
-                        f"species matching will produce 0 rows."
+                        f"{paper_id} ({len(kids_tree)} paragraph-only "
+                        f"kids). This PDF likely uses a non-standard "
+                        f"figure layout (phylogenetic tree / line "
+                        f"drawing only) — species matching will "
+                        f"produce 0 rows."
                     )
+                else:
+                    _warning_msg = None
+                if _warning_msg is not None:
                     entry = {
                         "label": "od_zero_figure_metadata",
                         "paper_id": paper_id,

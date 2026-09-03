@@ -212,7 +212,10 @@ class _StubODResult:
 
 
 def _emit_od_zero_figure_warning(
-    figures: list, json_data: dict, paper_id: str
+    figures: list,
+    json_data: dict | None,
+    paper_id: str,
+    od_error: str | None = None,
 ) -> None:
     """Mirror of the inline logic in pipeline._process_one_pdf_od_inner
     that the audit 2026-09-03 fix added. Re-implemented here so we
@@ -233,7 +236,16 @@ def _emit_od_zero_figure_warning(
         for t in kids_types
         if t and ("figure" in str(t).lower() or "image" in str(t).lower())
     }
-    if not figure_types and kids_tree:
+    # Two silent-failure shapes (audit 2026-09-03 follow-up):
+    if json_data is None:
+        _warning_msg = (
+            f"OpenDataLoader returned NO JSON structural tree for "
+            f"{paper_id} (error={od_error or 'unknown'}). Species "
+            f"matching produced 0 figures and 0 rows. The Java OD "
+            f"subprocess may have failed — check work/od_output/ "
+            f"for diagnostic logs."
+        )
+    elif not figure_types and kids_tree:
         _warning_msg = (
             f"OpenDataLoader returned 0 figures AND 0 "
             f"figure-type elements in the kids tree for "
@@ -242,6 +254,9 @@ def _emit_od_zero_figure_warning(
             f"(phylogenetic tree / line drawing only) — "
             f"species matching will produce 0 rows."
         )
+    else:
+        _warning_msg = None
+    if _warning_msg is not None:
         entry = {
             "label": "od_zero_figure_metadata",
             "paper_id": paper_id,
@@ -278,7 +293,10 @@ class TestPipelineZeroFigureWarning:
             },
         )
         _emit_od_zero_figure_warning(
-            stub.figures, stub.json_data, paper_id="zhang2014"
+            stub.figures,
+            stub.json_data,
+            paper_id="zhang2014",
+            od_error=getattr(stub, "error", None),
         )
 
         with _WARNINGS_LOCK:
@@ -294,6 +312,51 @@ class TestPipelineZeroFigureWarning:
         assert "paragraph-only kids" in warning["message"]
         assert "0 figures" in warning["message"]
         assert "216" in warning["message"]
+
+    def test_json_data_none_emits_warning(self) -> None:
+        """Audit 2026-09-03 follow-up: when OD subprocess fails and
+        ``json_data`` is ``None``, the silent failure (matches.jsonl=0
+        lines + manifest.warnings=[]) must still produce a warning.
+        Without this branch, every retry of the same PDF keeps the
+        operator staring at an empty Results tab.
+        """
+        from rlpe.utils import _WARNINGS, _WARNINGS_LOCK
+        with _WARNINGS_LOCK:
+            _WARNINGS.clear()
+
+        # Mimic the 2026-09-03 17:45 GUI re-run on zhang2014 where
+        # the OD Java subprocess returned exit code 1 (no JSON
+        # structural tree) but the panel segmenter still produced
+        # 40 panel crops from the rasterized pages — leaving the
+        # operator with ``n_rows=0`` and ``warnings=[]``.
+        stub = _StubODResult(
+            success=False,
+            figures=[],
+            json_data=None,
+            error="opendaderp-pdf subprocess exited 1",
+        )
+        _emit_od_zero_figure_warning(
+            stub.figures,
+            stub.json_data,
+            paper_id="zhang2014",
+            od_error=getattr(stub, "error", None),
+        )
+
+        with _WARNINGS_LOCK:
+            matching = [
+                w for w in _WARNINGS if w["label"] == "od_zero_figure_metadata"
+            ]
+        assert matching, (
+            "Pipeline should emit od_zero_figure_metadata warning even "
+            "when json_data is None (OD subprocess failure case)"
+        )
+        warning = matching[0]
+        assert "NO JSON" in warning["message"], (
+            f"warning should distinguish the no-JSON failure mode; "
+            f"got: {warning['message']}"
+        )
+        assert "zhang2014" in warning["message"]
+        assert "opendaderp-pdf subprocess exited 1" in warning["message"]
 
     def test_with_real_figures_no_warning(self) -> None:
         """Sanity check: when OD returns at least one figure, the
@@ -314,7 +377,10 @@ class TestPipelineZeroFigureWarning:
             },
         )
         _emit_od_zero_figure_warning(
-            stub.figures, stub.json_data, paper_id="beccaro2006"
+            stub.figures,
+            stub.json_data,
+            paper_id="beccaro2006",
+            od_error=getattr(stub, "error", None),
         )
         with _WARNINGS_LOCK:
             od_warnings = [
@@ -343,7 +409,10 @@ class TestPipelineZeroFigureWarning:
             },
         )
         _emit_od_zero_figure_warning(
-            stub.figures, stub.json_data, paper_id="normal_pdf"
+            stub.figures,
+            stub.json_data,
+            paper_id="normal_pdf",
+            od_error=getattr(stub, "error", None),
         )
         with _WARNINGS_LOCK:
             od_warnings = [
