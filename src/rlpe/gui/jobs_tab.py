@@ -917,8 +917,33 @@ class JobsTab(QWidget):
         self._update_summary()
 
     def update_progress(self, job_id: str, current: int, total: int, msg: str) -> None:
+        # Audit 2026-09-03 (user-reported zhang2014 follow-up): the
+        # historical ``if job_id not in self._jobs: return`` made
+        # the JobsTab invisible to ANY run that completed between
+        # two consecutive GUI restarts. If the operator started a
+        # job AFTER the GUI booted and BEFORE any disk-scan re-run,
+        # ``mark_done / mark_failed / mark_cancelled / update_progress``
+        # would all no-op because the in-memory ``_jobs`` dict
+        # didn't yet contain the entry. The pipeline.log showed
+        # "Job ... finished with 0 rows" (INFO) but the operator
+        # saw an empty Jobs tab + empty Results tab.
+        #
+        # Fix: create a placeholder JobRecord on the fly when the
+        # job_id is unknown so the operator can SEE the run in the
+        # Jobs tab immediately. pdf_path / output_dir are best-effort
+        # — empty when we can't derive them; the user can still
+        # open the work/ directory via the on-disk link in the
+        # JobsTab toolbar to find the actual outputs.
         if job_id not in self._jobs:
-            return
+            self._jobs[job_id] = JobRecord(
+                job_id=job_id,
+                pdf_path="",
+                output_dir="",
+                status=STATUS_RUNNING,
+                started_at=time.time(),
+                finished_at=0.0,
+                rows=[],
+            )
         job = self._jobs[job_id]
         job.progress_current = current
         job.progress_total = total
@@ -926,8 +951,18 @@ class JobsTab(QWidget):
         self._refresh_row(job)
 
     def mark_done(self, job_id: str, rows: list[dict[str, Any]]) -> None:
+        # See ``update_progress`` for the rationale behind creating
+        # a placeholder JobRecord when the id is unknown.
         if job_id not in self._jobs:
-            return
+            self._jobs[job_id] = JobRecord(
+                job_id=job_id,
+                pdf_path="",
+                output_dir="",
+                status=STATUS_DONE,
+                started_at=time.time(),
+                finished_at=time.time(),
+                rows=list(rows),
+            )
         job = self._jobs[job_id]
         job.status = STATUS_DONE
         job.rows = rows
@@ -939,8 +974,18 @@ class JobsTab(QWidget):
         self._trim_old_jobs()
 
     def mark_failed(self, job_id: str, error: str) -> None:
+        # See ``update_progress`` for the rationale behind creating
+        # a placeholder JobRecord when the id is unknown.
         if job_id not in self._jobs:
-            return
+            self._jobs[job_id] = JobRecord(
+                job_id=job_id,
+                pdf_path="",
+                output_dir="",
+                status=STATUS_FAILED,
+                started_at=time.time(),
+                finished_at=time.time(),
+                error=error,
+            )
         job = self._jobs[job_id]
         job.status = STATUS_FAILED
         job.error = error
@@ -951,8 +996,17 @@ class JobsTab(QWidget):
         self._trim_old_jobs()
 
     def mark_cancelled(self, job_id: str) -> None:
+        # See ``update_progress`` for the rationale behind creating
+        # a placeholder JobRecord when the id is unknown.
         if job_id not in self._jobs:
-            return
+            self._jobs[job_id] = JobRecord(
+                job_id=job_id,
+                pdf_path="",
+                output_dir="",
+                status=STATUS_CANCELLED,
+                started_at=time.time(),
+                finished_at=time.time(),
+            )
         job = self._jobs[job_id]
         job.status = STATUS_CANCELLED
         job.finished_at = time.time()
