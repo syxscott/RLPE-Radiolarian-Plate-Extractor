@@ -698,6 +698,15 @@ class RunTab(QWidget):
             return
         self._set_pdf_path(Path(path))
         settings["last_pdf_dir"] = str(Path(path).parent)
+        # Audit 2026-09-03 (Agent B): the in-memory dict write above
+        # never reaches QSettings, so a GUI restart loses the path
+        # the disk scan needs to pick up PySide6 output dirs. Persist
+        # to the canonical ``io/last_pdf_dir`` key here, matching the
+        # behaviour of ``main_window._on_open_pdf``.
+        from PySide6.QtCore import QSettings as _QS
+        from .constants import APP_AUTHOR, APP_NAME, QS_KEY_LAST_DIR as _K
+        _qs = _QS(APP_AUTHOR, APP_NAME)
+        _qs.setValue(_K, settings["last_pdf_dir"])
 
     def _on_clear(self) -> None:
         self._path_edit.clear()
@@ -825,6 +834,15 @@ class RunTab(QWidget):
             return
         self._settings["last_export_dir"] = str(out_path)
         self._settings["last_pdf_dir"] = str(Path(pdf).parent)
+        # Audit 2026-09-03 (Agent B): persist the output dir so the
+        # disk scan can pick up PySide6 output dirs after a restart.
+        # Without this, the ``io/last_export_dir`` key is empty until
+        # the user manually visits the Settings tab and clicks Save.
+        from PySide6.QtCore import QSettings as _QS2
+        from .constants import APP_AUTHOR as _AA2, APP_NAME as _AN2
+        from .constants import QS_KEY_LAST_EXPORT_DIR as _KE
+        _qs2 = _QS2(_AA2, _AN2)
+        _qs2.setValue(_KE, str(out_path))
 
         settings = self.collect_settings()
         self._worker = PipelineWorker(settings, Path(pdf), work_dir, parent=self)
