@@ -67,6 +67,18 @@ def load_gold_for(slug: str) -> list[dict]:
     return []
 
 
+def _enrich_preds_with_text_and_group(preds: list[dict]) -> list[dict]:
+    """Add occurrence_group_id to each pred row.
+
+    Returns a new list (does not mutate input). This is the
+    integration point for Feature B: same species in different
+    figures in the same paper get the same group id, so the eval
+    pipeline can deduplicate when desired.
+    """
+    from occurrence import add_occurrence_groups
+    return add_occurrence_groups(preds)
+
+
 def find_pdf(slug: str) -> Path | None:
     for d in [PAPERS_DIR, HOLDOUT_DIR]:
         for p in d.glob('*.pdf'):
@@ -197,6 +209,8 @@ def main():
             time.sleep(60)  # rate limit
         gold = load_gold_for(slug)
         preds = extract_panels_for_paper(backend, slug, gold)
+        # Feature B: attach occurrence_group_id to every pred row
+        preds = _enrich_preds_with_text_and_group(preds)
         if is_train:
             train_preds.extend(preds)
             train_gold.extend(gold)
