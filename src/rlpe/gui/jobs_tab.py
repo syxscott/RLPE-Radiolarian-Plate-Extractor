@@ -546,6 +546,46 @@ class JobsTab(QWidget):
         clear_all_btn.clicked.connect(self._clear_all)
         bar.addWidget(clear_all_btn)
 
+        # Audit 2026-09-03 (user-reported): "Clear all" used to be a
+        # no-op across restarts because the disk scan re-populates
+        # every job from ``manifests/matches.jsonl``. Add a
+        # Show-Hidden toggle (checkable button) that lets the
+        # operator peek at jobs they've hidden via `` Clear all
+        # so far and a "Delete permanently" button that wipes the
+        # on-disk data after a confirmation dialog. The hidden
+        # jid list is persisted in QSettings under
+        # ``QS_KEY_HIDDEN_JOB_IDS`` (audit bug-fix to satisfy
+        # QSettings's strict typing — must be ``list[str]`` not
+        # ``set[str]``).
+        from PySide6.QtCore import QSettings as _QSettings
+        from .constants import APP_AUTHOR as _AA, APP_NAME as _AN
+        from .constants import (
+            QS_KEY_HIDDEN_JOB_IDS as _QS_HIDDEN,
+            QS_KEY_SHOW_HIDDEN_JOBS as _QS_SHOW_HIDDEN,
+        )
+        self._qsettings = _QSettings(_AA, _AN)
+        self._hidden_jids: set[str] = self._load_hidden_jids()
+        # The "show hidden" preference survives restarts so the
+        # operator doesn't have to re-enable it after every restart.
+        try:
+            self._show_hidden: bool = bool(
+                int(self._qsettings.value(_QS_SHOW_HIDDEN, "0") or "0")
+            )
+        except Exception:
+            self._show_hidden = False
+
+        self._show_hidden_btn = tr_button("jobstab.show_hidden")
+        self._show_hidden_btn.setCheckable(True)
+        self._show_hidden_btn.setChecked(self._show_hidden)
+        self._show_hidden_btn.setProperty("class", "flat")
+        self._show_hidden_btn.toggled.connect(self._on_show_hidden_toggled)
+        bar.addWidget(self._show_hidden_btn)
+
+        delete_perm_btn = tr_button("jobstab.delete_permanently")
+        delete_perm_btn.setProperty("class", "flat")
+        delete_perm_btn.clicked.connect(self._delete_permanently)
+        bar.addWidget(delete_perm_btn)
+
         bar.addStretch(1)
         self._count_label = tr_label("jobstab.no_jobs")
         self._count_label.setObjectName("metric")
@@ -665,10 +705,47 @@ class JobsTab(QWidget):
                         complete_flag=cli_work / "output" / "manifests" / "complete.flag",
                     )
                 )
-        # Audit 2026-09-03 (BLOCKER user-reported): scan the user's
-        # configured ``last_pdf_dir`` and ``last_export_dir`` (read
-        # from QSettings so this works without changing MainWindow's
-        # JobsTab ctor signature) for PySide6-GUI output patterns.
+        # Audit 2026-09-03 (user-reported, "Clear all" not sticky):
+        # apply the soft-hide filter so jobs the operator hid via
+        # "Clear all" stay hidden across restarts. ``show_hidden``
+        # is the explicit override to peek back at them.
+        from .constants import (
+            QS_KEY_HIDDEN_JOB_IDS as _QS_HIDDEN_SCAN,
+        )
+        raw_hidden = getattr(self, "_qsettings", None)
+        show_hidden = getattr(self, "_show_hidden", False)
+        if raw_hidden is None:
+            # Test / bypass-init paths may not have wired up
+            # ``_qsettings``. Treat that as the empty hidden set
+            # so the disk scan still completes.
+            hidden_set = set()
+            self._hidden_jids = hidden_set
+            if not show_hidden:
+                pending = [
+                    p for p in pending if p.jid not in hidden_set
+                ]
+        else:
+            raw_hidden = raw_hidden.value(_QS_HIDDEN_SCAN, [])
+            if isinstance(raw_hidden, str) and raw_hidden:
+                try:
+                    import json as _json_h
+                    hidden_set = {
+                        str(j) for j in _json_h.loads(raw_hidden) if j
+                    }
+                except Exception:
+                    hidden_set = set()
+            elif isinstance(raw_hidden, list):
+                hidden_set = {str(j) for j in raw_hidden if j}
+            else:
+                hidden_set = set()
+            # Refresh the in-memory cache so subsequent ``Clear all``
+            # operations see exactly what was on disk.
+            self._hidden_jids = hidden_set
+            # Filter: drop hidden unless operator opted into Show-Hidden.
+            if not show_hidden:
+                pending = [
+                    p for p in pending if p.jid not in hidden_set
+                ]
         # The PySide6 GUI writes to ``<pdf_dir>/<stem>/work/manifests/``
         # AND ``<last_export_dir>/<stem>_rlpe_out/work/output/`` —
         # neither of which the legacy service_work/ or project root
@@ -1255,11 +1332,148 @@ class JobsTab(QWidget):
         self._update_summary()
 
     def _clear_all(self) -> None:
-        # Phase 56 audit: batch clear instead of individual _remove_job calls.
+        # Audit 2026-09-03 (user-reported): previously this just
+        # cleared ``self._jobs`` in memory. Because the disk scan
+        # re-populates from ``manifests/matches.jsonl`` on every
+        # restart, the cleared jobs came back. Now we SOFT-HIDE:
+        # add every currently-loaded job_id to the persisted
+        # ``io/hidden_job_ids`` list so the disk scan filters them
+        # out on the next restart. Disk artifacts are untouched —
+        # use the new "Delete permanently..." button to wipe them.
+        currently_visible = list(self._jobs.keys())
+        for jid in currently_visible:
+            self._hidden_jids.add(jid)
+        self._save_hidden_jids(self._hidden_jids)
         self._jobs.clear()
         self._table.setRowCount(0)
         self._ctx_actions.clear()
         self._update_summary()
+
+    # ------------------------------------------------------------------
+    # Audit 2026-09-03 (user-reported): hidden-jid persistence +
+    # permanent-delete confirmation helpers.
+    # ------------------------------------------------------------------
+    def _load_hidden_jids(self) -> set[str]:
+        """Read ``io/hidden_job_ids`` from QSettings as a set of
+        strings. ``QSettings.value`` returns whatever type the
+        underlying engine stored — for ``list[str]`` keys that
+        round-trip is fine on Linux/macOS but Windows REG_SZ
+        stores them as ``str`` (a JSON-encoded list). Handle both.
+        """
+        from .constants import QS_KEY_HIDDEN_JOB_IDS as _K
+        raw = self._qsettings.value(_K, [])
+        if raw is None or raw == "":
+            return set()
+        if isinstance(raw, str):
+            try:
+                import json as _json
+                parsed = _json.loads(raw)
+            except Exception:
+                parsed = []
+        else:
+            parsed = list(raw)
+        return {str(j) for j in parsed if j}
+
+    def _save_hidden_jids(self, hidden: set[str]) -> None:
+        """Persist hidden_jids as a JSON-encoded list so QSettings's
+        REG_SZ backend (Windows) round-trips correctly. ``list[str]``
+        also round-trips on Linux/macOS so we use the same format
+        everywhere.
+        """
+        from .constants import QS_KEY_HIDDEN_JOB_IDS as _K
+        import json as _json
+        self._qsettings.setValue(_K, _json.dumps(sorted(hidden), ensure_ascii=False))
+
+    def _on_show_hidden_toggled(self, checked: bool) -> None:
+        """Show / hide the rows the operator previously soft-deleted
+        via ``Clear all``. The toggle persists across restarts so
+        the operator doesn't have to re-enable it every session."""
+        from .constants import QS_KEY_SHOW_HIDDEN_JOBS as _K
+        self._show_hidden = bool(checked)
+        self._qsettings.setValue(_K, "1" if checked else "0")
+        # Easiest: re-run the disk scan which now applies the
+        # ``show_hidden`` flag.
+        self.load_recent_jobs_from_disk()
+
+    def _delete_permanently(self) -> None:
+        """Wipe the on-disk data for ALL jobs currently in
+        ``self._jobs`` (visible ones — hidden ones are filtered
+        out by the soft-hide filter). Confirmation dialog
+        prevents the one-click data loss the audit identified as
+        a Phase 49 audit-blocking risk.
+        """
+        if not self._jobs:
+            return
+        n = len(self._jobs)
+        msg = i18n._tr(
+            "jobstab.delete_permanently_confirm"
+        ).format(n=n)
+        # Audit 2026-08-19 (F-1): keep the confirm dialog
+        # buttons in English even when the rest of the UI is
+        # Chinese, because the destructive action labels are
+        # muscle-memory for power users. (The dialog text itself
+        # is still i18n'd.)
+        confirm = QMessageBox.question(
+            self,
+            "Delete permanently",
+            msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        # Walk every visible job's root dir and shutil.rmtree it.
+        # We use ``root`` from the disk-scan record when available,
+        # else fall back to ``service_work/<jid>/``.
+        deleted_jids: list[str] = []
+        from .constants import PROJECT_ROOT as _PR
+        for jid, job in list(self._jobs.items()):
+            target = self._resolve_job_disk_root(jid, job)
+            if target is None:
+                continue
+            try:
+                import shutil
+                if target.exists():
+                    shutil.rmtree(target)
+                deleted_jids.append(jid)
+            except Exception as exc:  # pragma: no cover - defensive
+                import logging as _logging
+                _logging.getLogger("rlpe.gui.jobs_tab").warning(
+                    "permanent delete failed for %s (%s): %s",
+                    jid,
+                    target,
+                    exc,
+                )
+        # Refresh in-memory + re-scan
+        for jid in deleted_jids:
+            self._jobs.pop(jid, None)
+        self._ctx_actions.clear()
+        self._table.setRowCount(0)
+        self.load_recent_jobs_from_disk()
+
+    def _resolve_job_disk_root(self, jid: str, job: "JobRecord | None") -> "Path | None":
+        """Best-effort: where on disk does this job's data live?
+
+        We support three layouts:
+          1. Web server jobs: ``service_work/<jid>/``
+          2. PySide6 GUI single-PDF runs: ``<pdf_dir>/<stem>/work/``
+             (the disk scan stored ``root=<stem_dir>``)
+          3. PySide6 GUI batch runs: ``<export_dir>/<stem>_rlpe_out/work/``
+        """
+        from .constants import PROJECT_ROOT as _PR
+        sw = _PR / "service_work" / jid
+        if sw.exists():
+            return sw
+        # The PySide6 GUI scanner wrote ``root=<stem_dir>`` (or
+        # ``<stem>_rlpe_out``); that's the directory we want to
+        # wipe because that's where work/output lives.
+        if job is not None and getattr(job, "settings", None):
+            pdf_path = str(job.settings.get("last_pdf_dir") or "")
+            if pdf_path:
+                stem_dir = Path(pdf_path) / jid
+                if stem_dir.exists():
+                    return stem_dir
+        return None
 
     def _refresh_texts(self) -> None:
         """Re-apply column headers and context-menu actions after language switch."""

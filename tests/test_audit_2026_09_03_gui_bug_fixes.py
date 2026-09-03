@@ -79,18 +79,28 @@ class TestJobsTabScansUserPdfDir:
 
         class _CapturingPending:
             def __init__(self, **kw):
-                pending_holder.append(kw)
+                # Mirror kwargs to attributes so production code
+                # that reads ``p.jid`` / ``p.matches_path`` after
+                # construction sees them. The audit fix added a
+                # hidden-jid filter that reads ``p.jid`` directly,
+                # so the capturer must populate it.
+                for k, v in kw.items():
+                    setattr(self, k, v)
+                pending_holder.append(self)
 
         monkeypatch.setattr(_jt, "_PendingDiskScan", _CapturingPending)
 
         # Instantiate JobsTab bypassing __init__ (no QWidget needed
         # for the sync walk).
         tab = JobsTab.__new__(JobsTab)
+        tab._qsettings = QSettings(APP_AUTHOR, APP_NAME)
+        tab._show_hidden = False
+        tab._hidden_jids = set()
         tab.load_recent_jobs_from_disk()
 
         # The zhang2014 path must be in the pending list.
         assert any(
-            "zhang2014" in str(p.get("matches_path", ""))
+            "zhang2014" in str(getattr(p, "matches_path", ""))
             for p in pending_holder
         ), (
             f"zhang2014 not picked up by disk scan; pending list: "
@@ -124,15 +134,22 @@ class TestJobsTabScansUserPdfDir:
 
         class _CapturingPending:
             def __init__(self, **kw):
-                pending_holder.append(kw)
+                for k, v in kw.items():
+                    setattr(self, k, v)
+                pending_holder.append(self)
 
         monkeypatch.setattr(_jt, "_PendingDiskScan", _CapturingPending)
 
         tab = JobsTab.__new__(JobsTab)
+        tab._qsettings = QSettings(APP_AUTHOR, APP_NAME)
+        tab._show_hidden = False
+        tab._hidden_jids = set()
         tab.load_recent_jobs_from_disk()
 
         assert any(
-            "zhang2014_2014_rlpe_out" in str(p.get("matches_path", ""))
+            "zhang2014_2014_rlpe_out" in str(
+                getattr(p, "matches_path", "")
+            )
             for p in pending_holder
         ), (
             f"batch zhang2014 not picked up; pending list: "
@@ -163,11 +180,16 @@ class TestJobsTabScansUserPdfDir:
 
         class _CapturingPending:
             def __init__(self, **kw):
-                pending_holder.append(kw)
+                for k, v in kw.items():
+                    setattr(self, k, v)
+                pending_holder.append(self)
 
         monkeypatch.setattr(_jt, "_PendingDiskScan", _CapturingPending)
 
         tab = JobsTab.__new__(JobsTab)
+        tab._qsettings = _qsettings
+        tab._show_hidden = False
+        tab._hidden_jids = set()
         # Should return 0 (or whatever) without raising.
         tab.load_recent_jobs_from_disk()
 

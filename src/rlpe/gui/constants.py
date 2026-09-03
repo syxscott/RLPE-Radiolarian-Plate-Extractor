@@ -158,6 +158,13 @@ QS_KEY_THEME: Final[str] = "ui/theme"
 QS_KEY_GEOMETRY: Final[str] = "ui/main_window_geometry"
 QS_KEY_STATE: Final[str] = "ui/main_window_state"
 QS_KEY_RECENT_DIRS: Final[str] = "io/recent_dirs"
+# Audit 2026-09-03 (user-reported): "Clear all" now soft-hides the
+# job_ids the operator asked to remove — the disk scan re-runs on
+# every GUI startup so without this list the cleared jobs would
+# come back. Persisted as a JSON list of strings so QSettings's
+# type-strictness (which rejects native ``set``) doesn't bite us.
+QS_KEY_HIDDEN_JOB_IDS: Final[str] = "io/hidden_job_ids"
+QS_KEY_SHOW_HIDDEN_JOBS: Final[str] = "ui/show_hidden_jobs"
 # audit 2026-08-17 (GUI-A4): URL of the running FastAPI server that
 # exposes ``POST /review/correction``. Defaults to the same loopback
 # bind the API uses (``run_web_server.py``). Operators who run the

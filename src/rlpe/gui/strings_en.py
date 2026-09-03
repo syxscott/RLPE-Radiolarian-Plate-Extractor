@@ -129,6 +129,21 @@ STRINGS = {
     # ============================================================
     "jobstab.clear_finished": "Clear finished",
     "jobstab.clear_all": "Clear all",
+    # Audit 2026-09-03 (user-reported): "Clear all" now soft-hides
+    # jobs (QSettings-backed). Two new toolbar buttons let the
+    # operator peek back at hidden jobs or permanently wipe the
+    # on-disk data after confirmation.
+    "jobstab.show_hidden": "Show hidden",
+    "jobstab.hide": "Hide",
+    "jobstab.unhide": "Unhide",
+    "jobstab.delete_permanently": "Delete permanently...",
+    "jobstab.delete_permanently_confirm": (
+        "Permanently delete on-disk data for {n} jobs "
+        "(matches / panels / metadata / crops / OCR cache).\n\n"
+        "This action is irreversible. Continue?"
+    ),
+    "jobstab.hidden_count_label": "{n} hidden jobs",
+    "jobstab.no_hidden_jobs": "No hidden jobs",
     "jobstab.no_jobs": "0 jobs",
     "jobstab.col.id": "Job ID",
     "jobstab.col.pdf": "PDF",

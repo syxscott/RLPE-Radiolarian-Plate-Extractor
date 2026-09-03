@@ -53,6 +53,20 @@ STRINGS = {
     "filter.zip": "Zip 文件 (*.zip)",
     "jobstab.clear_all": "全部清除",
     "jobstab.clear_finished": "清除已完成",
+    # Audit 2026-09-03 (user-reported): "Clear all" now soft-hides
+    # jobs (QSettings-backed). Two new toolbar buttons let the
+    # operator peek back at hidden jobs or permanently wipe the
+    # on-disk data after confirmation.
+    "jobstab.show_hidden": "显示已隐藏",
+    "jobstab.hide": "隐藏",
+    "jobstab.unhide": "取消隐藏",
+    "jobstab.delete_permanently": "永久删除...",
+    "jobstab.delete_permanently_confirm": (
+        "将永久删除 {n} 个 job 的磁盘数据 (匹配 / 图版 / 元数据 / 截图 / OCR 缓存)。\n\n"
+        "此操作不可撤销。是否继续？?"
+    ),
+    "jobstab.hidden_count_label": "已隐藏 {n} 个 job",
+    "jobstab.no_hidden_jobs": "没有已隐藏的 job",
     "jobstab.col.elapsed": "耗时",
     "jobstab.col.id": "任务 ID",
     "jobstab.col.out": "输出",
