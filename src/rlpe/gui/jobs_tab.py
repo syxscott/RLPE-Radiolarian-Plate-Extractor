@@ -558,19 +558,19 @@ class JobsTab(QWidget):
         # QSettings's strict typing — must be ``list[str]`` not
         # ``set[str]``).
         from PySide6.QtCore import QSettings as _QSettings
-        from .constants import APP_AUTHOR as _AA, APP_NAME as _AN
+
+        from .constants import APP_AUTHOR as _AA
+        from .constants import APP_NAME as _AN
         from .constants import (
-            QS_KEY_HIDDEN_JOB_IDS as _QS_HIDDEN,
             QS_KEY_SHOW_HIDDEN_JOBS as _QS_SHOW_HIDDEN,
         )
+
         self._qsettings = _QSettings(_AA, _AN)
         self._hidden_jids: set[str] = self._load_hidden_jids()
         # The "show hidden" preference survives restarts so the
         # operator doesn't have to re-enable it after every restart.
         try:
-            self._show_hidden: bool = bool(
-                int(self._qsettings.value(_QS_SHOW_HIDDEN, "0") or "0")
-            )
+            self._show_hidden: bool = bool(int(self._qsettings.value(_QS_SHOW_HIDDEN, "0") or "0"))
         except Exception:
             self._show_hidden = False
 
@@ -712,6 +712,7 @@ class JobsTab(QWidget):
         from .constants import (
             QS_KEY_HIDDEN_JOB_IDS as _QS_HIDDEN_SCAN,
         )
+
         raw_hidden = getattr(self, "_qsettings", None)
         show_hidden = getattr(self, "_show_hidden", False)
         if raw_hidden is None:
@@ -721,17 +722,14 @@ class JobsTab(QWidget):
             hidden_set = set()
             self._hidden_jids = hidden_set
             if not show_hidden:
-                pending = [
-                    p for p in pending if p.jid not in hidden_set
-                ]
+                pending = [p for p in pending if p.jid not in hidden_set]
         else:
             raw_hidden = raw_hidden.value(_QS_HIDDEN_SCAN, [])
             if isinstance(raw_hidden, str) and raw_hidden:
                 try:
                     import json as _json_h
-                    hidden_set = {
-                        str(j) for j in _json_h.loads(raw_hidden) if j
-                    }
+
+                    hidden_set = {str(j) for j in _json_h.loads(raw_hidden) if j}
                 except Exception:
                     hidden_set = set()
             elif isinstance(raw_hidden, list):
@@ -743,9 +741,7 @@ class JobsTab(QWidget):
             self._hidden_jids = hidden_set
             # Filter: drop hidden unless operator opted into Show-Hidden.
             if not show_hidden:
-                pending = [
-                    p for p in pending if p.jid not in hidden_set
-                ]
+                pending = [p for p in pending if p.jid not in hidden_set]
         # The PySide6 GUI writes to ``<pdf_dir>/<stem>/work/manifests/``
         # AND ``<last_export_dir>/<stem>_rlpe_out/work/output/`` —
         # neither of which the legacy service_work/ or project root
@@ -756,12 +752,14 @@ class JobsTab(QWidget):
         # tab is empty" failure mode reported on 2026-09-03.
         try:
             from PySide6.QtCore import QSettings
+
             from .constants import (
                 APP_AUTHOR,
                 APP_NAME,
                 QS_KEY_LAST_DIR,
                 QS_KEY_LAST_EXPORT_DIR,
             )
+
             _qsettings = QSettings(APP_AUTHOR, APP_NAME)
             # Collect the set of PDF-side and export-side roots to
             # scan. We dedupe via a resolved path set so the same
@@ -799,9 +797,8 @@ class JobsTab(QWidget):
                         # so re-running the same PDF twice produces the
                         # same jid (and the JobsTab dedupes rows).
                         import hashlib as _hl
-                        _jid = "user_" + _hl.md5(
-                            str(_mp.resolve()).encode()
-                        ).hexdigest()[:12]
+
+                        _jid = "user_" + _hl.md5(str(_mp.resolve()).encode()).hexdigest()[:12]
                         pending.append(
                             _PendingDiskScan(
                                 jid=_jid,
@@ -814,15 +811,20 @@ class JobsTab(QWidget):
                     _batch = _child / "work" / "output" / "manifests" / "matches.jsonl"
                     if _batch.exists():
                         import hashlib as _hl
-                        _jid = "user_batch_" + _hl.md5(
-                            str(_batch.resolve()).encode()
-                        ).hexdigest()[:12]
+
+                        _jid = (
+                            "user_batch_" + _hl.md5(str(_batch.resolve()).encode()).hexdigest()[:12]
+                        )
                         pending.append(
                             _PendingDiskScan(
                                 jid=_jid,
                                 root=_child / "work",
                                 matches_path=_batch,
-                                complete_flag=_child / "work" / "output" / "manifests" / "complete.flag",
+                                complete_flag=_child
+                                / "work"
+                                / "output"
+                                / "manifests"
+                                / "complete.flag",
                             )
                         )
         except ImportError:
@@ -968,9 +970,11 @@ class JobsTab(QWidget):
             # and the job is now in the table.
             try:
                 import logging as _lg
+
                 _lg.getLogger("rlpe.gui.jobs_tab").info(
                     "mark_done: created placeholder for unknown id %s (rows=%d)",
-                    job_id, len(rows),
+                    job_id,
+                    len(rows),
                 )
             except Exception:
                 pass
@@ -1426,12 +1430,14 @@ class JobsTab(QWidget):
         stores them as ``str`` (a JSON-encoded list). Handle both.
         """
         from .constants import QS_KEY_HIDDEN_JOB_IDS as _K
+
         raw = self._qsettings.value(_K, [])
         if raw is None or raw == "":
             return set()
         if isinstance(raw, str):
             try:
                 import json as _json
+
                 parsed = _json.loads(raw)
             except Exception:
                 parsed = []
@@ -1445,8 +1451,10 @@ class JobsTab(QWidget):
         also round-trips on Linux/macOS so we use the same format
         everywhere.
         """
-        from .constants import QS_KEY_HIDDEN_JOB_IDS as _K
         import json as _json
+
+        from .constants import QS_KEY_HIDDEN_JOB_IDS as _K
+
         self._qsettings.setValue(_K, _json.dumps(sorted(hidden), ensure_ascii=False))
 
     def _on_show_hidden_toggled(self, checked: bool) -> None:
@@ -1454,6 +1462,7 @@ class JobsTab(QWidget):
         via ``Clear all``. The toggle persists across restarts so
         the operator doesn't have to re-enable it every session."""
         from .constants import QS_KEY_SHOW_HIDDEN_JOBS as _K
+
         self._show_hidden = bool(checked)
         self._qsettings.setValue(_K, "1" if checked else "0")
         # Easiest: re-run the disk scan which now applies the
@@ -1470,9 +1479,7 @@ class JobsTab(QWidget):
         if not self._jobs:
             return
         n = len(self._jobs)
-        msg = i18n._tr(
-            "jobstab.delete_permanently_confirm"
-        ).format(n=n)
+        msg = i18n._tr("jobstab.delete_permanently_confirm").format(n=n)
         # Audit 2026-08-19 (F-1): keep the confirm dialog
         # buttons in English even when the rest of the UI is
         # Chinese, because the destructive action labels are
@@ -1491,18 +1498,20 @@ class JobsTab(QWidget):
         # We use ``root`` from the disk-scan record when available,
         # else fall back to ``service_work/<jid>/``.
         deleted_jids: list[str] = []
-        from .constants import PROJECT_ROOT as _PR
+
         for jid, job in list(self._jobs.items()):
             target = self._resolve_job_disk_root(jid, job)
             if target is None:
                 continue
             try:
                 import shutil
+
                 if target.exists():
                     shutil.rmtree(target)
                 deleted_jids.append(jid)
             except Exception as exc:  # pragma: no cover - defensive
                 import logging as _logging
+
                 _logging.getLogger("rlpe.gui.jobs_tab").warning(
                     "permanent delete failed for %s (%s): %s",
                     jid,
@@ -1516,7 +1525,7 @@ class JobsTab(QWidget):
         self._table.setRowCount(0)
         self.load_recent_jobs_from_disk()
 
-    def _resolve_job_disk_root(self, jid: str, job: "JobRecord | None") -> "Path | None":
+    def _resolve_job_disk_root(self, jid: str, job: JobRecord | None) -> Path | None:
         """Best-effort: where on disk does this job's data live?
 
         We support three layouts:
@@ -1526,6 +1535,7 @@ class JobsTab(QWidget):
           3. PySide6 GUI batch runs: ``<export_dir>/<stem>_rlpe_out/work/``
         """
         from .constants import PROJECT_ROOT as _PR
+
         sw = _PR / "service_work" / jid
         if sw.exists():
             return sw

@@ -70,7 +70,9 @@ class TestJobsTabScansUserPdfDir:
         self._write_user_output(last_pdf_dir, "zhang2014", n_rows=3)
 
         from PySide6.QtCore import QSettings
+
         from rlpe.gui.constants import APP_AUTHOR, APP_NAME, QS_KEY_LAST_DIR
+
         _qsettings = QSettings(APP_AUTHOR, APP_NAME)
         _qsettings.setValue(QS_KEY_LAST_DIR, str(last_pdf_dir))
 
@@ -99,12 +101,8 @@ class TestJobsTabScansUserPdfDir:
         tab.load_recent_jobs_from_disk()
 
         # The zhang2014 path must be in the pending list.
-        assert any(
-            "zhang2014" in str(getattr(p, "matches_path", ""))
-            for p in pending_holder
-        ), (
-            f"zhang2014 not picked up by disk scan; pending list: "
-            f"{pending_holder}"
+        assert any("zhang2014" in str(getattr(p, "matches_path", "")) for p in pending_holder), (
+            f"zhang2014 not picked up by disk scan; pending list: {pending_holder}"
         )
 
     def test_scan_picks_up_batch_output(
@@ -126,7 +124,9 @@ class TestJobsTabScansUserPdfDir:
         (manifests / "complete.flag").write_text("done", encoding="utf-8")
 
         from PySide6.QtCore import QSettings
+
         from rlpe.gui.constants import APP_AUTHOR, APP_NAME, QS_KEY_LAST_EXPORT_DIR
+
         _qsettings = QSettings(APP_AUTHOR, APP_NAME)
         _qsettings.setValue(QS_KEY_LAST_EXPORT_DIR, str(last_export_dir))
 
@@ -147,31 +147,26 @@ class TestJobsTabScansUserPdfDir:
         tab.load_recent_jobs_from_disk()
 
         assert any(
-            "zhang2014_2014_rlpe_out" in str(
-                getattr(p, "matches_path", "")
-            )
-            for p in pending_holder
-        ), (
-            f"batch zhang2014 not picked up; pending list: "
-            f"{pending_holder}"
-        )
+            "zhang2014_2014_rlpe_out" in str(getattr(p, "matches_path", "")) for p in pending_holder
+        ), f"batch zhang2014 not picked up; pending list: {pending_holder}"
 
     def test_no_user_dir_does_not_crash(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """If QSettings has no last_pdf_dir / last_export_dir, the
         scan must not crash — just skip the user-root step."""
-        from rlpe.gui import jobs_tab as _jt
-        from rlpe.gui.jobs_tab import JobsTab
-
         # Clear the keys.
         from PySide6.QtCore import QSettings
+
+        from rlpe.gui import jobs_tab as _jt
         from rlpe.gui.constants import (
             APP_AUTHOR,
             APP_NAME,
             QS_KEY_LAST_DIR,
             QS_KEY_LAST_EXPORT_DIR,
         )
+        from rlpe.gui.jobs_tab import JobsTab
+
         _qsettings = QSettings(APP_AUTHOR, APP_NAME)
         _qsettings.setValue(QS_KEY_LAST_DIR, "")
         _qsettings.setValue(QS_KEY_LAST_EXPORT_DIR, "")
@@ -228,13 +223,9 @@ def _emit_od_zero_figure_warning(
     if figures:
         return
     kids_tree = (json_data or {}).get("kids") or []
-    kids_types = [
-        k.get("Type") or k.get("type") for k in kids_tree if isinstance(k, dict)
-    ]
+    kids_types = [k.get("Type") or k.get("type") for k in kids_tree if isinstance(k, dict)]
     figure_types = {
-        t
-        for t in kids_types
-        if t and ("figure" in str(t).lower() or "image" in str(t).lower())
+        t for t in kids_types if t and ("figure" in str(t).lower() or "image" in str(t).lower())
     }
     # Two silent-failure shapes (audit 2026-09-03 follow-up):
     if json_data is None:
@@ -278,6 +269,7 @@ class TestPipelineZeroFigureWarning:
         """Stub OD with 0 figures + paragraph-only kids → warning
         emitted into ``_WARNINGS``."""
         from rlpe.utils import _WARNINGS, _WARNINGS_LOCK
+
         with _WARNINGS_LOCK:
             _WARNINGS.clear()
 
@@ -285,12 +277,7 @@ class TestPipelineZeroFigureWarning:
         stub = _StubODResult(
             success=True,
             figures=[],
-            json_data={
-                "kids": [
-                    {"Type": "paragraph", "content": "paper text"}
-                ]
-                * 216
-            },
+            json_data={"kids": [{"Type": "paragraph", "content": "paper text"}] * 216},
         )
         _emit_od_zero_figure_warning(
             stub.figures,
@@ -300,9 +287,7 @@ class TestPipelineZeroFigureWarning:
         )
 
         with _WARNINGS_LOCK:
-            matching = [
-                w for w in _WARNINGS if w["label"] == "od_zero_figure_metadata"
-            ]
+            matching = [w for w in _WARNINGS if w["label"] == "od_zero_figure_metadata"]
         assert matching, (
             "Pipeline should have emitted an od_zero_figure_metadata "
             "warning for a PDF with 0 figures and 0 figure-type kids"
@@ -321,6 +306,7 @@ class TestPipelineZeroFigureWarning:
         operator staring at an empty Results tab.
         """
         from rlpe.utils import _WARNINGS, _WARNINGS_LOCK
+
         with _WARNINGS_LOCK:
             _WARNINGS.clear()
 
@@ -343,17 +329,14 @@ class TestPipelineZeroFigureWarning:
         )
 
         with _WARNINGS_LOCK:
-            matching = [
-                w for w in _WARNINGS if w["label"] == "od_zero_figure_metadata"
-            ]
+            matching = [w for w in _WARNINGS if w["label"] == "od_zero_figure_metadata"]
         assert matching, (
             "Pipeline should emit od_zero_figure_metadata warning even "
             "when json_data is None (OD subprocess failure case)"
         )
         warning = matching[0]
         assert "NO JSON" in warning["message"], (
-            f"warning should distinguish the no-JSON failure mode; "
-            f"got: {warning['message']}"
+            f"warning should distinguish the no-JSON failure mode; got: {warning['message']}"
         )
         assert "zhang2014" in warning["message"]
         assert "opendaderp-pdf subprocess exited 1" in warning["message"]
@@ -362,6 +345,7 @@ class TestPipelineZeroFigureWarning:
         """Sanity check: when OD returns at least one figure, the
         warning is NOT emitted (we only flag the degenerate case)."""
         from rlpe.utils import _WARNINGS, _WARNINGS_LOCK
+
         with _WARNINGS_LOCK:
             _WARNINGS.clear()
 
@@ -383,9 +367,7 @@ class TestPipelineZeroFigureWarning:
             od_error=getattr(stub, "error", None),
         )
         with _WARNINGS_LOCK:
-            od_warnings = [
-                w for w in _WARNINGS if w["label"] == "od_zero_figure_metadata"
-            ]
+            od_warnings = [w for w in _WARNINGS if w["label"] == "od_zero_figure_metadata"]
         assert od_warnings == []
 
     def test_kids_but_no_figure_type_no_warning(self) -> None:
@@ -394,6 +376,7 @@ class TestPipelineZeroFigureWarning:
         is intact), do NOT emit the warning — the orphan-figure
         rescue path will still pick up captions."""
         from rlpe.utils import _WARNINGS, _WARNINGS_LOCK
+
         with _WARNINGS_LOCK:
             _WARNINGS.clear()
 
@@ -415,9 +398,7 @@ class TestPipelineZeroFigureWarning:
             od_error=getattr(stub, "error", None),
         )
         with _WARNINGS_LOCK:
-            od_warnings = [
-                w for w in _WARNINGS if w["label"] == "od_zero_figure_metadata"
-            ]
+            od_warnings = [w for w in _WARNINGS if w["label"] == "od_zero_figure_metadata"]
         assert od_warnings == [], (
             "Should NOT warn — kids tree has Figure types so the "
             "orphan-caption rescue path will still extract species"

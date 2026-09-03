@@ -36,7 +36,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 
-def _build_tab() -> "JobsTab":
+def _build_tab() -> JobsTab:
     """Build a JobsTab-shaped stub with the minimum surface the
     ``mark_*`` / ``update_progress`` helpers need. Avoids
     QWidget.__init__ (no real GUI)."""
@@ -140,8 +140,8 @@ class TestMarkDoneCreatesPlaceholderForUnknownJob:
         """When the job_id IS in ``_jobs``, ``mark_done`` should
         update the existing record's status / rows / finished_at
         rather than creating a duplicate placeholder."""
-        from rlpe.gui.jobs_tab import JobRecord
         from rlpe.gui.constants import STATUS_RUNNING
+        from rlpe.gui.jobs_tab import JobRecord
 
         tab = _build_tab()
         existing = JobRecord(

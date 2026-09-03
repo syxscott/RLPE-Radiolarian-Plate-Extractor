@@ -539,8 +539,7 @@ class RadiolarianPipeline:
                 stem = stable_id(p)
                 if resume and done_markers[stem].exists():
                     logger.info(
-                        "run: skipping %s — checkpoint exists at %s "
-                        "(resume=True)",
+                        "run: skipping %s — checkpoint exists at %s (resume=True)",
                         p.name,
                         done_markers[stem],
                     )
@@ -701,7 +700,9 @@ class RadiolarianPipeline:
             # but also did NOT produce usable data.
             if total > 0 and not rows:
                 try:
-                    from .utils import _WARNINGS as _W, _WARNINGS_LOCK as _L
+                    from .utils import _WARNINGS as _W
+                    from .utils import _WARNINGS_LOCK as _L
+
                     _w_msg = (
                         f"Pipeline processed {total} PDF(s) but produced "
                         f"0 result rows. Downstream figure-caption pairing, "
@@ -733,9 +734,7 @@ class RadiolarianPipeline:
                 "n_rows": len(rows),
                 "completed_at": _t.time(),
                 "warnings": _run_warnings,
-                "config_hash": getattr(
-                    self.config, "_config_hash", lambda: None
-                )(),
+                "config_hash": getattr(self.config, "_config_hash", lambda: None)(),
                 # Git commit + ( snapshot — the previous ``run_output.json``
                 # carried these via the ProvenanceRecord but the
                 # manifest didn't, so a 5-paper batch run looked
@@ -749,9 +748,7 @@ class RadiolarianPipeline:
                 manifest_path.parent / "manifest.json", _manifest
             )
         except Exception:
-            logger.exception(
-                "Failed to write manifest.json; run_output.json is unaffected"
-            )
+            logger.exception("Failed to write manifest.json; run_output.json is unaffected")
         self._emit_progress(total, total, f"Done — {len(rows)} matches")
         return rows
 
@@ -815,7 +812,7 @@ class RadiolarianPipeline:
                         backend.unload()
                     except Exception:
                         logger.debug("M3 backend unload raised", exc_info=True)
-                setattr(self, "m3_engine", None)
+                self.m3_engine = None
             # YOLO model cache (module-level function attribute).
             try:
                 from .layout import detect_figure_regions_yolo as _yolo_fn
@@ -847,7 +844,7 @@ class RadiolarianPipeline:
             except Exception:
                 pass
 
-    def __enter__(self) -> "RadiolarianPipeline":
+    def __enter__(self) -> RadiolarianPipeline:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -895,9 +892,7 @@ class RadiolarianPipeline:
         try:
             from .utils import write_jsonl as _write_jsonl
 
-            _matches_path = (
-                Path(self.config.work_dir) / "manifests" / "matches.jsonl"
-            )
+            _matches_path = Path(self.config.work_dir) / "manifests" / "matches.jsonl"
             _write_jsonl(_matches_path, rows)
             logger.debug(
                 "_process_one_pdf: appended %d rows for %s to matches.jsonl "
@@ -921,14 +916,14 @@ class RadiolarianPipeline:
         # with no species isn't re-tried forever; the operator can
         # delete the marker to force a re-run.
         try:
-            from .utils import ensure_dir as _ensure_dir
             import time as _cp_time
+
+            from .utils import ensure_dir as _ensure_dir
 
             _ensure_dir(self.config.work_dir / "_checkpoints")
             _marker = self.config.work_dir / "_checkpoints" / f"{paper_id}.done"
             _marker.write_text(
-                f"completed_at={_cp_time.time()}\n"
-                f"n_rows={len(rows)}\n",
+                f"completed_at={_cp_time.time()}\nn_rows={len(rows)}\n",
                 encoding="utf-8",
             )
         except Exception:
@@ -1517,14 +1512,14 @@ class RadiolarianPipeline:
         if not figures:
             try:
                 from .utils import _WARNINGS, _WARNINGS_LOCK  # noqa: PLC0415
+
                 kids_tree = (od_result.json_data or {}).get("kids") or []
                 kids_types = [
-                    k.get("Type") or k.get("type")
-                    for k in kids_tree
-                    if isinstance(k, dict)
+                    k.get("Type") or k.get("type") for k in kids_tree if isinstance(k, dict)
                 ]
                 figure_types = {
-                    t for t in kids_types
+                    t
+                    for t in kids_types
                     if t and "figure" in str(t).lower() or t and "image" in str(t).lower()
                 }
                 # Two distinct silent-failure shapes both produce
@@ -3087,14 +3082,13 @@ class RadiolarianPipeline:
             assignment[panel_i] = seg_j
             claimed_segs.add(seg_j)
         # Remaining panels + segs for pass 2.
-        remaining_panels = [
-            i for i in range(n_panels) if i not in assignment
-        ]
+        remaining_panels = [i for i in range(n_panels) if i not in assignment]
         remaining_segs = [j for j in range(n_segs) if j not in claimed_segs]
 
         if remaining_panels and remaining_segs:
             try:
                 from scipy.optimize import linear_sum_assignment  # type: ignore
+
                 # Rank distance only — no hint, no centroid.
                 cost2 = np.zeros(
                     (len(remaining_panels), len(remaining_segs)),
@@ -5432,7 +5426,9 @@ Rules:
                         # crashing the whole pair-lookup dedup pass.
                         existing_labels = {
                             (
-                                _normalize_panel_label(r.get("panel_id") or r.get("label_text") or "")
+                                _normalize_panel_label(
+                                    r.get("panel_id") or r.get("label_text") or ""
+                                )
                                 or ""
                             )
                             .strip()
@@ -5496,8 +5492,8 @@ Rules:
                             # ``(x or "")`` keeps the loop alive instead of
                             # AttributeError'ing the whole figure.
                             lbl_norm = (
-                                (_normalize_panel_label(lbl) or "") if lbl else ""
-                            ).strip().lower()
+                                ((_normalize_panel_label(lbl) or "") if lbl else "").strip().lower()
+                            )
                             if lbl_norm and lbl_norm in existing_labels:
                                 continue
                             # Phase 54 audit: M7 — use the *normalised*

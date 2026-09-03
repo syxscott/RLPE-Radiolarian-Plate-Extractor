@@ -43,6 +43,7 @@ def qapp():
     ``QSettings`` which uses the application name + org as the
     storage key)."""
     from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance() or QApplication([])
     yield app
 
@@ -55,7 +56,9 @@ def _isolated_qsettings(qapp):
     """
     yield
     from PySide6.QtCore import QSettings
+
     from rlpe.gui.constants import APP_AUTHOR, APP_NAME
+
     s = QSettings(APP_AUTHOR, APP_NAME)
     s.clear()
     s.sync()
@@ -67,6 +70,7 @@ def _build_tab(monkeypatch: pytest.MonkeyPatch, hidden: set[str] | None = None):
     real GUI, but lets us exercise the load/save helper directly.
     """
     from PySide6.QtCore import QSettings
+
     from rlpe.gui import jobs_tab as _jt
     from rlpe.gui.constants import APP_AUTHOR, APP_NAME
 
@@ -81,9 +85,7 @@ def _build_tab(monkeypatch: pytest.MonkeyPatch, hidden: set[str] | None = None):
 class TestHiddenJidsPersistence:
     """The QSettings round-trip must survive a fresh read."""
 
-    def test_save_then_load_round_trip(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_save_then_load_round_trip(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from rlpe.gui.jobs_tab import JobsTab
 
         tab = _build_tab(monkeypatch)
@@ -96,9 +98,7 @@ class TestHiddenJidsPersistence:
         loaded = tab2._load_hidden_jids()
         assert loaded == {"j-001", "j-002", "j-003"}
 
-    def test_load_empty_returns_empty_set(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_load_empty_returns_empty_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from rlpe.gui.jobs_tab import JobsTab
 
         tab = _build_tab(monkeypatch)
@@ -110,9 +110,7 @@ class TestClearAllSoftHides:
     """``_clear_all`` must add every visible jid to the persisted
     hidden set so the next disk scan filters them out."""
 
-    def test_clear_all_writes_hidden_jids(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_clear_all_writes_hidden_jids(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from rlpe.gui.jobs_tab import JobsTab
 
         tab = _build_tab(monkeypatch)
@@ -156,9 +154,7 @@ class TestDiskScanFiltersHidden:
     """The sync walk in ``load_recent_jobs_from_disk`` must drop
     jids whose ID is in the persisted hidden set."""
 
-    def test_hidden_jids_filtered_out(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_hidden_jids_filtered_out(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from rlpe.gui import jobs_tab as _jt
         from rlpe.gui.jobs_tab import JobsTab
 
@@ -188,6 +184,7 @@ class TestDiskScanFiltersHidden:
         # ``_jt._PendingDiskScan`` to a capturing subclass that
         # doesn't expose ``jid`` as a kwarg.
         from types import SimpleNamespace
+
         fake_pending = [
             SimpleNamespace(jid="hidden-a", root=Path("/fake")),
             SimpleNamespace(jid="hidden-b", root=Path("/fake")),
@@ -197,24 +194,18 @@ class TestDiskScanFiltersHidden:
         # we exercise only the filter step. Patch the section of
         # code that builds ``pending`` to return our fake list.
         # Easier: just call the filter expression inline.
-        raw_hidden = tab._qsettings.value(
-            "io/hidden_job_ids", []
-        )
+        raw_hidden = tab._qsettings.value("io/hidden_job_ids", [])
         hidden_set = set()
         if isinstance(raw_hidden, str) and raw_hidden:
             try:
-                hidden_set = {
-                    str(j) for j in json.loads(raw_hidden) if j
-                }
+                hidden_set = {str(j) for j in json.loads(raw_hidden) if j}
             except Exception:
                 hidden_set = set()
         elif isinstance(raw_hidden, list):
             hidden_set = {str(j) for j in raw_hidden if j}
 
         # Apply filter (mirrors the production code).
-        filtered = [
-            p for p in fake_pending if p.jid not in hidden_set
-        ]
+        filtered = [p for p in fake_pending if p.jid not in hidden_set]
 
         # Only the visible job survives.
         assert [p.jid for p in filtered] == ["visible-c"]
@@ -242,7 +233,9 @@ class TestDeletePermanently:
         tab._hidden_jids = set()
         tab._show_hidden = False
         from PySide6.QtCore import QSettings
+
         from rlpe.gui.constants import APP_AUTHOR, APP_NAME
+
         tab._qsettings = QSettings(APP_AUTHOR, APP_NAME)
         # Stub the in-memory ``_jobs`` so ``_delete_permanently``
         # walks at least one entry.
@@ -261,12 +254,14 @@ class TestDeletePermanently:
                 return _StubMB.Yes
 
         from PySide6.QtWidgets import QMessageBox
+
         monkeypatch.setattr(_jt, "QMessageBox", _StubMB)
 
         # Stub the resolution helper to return our staged root.
         tab._resolve_job_disk_root = (  # type: ignore[method-assign]
             lambda jid, job: root if jid == "delete-jj" else None
         )
+
         # Stub table / ctx / summary refresh.
         class _StubTable:
             def setRowCount(self, _n: int) -> None:
@@ -288,16 +283,16 @@ class TestDeletePermanently:
         # after delete. Stub it so the test doesn't depend on the
         # full scan machinery.
         called = {"n": 0}
+
         def _noop_scan():
             called["n"] += 1
+
         tab.load_recent_jobs_from_disk = _noop_scan  # type: ignore[method-assign]
 
         tab._delete_permanently()
 
         # Disk should be gone.
-        assert not root.exists(), (
-            f"Expected {root} to be removed by permanent-delete"
-        )
+        assert not root.exists(), f"Expected {root} to be removed by permanent-delete"
         # And the reload fired exactly once.
         assert called["n"] == 1
 
@@ -305,9 +300,10 @@ class TestDeletePermanently:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When the operator clicks No, NOTHING is touched."""
+        from PySide6.QtWidgets import QMessageBox
+
         from rlpe.gui import jobs_tab as _jt
         from rlpe.gui.jobs_tab import JobsTab
-        from PySide6.QtWidgets import QMessageBox
 
         root = tmp_path / "service_work" / "keep-me"
         (root / "output" / "manifests").mkdir(parents=True)
@@ -317,7 +313,9 @@ class TestDeletePermanently:
         tab._hidden_jids = set()
         tab._show_hidden = False
         from PySide6.QtCore import QSettings
+
         from rlpe.gui.constants import APP_AUTHOR, APP_NAME
+
         tab._qsettings = QSettings(APP_AUTHOR, APP_NAME)
         tab._jobs = {"keep-me": object()}
 

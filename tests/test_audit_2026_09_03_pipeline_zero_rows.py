@@ -32,7 +32,10 @@ def _emit_pipeline_zero_rows_warning(total: int, n_rows: int) -> None:
     2026-09-03 follow-up added. Re-implemented here so the test
     can pin the behaviour without standing up a full pipeline."""
     import time as _t
-    from rlpe.utils import _WARNINGS as _W, _WARNINGS_LOCK as _L
+
+    from rlpe.utils import _WARNINGS as _W
+    from rlpe.utils import _WARNINGS_LOCK as _L
+
     if total > 0 and n_rows == 0:
         msg = (
             f"Pipeline processed {total} PDF(s) but produced "
@@ -61,16 +64,14 @@ class TestPipelineZeroRowsWarning:
         stage rejected them, ``matches.jsonl: 0 行`` —
         manifest.warnings MUST now contain the catch-all."""
         from rlpe.utils import _WARNINGS, _WARNINGS_LOCK
+
         with _WARNINGS_LOCK:
             _WARNINGS.clear()
 
         _emit_pipeline_zero_rows_warning(total=1, n_rows=0)
 
         with _WARNINGS_LOCK:
-            matching = [
-                w for w in _WARNINGS
-                if w["label"] == "pipeline_finished_zero_rows"
-            ]
+            matching = [w for w in _WARNINGS if w["label"] == "pipeline_finished_zero_rows"]
         assert matching, (
             "Pipeline must emit pipeline_finished_zero_rows when "
             "it processed at least one PDF but emitted 0 rows"
@@ -84,16 +85,14 @@ class TestPipelineZeroRowsWarning:
         operator asked for nothing so producing nothing is the
         correct outcome."""
         from rlpe.utils import _WARNINGS, _WARNINGS_LOCK
+
         with _WARNINGS_LOCK:
             _WARNINGS.clear()
 
         _emit_pipeline_zero_rows_warning(total=0, n_rows=0)
 
         with _WARNINGS_LOCK:
-            matching = [
-                w for w in _WARNINGS
-                if w["label"] == "pipeline_finished_zero_rows"
-            ]
+            matching = [w for w in _WARNINGS if w["label"] == "pipeline_finished_zero_rows"]
         assert matching == [], (
             "Catch-all warning must not fire when no papers were "
             "processed (empty input dir, no PDFs found, etc.)"
@@ -104,19 +103,16 @@ class TestPipelineZeroRowsWarning:
         zero-rows warning is emitted (the success path is
         silent)."""
         from rlpe.utils import _WARNINGS, _WARNINGS_LOCK
+
         with _WARNINGS_LOCK:
             _WARNINGS.clear()
 
         _emit_pipeline_zero_rows_warning(total=3, n_rows=42)
 
         with _WARNINGS_LOCK:
-            matching = [
-                w for w in _WARNINGS
-                if w["label"] == "pipeline_finished_zero_rows"
-            ]
+            matching = [w for w in _WARNINGS if w["label"] == "pipeline_finished_zero_rows"]
         assert matching == [], (
-            "Pipeline with non-zero row output must not emit the "
-            "catch-all zero-rows warning"
+            "Pipeline with non-zero row output must not emit the catch-all zero-rows warning"
         )
 
 
