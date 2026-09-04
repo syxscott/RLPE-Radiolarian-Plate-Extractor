@@ -763,6 +763,30 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
                     }
                 )
 
+    # Audit 2026-09-04 eval-3: the scoring loop above iterates ONLY
+    # ``for g in gold`` — predictions that don't match any gold entry
+    # (extra pred panels, OCR-hallucinated panel_ids, etc.) were
+    # silently dropped. They should be counted as panel-level FPs
+    # (n_pred_panels - panel_match) AND, when they carry a non-empty
+    # species, as species-level FPs. Without this pass, precision
+    # stayed artificially high on runs whose pred set was larger than
+    # the gold set.
+    for (pid, fid, plabel), preds in pred_groups.items():
+        if (pid, fid, plabel) in consumed_pred_keys:
+            continue
+        canonical_pid = _normalize_paper_id(pid)
+        m = by_paper[canonical_pid]
+        m.paper_id = canonical_pid
+        # Each unconsumed pred key counts as one extra panel that
+        # didn't match any gold entry. The panel-level FP is
+        # reflected in n_pred_panels - panel_match (already in the
+        # aggregate); here we additionally count species FPs.
+        best = _best_pred(preds)
+        if best is not None:
+            sp = _norm_species(normalize_species(best.get("species")))
+            if sp:
+                m.species_fp += 1
+
     # n_pred_panels per paper (count unique (figure, panel) pairs)
     pred_per_paper: dict[str, int] = defaultdict(int)
     for pid, _fid, _plabel in pred_groups.keys():
