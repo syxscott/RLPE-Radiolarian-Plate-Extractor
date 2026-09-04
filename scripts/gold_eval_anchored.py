@@ -101,8 +101,13 @@ for i, slug in enumerate(slugs):
     # strip leading zeros so the regex matches both.
     plate_anchor = str(int(plate_num)) if plate_num else None
     paragraphs = re.split(r"\n\s*\n", full_text)
+    # Audit 2026-09-04 eval-4: the previous selector ranked
+    # paragraphs by counting how many gold species appeared in each
+    # candidate — a circular evaluation that always picked the
+    # paragraph already mentioning the gold answers. Rank by
+    # STRUCTURAL cues only (anchor match, then first qualifying
+    # paragraph). Do not look at gold species.
     best_para = None
-    best_score = 0
     # Anchor: prefer paragraph starting with "Plate <N>." or "Fig. <N>."
     if plate_anchor:
         anchor_re = re.compile(
@@ -114,23 +119,19 @@ for i, slug in enumerate(slugs):
                 continue
             if len(p) < 50 or len(p) > 4000:
                 continue
-            score = sum(1 for sp in gold_species if sp in p and len(sp) > 5)
-            if score > best_score:
-                best_score = score
-                best_para = p
-    # Fallback: best paragraph by species overlap (no anchor)
+            best_para = p
+            break  # first anchor-matched paragraph wins (no scoring)
+    # Fallback: first paragraph in length range (no anchor match)
     if best_para is None:
         for p in paragraphs:
             if len(p) < 100 or len(p) > 4000:
                 continue
-            score = sum(1 for sp in gold_species if sp in p and len(sp) > 5)
-            if score > best_score:
-                best_score = score
-                best_para = p
+            best_para = p
+            break  # first qualifying paragraph wins (no scoring)
     if best_para is None:
         best_para = page_text
     print(
-        f"  caption ({len(best_para)} chars, gold_species_overlap={best_score}): {best_para[:120]}..."
+        f"  caption ({len(best_para)} chars): {best_para[:120]}..."
     )
 
     # Render page
