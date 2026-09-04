@@ -324,6 +324,15 @@ PROMPT_REGISTRY: dict[str, str] = {
         "radiolarians and its caption, extract any geological context "
         "visible in the caption (formation, member, group, lithology, "
         "locality, country). Return strict JSON only:\n\n"
+        # Audit 2026-09-04 llm-4: do NOT invent coordinates from
+        # locality / country strings. Emit latitude / longitude as
+        # null unless the figure explicitly prints coordinates
+        # (graticule tick, scale-bar, or "X° N, Y° E" in the
+        # caption). Invented coordinates pollute Darwin Core
+        # exports with fabricated values that look like measurements.
+        "Do not invent or guess latitude / longitude from a locality "
+        "or country name. Emit them as null unless the figure or "
+        "caption explicitly states coordinates.\n\n"
         '{"geo": [{"age": str|null, "chronostratigraphy": str|null, '
         '"chronostratigraphy_rank": str|null, "ma_top": float|null, '
         '"ma_base": float|null, "ma_mid": float|null, '
@@ -375,6 +384,12 @@ PROMPT_REGISTRY: dict[str, str] = {
         "2. PER-LAYER (one entry per visible layer in ``layers``): "
         "the lithology, formation, member, age, and Ma range of each "
         "distinct layer visible in the column (from top to bottom).\n\n"
+        # Audit 2026-09-04 llm-4: do NOT invent coordinates from
+        # locality / country strings.
+        "Do not invent or guess latitude / longitude from a locality "
+        "or country name. Emit them as null unless the figure or "
+        "caption explicitly states coordinates (e.g. \"outcrop at "
+        "44.0 N, -107.9 E\" or a map graticule).\n\n"
         "Return strict JSON only, no markdown fences:\n\n"
         "{\n"
         '  "geo": [{"age": str|null, "chronostratigraphy": str|null, '
@@ -435,8 +450,14 @@ PROMPT_REGISTRY: dict[str, str] = {
         '    "lithology": "mixed shale/limestone/sandstone",\n'
         '    "locality": "Mt. Wilmot",\n'
         '    "country": "USA",\n'
-        '    "latitude": 44.0,\n'
-        '    "longitude": -107.9,\n'
+        # Audit 2026-09-04 llm-4: do NOT teach the model to invent
+        # coordinates from locality / country strings. The previous
+        # few-shot emitted 44.0, -107.9 for "Mt. Wilmot, Wyoming"
+        # — a fabrication the model then reproduced on every future
+        # locality string, polluting Darwin Core exports. Coordinates
+        # must be null unless the figure explicitly prints them.
+        '    "latitude": null,\n'
+        '    "longitude": null,\n'
         '    "biozone": null,\n'
         '    "confidence": 0.92\n'
         "  }],\n"
@@ -476,6 +497,11 @@ PROMPT_REGISTRY: dict[str, str] = {
         "2. PER-LAYER (one entry per visible layer in ``layers``): "
         "the lithology, age, formation, and Ma range of each layer "
         "(from top to bottom).\n\n"
+        # Audit 2026-09-04 llm-4: do NOT invent coordinates from
+        # locality / country strings.
+        "Do not invent or guess latitude / longitude from a locality "
+        "or country name. Emit them as null unless the figure or "
+        "caption explicitly states coordinates.\n\n"
         "Return strict JSON only, no markdown fences:\n\n"
         "{\n"
         '  "geo": [{"age": str|null, "chronostratigraphy": str|null, '
@@ -532,8 +558,12 @@ PROMPT_REGISTRY: dict[str, str] = {
         '    "lithology": "mixed clay/silt/gravel",\n'
         '    "locality": "Lombardy Basin",\n'
         '    "country": "Italy",\n'
-        '    "latitude": 45.4,\n'
-        '    "longitude": 9.5,\n'
+        # Audit 2026-09-04 llm-4: do NOT invent coordinates from
+        # locality / country strings — the previous few-shot
+        # emitted 45.4, 9.5 for "Lombardy Basin, Italy", training
+        # the model to fabricate DwC decimalLatitude.
+        '    "latitude": null,\n'
+        '    "longitude": null,\n'
         '    "biozone": null,\n'
         '    "confidence": 0.85\n'
         "  }],\n"
@@ -576,6 +606,14 @@ PROMPT_REGISTRY: dict[str, str] = {
         "or symbol), a species name (Latin binomial), and coordinates "
         "(latitude/longitude or relative position). Also extract the age, "
         "formation, and lithology associated with each point if visible.\n\n"
+        # Audit 2026-09-04 llm-4: do NOT invent coordinates from
+        # locality / country strings — only emit coordinates that
+        # are explicitly printed on the map (graticule, scale, or
+        # explicit "X°N Y°E" label).
+        "Do not invent or guess latitude / longitude from a country "
+        "name (\"filled circle in Italy\" is NOT a coordinate). Emit "
+        "coordinates as null unless they are explicitly printed on "
+        "the map.\n\n"
         "Return strict JSON only, no markdown fences:\n\n"
         "{\n"
         '  "geo": [{"age": str|null, "chronostratigraphy": str|null, '
@@ -645,22 +683,28 @@ PROMPT_REGISTRY: dict[str, str] = {
         '    "confidence": 0.9\n'
         "  }],\n"
         '  "localities": [\n'
+        # Audit 2026-09-04 llm-4: do NOT teach the model to invent
+        # coordinates from country / locality strings. The previous
+        # few-shot emitted 45.4/12.0 for "Italy", 34.0/9.0 for
+        # "Tunisia", 40.0/-3.0 for "Spain" — training the model to
+        # fabricate DwC decimalLatitude. Set to null unless the
+        # figure explicitly prints coordinates.
         '    {"species": "Cretaceous radiolarian sp. A", "label": "1", '
-        '"latitude": 45.4, "longitude": 12.0, '
+        '"latitude": null, "longitude": null, '
         '"paleo_latitude": null, "paleo_longitude": null, '
         '"age": "Late Cretaceous", "ma_top": 66.0, "ma_base": 72.0, '
         '"formation": null, "lithology": null, "biozone": null, '
         '"evidence": "filled circle in Italy, label 1", '
         '"confidence": 0.78},\n'
         '    {"species": "Pseudocrucella sp.", "label": "2", '
-        '"latitude": 34.0, "longitude": 9.0, '
+        '"latitude": null, "longitude": null, '
         '"paleo_latitude": null, "paleo_longitude": null, '
         '"age": "Late Cretaceous", "ma_top": 66.0, "ma_base": 72.0, '
         '"formation": null, "lithology": null, "biozone": null, '
         '"evidence": "filled circle in Tunisia, label 2", '
         '"confidence": 0.82},\n'
         '    {"species": null, "label": "3", '
-        '"latitude": 40.0, "longitude": -3.0, '
+        '"latitude": null, "longitude": null, '
         '"paleo_latitude": null, "paleo_longitude": null, '
         '"age": null, "ma_top": null, "ma_base": null, '
         '"formation": null, "lithology": null, "biozone": null, '
