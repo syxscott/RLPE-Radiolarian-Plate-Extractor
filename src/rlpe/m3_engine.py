@@ -4727,6 +4727,19 @@ class M3Engine:
                 panels_data = list(inner) if isinstance(inner, list) else []
             else:
                 panels_data = list(parsed)
+        elif (
+            isinstance(parsed, dict)
+            and "label" in parsed
+            and "species" in parsed
+        ):
+            # audit 2026-09-04 (CI regression fix): the lenient
+            # ``_safe_json_loads`` recovery sometimes unwraps a
+            # top-level list to its first element when the model emitted
+            # a single bare panel dict (e.g. ``[{"label": "1", "species":
+            # "X"}]``). Treat that single-dict result as a one-row
+            # panel list so callers get a populated row instead of
+            # silently dropping it.
+            panels_data = [parsed]
         if not panels_data:
             return []
 

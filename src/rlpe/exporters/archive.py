@@ -543,4 +543,6 @@ def _coerce_run_output_from_dict(run: dict) -> RunOutput:
         )
     payload = dict(run)
     payload["provenance"] = prov
-    return RunOutput.model_validate(payload)
+    return RunOutput.model_validate(
+        payload, context={"skip_dedup": True}
+    )

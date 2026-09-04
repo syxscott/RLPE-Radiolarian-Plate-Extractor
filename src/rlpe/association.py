@@ -416,7 +416,7 @@ def extract_taxa_from_caption(caption_text: str) -> list[str]:
     return taxa
 
 
-def _label_sort_key(label: str) -> tuple[int, str]:
+def _label_sort_key(label: str) -> tuple[int, int, str]:
     """Sort panel labels like "1", "2", ..., "10", "A", "B".
 
     Pure-numeric labels sort by their integer value; alphabetic labels
@@ -430,17 +430,25 @@ def _label_sort_key(label: str) -> tuple[int, str]:
     caption-pair scan, mismatching the in-plate visual order and
     inflating image-verified F1 by counting off-by-one matches as
     positives. Encode the integer value into the sort tuple.
+
+    Audit 2026-09-04 (CI regression fix): return a 3-tuple
+    ``(rank, int_val, raw)`` so all pure-digit labels share rank 0
+    but still sort by their integer value, while all alpha labels
+    share rank 1 and sort lexicographically. Stable sort + the
+    integer discriminator fixes the ``[9, 10, 1, 2]``-vs-correct-
+    ``[1, 2, 9, 10]`` ordering bug without breaking the existing
+    numeric-vs-alpha separation.
     """
     s = str(label).strip()
     if s.isdigit():
         try:
-            return (0, int(s))
+            return (0, int(s), "")
         except ValueError:
-            return (0, 0)
+            return (0, 0, "")
     try:
-        return (1, s)
+        return (1, 0, s)
     except Exception:
-        return (2, s)
+        return (2, 0, s)
 
 
 @functools.lru_cache(maxsize=8192)

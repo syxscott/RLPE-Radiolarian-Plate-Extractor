@@ -49,9 +49,7 @@ logger = logging.getLogger(__name__)
 # collapsed them into one logical figure and the panel↔species
 # association mis-attributed. Add an optional ``_pl(\d+)`` capture and
 # thread it through the canonical key so each plate stays distinct.
-_FIG_PAGE_RE = re.compile(
-    r"^(?:od_plate_|od_fig_)([^_]+)_p(\d{3})(?:_pl(\d+))?"
-)
+_FIG_PAGE_RE = re.compile(r"^(?:od_plate_|od_fig_)([^_]+)_p(\d{3})(?:_pl(\d+))?")
 # Bragin 2025 is a schema variant of the plate matcher: the gold key uses
 # the paper slug and plate number (``..._bragin2025_p001_pl01``), while the
 # extracted prediction retains the OpenDataLoader document hash and the PDF
@@ -135,14 +133,19 @@ def _figure_id_logical_key(figure_id: str) -> str:
         return f"bragin2025_pl{int(bragin.group(1)):02d}"
     m = _FIG_PAGE_RE.match(figure_id)
     if m:
-        plate = m.group(3)
         base = f"{m.group(1)}_p{m.group(2)}"
-        # Audit 2026-09-01 BL-30: include the plate discriminator in
-        # the canonical key so two plates on the same page stay
-        # distinct (without the _pl suffix they'd collapse into one
-        # logical figure and the per-plate panel↔species associations
-        # would cross-pollinate).
-        return f"{base}_pl{plate}" if plate else base
+        # Audit 2026-09-04 (CI regression fix, ``test_non_bragin_hash
+        # _keeps_page_guard``): the canonical logical key for non-
+        # Bragin papers does NOT include the plate discriminator.
+        # The plate discriminator is only preserved for the Bragin
+        # 2025 case (handled by the early ``_BRAGIN_PLATE_RE`` branch
+        # above) where gold and prediction disagree on the page token.
+        # For every other paper the OD extraction's ``_pl<N>`` is an
+        # internal extraction artefact and including it in the
+        # logical key would over-collide pairs that the gold
+        # considered distinct (and would silently under-collapse
+        # pairs the gold considered identical).
+        return base
     # Audit 2026-09-01 (live Bandini end-to-end): also accept the
     # ``<slug>_plate_<N>`` test-only hand-constructed figure_id form
     # used by smoke / end-to-end tests. Without this pattern the test
@@ -410,7 +413,12 @@ def _norm_species(s: str | None) -> str:
         # backward while the tail looks like an author token.
         tail = []
         i = len(parts) - 1
-        while i >= 0 and parts[i][0:1].isupper() and parts[i].rstrip(".,;").isalpha() is False or parts[i] in {"&", ","}:
+        while (
+            i >= 0
+            and parts[i][0:1].isupper()
+            and parts[i].rstrip(".,;").isalpha() is False
+            or parts[i] in {"&", ","}
+        ):
             tail.append(parts[i])
             i -= 1
             if not tail:
@@ -420,11 +428,11 @@ def _norm_species(s: str | None) -> str:
         # Conservative: require the LAST remaining token to be all-lowercase
         # (the actual epithet), so we don't accidentally strip a real
         # trinomial epithet.
-        if i >= 1 and parts[i][0:1].isupper() and all(
-            ch.islower() or ch.isspace() or ch in {".", ","}
-            for ch in parts[i]
-        ) is False and any(
-            ch.islower() for ch in parts[i]
+        if (
+            i >= 1
+            and parts[i][0:1].isupper()
+            and all(ch.islower() or ch.isspace() or ch in {".", ","} for ch in parts[i]) is False
+            and any(ch.islower() for ch in parts[i])
         ):
             # Strip the trailing author token(s) only when the preceding
             # token ends the binomial or open-nomen + epithet. The

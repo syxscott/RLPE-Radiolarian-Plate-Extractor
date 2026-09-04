@@ -259,13 +259,23 @@ def test_dwca_default_options_use_real_chars() -> None:
 
 
 def test_dwca_occurrence_id_unique_enforced(tmp_path: Path) -> None:
-    """Duplicate occurrenceID must raise ValueError (EXP-3)."""
-    # Two panels with the same (paper_id, figure_id, panel_id=None)
-    # tuple will both build occ_id = "p1:f1:_" — a guaranteed
-    # duplicate.
-    p1 = _make_panel(panel_id=None, species="Genus aaa")
-    p2 = _make_panel(panel_id=None, species="Genus bbb")
-    run = _make_run([p1, p2])
+    """Duplicate occurrenceID must raise ValueError (EXP-3).
+
+    Bypass RunOutput's own dedup by passing a raw ``dict`` payload
+    (write_dwca_zip accepts a dict and only RunOutput's __post_init__
+    dedup-drops duplicates). The ``_coerce_run_output_from_dict``
+    helper does not call __post_init__, so duplicates survive into
+    the export dedup check and trigger the expected ValueError.
+    """
+    p1 = _make_panel(panel_id="1", species="Genus aaa")
+    p2 = _make_panel(panel_id="1", species="Genus bbb")
+    # ``write_dwca_zip`` accepts a dict (Phase 58 Plan 1.1) and
+    # bypasses RunOutput.__post_init__'s dedup loop, so duplicate
+    # occurrenceIDs flow through to the EXP-3 dedup check.
+    run = {
+        "provenance": {"job_id": "j", "source": "test"},
+        "panels": [p1.model_dump() if hasattr(p1, "model_dump") else p1 for p in (p1, p2)],
+    }
     target = tmp_path / "out.zip"
 
     with pytest.raises(ValueError) as exc_info:

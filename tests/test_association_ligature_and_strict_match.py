@@ -92,16 +92,26 @@ def test_label_in_pair_lookup_no_match():
 
 
 def test_label_sort_key_numeric_vs_alpha():
-    """Pure digits sort first (rank 0), alpha sort after (rank 1)."""
-    # Rank 0 = numeric, rank 1 = alpha. Within rank, sort is stable.
+    """Pure digits sort first (rank 0), alpha sort after (rank 1).
+
+    Audit 2026-09-04 (CI regression fix): the return tuple is now
+    ``(rank, int_val, raw)``. Numeric labels share rank 0 and sort
+    by integer value (so ``9`` comes before ``10``); alpha labels
+    share rank 1 and sort lexicographically. Numeric and alpha
+    never share a rank so they sort into separate groups.
+    """
+    # Rank separation
     assert _label_sort_key("1")[0] == 0
     assert _label_sort_key("2")[0] == 0
     assert _label_sort_key("10")[0] == 0
     assert _label_sort_key("A")[0] == 1
     assert _label_sort_key("Z")[0] == 1
-    # All numeric labels share rank 0; sort tie-breaks by caller's stable
-    # sort on a secondary key, but the rank itself is what we test here.
-    assert _label_sort_key("9") == _label_sort_key("10")
+    # Numeric labels sort by integer value (not lex).
+    assert _label_sort_key("1") < _label_sort_key("2")
+    assert _label_sort_key("2") < _label_sort_key("10")
+    assert _label_sort_key("9") < _label_sort_key("10")
+    # Numeric and alpha never share a rank.
+    assert _label_sort_key("1")[0] != _label_sort_key("A")[0]
     # Alpha > numeric.
     assert _label_sort_key("9") < _label_sort_key("A")
     assert _label_sort_key("100") < _label_sort_key("A")
