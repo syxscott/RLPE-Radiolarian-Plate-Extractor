@@ -138,16 +138,18 @@ def _safe_json_loads(text: str) -> Any:
     # 1) Whole text
     try:
         parsed = json.loads(text)
-        # Audit 2026-09-01: also wrap a top-level array into its first
-        # dict element so callers that expect a single-object return
-        # value keep working. M3 occasionally emits ``[{"sections":
-        # [...]}]`` at the top level; previously the caller got a
-        # ``list`` and crashed on ``result["sections"]``.
-        if isinstance(parsed, list) and parsed:
-            first = parsed[0]
-            if isinstance(first, dict):
-                return first
-        if isinstance(parsed, dict):
+        # Audit 2026-09-04 (CI regression fix): do NOT unwrap a
+        # top-level array to its first element. ``parse_caption``
+        # expects a list of items and iterates ``for item in data``;
+        # unwrapping the array to a single dict causes the iteration
+        # to never enter the loop and the function returns 0 pairs
+        # (e.g. ``TestB8ParseCaptionNormalizes::test_llm_cf_no_period
+        # _passes_through_normalize`` fails with ``len(pairs) == 0``).
+        # The audit 2026-09-01 unwrap was for the range-chart
+        # extractor; ``range_chart_extractor._safe_json_loads`` has
+        # its own local copy that does the unwrap, so removing it
+        # here doesn't regress that consumer.
+        if isinstance(parsed, (dict, list)):
             return parsed
     except Exception:
         pass
