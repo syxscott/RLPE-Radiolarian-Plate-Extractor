@@ -378,6 +378,16 @@ def extract_taxa_from_caption(caption_text: str) -> list[str]:
         return []
     if is_placeholder_caption(caption_text):
         return []
+    # Audit 2026-09-04 taxon-2: normalize OCR character noise BEFORE
+    # pattern matching, not on the extracted output —
+    # ``TAXON_LIKE_PATTERN``'s character class is ASCII-only, so a
+    # genus token carrying a stray digit ("Sponguru1") or a macron
+    # ("Archaeodictyomitrā") never matched in the first place and
+    # post-hoc normalization could not recover it. The digit-one rule
+    # only fires after a letter ("Fig 1" / "sp. 1" keep their digit).
+    from .ocr_corrections import _normalize_ocr_chars
+
+    caption_text = _normalize_ocr_chars(caption_text)
     # audit 2026-07-31: strip the "Explanation of Plate N." header the
     # same way taxon.py does — "Explanation of" is not a binomial.
     from .taxon import TaxonRecognizer

@@ -39,6 +39,7 @@ from typing import Any
 from PIL import Image
 
 from .grobid import PipelineCancelledError  # noqa: E402
+from .ocr_corrections import _normalize_ocr_chars  # noqa: E402
 
 # Import FallbackRecommendedError to detect when backend recommends switching
 from .llm_backends import (  # noqa: E402
@@ -1417,6 +1418,12 @@ def _normalize_species(species: str) -> str | None:
     s = species.strip()
     if not s:
         return None
+    # Audit 2026-09-04 taxon-2: the OCR character-level normalizer
+    # (l/1, I/l, macrons) previously had zero production call sites —
+    # mangled LLM output ("Sponguru1", "Archaeodictyomitrā") was
+    # exported verbatim. Apply it before any gold-shape rule so the
+    # structured passes below see clean ASCII.
+    s = _normalize_ocr_chars(s)
     # Phase 6D audit 2026-08-19 NIT-4: collapse runs of whitespace
     # *before* any downstream regex so the per-corpus suffix rules
     # (gen/sp/gr stripping, parens folding, etc.) see a single-spaced
