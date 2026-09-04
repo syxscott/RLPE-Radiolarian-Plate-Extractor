@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .metrics import EvaluationReport, PaperMetrics
+from .metrics import DEFAULT_GOLD_PROVENANCE, EvaluationReport, PaperMetrics
 
 
 def write_json_report(report: EvaluationReport, target: Path) -> Path:
@@ -39,6 +39,11 @@ def write_markdown_report(
     agg = report.aggregate
     lines: list[str] = []
     lines.append(f"# {title}\n")
+    # Audit 2026-09-04 eval-1: the gold-provenance caveat goes at the
+    # TOP of the report — before any F1 table — so nobody reads a
+    # bare "Species F1: 82.96%" without knowing the gold is
+    # parser-derived (self-consistency), not image-verified.
+    lines.append(f"> **Gold provenance:** {report.gold_provenance}\n")
     if notes:
         lines.append(notes + "\n")
     lines.append("## Aggregate\n")
