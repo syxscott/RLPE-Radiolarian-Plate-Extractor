@@ -1933,38 +1933,25 @@ def _build_figures_from_plate_captions(
     leftover / unassigned bucket — not just the page number, which is
     too coarse when a plate caption on page P uses images spanning
     [P, P+1] (Bandini 2011 plate 1: caption p12, actual plate image p13).
+
+    BUG-2 (audit 2026-09-04, Zhang 2014): assignment runs in TWO passes.
+    Fig-kind captions ("Fig. N" charts / maps) go first and claim their
+    **same-page** images only (widening to the standard forward window
+    only when the caption page has no image at all); plate-kind captions
+    ("Explanation of Plate N") then take the remaining unclaimed images
+    with the classic window logic. The old single pass let a plate
+    caption that shares a page with a Fig. N chart steal the chart (and
+    leave the fig caption with ``no_images=True``). Captions without a
+    ``kind`` key (legacy fixtures / reconstructed plates) are treated as
+    plate-kind, which keeps their behaviour identical to the old pass.
     """
     pairs: list[FigureCaptionPair] = []
-    n = len(plate_captions)
     claimed_image_ids: set[int] = set()
-    for idx, cap in enumerate(plate_captions):
-        page_lo = cap["page_number"]
-        # Phase 28: forward window now configurable via
-        # ``caption_window`` (default 5 on PipelineConfig / OD
-        # extractor). Covers the caption-below-figure and
-        # figure-on-next-page layouts, plus appendix-style layouts
-        # where plates sit a few pages after their caption. The next-
-        # caption clamp below prevents Plate A from stealing images
-        # that belong to Plate B even when the window is wide.
-        page_hi = page_lo + int(caption_window)
-        if idx + 1 < n:
-            next_cap_page = plate_captions[idx + 1]["page_number"]
-            # Clamp the forward window when the next caption is at
-            # least 2 pages beyond page_lo. The conditions
-            # ``next_cap_page > page_lo + 1`` and
-            # ``next_cap_page >= page_lo + 2`` are mathematically
-            # equivalent — there is no behavior change between them.
-            # This block was previously edited to ``>=`` on the theory
-            # that the original ``>`` was wrong; mutation testing
-            # showed both forms are identical, so the edit is
-            # reverted to keep the code minimal and the comments
-            # honest.
-            if next_cap_page > page_lo + 1:
-                page_hi = min(page_hi, next_cap_page - 1)
-        page_hi = max(page_hi, page_lo)  # never invert
 
-        # Candidate images: in [page_lo, page_hi], not already claimed.
-        candidates: list[dict[str, Any]] = []
+    def _unclaimed_in_range(page_lo: int, page_hi: int) -> list[dict[str, Any]]:
+        """Images in [page_lo, page_hi] not already claimed by an
+        earlier caption."""
+        out: list[dict[str, Any]] = []
         for img in images:
             p = int(img.get("page number", 0) or 0)
             if page_lo <= p <= page_hi:
@@ -1982,7 +1969,55 @@ def _build_figures_from_plate_captions(
                 except (TypeError, ValueError):
                     img_id = -1
                 if img_id not in claimed_image_ids:
-                    candidates.append(img)
+                    out.append(img)
+        return out
+
+    # BUG-2 two-pass order: fig-kind first (precise same-page anchor),
+    # then plate-kind (window-based). Within each pass the captions
+    # keep document order.
+    ordered = (
+        [c for c in plate_captions if c.get("kind") == "fig"]
+        + [c for c in plate_captions if c.get("kind") != "fig"]
+    )
+    n = len(ordered)
+    for idx, cap in enumerate(ordered):
+        is_fig = cap.get("kind") == "fig"
+        page_lo = cap["page_number"]
+        # Phase 28: forward window now configurable via
+        # ``caption_window`` (default 5 on PipelineConfig / OD
+        # extractor). Covers the caption-below-figure and
+        # figure-on-next-page layouts, plus appendix-style layouts
+        # where plates sit a few pages after their caption. The next-
+        # caption clamp below prevents Plate A from stealing images
+        # that belong to Plate B even when the window is wide.
+        page_hi = page_lo + int(caption_window)
+        if idx + 1 < n:
+            next_cap_page = ordered[idx + 1]["page_number"]
+            # Clamp the forward window when the next caption is at
+            # least 2 pages beyond page_lo. The conditions
+            # ``next_cap_page > page_lo + 1`` and
+            # ``next_cap_page >= page_lo + 2`` are mathematically
+            # equivalent — there is no behavior change between them.
+            # This block was previously edited to ``>=`` on the theory
+            # that the original ``>`` was wrong; mutation testing
+            # showed both forms are identical, so the edit is
+            # reverted to keep the code minimal and the comments
+            # honest.
+            if next_cap_page > page_lo + 1:
+                page_hi = min(page_hi, next_cap_page - 1)
+        page_hi = max(page_hi, page_lo)  # never invert
+
+        if is_fig:
+            # Fig-kind precision anchor (BUG-2): charts and maps are
+            # captioned on the image's own page, so claim same-page
+            # images first and only widen to the window when the
+            # caption page has no unclaimed image at all.
+            candidates = _unclaimed_in_range(page_lo, page_lo)
+            if not candidates:
+                candidates = _unclaimed_in_range(page_lo, page_hi)
+        else:
+            # Candidate images: in [page_lo, page_hi], not already claimed.
+            candidates = _unclaimed_in_range(page_lo, page_hi)
 
         if not candidates:
             # No images found for this plate caption; skip but record the caption
