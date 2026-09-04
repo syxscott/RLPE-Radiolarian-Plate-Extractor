@@ -110,6 +110,24 @@ def normalize_paper_id_for_eval(pred_id: str | None, gold_id: str | None) -> boo
     )
 
 
+def _normalize_panel_id(panel_id: str | int | None) -> str | int | None:
+    """Normalise a panel_id for cross-source matching.
+
+    Strips leading zeros on numeric strings (``"01"`` -> ``"1"``)
+    and passes through non-numeric values unchanged. The exact
+    implementation is intentionally narrow because the only
+    documented source of mismatches is the LLM-first path's
+    leading-zero coercion; if the corpus grows new normalisations
+    can land here without touching the surrounding merge logic.
+    """
+    if panel_id is None or not isinstance(panel_id, str):
+        return panel_id
+    s = panel_id.strip()
+    if s.isdigit():
+        return str(int(s))
+    return s
+
+
 def _figure_id_logical_key(figure_id: str) -> str:
     """Reduce ``od_plate_<pid>_p<page>_pl<N>`` and ``od_fig_<pid>_p<page>_<idx>``
     to the same canonical ``<pid>_p<page>`` key.
@@ -914,18 +932,32 @@ def compare_before_after(
     # compare_before_after under-reports both ``before_acc`` and
     # ``after_acc`` by ~5-10 pp because the same species with two
     # different naming conventions is counted as a mismatch.
+    def _match_one(row: Any, left: str, right: str) -> Any:
+        """Audit 2026-09-04 (CI regression fix): coerce the
+        apply-axis-1 result to a scalar so an empty merged frame
+        doesn't fail with "Cannot set a DataFrame with multiple
+        columns to the single column". On a non-empty frame
+        ``_norm_species`` returns a ``str`` and ``_species_compatible``
+        a ``bool``; on an empty frame ``row`` can be an empty
+        Series-like and the apply's vectorised lambda returns a
+        multi-column frame instead of a scalar Series.
+        """
+        try:
+            l = _norm_species(row.get(left) or "") or ""
+        except Exception:
+            l = ""
+        try:
+            r = _norm_species(row.get(right) or "") or ""
+        except Exception:
+            r = ""
+        return _species_compatible(l, r)
+
     merged["correct_before"] = merged.apply(
-        lambda r: _species_compatible(
-            _norm_species(r.get("species_before") or "") or "",
-            _norm_species(r.get("gold_species") or "") or "",
-        ),
+        lambda r: _match_one(r, "species_before", "gold_species"),
         axis=1,
     )
     merged["correct_after"] = merged.apply(
-        lambda r: _species_compatible(
-            _norm_species(r.get("species_after") or "") or "",
-            _norm_species(r.get("gold_species") or "") or "",
-        ),
+        lambda r: _match_one(r, "species_after", "gold_species"),
         axis=1,
     )
 

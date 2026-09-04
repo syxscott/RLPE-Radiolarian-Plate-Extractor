@@ -113,12 +113,12 @@ def test_app_joboptions_validates_grobid_timeout_range():
 def test_caption_window_zero_raises_value_error():
     """``caption_window=0`` must fail at construction, not silently
     degenerate the rescue window."""
-    with pytest.raises(ValueError, match="caption_window must be >= 1"):
+    with pytest.raises(ValueError, match="caption_window must be in"):
         OpenDataLoaderExtractor(caption_window=0)
 
 
 def test_caption_window_negative_raises_value_error():
-    with pytest.raises(ValueError, match="caption_window must be >= 1"):
+    with pytest.raises(ValueError, match="caption_window must be in"):
         OpenDataLoaderExtractor(caption_window=-1)
 
 
