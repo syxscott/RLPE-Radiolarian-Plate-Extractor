@@ -65,7 +65,17 @@ class Coordinate:
 # so the float-conversion path downstream is unchanged.
 _DECIMAL_RE = re.compile(
     r"""
-    (?=.*(?:\.\d|\b[NSEW]\b))
+    # Audit 2026-09-04 geo-4: an EXPLICIT hemisphere indicator is
+    # required — either a hemisphere letter (N/S/E/W) or an explicit
+    # negative sign on at least one coord. Without one, the parser
+    # cannot tell whether 35 is N or S — the previous code accepted
+    # "35, 110.5" as (lat=35, lon=110.5) regardless of hemisphere,
+    # silently flipping a Southern or Western Hemisphere site to the
+    # wrong sign. The lookahead permits the hemisphere letter glued
+    # to the numeric token (e.g. "35N" — the standard cartographic
+    # form) AND a leading minus ("-35" — also an unambiguous
+    # hemisphere indicator per cartographic convention).
+    (?=.*(?:[NSEW]|-\d))
     (?<!\w)
     [\(（]?\s*
     (?P<lat>-?\d{1,3}(?:\.\d{1,10})?)\s*°?\s*(?P<lat_h>[NSns])?

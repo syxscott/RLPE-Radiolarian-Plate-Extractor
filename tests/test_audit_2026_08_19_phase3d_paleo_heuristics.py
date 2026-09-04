@@ -329,9 +329,16 @@ class TestM5GeoCoordsBrackets:
         assert abs(c.longitude - 110.3) < 0.01
 
     def test_fullwidth_bracket_no_space(self):
-        c = parse_coordinate("（35.7,110.3）")
+        # Audit 2026-09-04 geo-4: a hemisphere letter (or explicit
+        # sign) is required. Pre-audit this test pinned "（35.7,110.3）"
+        # (full-width brackets, no hemisphere) as parseable — the
+        # updated contract rejects it. Use the qualified form with
+        # full-width brackets to keep the bracket-wrapping fix
+        # (Phase 3D) pinned.
+        c = parse_coordinate("（35.7N,110.3E）")
         assert c is not None, (
-            "'（35.7,110.3）' (full-width brackets, no space, no hemisphere) must parse"
+            "'（35.7N,110.3E）' (full-width brackets, no space, with "
+            "hemisphere) must parse"
         )
         assert abs(c.latitude - 35.7) < 0.01
         assert abs(c.longitude - 110.3) < 0.01

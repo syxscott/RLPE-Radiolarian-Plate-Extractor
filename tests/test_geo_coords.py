@@ -10,7 +10,11 @@ from rlpe.geo_coords import (
 
 class TestDecimalCoordinates:
     def test_simple_decimal(self):
-        c = parse_coordinate("35.7, 110.3")
+        # Audit 2026-09-04 geo-4: bare decimals without a hemisphere
+        # letter are no longer accepted — the parser cannot tell
+        # whether 35.7 is N or S without an explicit N/S marker.
+        # Use the qualified form so the hemisphere is unambiguous.
+        c = parse_coordinate("35.7N, 110.3E")
         assert c is not None
         assert abs(c.latitude - 35.7) < 0.01
         assert abs(c.longitude - 110.3) < 0.01
@@ -22,7 +26,10 @@ class TestDecimalCoordinates:
         assert c.longitude == 110.3
 
     def test_decimal_negative_longitude(self):
-        c = parse_coordinate("35.7, -110.3")
+        # Audit 2026-09-04 geo-4: hemisphere letter required. Use the
+        # negative-lon form (a "-" in front is hemisphere-equivalent
+        # for longitude).
+        c = parse_coordinate("35.7N, -110.3")
         assert c is not None
         assert c.latitude == 35.7
         assert c.longitude == -110.3
@@ -69,7 +76,8 @@ class TestDMSCoordinates:
 
 class TestParseAllCoordinates:
     def test_returns_multiple(self):
-        text = "Site 1 at 35.7, 110.3 and Site 2 at 36.0, 111.0"
+        # Audit 2026-09-04 geo-4: hemisphere letters required.
+        text = "Site 1 at 35.7N, 110.3E and Site 2 at 36.0N, 111.0E"
         coords = parse_all_coordinates(text)
         assert len(coords) >= 2
 
@@ -77,6 +85,6 @@ class TestParseAllCoordinates:
         assert parse_all_coordinates("") == []
 
     def test_single(self):
-        coords = parse_all_coordinates("Coordinates: 35.7, 110.3")
+        coords = parse_all_coordinates("Coordinates: 35.7N, 110.3E")
         assert len(coords) >= 1
         assert abs(coords[0].latitude - 35.7) < 0.01

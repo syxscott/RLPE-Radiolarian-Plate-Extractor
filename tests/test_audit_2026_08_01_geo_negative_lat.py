@@ -12,7 +12,10 @@ from rlpe.geo_coords import (
 
 class TestGeoCoordsNegativeLat:
     def test_negative_lat_string(self):
-        """``-35.7, -110.3`` must parse with both coordinates negative."""
+        # Audit 2026-09-04 geo-4: hemisphere letter required (or
+        # negative sign on both — that's an unambiguous hemisphere
+        # indicator). The "-35.7, -110.3" form still parses because
+        # both signs are explicit.
         c = parse_coordinate("-35.7, -110.3")
         assert c is not None
         assert c.latitude == -35.7
@@ -36,9 +39,11 @@ class TestGeoCoordsNegativeLat:
         assert c.longitude == -110.3, f"expected lon=-110.3 (no double-negation), got {c.longitude}"
 
     def test_positive_no_letter(self):
-        """``35.7, 110.3`` (no hemisphere letters, positive) parses
-        positive."""
-        c = parse_coordinate("35.7, 110.3")
+        # Audit 2026-09-04 geo-4: bare decimals without hemisphere or
+        # explicit sign are no longer accepted — the parser cannot
+        # disambiguate N/S/E/W without a marker. Update to use an
+        # explicit sign on longitude (unambiguous hemisphere indicator).
+        c = parse_coordinate("35.7, 110.3E")
         assert c is not None
         assert c.latitude == 35.7
         assert c.longitude == 110.3
@@ -65,9 +70,10 @@ class TestGeoCoordsNegativeLat:
         assert abs(c.longitude - (-110.3)) < 1e-6
 
     def test_decimal_with_point_only(self):
-        """``12.5, 45.2`` (pure decimal, no hemisphere letter) parses
-        positive."""
-        c = parse_coordinate("12.5, 45.2")
+        # Audit 2026-09-04 geo-4: bare decimals without a hemisphere
+        # marker are rejected. The qualified form ("12.5N, 45.2E")
+        # still parses.
+        c = parse_coordinate("12.5N, 45.2E")
         assert c is not None
         assert c.latitude == 12.5
         assert c.longitude == 45.2
@@ -75,9 +81,13 @@ class TestGeoCoordsNegativeLat:
     def test_decimal_regex_has_negative_lat_group(self):
         """Source-guard: the decimal regex ``lat`` group must accept an
         optional leading minus. A future refactor that drops the ``-?``
-        would silently break the C6 fix."""
-        # Compile a quick probe: the regex must accept "-35.7, 110.3".
-        m = _DECIMAL_RE.search("-35.7, 110.3")
+        would silently break the C6 fix.
+
+        Audit 2026-09-04 geo-4: the regex now also requires a
+        hemisphere letter (or both signs) so we use "-35.7, -110.3"
+        (both negative) as the probe — the hemisphere requirement is
+        satisfied by the explicit signs."""
+        m = _DECIMAL_RE.search("-35.7, -110.3")
         assert m is not None, "decimal regex must accept leading '-' on lat"
         assert m.group("lat") == "-35.7"
         assert float(m.group("lat")) == -35.7
