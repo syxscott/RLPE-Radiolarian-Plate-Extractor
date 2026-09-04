@@ -779,9 +779,19 @@ class MainWindow(QMainWindow):
 
         On Windows QSettings is registry-backed; changes are only
         flushed on process exit, not on every setValue.
+
+        BUG-3 (audit 2026-09-04): the previous implementation bulk-wrote
+        EVERY in-memory ``_settings`` entry under its bare name, which
+        dumped ``last_pdf_dir`` / ``llm_backend`` / ``theme`` / … into
+        the ``[General]`` section where no reader ever looks (the
+        canonical keys are the ``io/``-prefixed ones). Only the two
+        directory keys have a canonical QSettings home, so only they
+        are flushed — and under their canonical ``io/`` names.
         """
-        for key, value in self._settings.items():
-            self._qsettings.setValue(key, value)
+        if "last_pdf_dir" in self._settings:
+            self._qsettings.setValue(QS_KEY_LAST_DIR, self._settings["last_pdf_dir"])
+        if "last_export_dir" in self._settings:
+            self._qsettings.setValue(QS_KEY_LAST_EXPORT_DIR, self._settings["last_export_dir"])
         self._qsettings.sync()
 
     # ------------------------------------------------------------------

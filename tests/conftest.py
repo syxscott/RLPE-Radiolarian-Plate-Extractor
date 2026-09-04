@@ -160,6 +160,57 @@ if str(_TESTS) not in sys.path:
 # first call within each test). Tests that don't touch the cache
 # pay no cost.
 @pytest.fixture(autouse=True)
+def _isolate_qsettings(tmp_path_factory, monkeypatch):
+    """BUG-3 (audit 2026-09-04): redirect QSettings away from the user's
+    real config file for every test.
+
+    The GUI tests share the production QSettings scope (org "RLPE
+    Contributors", app "RLPE - Radiolarian Plate Extractor" →
+    ``~/.config/RLPE Contributors/…conf``). Any test that saves a tab,
+    flushes settings, or instantiates QSettings wrote straight into the
+    user's real config — empirically wiping ``io/last_pdf_dir`` /
+    ``io/last_export_dir`` to empty strings and breaking the GUI's
+    on-restart disk scan (Phase 49).
+
+    We redirect BOTH redirection mechanisms Qt consults on Linux:
+      * ``QSettings.setPath(NativeFormat/IniFormat, UserScope, …)`` —
+        the documented per-scope path override;
+      * ``XDG_CONFIG_HOME`` — the environment variable the native
+        (Linux INI) backend resolves the config root from.
+
+    The redirect dir comes from ``tmp_path_factory`` (NOT the test's
+    own ``tmp_path``): tests that enumerate their tmp_path contents
+    (e.g. the atomic-write audit tests) must not see fixture dirs, and
+    a factory-issued dir is still unique per test so tests stay
+    isolated from each other. Autouse so no test can opt out.
+    """
+    try:
+        from PySide6.QtCore import QSettings
+    except ImportError:
+        # No PySide6 → no QSettings anywhere in this run; nothing to
+        # isolate.
+        yield
+        return
+
+    qt_conf_dir = tmp_path_factory.mktemp("qsettings-redirect") / "qtconfig"
+    xdg_dir = tmp_path_factory.mktemp("qsettings-redirect") / "xdgconfig"
+    qt_conf_dir.mkdir(parents=True, exist_ok=True)
+    xdg_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_dir))
+    # ``QSettings(org, app)`` constructs with the *NativeFormat* enum,
+    # which on Linux is a DIFFERENT enum value from IniFormat even
+    # though both are INI-backed — register the redirect for both so
+    # every construction path is covered.
+    QSettings.setPath(QSettings.Format.NativeFormat, QSettings.Scope.UserScope, str(qt_conf_dir))
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(qt_conf_dir))
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    yield
+    # No teardown restore: the NEXT test's fixture run re-points the
+    # (process-global) path at its own tmp dir, and the real pytest
+    # process never writes user settings outside a test.
+
+
+@pytest.fixture(autouse=True)
 def _reset_gemma_prompt_cache():
     """Reset ``gemma_postprocess`` prompt cache state before each test.
 
