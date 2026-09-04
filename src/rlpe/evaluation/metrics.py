@@ -410,8 +410,24 @@ def _norm_species(s: str | None) -> str:
     # form. The old case-sensitive check was fragile because pred
     # rows in all-caps fired but the same gold row in Title-case did
     # not.
+    # audit 2026-09-04 taxon-6: the previous one-way ``Archaeo`` ->
+    # ``Archeo`` fold treated the orthographic VARIANT as canonical,
+    # so pred rows written with the standard ``Archaeo`` prefix
+    # (De Wever 2001, O'Dogherty 1994) matched gold rows in the
+    # variant ``Archeo`` form — but NOT vice versa. F1 was inflated
+    # for any run that fed the standard form as pred and the variant
+    # as gold (or vice versa). Fold both directions to the accepted
+    # nomenclatural form ``Archaeo`` (Greek ``archaîos``) so the
+    # comparison is symmetric.
     if s.lower().startswith("archaeo"):
-        s = "Archeo" + s[len("Archaeo") :]
+        # Already ``Archaeo`` (case-insensitive); canonicalise the
+        # capitalisation while leaving the rest of the stem intact.
+        s = "Archaeo" + s[len("Archaeo") :]
+    elif s.lower().startswith("archeo"):
+        # Variant spelling: "Archeodictyomitra" -> "Archaeodictyomitra".
+        # Strip the 6-char ``Archeo`` prefix and re-prefix with the
+        # 7-char ``Archaeo``. Case of the stem is preserved.
+        s = "Archaeo" + s[len("Archeo") :]
     # Audit 2026-09-01 (live Bandini end-to-end): strip TRAILING
     # author-token that follows the species epithet / open-nomen
     # qualifier. ICZN citation forms like "(Tan, 1973)" or bare

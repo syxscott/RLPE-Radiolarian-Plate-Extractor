@@ -136,6 +136,27 @@ TAXON_CF_COMPARE_PATTERN = re.compile(
     r"(?:[A-Z]\.|([A-Z][a-zA-Z-]+))\s+"
     r"([a-z][a-zA-Z-]+)"
 )
+_AUTHOR_INITIAL_RE = re.compile(r"\b([A-Z])\.")
+
+
+def _extract_author_initial(text: str, match: "re.Match[str]") -> str | None:
+    """Audit 2026-09-04 taxon-7 helper.
+
+    When :data:`TAXON_CF_COMPARE_PATTERN` matched the author-initial
+    branch (``S.``), group 1 is None — the literal ``S.`` is NOT
+    captured. Recover it from the source text by looking at the
+    characters immediately preceding the epithet group.
+
+    Returns the author-initial token (``S.``) as a string, or None if
+    no single-letter dotted initial is in range.
+    """
+    # The epithet group starts at match.start(2); the author initial
+    # occupies the ``[A-Z].`` token immediately before it. Search
+    # backward up to 6 characters (worst case: "  S.  ").
+    start = max(0, match.start(2) - 6)
+    pre = text[start : match.start(2)]
+    m = _AUTHOR_INITIAL_RE.search(pre)
+    return f"{m.group(1)}." if m else None
 _SINGLE_UPPER = re.compile(r"[A-Z]")
 _SINGLE_DIGITS = re.compile(r"\d{1,2}")
 _SPECIES_QUAL = re.compile(r"\b(sp\.|spp\.|cf\.|aff\.)\b", re.IGNORECASE)
@@ -420,9 +441,28 @@ def extract_taxa_from_caption(caption_text: str) -> list[str]:
     # the comparison epithet when the cleaner had stripped it. Use the
     # same ``text`` for both passes for audit consistency.
     for m in TAXON_CF_COMPARE_PATTERN.finditer(text):
-        compared = m.group(2).strip() if m.group(2) else None
-        if compared and compared not in taxa:
-            taxa.append(compared)
+        epithet = m.group(2).strip() if m.group(2) else None
+        # Audit 2026-09-04 taxon-7: the previous code appended only the
+        # epithet (e.g. "excelsa") — losing the genus / author-initial
+        # disambiguator (e.g. "S."). Multiple genera have an "excelsa"
+        # epithet; without the S. / Stichocapsa prefix the downstream
+        # mapping cannot tell which ``excelsa`` the determiner meant.
+        # Group 1 carries either the full genus (``Stichocapsa``) or is
+        # None when the author-initial branch (``S.``) fired; in the
+        # latter case the matched literal ``S.`` lives in the source
+        # text immediately before the epithet, so we recover it from
+        # the raw match.
+        if epithet:
+            genus_or_initial = m.group(1) or _extract_author_initial(text, m)
+            if genus_or_initial:
+                compared = f"{genus_or_initial} {epithet}"
+            else:
+                # Neither group 1 nor a leading author-initial is
+                # present in this match — bare epithet, skip (would
+                # fail downstream _is_valid_species).
+                continue
+            if compared not in taxa:
+                taxa.append(compared)
     return taxa
 
 
