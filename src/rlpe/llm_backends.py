@@ -432,6 +432,15 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
             if norm:
                 return {"_is_multi_panel": True, "panels": norm}
         elif isinstance(obj, dict):
+            # Audit 2026-09-04 (llm-1): the LLM-first system prompt
+            # demands exactly this shape — ``{"panels": [...]}`` — so a
+            # fully prompt-compliant answer must unwrap to the multi-
+            # panel contract instead of being fed to
+            # ``_normalize_panel_dict`` (whose whitelist drops the
+            # "panels" key and collapses the answer to one empty row).
+            unwrapped = _unwrap_panels_object(obj)
+            if unwrapped is not None:
+                return unwrapped
             return _normalize_panel_dict(obj)
     except Exception:
         pass
@@ -470,6 +479,9 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
         try:
             obj = json.loads(obj_match.group(0))
             if isinstance(obj, dict):
+                unwrapped = _unwrap_panels_object(obj)
+                if unwrapped is not None:
+                    return unwrapped
                 if any(k in obj for k in ("species", "label")):
                     return _normalize_panel_dict(obj)
                 # else: not a panel-shape JSON, keep looking
@@ -491,6 +503,9 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
         try:
             obj = json.loads(last_obj)
             if isinstance(obj, dict):
+                unwrapped = _unwrap_panels_object(obj)
+                if unwrapped is not None:
+                    return unwrapped
                 return _normalize_panel_dict(obj)
         except Exception:
             pass
@@ -545,6 +560,32 @@ _ALLOWED_PANEL_FIELDS = frozenset(
         "stratigraphy",
     }
 )
+
+
+def _unwrap_panels_object(obj: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the multi-panel contract for a prompt-compliant
+    ``{"panels": [...]}`` answer, or ``None`` when ``obj`` is not that
+    shape.
+
+    audit 2026-09-04 (llm-1): the LLM-first system prompt requires the
+    model to answer ``{"panels": [...]}`` — but the per-panel whitelist
+    in ``_normalize_panel_dict`` drops the "panels" key, so a compliant
+    answer collapsed to a single empty row. Unwrapping happens at the
+    parse layer, before the whitelist ever sees a panel dict.
+    """
+    panels_val = obj.get("panels")
+    if not isinstance(panels_val, list):
+        return None
+    items = [p for p in panels_val if isinstance(p, dict)]
+    if not items:
+        # Placeholder contract ("{"panels": []}" for auto captions) —
+        # return an explicitly empty multi-panel result rather than a
+        # fabricated empty row.
+        return {"_is_multi_panel": True, "panels": []}
+    return {
+        "_is_multi_panel": True,
+        "panels": [_normalize_panel_dict(p) for p in items],
+    }
 
 
 def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
