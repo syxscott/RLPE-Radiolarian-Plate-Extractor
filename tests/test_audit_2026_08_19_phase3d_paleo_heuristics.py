@@ -259,12 +259,18 @@ class TestM4ClassifyCoordinateAgeAfter:
     def test_paleo_before_still_works(self):
         """Regression: the BEFORE-window must still work. Put a
         paleo keyword 200 chars before the coord and nothing
-        after. The function must return 'paleo'."""
-        prefix = "Eocene " + "g" * 200
+        after. The function must return 'paleo'.
+
+        Audit 2026-09-04 geo-3: bare "Eocene" no longer triggers paleo
+        (it's a common paleogeographic descriptor). Use the
+        qualified form "in the Eocene" so a temporal preposition cue
+        is required.
+        """
+        prefix = "in the Eocene " + "g" * 200
         text, m_start, m_end = self._build(prefix=prefix, coord="38N, 14E", tail="rock description")
         out = _classify_coordinate_age(text, m_start, m_end)
         assert out == "paleo", (
-            f"'Eocene' 200 chars BEFORE the coord must still be detected; got {out!r}"
+            f"'in the Eocene' 200 chars BEFORE the coord must still be detected; got {out!r}"
         )
 
     def test_ambiguous_both_sides_still_none(self):

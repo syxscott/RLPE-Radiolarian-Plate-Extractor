@@ -114,7 +114,11 @@ class TestPaleoCoordinateClassification:
         # bordered by non-word chars; glued to 'g' it would not
         # match), then 99 filler, total 300 chars. 'Eocene' starts
         # at position 195 — well inside the 400-char window.
-        prefix = "g" * 194 + " Eocene " + "g" * 98
+        # Audit 2026-09-04 geo-3: bare "Eocene" alone no longer
+        # triggers paleo (it's a common paleogeographic descriptor).
+        # The qualified form "in the Eocene" is used to require a
+        # temporal preposition cue.
+        prefix = "g" * 195 + " in the Eocene " + "g" * 90
         assert len(prefix) == 300
         text = _ctx(prefix)
         out = _classify_coordinate_age(text, _COORD_START, _COORD_END)
@@ -259,8 +263,23 @@ class TestSourceGuard:
 
     def test_keyword_lists_unchanged(self):
         """The keyword list itself must not be modified — only the
-        matching algorithm. (Catches accidental renames.)"""
-        for needle in ("paleogene", "neogene", "eocene", "pleistocene"):
-            assert needle in _PALEO_KEYWORDS, f"_PALEO_KEYWORDS missing {needle!r}"
+        matching algorithm. (Catches accidental renames.)
+
+        Audit 2026-09-04 geo-3: bare epoch/era names ("paleogene",
+        "neogene", "eocene", etc.) are NOT in _PALEO_KEYWORDS — only
+        the qualified forms ("in the eocene", "in paleogene", …) are
+        present. This test now asserts that the qualified forms are
+        still in the list and that the bare forms are NOT (the source
+        guard in test_geo3_paleo_label_context_2026_09_04.py).
+        """
+        for needle in (
+            "in the eocene",
+            "in paleogene",
+            "in the neogene",
+            "in the pleistocene",
+        ):
+            assert needle in _PALEO_KEYWORDS, (
+                f"_PALEO_KEYWORDS missing qualified form {needle!r}"
+            )
         for needle in ("today", "present-day"):
             assert needle in _MODERN_KEYWORDS, f"_MODERN_KEYWORDS missing {needle!r}"

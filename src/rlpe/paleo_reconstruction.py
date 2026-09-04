@@ -964,8 +964,21 @@ def enrich_geology_record(record: dict[str, Any]) -> None:
     No-op when modern coords or age are missing (we don't guess).
     """
     try:
-        lat = record.get("latitude")
-        lon = record.get("longitude")
+        # Audit 2026-09-04 geo-2: prefer the producer-classified
+        # ``modern_latitude`` / ``modern_longitude`` when present.
+        # The bare ``latitude`` / ``longitude`` fields hold the
+        # FIRST coord found (may be paleo if the section opened with
+        # a paleo coordinate) — using them as the Rodrigues rotation
+        # anchor would rotate the paleo value AGAIN, producing a
+        # "double-rotated" paleo_latitude. Read the classified pair
+        # first; fall back to the bare pair only when the producer
+        # didn't classify.
+        lat = record.get("modern_latitude")
+        if lat is None:
+            lat = record.get("latitude")
+        lon = record.get("modern_longitude")
+        if lon is None:
+            lon = record.get("longitude")
         age_str = record.get("chronostratigraphy") or record.get("age") or ""
         # Convert age to numeric Ma via the same ICS table used in
         # ``stratigraphy.find_ages_in_text``. We import lazily so this
