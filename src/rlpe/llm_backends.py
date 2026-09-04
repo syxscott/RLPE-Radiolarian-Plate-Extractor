@@ -2544,6 +2544,34 @@ class FallbackHandler:
         return action
 
 
+def resolve_minimax_api_key(extra: dict[str, Any] | None = None) -> str | None:
+    """Single source of truth for MiniMax API-key resolution.
+
+    Mirrors the key sources the pipeline actually consumes, in priority
+    order:
+
+      1. ``extra["MiniMax_api_key"]`` (GUI Settings field / CLI config);
+      2. ``MiniMax_API_KEY`` / ``MINIMAX_API_KEY`` environment;
+      3. ``ANTHROPIC_API_KEY`` environment — Round 18: the project's
+         documented .env key (the MiniMax API speaks the Anthropic wire
+         protocol, and the ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_MODEL``
+         pair keeps the endpoint consistent). ``RadiolarianPipeline``
+         injects the same fallback into ``extra["MiniMax_api_key"]``
+         before building the backend (pipeline.py), so callers that
+         resolve the key BEFORE the pipeline exists (the GUI worker's
+         outbound-policy resolution) must agree or they silently
+         disable the LLM (BUG-4, audit 2026-09-04).
+    """
+    extra = extra or {}
+    key = (
+        extra.get("MiniMax_api_key")
+        or os.environ.get("MiniMax_API_KEY")
+        or os.environ.get("MINIMAX_API_KEY")
+        or os.environ.get("ANTHROPIC_API_KEY")
+    )
+    return str(key) if key else None
+
+
 def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3Backend:
     """Build a MiniMaxM3Backend from ``extra`` config, falling back to env vars.
 
@@ -2564,22 +2592,22 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
     # opt-in ValueError at construction instead of the private
     # default. Align with the dataclass.
     policy = str(extra.get("data_outbound_policy", "api_redacted"))
-    # NOTE: ANTHROPIC_API_KEY is intentionally NOT in this fallback chain
-    # — it's the key for the real Anthropic API, not for MiniMax. On a
-    # host that has both, falling back to ANTHROPIC_API_KEY would silently
-    # send the wrong key to MiniMax and surface as a confusing 401. MiniMax
-    # supports the Anthropic wire protocol but uses its own keyspace; we
-    # only accept its own env vars.
-    api_key = (
-        extra.get("MiniMax_api_key")
-        or os.environ.get("MiniMax_API_KEY")
-        or os.environ.get("MINIMAX_API_KEY")
-    )
+    # BUG-4 (audit 2026-09-04): key resolution lives in the shared
+    # ``resolve_minimax_api_key`` helper so this builder, the pipeline
+    # heuristic and the GUI worker's policy resolver can never drift
+    # apart again. The chain includes ``ANTHROPIC_API_KEY`` (Round 18:
+    # the project's documented .env key — the base_url chain below
+    # honours ``ANTHROPIC_BASE_URL``, so the key/endpoint pair stays
+    # self-consistent).
+    api_key = resolve_minimax_api_key(extra)
     if not api_key and policy != "local_only":
         raise ValueError(
             "MiniMax api_key not set. Provide one via:\n"
             "  - PipelineConfig.extra['MiniMax_api_key']\n"
             "  - environment variable MiniMax_API_KEY or MINIMAX_API_KEY\n"
+            "  - environment variable ANTHROPIC_API_KEY (Round 18 fallback:\n"
+            "    the project .env documents it; MiniMax speaks the Anthropic\n"
+            "    wire protocol, ANTHROPIC_BASE_URL keeps the endpoint aligned)\n"
             "  - .env file (see .env.example)\n"
             "Or set data_outbound_policy=local_only to run without the API."
         )

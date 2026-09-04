@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 import traceback
+from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QSettings, Qt
 from PySide6.QtGui import QGuiApplication
@@ -59,6 +60,29 @@ def _install_exception_hook(log) -> None:
     sys.excepthook = hook
 
 
+def _load_project_env(env_path: Path | None = None) -> int:
+    """Load the project ``.env`` into ``os.environ`` (BUG-4, 2026-09-04).
+
+    Only the CLI and the web server loaded the project .env; the desktop
+    GUI never did, so a user who configured their MiniMax key there
+    (``ANTHROPIC_API_KEY`` / ``ANTHROPIC_BASE_URL`` /
+    ``ANTHROPIC_MODEL`` — or ``MINIMAX_API_KEY``) got an LLM-less,
+    local_only GUI run that finished in seconds with 0 rows. Uses the
+    shared ``env_loader`` so the override semantics (project .env wins
+    for the reserved LLM keys) are identical to the CLI/web paths.
+
+    Returns the number of keys actually set (0 when the file is
+    absent), mirroring ``load_env_file``.
+    """
+    from ..env_loader import load_env_file
+
+    if env_path is None:
+        env_path = Path(__file__).resolve().parents[3] / ".env"
+    if not env_path.exists():
+        return 0
+    return load_env_file(env_path)
+
+
 def run_app(argv: list[str] | None = None) -> int:
     """Construct the QApplication, install the main window, run the loop.
 
@@ -72,6 +96,12 @@ def run_app(argv: list[str] | None = None) -> int:
     log.info("=" * 70)
     log.info("%s v%s starting up", APP_NAME, APP_VERSION)
     log.info("=" * 70)
+
+    # BUG-4 (2026-09-04): load the project .env BEFORE any pipeline
+    # config is built so the worker sees the configured LLM keys.
+    _loaded = _load_project_env()
+    if _loaded:
+        log.info("Loaded %d key(s) from project .env", _loaded)
 
     if argv is None:
         argv = sys.argv

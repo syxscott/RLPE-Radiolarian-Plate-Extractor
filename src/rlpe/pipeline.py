@@ -6684,10 +6684,15 @@ Rules:
             )
 
         if action == "rules":
+            # BUG-4 (audit 2026-09-04): log the actual error text. The
+            # bare "API error" message previously hid non-network
+            # causes — e.g. a local_only policy short-circuit reads
+            # exactly like an outage while no call was ever attempted.
             logger.warning(
-                "[MiniMax] API error, falling back to rule pipeline for %s/%s",
+                "[MiniMax] API error, falling back to rule pipeline for %s/%s: %s",
                 paper_id,
                 figure_id,
+                (error_info.get("error") or "?")[:300],
             )
             for m in result:
                 m.metadata["MiniMax_fallback_action"] = "rules"

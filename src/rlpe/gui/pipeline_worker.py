@@ -535,17 +535,21 @@ def _resolve_outbound_policy(policy_setting: str, settings_key: str | None) -> s
       * an explicit, valid user choice (``api_redacted`` / ``api_full`` /
         ``local_only``) always wins;
       * ``auto`` (or unset / garbage) picks ``api_redacted`` when a
-        MiniMax key is reachable via the settings dict or the
-        environment, and ``local_only`` otherwise;
+        MiniMax key is reachable — settings key or env via the shared
+        ``resolve_minimax_api_key`` helper (which includes the Round 18
+        ``ANTHROPIC_API_KEY`` fallback that ``RadiolarianPipeline``
+        injects into the config — BUG-4, audit 2026-09-04: the resolver
+        previously ignored it and disabled the LLM while the pipeline
+        would have had a key) — and ``local_only`` otherwise;
       * ``api_full`` is opt-in only (``RLPE_DATA_OUTBOUND_OPT_IN``, the
         same gate ``MiniMaxM3Backend`` enforces). Without it the backend
         would raise mid-run, so we downgrade to ``api_redacted`` here.
     """
     policy = (policy_setting or "").strip()
     if policy not in _VALID_OUTBOUND_POLICIES or policy == "auto":
-        has_key = bool(settings_key) or bool(
-            os.environ.get("MiniMax_API_KEY") or os.environ.get("MINIMAX_API_KEY")
-        )
+        from ..llm_backends import resolve_minimax_api_key
+
+        has_key = resolve_minimax_api_key({"MiniMax_api_key": settings_key}) is not None
         policy = "api_redacted" if has_key else "local_only"
     if (
         policy == "api_full"

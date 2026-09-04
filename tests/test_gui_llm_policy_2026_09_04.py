@@ -145,6 +145,9 @@ class TestResolveOutboundPolicy:
 
         monkeypatch.delenv("MiniMax_API_KEY", raising=False)
         monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+        # test_run_research_eval_wiring setdefault()s this at module
+        # import; the Round 18 fallback makes it a valid key source.
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         assert _resolve_outbound_policy("", None) == "local_only"
 
     def test_settings_key_yields_api_redacted(self, monkeypatch):
@@ -166,6 +169,7 @@ class TestResolveOutboundPolicy:
 
         monkeypatch.delenv("MiniMax_API_KEY", raising=False)
         monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         assert _resolve_outbound_policy("garbage", None) == "local_only"
 
 
@@ -182,6 +186,7 @@ class TestBuildConfigPolicy:
     def test_no_key_local_only(self, monkeypatch, tmp_path):
         monkeypatch.delenv("MiniMax_API_KEY", raising=False)
         monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         worker = _make_worker({"use_gpu": False}, tmp_path)
         cfg = worker._build_config()
         assert cfg.extra["data_outbound_policy"] == "local_only"
