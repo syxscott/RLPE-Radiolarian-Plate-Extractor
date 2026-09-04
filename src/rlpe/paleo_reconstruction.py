@@ -12,13 +12,17 @@ Why in-process (not full GPlates):
 - The results can be REPLACED later by a proper GPlates call via
   PBDB if the operator needs sub-degree precision.
 
-Plates and poles are from Seton et al. 2012
-("Global continental and ocean basin reconstructions since 200 Ma",
-Earth-Science Reviews). Euler poles are stored as
+Plates and poles: the embedded tables are COARSE APPROXIMATIONS
+(“embedded-approximate”), audited to be physically plausible (no
+spin-axis poles — audit 2026-09-04 geo-1) but NOT verified against
+the published Seton et al. 2012 rotation file. For research-grade
+paleo-coordinates, supply the real EarthByte file
+(Seton_etal_2012_ESR.rot) via the ``RLPE_SETON2012_ROT`` environment
+variable; plates loaded from it are labelled "Seton 2012" in exports.
+Euler poles are stored as
 ``(latitude, longitude, rotation_degrees)`` for each plate at a
-sparse set of reconstruction times. Linear interpolation between
-adjacent timesteps keeps the table small while staying within ~5°
-of the published GPlates rotation for the supported plates.
+sparse set of reconstruction times; linear interpolation between
+adjacent timesteps keeps the table small.
 
 Phase 3C (audit 2026-08-19) B-11 fix: previously this module
 embedded approximate "Euler poles from Seton et al. 2012" that
@@ -200,11 +204,12 @@ COUNTRY_PLATE: dict[str, str] = {
 #
 # Phase 3C (audit 2026-08-19) B-11 fix: the previous table embedded
 # values described as "Seton et al. 2012" but actually approximated
-# by hand. Africa / North America / Eurasia now use the values from
-# the published EarthByte Seton 2012 rotation file (the
-# ``_SETON2012_*_ROTATIONS`` constants below); the other plates use
-# the same pattern (3-7 timesteps, ~5-15° cumulative rotation) drawn
-# from the same file.
+# by hand. NOTE (audit 2026-09-04 geo-1): only some tables were ever
+# corrected against the published file; the rest remain coarse
+# approximations and exports now say "embedded-approximate" instead
+# of claiming "Seton 2012". Tables must also pass the spin-axis pole
+# guard in ``_interpolate_euler`` (the fabricated Indo-Australian
+# table that survived the B-11 fix was removed).
 
 # EarthByte / GPlates Seton 2012 rotation for Africa (PlateID 101).
 # Source: Seton et al. 2012 supplementary data, file
@@ -285,18 +290,16 @@ _SETON2012_INDIA_ROTATIONS: list[tuple[float, float, float, float]] = [
     (200.0, 5.0, -10.0, 60.0),
 ]
 
-# EarthByte Seton 2012 rotation for Indo-Australian (PlateID 801).
-# Australia separated from Antarctica at ~35 Ma (Eocene-Oligocene
-# boundary) and has rotated counter-clockwise (positive) ever since.
-_SETON2012_INDO_AUSTRALIAN_ROTATIONS: list[tuple[float, float, float, float]] = [
-    (0.0, 0.0, 0.0, 0.0),
-    (10.0, -90.0, 0.0, -3.0),
-    (50.0, -90.0, 0.0, -10.0),
-    (100.0, -90.0, 0.0, -20.0),
-    (130.0, -90.0, 0.0, -25.0),
-    (200.0, -90.0, 0.0, -35.0),
-    (250.0, -90.0, 0.0, -40.0),
-]
+# audit 2026-09-04 (geo-1) REMOVAL: the former "Indo-Australian" table
+# placed every non-zero timestep's Euler pole exactly on the geographic
+# spin axis (lat -90, lon 0). A rotation about the spin axis cannot
+# change latitude, so Australia's paleo-latitude was frozen at its
+# modern value for all ages while being exported as "Seton 2012" — a
+# fabricated dataset wearing a literature citation. There is NO honest
+# embedded replacement (we will not hand-invent poles again): the plate
+# is now unsupported until an operator supplies the real
+# ``Seton_etal_2012_ESR.rot`` via ``RLPE_SETON2012_ROT`` /
+# ``_load_seton2012_from_external``. Missing data beats fabricated data.
 
 # EarthByte Seton 2012 rotation for the Pacific plate (PlateID 901).
 # New Zealand has been a Pacific plate terrane since ~85 Ma; the
@@ -326,7 +329,6 @@ _SETON2012_POLES: dict[str, list[tuple[float, float, float, float]]] = {
     "seton_2012_south_america": _SETON2012_SOUTH_AMERICA_ROTATIONS,
     "seton_2012_antarctica": _SETON2012_ANTARCTICA_ROTATIONS,
     "seton_2012_india": _SETON2012_INDIA_ROTATIONS,
-    "seton_2012_indo_australian": _SETON2012_INDO_AUSTRALIAN_ROTATIONS,
     "seton_2012_new_zealand": _SETON2012_PACIFIC_ROTATIONS,
 }
 
@@ -424,7 +426,10 @@ EULER_POLES: dict[str, list[tuple[float, float, float, float]]] = {
     "South America": list(_SETON2012_SOUTH_AMERICA_ROTATIONS),  # 0..250.0 Ma
     "Antarctica": list(_SETON2012_ANTARCTICA_ROTATIONS),  # 0..200.0 Ma
     "India": list(_SETON2012_INDIA_ROTATIONS),  # 0..200.0 Ma
-    "Indo-Australian": list(_SETON2012_INDO_AUSTRALIAN_ROTATIONS),  # 0..250.0 Ma
+    # "Indo-Australian" removed (audit 2026-09-04 geo-1): the old table
+    # was fabricated (spin-axis poles). Supply a real rotation file via
+    # ``RLPE_SETON2012_ROT`` / ``_load_seton2012_from_external`` to
+    # re-enable the plate.
     "New_Zealand": list(_SETON2012_PACIFIC_ROTATIONS),  # 0..250.0 Ma
     # --- Relative rotations from Seton 2012 supplementary file. ---
     "Adria": list(_ADRIA_RELATIVE_ROTATIONS),  # 0..250.0 Ma
@@ -462,6 +467,58 @@ _PLATE_ALIAS = {
     "USA": "North America",
     "UK": "Eurasia",
 }
+
+# audit 2026-09-04 (geo-1): a Euler pole within 5° of the geographic
+# spin axis cannot change a point's latitude. A LARGE rotation about
+# such a pole fabricates paleo-latitudes (the Indo-Australian bug:
+# -20°..-40° spins that left Australia's latitude frozen). Small
+# spin-axis rotations are a legitimate GPlates-file idiom for "this
+# plate barely moves in latitude" (e.g. Africa's 10 Ma row at 0.5°),
+# so the guard only fires when both the pole is degenerate AND the
+# rotation is large. Plates whose real geography sits at the pole
+# (Antarctica) are exempt entirely.
+_SPIN_AXIS_TOLERANCE_DEG = 5.0
+_SPIN_AXIS_MAX_ROTATION_DEG = 10.0
+_POLAR_PLATES = frozenset({"Antarctica"})
+
+# Plates whose rotation table was replaced by an operator-supplied
+# Seton 2012 ``.rot`` file (via ``_load_seton2012_from_external``).
+# Only these may be labelled "Seton 2012" in exported records — the
+# embedded tables are coarse approximations, not the published file.
+_EXTERNAL_MODEL_PLATES: set[str] = set()
+
+_MODEL_LABEL_EMBEDDED = "embedded-approximate"
+_MODEL_LABEL_SETON = "Seton 2012"
+
+
+def reconstruction_model_label(plate_id: str | None) -> str:
+    """Honest provenance label for a paleo-coordinate produced for
+    ``plate_id``: "Seton 2012" only when that plate's table was loaded
+    from a real rotation file; "embedded-approximate" otherwise."""
+    if plate_id and plate_id in _EXTERNAL_MODEL_PLATES:
+        return _MODEL_LABEL_SETON
+    return _MODEL_LABEL_EMBEDDED
+
+
+def ensure_rotation_source() -> int:
+    """Load an operator-supplied Seton 2012 rotation file if configured.
+
+    Reads ``RLPE_SETON2012_ROT`` (path to a GPlates ``.rot`` file).
+    No-op when unset/missing. Idempotent — a second call after a
+    successful load returns 0. Returns the number of plates merged.
+    """
+    path = os.environ.get("RLPE_SETON2012_ROT")
+    if not path:
+        return 0
+    if _EXTERNAL_MODEL_PLATES:
+        return 0
+    merged = _load_seton2012_from_external(path)
+    if merged:
+        logger.info(
+            "paleo_reconstruction: %d plate(s) now use real Seton 2012 "
+            "rotations from RLPE_SETON2012_ROT", merged,
+        )
+    return merged
 
 
 def _resolve_deprecated_plate(plate_id: str) -> str:
@@ -620,6 +677,24 @@ def _interpolate_euler(plate: str, age_ma: float):
     """
     poles = EULER_POLES.get(plate)
     if not poles:
+        return None
+    # audit 2026-09-04 (geo-1): refuse LARGE spin-axis rotations for
+    # non-polar plates — they cannot move latitude, so a table built
+    # from them fabricates paleo-latitudes. (Small spin-axis rows are
+    # a legitimate idiom for plates that genuinely barely move.)
+    if plate not in _POLAR_PLATES and any(
+        abs(abs(e_lat) - 90.0) < _SPIN_AXIS_TOLERANCE_DEG
+        and abs(_rot) > _SPIN_AXIS_MAX_ROTATION_DEG
+        for (_age, e_lat, _e_lon, _rot) in poles
+    ):
+        logger.warning(
+            "paleo_reconstruction: plate %r has spin-axis Euler poles "
+            "(|lat| within %s° of 90) — latitude-unmoving rotations; "
+            "refusing to fabricate paleo-coordinates. Supply a real "
+            "rotation file via RLPE_SETON2012_ROT.",
+            plate,
+            _SPIN_AXIS_TOLERANCE_DEG,
+        )
         return None
     # poles is sorted by age descending (younger -> older).
     ages = [p[0] for p in poles]
@@ -868,6 +943,7 @@ def _load_seton2012_from_external(path: str | os.PathLike) -> int:
             )
             continue
         EULER_POLES[name] = sorted(rows, key=lambda r: r[0])
+        _EXTERNAL_MODEL_PLATES.add(name)
         merged += 1
         logger.info(
             "paleo_reconstruction: loaded %d rotation rows for plate=%r from %s",
@@ -933,11 +1009,11 @@ def enrich_geology_record(record: dict[str, Any]) -> None:
         record["paleo_longitude"] = round(paleo_lon, 4)
         record["modern_latitude"] = round(float(lat), 4)
         record["modern_longitude"] = round(float(lon), 4)
-        # Phase 3C B-11 fix: the rotation source is now real Seton
-        # 2012, not the simplified approximation. Update the model
-        # label accordingly so downstream consumers can audit which
-        # pole table produced the paleo coordinates.
-        record["reconstruction_model"] = "Seton 2012"
+        # audit 2026-09-04 (geo-1): honest provenance. "Seton 2012" is
+        # only claimed for plates loaded from a real rotation file; the
+        # embedded tables are coarse approximations and are labelled as
+        # such so downstream consumers can audit (or exclude) them.
+        record["reconstruction_model"] = reconstruction_model_label(plate)
         record["reconstruction_age_ma"] = round(float(age_ma), 2)
     except (TypeError, ValueError, AttributeError, KeyError, ImportError) as exc:
         # Phase 55 audit CRITICAL-3/HIGH-5 fix: narrow to the exceptions

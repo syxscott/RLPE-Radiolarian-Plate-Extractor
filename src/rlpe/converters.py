@@ -2154,9 +2154,16 @@ def paleo_coordinates_from_localities(
     # dependency surface small).
     try:
         from .paleo_reconstruction import (
+            ensure_rotation_source,
             infer_plate_id,
             reconstruct_paleo_position,
+            reconstruction_model_label,
         )
+
+        # audit 2026-09-04 (geo-1): give the operator-supplied rotation
+        # file (RLPE_SETON2012_ROT) a chance to load before any
+        # reconstruction, so "Seton 2012" labels reflect real data.
+        ensure_rotation_source()
     except Exception as exc:
         # Round 23 audit: surface this as a WarningRecord so the
         # operator sees the backend is unavailable (was previously
@@ -2229,14 +2236,20 @@ def paleo_coordinates_from_localities(
             paleo_latitude=float(paleo_lat) if paleo_lat is not None else None,
             paleo_longitude=float(paleo_lon) if paleo_lon is not None else None,
             plate_id=plate_id,
-            reconstruction_model="Seton2012",
+            # audit 2026-09-04 (geo-1): honest provenance — "Seton 2012"
+            # only for plates loaded from a real rotation file.
+            reconstruction_model=reconstruction_model_label(plate_id),
             method="euler_pole_rotation",
             confidence=0.7 if paleo_lat is not None else 0.0,
             backend_status="ok" if paleo_lat is not None else "plate_or_age_unknown",
-            # Phase 63 Plan 6.20 (Bug 6.20): PBDB-style paleocoord
-            # uncertainty. Seton2012 Euler-pole reconstructions carry
-            # ~50 km of plate motion uncertainty at typical ages.
-            coordinate_uncertainty_in_meters=50000.0,
+            # Phase 63 Plan 6.20 (Bug 6.20) + audit 2026-09-04 (geo-8):
+            # the 50 km figure is only meaningful for the published
+            # rotation file; embedded approximations must not claim it.
+            coordinate_uncertainty_in_meters=(
+                50000.0
+                if reconstruction_model_label(plate_id) == "Seton 2012"
+                else None
+            ),
         )
         out.append(rec.model_dump())
     return out, warnings_out

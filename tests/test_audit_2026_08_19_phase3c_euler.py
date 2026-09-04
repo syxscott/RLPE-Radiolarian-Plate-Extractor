@@ -42,6 +42,7 @@ from pathlib import Path
 
 import pytest
 
+from rlpe import paleo_reconstruction as pr
 from rlpe.paleo_reconstruction import (
     _DEPRECATED_PLATE_ALIASES,
     _SETON2012_POLES,
@@ -111,13 +112,12 @@ class TestSeton2012Embed:
             prev_abs = abs(rot)
 
     def test_seton2012_master_dict_has_eight_plates(self):
-        """The embedded Seton 2012 master dict ships the 8 plates
-        whose rotation file uses the absolute reference frame:
-        Africa, North America, Eurasia, South America, Antarctica,
-        India, Indo-Australian, New_Zealand."""
-        # Note the keys are prefixed with ``seton_2012_`` so the
-        # legacy source-guard test in test_round18_abc_complete
-        # only finds the plates via ``EULER_POLES``.
+        """The embedded master dict ships the absolute-reference-frame
+        plates. Updated 2026-09-04 (audit geo-1): "Indo-Australian" was
+        REMOVED — its table was fabricated (spin-axis poles that cannot
+        change latitude; exported as "Seton 2012" anyway). Missing data
+        beats fabricated data, so the plate ships unsupported until an
+        operator supplies the real rotation file."""
         expected_plates = {
             "Africa",
             "North America",
@@ -125,29 +125,31 @@ class TestSeton2012Embed:
             "South America",
             "Antarctica",
             "India",
-            "Indo-Australian",
             "New_Zealand",
         }
         for plate in expected_plates:
             assert plate in EULER_POLES, (
                 f"Plate {plate!r} missing from EULER_POLES — "
-                "Phase 3C B-11 fix requires all 8 Seton 2012 "
+                "Phase 3C B-11 fix requires the Seton 2012 "
                 "absolute-rotation plates to ship."
             )
+        assert "Indo-Australian" not in EULER_POLES, (
+            "audit 2026-09-04 geo-1: the fabricated Indo-Australian "
+            "table must stay removed (supply a real .rot file instead)."
+        )
 
     def test_new_plates_have_real_rotations(self):
-        """New_Zealand (Pacific) and Indo-Australian must have
-        real Seton 2012 rotations — at least one timestep with
-        |rotation| > 5°. Sparse / identity rotations would mean
-        "we don't have real data" and contradict the B-11 fix."""
-        for plate in ("New_Zealand", "Indo-Australian"):
-            poles = EULER_POLES[plate]
-            max_abs_rot = max(abs(p[3]) for p in poles)
-            assert max_abs_rot > 5.0, (
-                f"Plate {plate!r} has max |rotation|={max_abs_rot}° "
-                "— Phase 3C B-11 fix requires real Seton 2012 "
-                "data, not a sparse identity table."
-            )
+        """New_Zealand (Pacific) must have real rotations — at least
+        one timestep with |rotation| > 5°. Updated 2026-09-04: the
+        Indo-Australian half of this check was removed with the
+        fabricated table (see test_seton2012_master_dict_has_eight_plates)."""
+        poles = EULER_POLES["New_Zealand"]
+        max_abs_rot = max(abs(p[3]) for p in poles)
+        assert max_abs_rot > 5.0, (
+            f"Plate New_Zealand has max |rotation|={max_abs_rot}° "
+            "— Phase 3C B-11 fix requires real rotation "
+            "data, not a sparse identity table."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -430,10 +432,16 @@ class TestStandardPlateNames:
         )
 
     def test_indo_australian_is_standard_plate(self):
-        """``Indo-Australian`` must be the new standard name."""
-        assert "Indo-Australian" in EULER_POLES, (
-            "Phase 3C B-12 fix: 'Indo-Australian' must be the "
-            "standard plate name (replaces informal 'East Gondwana')."
+        """``Indo-Australian`` remains the standard NAME in the country
+        lookup tables (so the plate is identified honestly), but it has
+        no embedded rotation table since audit 2026-09-04 geo-1 removed
+        the fabricated one — reconstruction returns None until a real
+        rotation file is loaded."""
+        assert COUNTRY_PLATE.get("australia") == "Indo-Australian"
+        assert "Indo-Australian" not in EULER_POLES
+        assert pr.reconstruct_paleo_position(-25.0, 134.0, 100.0, plate_id="Indo-Australian") == (
+            None,
+            None,
         )
 
     def test_country_lookup_new_zealand_resolves(self):
