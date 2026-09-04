@@ -4,6 +4,25 @@ Reports per-paper precision / recall / F1 (species match) and panel_match
 rate. Used to verify Round 5/6 fixes actually recover pl07/08/09 of
 bandini2011 and pl02/pl03 of pouille2014 etc.
 
+F1 naming (audit 2026-09-04 eval-6):
+    * per_figure[fig]["f1_fig_harmonic"] — harmonic mean of per-figure
+      P and R; previously emitted under the ambiguous key ``"f1"``.
+    * per_figure[fig]["f1_macro"]       — arithmetic mean of
+      per-figure F1 (the standard "macro F1" definition); previously
+      NOT computed at all.
+    * micro["f1"]                       — harmonic mean of pooled
+      (micro) P and R, computed from total_tp / total_fp / total_fn.
+
+Three distinct formulas, three distinct keys, no ambiguity for
+downstream consumers.
+
+The local ``normalize_species`` is DEPRECATED for general-purpose
+eval; the canonical implementation is in
+``rlpe.evaluation.metrics``. This script keeps the lenient
+round6-only normaliser for backwards compatibility with historical
+round6 outputs but new code should call
+``rlpe.evaluation.metrics.evaluate()``.
+
 Usage:
     PYTHONPATH=src python scripts/eval_round6_gold.py \\
         --matches work/oa_smoke_round6_bandini2011/output/manifests/matches.jsonl \\
@@ -21,7 +40,19 @@ from typing import Any
 
 
 def normalize_species(s: str | None) -> str:
-    """Normalize species string for lenient matching.
+    """DEPRECATED — round6-only lenient normaliser.
+
+    Use :func:`rlpe.evaluation.metrics.evaluate` for general-purpose
+    species F1. This function is kept for backwards compatibility
+    with the round6 live-runs dataset and intentionally diverges from
+    the production normalisation (it drops author citations and
+    qualifier suffixes more aggressively).
+
+    Audit 2026-09-04 eval-6: this normalisation produces different
+    F1 numbers than the production evaluator. New eval scripts must
+    NOT use this — they should call
+    ``rlpe.evaluation.metrics.evaluate(gold, preds)`` instead.
+    """
 
     Drops:
       - "?" uncertainty markers and empty "(?:)" / "()" groups
@@ -109,6 +140,7 @@ def eval_per_paper(matches: list[dict[str, Any]], gold: dict[str, set[str]]) -> 
             pred_by_fig.setdefault(r.get("figure_id", ""), set()).add(f"{pid}|{sp}")
     per_fig = {}
     total_tp = total_fp = total_fn = 0
+    fig_f1s: list[float] = []
     for fid, gold_pairs in gold.items():
         pred_pairs = pred_by_fig.get(fid, set())
         tp = len(gold_pairs & pred_pairs)
@@ -116,25 +148,32 @@ def eval_per_paper(matches: list[dict[str, Any]], gold: dict[str, set[str]]) -> 
         fn = len(gold_pairs - pred_pairs)
         prec = tp / (tp + fp) if (tp + fp) else 0.0
         rec = tp / (tp + fn) if (tp + fn) else 0.0
-        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+        # Audit 2026-09-04 eval-6: name the per-figure F1 formula
+        # explicitly. ``f1_fig_harmonic`` is harmonic_mean(P_fig, R_fig);
+        # ``f1_macro`` is computed later as the arithmetic mean of these
+        # values (standard macro F1 definition).
+        f1_fig_harmonic = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
         per_fig[fid] = {
             "tp": tp,
             "fp": fp,
             "fn": fn,
             "p": prec,
             "r": rec,
-            "f1": f1,
+            "f1_fig_harmonic": f1_fig_harmonic,
             "gold_n": len(gold_pairs),
             "pred_n": len(pred_pairs),
         }
+        fig_f1s.append(f1_fig_harmonic)
         total_tp += tp
         total_fp += fp
         total_fn += fn
     micro_p = total_tp / (total_tp + total_fp) if (total_tp + total_fp) else 0.0
     micro_r = total_tp / (total_tp + total_fn) if (total_tp + total_fn) else 0.0
     micro_f1 = 2 * micro_p * micro_r / (micro_p + micro_r) if (micro_p + micro_r) else 0.0
+    macro_f1 = sum(fig_f1s) / len(fig_f1s) if fig_f1s else 0.0
     return {
         "per_figure": per_fig,
+        "macro_f1": macro_f1,
         "micro": {
             "p": micro_p,
             "r": micro_r,
