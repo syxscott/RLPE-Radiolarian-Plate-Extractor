@@ -2312,22 +2312,41 @@ class MiniMaxM3Backend(BaseLLMBackend):
 
     def _apply_outbound_policy(
         self, panel_image, caption_text: str, ocr_labels: list[str], user_prompt: str
-    ) -> tuple[Any, str]:
-        """Return the redacted (panel_image, user_prompt) tuple based on
-        ``self.data_outbound_policy``. The original caption_text and
-        ocr_labels are also dropped from the user_prompt when the
-        policy is ``api_redacted``.
+    ) -> tuple[Any, str, str, list[str]]:
+        """Return the redacted (panel_image, user_prompt, caption_text,
+        ocr_labels) tuple based on ``self.data_outbound_policy``.
+
+        Audit 2026-09-04 llm-2: the previous signature returned only
+        ``(panel_image, user_prompt)``. caption_text and ocr_labels
+        were silently ignored in the function body, then re-attached
+        to the outgoing request via a thread-local side channel
+        (``_build_user_content`` prepends ``[Figure caption: ...]``
+        from ``self._thread_local.caption_text``). So even when the
+        user opted into ``api_redacted``, the full paper caption
+        still left the machine. Fix: redact caption_text /
+        ocr_labels HERE and return them in the tuple so the
+        thread-local stores the redacted version, not the original.
         """
         if self.data_outbound_policy == "api_full":
-            return panel_image, user_prompt
+            return panel_image, user_prompt, caption_text, ocr_labels
         if self.data_outbound_policy == "local_only":
             # Both branches return the same shape; the caller checks
             # policy and short-circuits before this is even invoked,
             # so this is just defensive in case the policy is changed
             # at runtime.
-            return self._redact_image(panel_image), self._redact_text(user_prompt, limit=0)
+            return (
+                self._redact_image(panel_image),
+                self._redact_text(user_prompt, limit=0),
+                "",  # caption dropped
+                [],  # ocr_labels dropped
+            )
         # api_redacted
-        return self._redact_image(panel_image), self._redact_text(user_prompt, limit=200)
+        return (
+            self._redact_image(panel_image),
+            self._redact_text(user_prompt, limit=200),
+            "",  # caption dropped — paper-private caption text
+            [],  # ocr_labels dropped — could be inferred from image
+        )
 
     def infer_panel(
         self,
@@ -2367,12 +2386,18 @@ class MiniMaxM3Backend(BaseLLMBackend):
         # can prepend them to the user prompt. This keeps all callers (including
         # m3_engine which passes empty strings) working while enabling future callers
         # to pass actual caption / OCR context through these parameters.
-        self._thread_local.caption_text = caption_text or ""
-        self._thread_local.ocr_labels = ocr_labels or []
+        #
+        # Audit 2026-09-04 llm-2: must store the REDACTED caption /
+        # ocr_labels (returned from _apply_outbound_policy), not the
+        # originals. Otherwise the thread-local re-attachment in
+        # _build_user_content leaks the paper's caption text even
+        # when the user opted into api_redacted.
         try:
-            img, up = self._apply_outbound_policy(
+            img, up, redacted_caption, redacted_ocr = self._apply_outbound_policy(
                 panel_image, caption_text, ocr_labels, user_prompt
             )
+            self._thread_local.caption_text = redacted_caption or ""
+            self._thread_local.ocr_labels = redacted_ocr or []
             # Audit M-14: redact the secondary image under the
             # ``api_redacted`` / ``local_only`` policies too, so a
             # caller asking for "extra image" never leaks the strat
@@ -2394,7 +2419,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
         if self.data_outbound_policy == "local_only":
             return self._local_only_noop("MiniMax disabled (data_outbound_policy=local_only)")
         try:
-            _, up = self._apply_outbound_policy(None, "", [], user_prompt)
+            _, up, _, _ = self._apply_outbound_policy(None, "", [], user_prompt)
             messages = self._build_text_messages(up)
             resp = self._call_api(system_prompt, messages)
             return self._make_result(resp)
