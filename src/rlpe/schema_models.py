@@ -677,29 +677,24 @@ class RunOutput(BaseModel):
     morphologies: list[MorphologyRecord] = Field(default_factory=list)
     warnings: list[WarningRecord] = Field(default_factory=list)
 
-    @model_validator(mode="wrap")
-    def _enforce_unique_ids(self, handler, info) -> RunOutput:
-        # mode="wrap" gives us ``info`` (with ``context`` from
-        # ``model_validate(..., context={...})``) and ``handler`` to
-        # invoke the default validation. Audit 2026-09-04 (CI
-        # regression fix): when ``context={"skip_dedup": True}`` is
-        # passed, skip the upstream dedup so the EXP-3
-        # ``write_dwca_zip`` test (and any future caller that wants
-        # the raw duplicate ``PanelRecord`` list to flow through to
-        # the per-row dedup check) can opt out.
-        ctx = getattr(info, "context", {}) or {}
-        if ctx.get("skip_dedup", False):
-            return handler(self)
-        # Otherwise chain through the default validation (which
-        # invokes this method's mode="after" body below).
-        return handler(self)
+    @model_validator(mode="wrap")  # type: ignore[arg-type]
+    def _enforce_unique_ids(
+        self,
+        handler: Any,
+        info: Any,
+    ) -> RunOutput:
+        # ``handler``/``info`` are typed ``Any``: pydantic's decorator
+        # overloads (``ModelWrapValidator[Never]``) reject the precise
+        # ``ModelWrapValidatorHandler``/``ValidationInfo`` annotations
+        # under mypy --ignore-missing-imports (invariance friction),
+        # and pydantic validates the real signature at runtime.
         """Audit 2026-09-01 CR-14: enforce ID uniqueness across the
-        four primary dimensions (paper_id / figure_id /
+        three primary dimensions (paper_id / (paper_id, figure_id) /
         (paper_id, figure_id, panel_id)). The previous schema accepted
         silently — eval scripts that group by ``paper_id`` to compute
         F1 then double-counted the duplicated rows.
 
-        We deduplicate *in place* on the parsed object rather than
+        We deduplicate *in place* on the validated object rather than
         rejecting so legacy / manually-edited gold files with
         duplicate entries still load (the duplicates are dropped
         with a WARNING — not a hard failure).
@@ -708,40 +703,25 @@ class RunOutput(BaseModel):
         ``context={"skip_dedup": True}`` flag passed to
         :meth:`model_validate` so the EXP-3 ``write_dwca_zip`` test
         (and any future caller that wants the raw duplicate
-        ``PanelRecord`` list to flow through to the per-row
-        dedup check at line 437) can opt out of the upstream
-        :class:`RunOutput` dedup. Without this, the test was a
-        no-op because ``write_dwca_zip`` always received a
-        already-deduped :class:`RunOutput`.
+        ``PanelRecord`` list to flow through to the per-row dedup
+        check) can opt out of the upstream :class:`RunOutput` dedup.
+
+        Audit 2026-09-04 (second fix): the earlier rewrite of this
+        method accidentally placed ``return handler(self)`` *before*
+        the dedup body, making the dedup unreachable dead code for
+        every caller (duplicates silently survived validation again).
+        The dedup now runs after ``handler(self)`` completes the
+        default validation, on the validated instance.
         """
-        # Pydantic v2 model_validators receive ``info`` as the
-        # second arg. ``info.context`` is the dict passed to
-        # ``model_validate(..., context=...)``. Sniff for skip_dedup.
-        _info = locals().get("info")
-        _skip = bool(
-            getattr(_info, "context", {}).get("skip_dedup", False) if _info is not None else False
-        )
-        if _skip:
-            return self
-        import logging as _logging
+        # mode="wrap" gives us ``info`` (with ``context`` from
+        # ``model_validate(..., context={...})``) and ``handler`` to
+        # invoke the default validation. When the caller opted out of
+        # dedup, pass straight through.
+        ctx = getattr(info, "context", {}) or {}
+        if ctx.get("skip_dedup", False):
+            return handler(self)
 
-        _logger = _logging.getLogger(__name__)
-
-        def _dedup_keep_first(items: list, key_fn, label: str) -> list:
-            seen: set = set()
-            deduped: list = []
-            for it in items:
-                k = key_fn(it)
-                if k in seen:
-                    _logger.warning(
-                        "RunOutput: dropping duplicate %s with key %r",
-                        label,
-                        k,
-                    )
-                    continue
-                seen.add(k)
-                deduped.append(it)
-            return deduped
+        validated = handler(self)
 
         import logging as _logging
 
@@ -764,20 +744,20 @@ class RunOutput(BaseModel):
             return deduped
 
         # Dedup papers by paper_id.
-        self.papers = _dedup_keep_first(self.papers, lambda p: p.paper_id, "PaperRecord")
+        validated.papers = _dedup_keep_first(validated.papers, lambda p: p.paper_id, "PaperRecord")
         # Dedup figures by (paper_id, figure_id).
-        self.figures = _dedup_keep_first(
-            self.figures,
+        validated.figures = _dedup_keep_first(
+            validated.figures,
             lambda f: (f.paper_id, f.figure_id),
             "FigureRecord",
         )
         # Dedup panels by (paper_id, figure_id, panel_id).
-        self.panels = _dedup_keep_first(
-            self.panels,
+        validated.panels = _dedup_keep_first(
+            validated.panels,
             lambda p: (p.paper_id, p.figure_id, p.panel_id),
             "PanelRecord",
         )
-        return self
+        return validated
 
 
 def emit_json_schema(target: Path) -> Path:

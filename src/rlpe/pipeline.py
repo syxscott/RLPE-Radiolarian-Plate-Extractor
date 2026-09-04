@@ -3711,7 +3711,12 @@ class RadiolarianPipeline:
                 paper_id,
             )
             return rows
-        policy = str(self.config.extra.get("data_outbound_policy", "api_full"))
+        # Audit 2026-09-04 (BLOCKER-#2 consistency fix): default aligned
+        # with MiniMaxM3Backend's ``api_redacted`` dataclass default —
+        # this read used the stale ``api_full`` default, silently
+        # sending body morphology to the cloud when the operator never
+        # chose a policy.
+        policy = str(self.config.extra.get("data_outbound_policy", "api_redacted"))
         if policy == "local_only":
             logger.info(
                 "_apply_morphology_enrichment: data_outbound_policy=local_only; "

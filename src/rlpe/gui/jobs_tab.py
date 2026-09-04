@@ -719,7 +719,7 @@ class JobsTab(QWidget):
             # Test / bypass-init paths may not have wired up
             # ``_qsettings``. Treat that as the empty hidden set
             # so the disk scan still completes.
-            hidden_set = set()
+            hidden_set: set[str] = set()
             self._hidden_jids = hidden_set
             if not show_hidden:
                 pending = [p for p in pending if p.jid not in hidden_set]

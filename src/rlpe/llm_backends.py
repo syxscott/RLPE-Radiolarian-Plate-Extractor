@@ -2556,7 +2556,14 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
     #   * api_full / api_redacted -> need a key
     #   * local_only              -> key is optional; the backend will
     #                                short-circuit every outbound call
-    policy = str(extra.get("data_outbound_policy", "api_full"))
+    # Audit 2026-09-04 (BLOCKER-#2 consistency fix): the dataclass
+    # field default was flipped to ``api_redacted`` when ``api_full``
+    # became opt-in only, but this builder still defaulted to
+    # ``api_full`` — so every caller that did not set the key
+    # explicitly (tests, GUI, direct PipelineConfig users) hit the
+    # opt-in ValueError at construction instead of the private
+    # default. Align with the dataclass.
+    policy = str(extra.get("data_outbound_policy", "api_redacted"))
     # NOTE: ANTHROPIC_API_KEY is intentionally NOT in this fallback chain
     # — it's the key for the real Anthropic API, not for MiniMax. On a
     # host that has both, falling back to ANTHROPIC_API_KEY would silently
