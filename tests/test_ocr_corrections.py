@@ -79,10 +79,13 @@ def test_hollis_foreman_suffix_dropped():
 # ---------------------------------------------------------------------------
 
 
-def test_feng_trilonche_pseudo_restored():
-    """LLM drops the "pseudo-" prefix on Trilonche pseudocimelia."""
+def test_feng_trilonche_pseudo_not_forced():
+    # Audit 2026-09-04 taxon-5: the previous rule rewrote 6 valid
+    # "Trilonche cimelia" determinations into a different species
+    # ("Trilonche pseudocimelia"). Removed; the pred survives
+    # unchanged.
     pred = "Trilonche cimelia"
-    assert apply_corrections(pred, "feng2007") == "Trilonche pseudocimelia"
+    assert apply_corrections(pred, "feng2007") == "Trilonche cimelia"
 
 
 # ---------------------------------------------------------------------------
@@ -90,10 +93,14 @@ def test_feng_trilonche_pseudo_restored():
 # ---------------------------------------------------------------------------
 
 
-def test_beccaro_pseudoeucyrtis_group_b_restored():
-    """Parser drops the group letter " B" on Pseudoeucyrtis."""
-    pred = "Pseudoeucyrtis sp."
-    assert apply_corrections(pred, "beccaro2006") == "Pseudoeucyrtis sp. B"
+def test_beccaro_open_nomenclature_not_forced_to_sp_b():
+    # Audit 2026-09-04 taxon-5: "Pseudoeucyrtis sp." is a real
+    # open-nomenclature label in ``data/gold/beccaro2006.jsonl``
+    # (undetermined species, NOT a named informal morphogroup);
+    # the previous forcing rule rewrote it to "sp. B" which destroyed
+    # the distinction.
+    assert apply_corrections("Pseudoeucyrtis sp.", "beccaro2006") == "Pseudoeucyrtis sp."
+    assert apply_corrections("Pseudoeucyrtis sp. B", "beccaro2006") == "Pseudoeucyrtis sp. B"
 
 
 # ---------------------------------------------------------------------------

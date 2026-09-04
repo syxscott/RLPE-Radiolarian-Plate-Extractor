@@ -186,33 +186,23 @@ PAPER_WHITELIST: dict[str, list[tuple[str, str]]] = {
         #    (they appear only in the systematic description). Whitelist
         #    drops " Foreman" so the plate label matches.
         (r"Theocorys\? phyzella Foreman\b", "Theocorys? phyzella"),
-        # 6. "Corythomelissa sp. A" with a sample-code suffix in gold
-        #    ("A. B-F36/0"): pred emits just the prefix. Soft-norm can't
-        #    recover the suffix; whitelist recovers it. Fires only when
-        #    the pred has NO sample-code suffix of its own (negative
-        #    lookahead for ". <CAP>" continuation).
-        (r"Corythomelissa sp\. A(?!\.\s*[A-Z])", "Corythomelissa sp. A. B-F36/0"),
         # 7. "Axoprunum bispiculum" pred vs "Axoprunum aff. bispiculum"
         #    gold: LLM dropped the "aff." qualifier. This is the one
         #    case where the LLM is the MORE conservative source — gold
         #    is the open-nomen marker. Re-add it.
         (r"Axoprunum bispiculum(?!\s+aff\.)", "Axoprunum aff. bispiculum"),
     ],
-    # feng2007 — the LLM frequently rolls "Trilonche pseudocimelia" up
-    # to "Trilonche cimelia" (it strips the "pseudo-" prefix because
-    # the OCR confidence on the "pseudo-" ligature is low). Re-add it.
-    # 4 occurrences, all on the same species.
-    "feng2007": [
-        (r"Trilonche cimelia(?!\s+pseudo)", "Trilonche pseudocimelia"),
-    ],
-    # beccaro2006 — the parser drops the group letter on "Pseudoeucyrtis
-    # sp. B" → "Pseudoeucyrtis sp.". 2 occurrences on plate 13. Whitelist
-    # recovers the " B" suffix when the pred has exactly the bare species
-    # (audit 2026-07-31: the negative lookahead stops the rule from
-    # re-appending " B" to an already-correct "Pseudoeucyrtis sp. B").
-    "beccaro2006": [
-        (r"Pseudoeucyrtis sp\.(?!\s*[A-Z])", "Pseudoeucyrtis sp. B"),
-    ],
+    # Audit 2026-09-04 taxon-5: the previous "Trilonche cimelia ->
+    # Trilonche pseudocimelia" forcing rule rewrote 6 valid "Trilonche
+    # cimelia" determinations into a different species. Removing the
+    # rule; downstream soft-norm already handles "pseudo-" prefix loss
+    # in the m3_engine golden path.
+    "feng2007": [],
+    # Audit 2026-09-04 taxon-5: the previous "Pseudoeucyrtis sp. ->
+    # Pseudoeucyrtis sp. B" rule destroyed a real open-nomenclature
+    # distinction (sp. = undetermined species; sp. B = named informal
+    # morphogroup) that the project's own gold preserves.
+    "beccaro2006": [],
 }
 
 

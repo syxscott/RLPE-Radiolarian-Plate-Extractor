@@ -1012,27 +1012,62 @@ def _parse_extraction_response(
 # doesn't drop the link; downstream can filter low-confidence links.
 
 
+_QUALIFIER_RE = re.compile(r"\b(cf|aff)\b\.?", re.IGNORECASE)
+
+
 def _norm(s: str | None) -> str:
     if not s:
         return ""
     s = str(s).strip()
     s = re.sub(r"\s+sp\.?$", "", s, flags=re.IGNORECASE).strip()
-    # Phase 64 audit: cf. and aff. are both ICZN qualification markers
-    # that must be stripped before species epithet comparison.
-    s = re.sub(r"\s+(?:cf\.|aff\.)\s+", " ", s, flags=re.IGNORECASE).strip()
+    # Audit 2026-09-04 taxon-4: cf. and aff. are now PRESERVED in the
+    # normalised form so ``_species_match`` can distinguish them. The
+    # previous deletion collapsed "cf. jamesi" onto "jamesi" and made
+    # the range-chart linker attribute a panel's uncertain
+    # determination to the definite chart species — corrupting the
+    # biozone/age metadata and downstream PBDB/GBIF submissions.
     return s.lower()
 
 
+def _qualifier(s: str) -> str | None:
+    """Return "cf" | "aff" | None from a normalised species string.
+
+    The qualifier is what differentiates ICZN's two open-nomenclature
+    assertions — cf. (tentative identification) and aff. (similar but
+    distinct species) — from a definite determination. Range-chart
+    linkage must never fuse one qualifier into another.
+    """
+    m = _QUALIFIER_RE.search(s)
+    if not m:
+        return None
+    return m.group(1).lower()
+
+
 def _species_match(rc_species: str, panel_species: str) -> bool:
-    """Loose match: same genus (first word) + compatible epithet."""
+    """Loose match: same genus (first word) + compatible epithet.
+
+    Audit 2026-09-04 taxon-4: the qualifier (cf./aff./none) on each
+    side must agree. cf./aff. are different ICZN assertions and must
+    not collapse onto the definite species — see the BLOCKER audit
+    note on biozone attribution below.
+    """
     a = _norm(rc_species)
     b = _norm(panel_species)
     if not a or not b:
         return False
-    if a == b:
+    # Qualifier must match (or both be absent). cf vs aff is a
+    # mismatch; either vs definite is a mismatch.
+    a_q = _qualifier(a)
+    b_q = _qualifier(b)
+    if a_q != b_q:
+        return False
+    # Strip the qualifier for the rest of the comparison.
+    a_clean = _QUALIFIER_RE.sub("", a).strip()
+    b_clean = _QUALIFIER_RE.sub("", b).strip()
+    if a_clean == b_clean:
         return True
-    a_parts = a.split()
-    b_parts = b.split()
+    a_parts = a_clean.split()
+    b_parts = b_clean.split()
     if not a_parts or not b_parts:
         return False
     if a_parts[0] != b_parts[0]:

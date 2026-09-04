@@ -538,6 +538,73 @@ class OpenDataLoaderExtractor:
                 if p > 0:
                     page_to_images.setdefault(p, []).append(el)
 
+        # audit 2026-09-04 pipe-1: an image already owned by a REAL
+        # existing figure (a plate pair, or a FALLBACK pair that carries
+        # both a caption and an image) must not be re-attached to a
+        # rescued ``Fig. N`` caption. Before this guard the rescue picked
+        # ``max(same_page_imgs, key=area)`` with no knowledge of what the
+        # existing figures owned, so the same physical plate PNG ended up
+        # in 2-3 different ``image_paths`` lists. The pipeline iterates
+        # figures with no image-path dedup, so that PNG was segmented once
+        # per caption and each pass applied a *different* caption's
+        # species list to the same panels — duplicate occurrence rows and
+        # species credited to a caption that never printed them. This is
+        # the same protection ``_rescue_missing_images`` already
+        # implements via ``claimed_basenames``.
+        #
+        # The ownership test mirrors the Round 21 dedup above: only a pair
+        # with BOTH a non-empty caption AND non-empty image_paths counts as
+        # an owner. A stub (empty caption) does not block the rescue, so
+        # the real Fig. caption can still win the image it describes.
+        claimed_basenames: set[str] = set()
+        for fig in existing_figures:
+            if isinstance(fig, dict):
+                cap = (fig.get("caption_text") or "").strip()
+                imgs = fig.get("image_paths") or []
+            else:
+                cap = (fig.caption_text or "").strip()
+                imgs = list(fig.image_paths or [])
+            if not (cap and imgs):
+                continue
+            for ip in imgs:
+                try:
+                    claimed_basenames.add(Path(ip).name)
+                except (OSError, ValueError):
+                    # Defensive: a malformed path string should not crash
+                    # the whole rescue; just skip it.
+                    continue
+
+        # ...and two rescued captions in this same call must not share an
+        # image either (mirrors ``rescued_used_keys`` in
+        # ``_rescue_missing_images``). A caption left with no image at all
+        # is emitted with ``image_paths == []`` so the downstream
+        # range-chart / orphan-image path can still act on it — that is
+        # strictly better than re-processing the same PNG under a foreign
+        # caption.
+        used_basenames: set[str] = set()
+
+        def _img_key(el: dict[str, Any]) -> str:
+            """Best-effort filesystem basename for an OD image element.
+
+            Uses the same approximation as ``_rescue_missing_images``:
+            the ``source`` field when present, else OD's
+            ``imageFile{N}.png`` convention. The chosen image is re-checked
+            against the *resolved* basename below, so a wrong approximation
+            can only cost a lookup, never a duplicate attachment.
+            """
+            src = el.get("source") or ""
+            if src:
+                return Path(src).name
+            try:
+                img_id = int(el.get("id", -1) or -1)
+            except (TypeError, ValueError):
+                return ""
+            return f"imageFile{img_id}.png" if img_id >= 0 else ""
+
+        def _claimable(el: dict[str, Any]) -> bool:
+            key = _img_key(el)
+            return bool(key) and key not in claimed_basenames and key not in used_basenames
+
         rescued: list[FigureCaptionPair] = []
         for cap in all_captions:
             text = (cap.get("content") or "").strip()
@@ -565,7 +632,7 @@ class OpenDataLoaderExtractor:
             #      are silently dropped (no image → no panel rows →
             #      no downstream LLM-first / range-chart match).
             chosen_img = None
-            same_page_imgs = page_to_images.get(page, [])
+            same_page_imgs = [el for el in page_to_images.get(page, []) if _claimable(el)]
             if same_page_imgs:
                 # audit 2026-07-26: bbox is [left,bottom,right,top];
                 # area = (right-left)*(top-bottom), not right*top.
@@ -600,6 +667,10 @@ class OpenDataLoaderExtractor:
                 offsets = list(range(1, w + 1)) + list(range(-1, -w - 1, -1))
                 for offset in offsets:
                     for img in page_to_images.get(page + offset, []):
+                        # pipe-1: never score an image that is already owned
+                        # by a real figure or claimed by an earlier rescue.
+                        if not _claimable(img):
+                            continue
                         score = 1.0 / (1.0 + abs(offset))
                         # Slight bonus for a large image, since
                         # appendix figures tend to be big plate pages.
@@ -613,7 +684,19 @@ class OpenDataLoaderExtractor:
                 if candidates:
                     chosen_img = max(candidates, key=lambda c: c[0])[1]
             image_paths = _resolve_image_paths([chosen_img] if chosen_img else [], output_dir)
-            plate_imgs = [chosen_img] if chosen_img else []
+            # pipe-1 belt-and-braces: the ``_img_key`` approximation above
+            # guesses the basename for source-less elements. Re-check the
+            # basename OD actually resolved to, so a guessed key that
+            # happens to differ from the real file can never produce a
+            # duplicate attachment.
+            image_paths = [
+                p
+                for p in image_paths
+                if Path(p).name not in claimed_basenames
+                and Path(p).name not in used_basenames
+            ]
+            used_basenames.update(Path(p).name for p in image_paths)
+            plate_imgs = [chosen_img] if image_paths else []
             merged_bbox = _union_bbox(plate_imgs) if plate_imgs else None
             rescued.append(
                 FigureCaptionPair(

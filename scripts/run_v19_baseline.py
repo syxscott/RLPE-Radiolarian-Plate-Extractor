@@ -152,13 +152,16 @@ def extract_panels_for_paper(backend, slug: str, gold: list[dict]) -> list[dict]
     for p in panels:
         sp_raw = p.get("species")
         sp, qual = parse_open_nomenclature(sp_raw)
-        qual_str = f" {qual}" if qual else ""
+        # Audit 2026-09-04 taxon-8: species string is preserved
+        # verbatim — cf./aff. stays inside; qualifier surfaced
+        # separately for provenance. Do NOT re-stitch onto the end.
         preds.append(
             {
                 "paper_id": pid,
                 "figure_id": target_fig,
                 "panel_id": normalize_panel_id(p.get("label", "")),
-                "species": f"{sp}{qual_str}" if sp else None,
+                "species": sp if sp else None,
+                "qualifier": qual,
                 "confidence": p.get("confidence", 0.0),
             }
         )

@@ -19,23 +19,36 @@ _QUALIFIER_RE = re.compile(r"\b(cf|aff|vel|similar)\b\.?\s*", re.IGNORECASE)
 
 
 def parse_open_nomenclature(species: str | None) -> tuple[str | None, str | None]:
-    """Split a species string into (species, qualifier).
+    """Identify an open-nomenclature qualifier without altering the name.
 
-    'Genus cf. species' → ('Genus species', 'cf.')
-    'Genus aff. species' → ('Genus species', 'aff.')
-    'Genus species'      → ('Genus species', None)
+    Returns the original ``species`` string verbatim plus a separate
+    ``qualifier`` label ("cf." / "aff." / None).
+
+    Audit 2026-09-04 taxon-8: the previous implementation
+    ``_QUALIFIER_RE.sub("", species)`` deleted the cf./aff. token and
+    fused the compared species into a pseudo-trinomial — ``"A. mitra
+    cf. S. excelsa"`` became ``"A. mitra S. excelsa"`` (no literature
+    name) and ``"Z. cf. testatum"`` became ``"Z. testatum"`` (an
+    uncertain determination silently promoted to definite). Callers
+    then re-stitched the qualifier onto the end, producing
+    ``"Z. testatum cf."`` — open nomenclature puts cf. BEFORE the
+    epithet, so the position was wrong too.
+
+    The species content is now preserved end-to-end; callers must use
+    the returned ``species`` field as-is and may surface the
+    ``qualifier`` separately for provenance.
     """
     if species is None:
         return None, None
-    species = species.strip()
-    if not species:
+    s = species.strip()
+    if not s:
+        # Pure-whitespace input — preserve the historical
+        # ``(None, None)`` contract; an empty string would change
+        # the row assembly path in callers.
         return None, None
-    qual_match = _QUALIFIER_RE.search(species)
-    if qual_match is None:
-        return species, None
-    qualifier = qual_match.group(1).lower() + "."
-    clean = _QUALIFIER_RE.sub("", species, count=1).strip()
-    return clean, qualifier
+    qual_match = _QUALIFIER_RE.search(s)
+    qualifier = qual_match.group(1).lower() + "." if qual_match else None
+    return s, qualifier
 
 
 _PANEL_PREFIX_RE = re.compile(

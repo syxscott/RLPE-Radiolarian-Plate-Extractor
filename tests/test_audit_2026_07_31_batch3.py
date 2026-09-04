@@ -133,11 +133,17 @@ class TestPaperWhitelistNoCorruption:
         s = apply_corrections("Corythomelissa sp. A. B-F36/0", "hollis2006")
         assert s == "Corythomelissa sp. A. B-F36/0"
 
-    def test_truncated_form_still_recovered(self):
+    def test_truncated_form_not_forced_to_inject_sample_code(self):
         from rlpe.ocr_corrections import apply_corrections
 
+        # Audit 2026-09-04 taxon-5: the previous rule injected the
+        # sample-code "B-F36/0" into the species field; that turned
+        # the species string into a label-plus-sample-code, which is
+        # not a taxon name. The rule is removed — the truncated
+        # "sp. A" must survive unchanged.
         s = apply_corrections("Corythomelissa sp. A", "hollis2006")
-        assert s == "Corythomelissa sp. A. B-F36/0"
+        assert s == "Corythomelissa sp. A"
+        assert "B-F36/0" not in s
 
     def test_indet_long_form_not_broken(self):
         from rlpe.ocr_corrections import apply_corrections
@@ -151,11 +157,16 @@ class TestPaperWhitelistNoCorruption:
         s = apply_corrections("Spumellarian gen", "hollis2006")
         assert s == "Spumellarian indet"
 
-    def test_beccaro_group_letter_not_duplicated(self):
+    def test_beccaro_open_nomenclature_preserved(self):
         from rlpe.ocr_corrections import apply_corrections
 
+        # Audit 2026-09-04 taxon-5: "Pseudoeucyrtis sp." is a real
+        # open-nomenclature label in ``data/gold/beccaro2006.jsonl``
+        # (undetermined species, NOT a named informal morphogroup);
+        # the previous forcing rule rewrote it to "sp. B" which
+        # destroyed that distinction. Both forms now survive intact.
         assert apply_corrections("Pseudoeucyrtis sp. B", "beccaro2006") == "Pseudoeucyrtis sp. B"
-        assert apply_corrections("Pseudoeucyrtis sp.", "beccaro2006") == "Pseudoeucyrtis sp. B"
+        assert apply_corrections("Pseudoeucyrtis sp.", "beccaro2006") == "Pseudoeucyrtis sp."
 
 
 class TestSubgenusForms:

@@ -10,8 +10,13 @@ from post_process import (
 
 
 def test_parse_open_nomenclature_cf():
+    # Audit 2026-09-04 taxon-8: parse_open_nomenclature preserves the
+    # species string verbatim and surfaces the qualifier label only.
+    # The previous assertion ``sp == "Genus species"`` pinned the
+    # pseudo-trinomial corruption that fused "cf. species" into the
+    # canonical binomial.
     sp, qual = parse_open_nomenclature("Genus cf. species")
-    assert sp == "Genus species"
+    assert sp == "Genus cf. species"
     assert qual == "cf."
 
 
