@@ -1274,7 +1274,15 @@ class RadiolarianPipeline:
                 # that prefers PNGs whose numeric suffix looks like
                 # the target page).
                 if images_dir and _os.path.isdir(images_dir):
-                    png_files = sorted(
+                    # Audit 2026-09-04 pipe-2: sort by numeric suffix,
+                    # not alphabetically. OD exports
+                    # ``imageFile1.png``, ``imageFile2.png``,
+                    # ``imageFile10.png``, ... in element-walk order;
+                    # alphabetical sort places ``imageFile10.png``
+                    # before ``imageFile2.png`` so the i-th sorted
+                    # file no longer corresponds to the i-th OD
+                    # ``<image>`` element.
+                    png_files = _sort_od_images_numerically(
                         f
                         for f in _os.listdir(images_dir)
                         if f.lower().endswith((".png", ".jpg", ".jpeg"))
@@ -7184,6 +7192,38 @@ def _page_from_filename(fname: str) -> int | None:
         return int(matches[-1])
     except (TypeError, ValueError):
         return None
+
+
+def _sort_od_images_numerically(files) -> list[str]:
+    """Sort OD-exported image filenames by numeric suffix.
+
+    Audit 2026-09-04 pipe-2: the previous collector used
+    ``sorted(...)`` which sorts alphabetically. OD exports
+    ``imageFile1.png``, ``imageFile2.png``, ``imageFile10.png``,
+    ``imageFile11.png``, ... — alphabetical sort places
+    ``imageFile10.png`` BEFORE ``imageFile2.png``, so the i-th
+    sorted filename no longer corresponds to the i-th OD
+    ``<image>`` element. From the 10th image onward, every
+    (file, element) pairing is off by however many prior filenames
+    had longer numeric suffixes.
+
+    This helper sorts by the trailing integer (via
+    :func:`_page_from_filename`) so the i-th sorted file matches
+    the i-th OD element. Files without a numeric suffix sink to
+    the end (sentinel high index) so they never claim an i-th slot
+    that should belong to a real indexed file.
+
+    Tiebreak: filenames with the same numeric suffix sort by name
+    (stable). This rarely fires in practice but keeps the sort
+    deterministic.
+    """
+    # Sentinel high index for files without any numeric suffix.
+    NO_INDEX = 10**12
+
+    def sort_key(fname: str) -> tuple[int, str]:
+        return (_page_from_filename(fname) or NO_INDEX, fname)
+
+    return sorted(files, key=sort_key)
 
 
 def _resolve_m3_prompt_lang(value: Any) -> str | None:
