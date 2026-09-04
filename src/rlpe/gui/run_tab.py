@@ -539,6 +539,15 @@ class RunTab(QWidget):
             "min_panel_score": self._panel_score.value(),
             "use_gpu": self._gpu_check.isChecked(),
             "llm_backend": self._llm_combo.currentData() or self._llm_combo.currentText(),
+            # BUG-1 (audit 2026-09-04): forward the LLM auth keys from
+            # the shared Settings-tab dict (same pattern as the YOLO
+            # keys above — the controls live in SettingsTab). Without
+            # this the worker never saw a key/policy and always ran
+            # local_only, silently disabling the LLM.
+            "MiniMax_api_key": str(self._settings.get("MiniMax_api_key", "") or ""),
+            "data_outbound_policy": str(
+                self._settings.get("data_outbound_policy", "auto") or "auto"
+            ),
             "m3_prompt_lang": self._m3_lang.currentData() or self._m3_lang.currentText(),
             "m3_model": self._m3_model_edit.text().strip() or DEFAULT_MINIMAX_MODEL,
             "MiniMax_thinking_budget": self._m3_budget.value(),

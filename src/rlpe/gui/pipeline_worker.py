@@ -20,6 +20,7 @@ deadlock on fork-after-thread. The pipeline's own internal
 
 from __future__ import annotations
 
+import os
 import threading
 import traceback
 from pathlib import Path
@@ -148,6 +149,17 @@ class PipelineWorker(QThread):
                 f"GEMMA={cfg.extra.get('llm_backend', 'rules')} "
                 f"caption_window={cfg.od_caption_window}"
             )
+            # BUG-1 (audit 2026-09-04): make the effective LLM policy
+            # visible. A silent local_only run used to look identical to
+            # a normal run in the log while producing 0 rows.
+            policy = str(cfg.extra.get("data_outbound_policy", ""))
+            if policy == "local_only":
+                self._emit_log(
+                    "LLM outbound policy: local_only "
+                    "(LLM disabled — rule-based extraction only)"
+                )
+            else:
+                self._emit_log(f"LLM outbound policy: {policy}")
 
             self.status_changed.emit("running")
             pipeline = RadiolarianPipeline(
@@ -170,6 +182,17 @@ class PipelineWorker(QThread):
             # Convert each result row to a plain dict (QVariant friendly).
             out = [self._row_to_dict(r) for r in results]
             self._emit_log(f"Pipeline finished: {len(out)} rows")
+            if not out and policy == "local_only":
+                # BUG-1 (audit 2026-09-04): a 0-row run under local_only
+                # almost always means the LLM was never configured —
+                # surface an actionable hint instead of a bare "0 rows".
+                self._emit_log(
+                    "WARNING: 0 rows extracted with the LLM disabled "
+                    "(data_outbound_policy=local_only). Set a MiniMax API "
+                    "key in Settings → LLM / M3 (or the MiniMax_API_KEY "
+                    "environment variable) to enable LLM caption parsing, "
+                    "then re-run."
+                )
             self.status_changed.emit("done")
             self.finished_ok.emit(out)
         except Exception as exc:
@@ -307,7 +330,13 @@ class PipelineWorker(QThread):
             "MiniMax_timeout_sec": int(s.get("MiniMax_timeout_sec", 60)),
             "MiniMax_thinking_budget_tokens": int(s.get("MiniMax_thinking_budget", 1024)),
             "MiniMax_max_concurrent": int(s.get("MiniMax_max_concurrent", 1)),
-            "data_outbound_policy": str(s.get("data_outbound_policy", "local_only")),
+            # BUG-1 (audit 2026-09-04): resolve via _resolve_outbound_policy
+            # instead of defaulting to local_only — the GUI settings dict
+            # historically never carried the key, so the LLM was always
+            # disabled and 0-row runs were invisible to the user.
+            "data_outbound_policy": _resolve_outbound_policy(
+                str(s.get("data_outbound_policy") or ""), s.get("MiniMax_api_key")
+            ),
             # SAM2 / model paths — pass through if set
             "sam2_checkpoint": s.get("sam2_checkpoint"),
             "sam2_model_cfg": s.get("sam2_model_cfg"),
@@ -482,3 +511,45 @@ def _detect_gpu() -> bool:
         return bool(torch.cuda.is_available())
     except Exception:
         return False
+
+
+# Valid values for the ``data_outbound_policy`` setting (mirrors the
+# gate in ``MiniMaxM3Backend.__post_init__``, llm_backends.py:1592).
+_VALID_OUTBOUND_POLICIES = frozenset({"auto", "api_redacted", "api_full", "local_only"})
+# Same opt-in set the backend accepts for ``RLPE_DATA_OUTBOUND_OPT_IN``
+# (llm_backends.py:1607).
+_OPT_IN_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def _resolve_outbound_policy(policy_setting: str, settings_key: str | None) -> str:
+    """Resolve the effective ``data_outbound_policy`` for a GUI run.
+
+    BUG-1 (audit 2026-09-04): the settings dict flowing through the GUI
+    never carried ``data_outbound_policy``, so ``_build_config`` silently
+    fell back to ``local_only`` and ``MiniMaxM3Backend`` short-circuited
+    every ``infer_*`` call. Stage-1 caption parsing then fell back to the
+    regex parser, which produces garbage pairs for the "Explanation of
+    Plate N" convention — the run finished with 0 rows and no warning.
+
+    Resolution order:
+      * an explicit, valid user choice (``api_redacted`` / ``api_full`` /
+        ``local_only``) always wins;
+      * ``auto`` (or unset / garbage) picks ``api_redacted`` when a
+        MiniMax key is reachable via the settings dict or the
+        environment, and ``local_only`` otherwise;
+      * ``api_full`` is opt-in only (``RLPE_DATA_OUTBOUND_OPT_IN``, the
+        same gate ``MiniMaxM3Backend`` enforces). Without it the backend
+        would raise mid-run, so we downgrade to ``api_redacted`` here.
+    """
+    policy = (policy_setting or "").strip()
+    if policy not in _VALID_OUTBOUND_POLICIES or policy == "auto":
+        has_key = bool(settings_key) or bool(
+            os.environ.get("MiniMax_API_KEY") or os.environ.get("MINIMAX_API_KEY")
+        )
+        policy = "api_redacted" if has_key else "local_only"
+    if (
+        policy == "api_full"
+        and os.environ.get("RLPE_DATA_OUTBOUND_OPT_IN", "").strip().lower() not in _OPT_IN_VALUES
+    ):
+        policy = "api_redacted"
+    return policy

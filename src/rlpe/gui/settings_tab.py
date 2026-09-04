@@ -428,6 +428,24 @@ class SettingsTab(QWidget):
         populate_friendly_combo(self._llm_backend, llm_backend_friendly_options)
         llayout.addRow(tr_label("settab.llm.backend"), self._llm_backend)
 
+        # BUG-1 (audit 2026-09-04): the GUI had no way to enter a
+        # MiniMax API key or choose the data-outbound policy, so the
+        # worker always ran local_only and the LLM was silently
+        # disabled. Password echo keeps the key out of shoulder-surf
+        # and out of screen recordings.
+        self._minimax_api_key = QLineEdit()
+        self._minimax_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._minimax_api_key.setPlaceholderText("(blank = use MiniMax_API_KEY env var)")
+        llayout.addRow(tr_label("settab.llm.api_key"), self._minimax_api_key)
+
+        self._data_outbound = QComboBox()
+        self._data_outbound.setMinimumHeight(32)
+        self._data_outbound.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        from .constants import data_outbound_friendly_options
+
+        populate_friendly_combo(self._data_outbound, data_outbound_friendly_options)
+        llayout.addRow(tr_label("settab.llm.outbound"), self._data_outbound)
+
         self._m3_model = QLineEdit(DEFAULT_MINIMAX_MODEL)
         llayout.addRow(tr_label("settab.m3.model"), self._m3_model)
 
@@ -860,6 +878,14 @@ class SettingsTab(QWidget):
         if ix >= 0:
             self._llm_backend.setCurrentIndex(ix)
         self._m3_model.setText(self._qsettings.value("m3_model", DEFAULT_MINIMAX_MODEL))
+        # BUG-1 (audit 2026-09-04): restore the MiniMax key + outbound
+        # policy. Missing policy → "auto" (the new worker-side resolver
+        # picks api_redacted/local_only from key availability).
+        self._minimax_api_key.setText(self._qsettings.value("MiniMax_api_key", ""))
+        outbound = self._qsettings.value("data_outbound_policy", "auto")
+        outbound_ix = self._data_outbound.findData(outbound)
+        if outbound_ix >= 0:
+            self._data_outbound.setCurrentIndex(outbound_ix)
         # the friendly display.
         m3_lang = self._qsettings.value("m3_prompt_lang", DEFAULT_M3_PROMPT_LANG)
         m3_lang_ix = self._m3_prompt_lang.findData(m3_lang)
@@ -1026,6 +1052,11 @@ class SettingsTab(QWidget):
         llm_backend_code = self._llm_backend.currentData() or self._llm_backend.currentText()
         self._qsettings.setValue("llm_backend", llm_backend_code)
         self._qsettings.setValue("m3_model", self._m3_model.text())
+        # BUG-1 (audit 2026-09-04): persist the MiniMax key + outbound
+        # policy so the worker's _resolve_outbound_policy sees them.
+        self._qsettings.setValue("MiniMax_api_key", self._minimax_api_key.text())
+        outbound_code = self._data_outbound.currentData() or self._data_outbound.currentText()
+        self._qsettings.setValue("data_outbound_policy", outbound_code)
         m3_lang_code = self._m3_prompt_lang.currentData() or self._m3_prompt_lang.currentText()
         self._qsettings.setValue("m3_prompt_lang", m3_lang_code)
         self._qsettings.setValue("MiniMax_thinking_budget", self._m3_budget.value())
@@ -1240,6 +1271,11 @@ class SettingsTab(QWidget):
                 "m3_model": self._m3_model.text()
                 if self._m3_model.text()
                 else DEFAULT_MINIMAX_MODEL,
+                # BUG-1 (audit 2026-09-04): forward the LLM auth keys to
+                # the Run tab's collect_settings() via this shared dict.
+                "MiniMax_api_key": self._minimax_api_key.text(),
+                "data_outbound_policy": self._data_outbound.currentData()
+                or self._data_outbound.currentText(),
                 "MiniMax_thinking_budget": self._m3_budget.value(),
                 "MiniMax_max_output_tokens": self._m3_output.value(),
                 "MiniMax_timeout_sec": self._m3_timeout.value(),

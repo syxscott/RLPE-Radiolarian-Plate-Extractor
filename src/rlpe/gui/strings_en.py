@@ -294,6 +294,8 @@ STRINGS = {
     "settab.ocr.od_caption_window": "OD caption window:",
     "settab.llm": "LLM / M3",
     "settab.llm.backend": "LLM backend:",
+    "settab.llm.api_key": "MiniMax API key:",
+    "settab.llm.outbound": "Data outbound policy:",
     "settab.m3.model": "M3 model:",
     "settab.m3.lang": "M3 prompt lang:",
     "settab.m3.budget": "M3 thinking budget:",

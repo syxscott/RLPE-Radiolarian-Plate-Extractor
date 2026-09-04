@@ -303,6 +303,8 @@ STRINGS = {
     "settab.grobid.url": "GROBID 地址：",
     "settab.llm": "LLM / M3",
     "settab.llm.backend": "LLM 后端：",
+    "settab.llm.api_key": "MiniMax API 密钥：",
+    "settab.llm.outbound": "数据出站策略：",
     "settab.log.open_fail": "无法打开：{error}\n\n路径：{path}",
     "settab.log.path": "日志文件：{path}",
     "settab.log.not_yet": "暂无日志文件。\n\n日志将在首次运行流水线后生成。\n\n预期路径：\n{path}",

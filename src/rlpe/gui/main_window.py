@@ -370,6 +370,13 @@ class MainWindow(QMainWindow):
             "llm_backend": self._qsettings.value("llm_backend", "minimax"),
             "m3_prompt_lang": self._qsettings.value("m3_prompt_lang", "auto"),
             "m3_model": self._qsettings.value("m3_model", "MiniMax-M3"),
+            # BUG-1 (audit 2026-09-04): carry the LLM auth keys into the
+            # Run tab's collect_settings() path; without them the worker
+            # always resolved data_outbound_policy to local_only.
+            "MiniMax_api_key": str(self._qsettings.value("MiniMax_api_key", "")),
+            "data_outbound_policy": str(
+                self._qsettings.value("data_outbound_policy", "auto")
+            ),
             "MiniMax_thinking_budget": self._qint(self._qsettings, "MiniMax_thinking_budget", 1024),
             "MiniMax_max_output_tokens": self._qint(
                 self._qsettings, "MiniMax_max_output_tokens", 2048

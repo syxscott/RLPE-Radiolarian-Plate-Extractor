@@ -342,6 +342,29 @@ def llm_backend_friendly_options() -> list[tuple[str, str]]:
     ]
 
 
+# Data-outbound policy options (BUG-1, audit 2026-09-04). Values mirror
+# ``MiniMaxM3Backend.data_outbound_policy``; "auto" resolves to
+# api_redacted when a MiniMax key is reachable, local_only otherwise
+# (see gui.pipeline_worker._resolve_outbound_policy).
+DATA_OUTBOUND_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("auto", "Auto (uses API if key set)", "自动（配置密钥后调用 API）"),
+    ("api_redacted", "API (redacted text only)", "API（仅发送脱敏文本）"),
+    ("api_full", "API (full document, opt-in)", "API（完整文档，需显式授权）"),
+    ("local_only", "Local only (no LLM)", "仅本地（禁用 LLM）"),
+)
+
+
+def data_outbound_friendly_options() -> list[tuple[str, str]]:
+    """``[(code, friendly_name), ...]`` in the current language."""
+    from . import i18n as _i18n
+
+    lang = _i18n.current_language()
+    return [
+        (code, zh_name if lang == "zh_CN" else en_name)
+        for code, en_name, zh_name in DATA_OUTBOUND_OPTIONS
+    ]
+
+
 # M3 prompt language options
 M3_PROMPT_LANG_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
     ("auto", "Auto-detect", "自动检测"),
