@@ -53,7 +53,18 @@ def write_markdown_report(
     lines.append(f"| Gold panels | {agg.get('n_gold', 0)} |")
     lines.append(f"| Species precision | {agg.get('species_precision', 0):.1%} |")
     lines.append(f"| Species recall | {agg.get('species_recall', 0):.1%} |")
-    lines.append(f"| Species F1 | {agg.get('species_f1', 0):.1%} |")
+    # Audit 2026-09-04 eval-5: the aggregate no longer carries a
+    # single ``species_f1`` key — the micro and macro variants are
+    # surfaced separately so reviewers cannot be confused by two
+    # different "Species F1" numbers in the same report. ``agg.get``
+    # fallback to ``species_f1`` keeps old callers rendering a value
+    # rather than 0.0%.
+    lines.append(
+        f"| Species F1 (micro) | {agg.get('species_f1_micro', agg.get('species_f1', 0)):.1%} |"
+    )
+    lines.append(
+        f"| Species F1 (macro) | {agg.get('species_f1_macro', agg.get('species_f1', 0)):.1%} |"
+    )
     lines.append(f"| Panel match rate | {agg.get('panel_match_rate', 0):.1%} |")
     lines.append(f"| Exact match rate | {agg.get('exact_match_rate', 0):.1%} |")
     lines.append("")

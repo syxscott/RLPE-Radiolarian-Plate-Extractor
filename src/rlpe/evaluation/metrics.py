@@ -798,6 +798,14 @@ def evaluate(predictions: list[dict[str, Any]], gold: list[GoldPanel]) -> Evalua
         # values so downstream consumers can pick whichever definition
         # they want.
         "species_f1_micro": (2 * total_tp / max(1, 2 * total_tp + total_fp + total_fn)),
+        # Audit 2026-09-04 eval-5: the legacy "species_f1" key was
+        # ambiguous (micro vs macro) and was removed by BL-28; old
+        # downstream consumers still reading it now see 0.0%. Keep a
+        # back-compat alias to the micro value so any report that
+        # hasn't been updated (see report.py:56) renders a meaningful
+        # number instead of zero. New code MUST use
+        # ``species_f1_micro`` / ``species_f1_macro`` explicitly.
+        "species_f1": (2 * total_tp / max(1, 2 * total_tp + total_fp + total_fn)),
         "species_f1_macro": (
             sum(m.species_f1 for m in by_paper.values()) / max(1, len(by_paper))
             if by_paper
