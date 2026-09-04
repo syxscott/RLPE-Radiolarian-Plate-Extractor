@@ -2,9 +2,10 @@
 
 import os
 import sys
+import time as _time
 from pathlib import Path
 
-REPO = Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor")
+REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
@@ -34,17 +35,39 @@ class _StubBackend:
         return {"error": "stubbed"}
 
 
-rlpe.llm_backends.MiniMaxM3Backend = _StubBackend
+def _import_run_research_eval():
+    """Import ``run_research_eval`` with ``MiniMaxM3Backend`` and
+    ``time.sleep`` stubbed, then RESTORE both attributes.
 
-# gold_eval_anchored.py is a script-style module: its top-level
-# ``for i, slug in enumerate(slugs)`` loop calls ``time.sleep(60)``
-# between papers. Stub it out BEFORE importing run_research_eval so
-# the transitive import doesn't take 9 minutes.
-import time as _time
+    Audit 2026-09-04 (CI regression): this file used to patch both
+    attributes at module level and never restore them. Every test
+    file collected *after* this one then saw the stub instead of the
+    real ``MiniMaxM3Backend`` (→ AttributeError in
+    test_audit_2026_08_01_llm_backends / phase2c / phase4b) and a
+    no-op ``time.sleep`` (→ M9 backoff-jitter assertions failing).
+    The stubs are only needed WHILE ``gold_eval_anchored`` executes
+    its module-level backend construction + ``time.sleep(60)`` paper
+    loop, so keep them scoped to the import and put the originals
+    back in a ``finally``.
+    """
+    real_backend = rlpe.llm_backends.MiniMaxM3Backend
+    real_sleep = _time.sleep
+    rlpe.llm_backends.MiniMaxM3Backend = _StubBackend
+    _time.sleep = lambda *_a, **_kw: None
+    try:
+        # gold_eval_anchored.py is a script-style module: its top-level
+        # ``for i, slug in enumerate(slugs)`` loop calls ``time.sleep(60)``
+        # between papers. Stub it out BEFORE importing run_research_eval so
+        # the transitive import doesn't take 9 minutes.
+        import run_research_eval
 
-_time.sleep = lambda *_a, **_kw: None
+        return run_research_eval._enrich_preds_with_text_and_group
+    finally:
+        rlpe.llm_backends.MiniMaxM3Backend = real_backend
+        _time.sleep = real_sleep
 
-from run_research_eval import _enrich_preds_with_text_and_group
+
+_enrich_preds_with_text_and_group = _import_run_research_eval()
 
 
 def test_enrich_attaches_occurrence_group_id():

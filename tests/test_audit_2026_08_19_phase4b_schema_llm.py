@@ -53,6 +53,19 @@ if str(_SRC) not in sys.path:
 # ---------------------------------------------------------------------------
 
 
+def _UTC_NOW():
+    """Locale-independent wall-clock accessor (UTC, tz-aware).
+
+    Kept as a helper so the HTTP-date tests never depend on
+    ``strftime`` for RFC-1123 formatting (see the
+    ``test_http_date_in_future_returns_seconds`` comment for the
+    QApplication/setlocale interaction this avoids).
+    """
+    from datetime import datetime
+
+    return datetime.now(UTC)
+
+
 def _make_pil_image(width: int = 64, height: int = 64, color: str = "red") -> Any:
     """Build a real PIL Image so the multimodal encoder can serialize it."""
     from PIL import Image
@@ -668,36 +681,48 @@ class TestM24ParseRetryAfterHeader:
         """An HTTP-date in the future returns the seconds-to-date,
         capped at 60."""
         # 5 minutes from now — well within the 60s cap.
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
+        from email.utils import format_datetime
 
         from rlpe.llm_backends import MiniMaxM3Backend
 
-        future = datetime.now(UTC) + timedelta(minutes=5)
-        http_date = future.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        future = _UTC_NOW() + timedelta(minutes=5)
+        # Audit 2026-09-04 (CI regression): format the date with
+        # ``email.utils.format_datetime`` instead of ``strftime``.
+        # Qt's QApplication init (pulled in by GUI tests collected
+        # earlier in the same pytest session) calls
+        # ``setlocale(LC_ALL, "")``, which makes ``%a``/``%b`` render
+        # day/month names in the *system* locale — under zh_CN the
+        # resulting string is no longer RFC-1123 and
+        # ``parsedate_to_datetime`` returns 0.0. format_datetime is
+        # locale-independent.
+        http_date = format_datetime(future, usegmt=True)
         result = MiniMaxM3Backend._parse_retry_after_header(http_date)
         # Must be > 0 (future date) and <= 60 (cap).
         assert 0 < result <= 60.0
 
     def test_http_date_in_past_returns_zero(self):
         """An HTTP-date in the past returns 0 (no waiting needed)."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
+        from email.utils import format_datetime
 
         from rlpe.llm_backends import MiniMaxM3Backend
 
-        past = datetime.now(UTC) - timedelta(minutes=5)
-        http_date = past.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        past = _UTC_NOW() - timedelta(minutes=5)
+        http_date = format_datetime(past, usegmt=True)
         assert MiniMaxM3Backend._parse_retry_after_header(http_date) == 0.0
 
     def test_http_date_far_future_capped_at_60(self):
         """An HTTP-date far in the future is capped at 60 seconds so a
         buggy server can't pin a worker for minutes."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
+        from email.utils import format_datetime
 
         from rlpe.llm_backends import MiniMaxM3Backend
 
         # 24 hours in the future.
-        future = datetime.now(UTC) + timedelta(days=1)
-        http_date = future.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        future = _UTC_NOW() + timedelta(days=1)
+        http_date = format_datetime(future, usegmt=True)
         result = MiniMaxM3Backend._parse_retry_after_header(http_date)
         assert result == 60.0
 

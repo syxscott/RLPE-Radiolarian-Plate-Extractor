@@ -73,10 +73,14 @@ class TestSafeJsonLoads:
     def test_array_and_nested(self):
         from rlpe.m3_engine import _safe_json_loads
 
-        # Audit 2026-09-01: a top-level JSON array is unwrapped into its
-        # first dict element (callers expect a single-object return).
-        # So ``'[{"a": 1}]'`` now yields ``{"a": 1}``.
-        assert _safe_json_loads('[{"a": 1}]') == {"a": 1}
+        # Audit 2026-09-04: a top-level JSON array is returned as-is.
+        # The 2026-09-01 "unwrap array to first element" behaviour was
+        # reverted (commit c2b77a3): ``parse_caption`` iterates the
+        # parsed value as a list, and unwrapping made the loop see a
+        # single dict (0 pairs). Consumers that want a single dict
+        # unwrap locally (e.g. ``enrich_plate_panels`` handles both
+        # shapes).
+        assert _safe_json_loads('[{"a": 1}]') == [{"a": 1}]
         assert _safe_json_loads('{"a": {"b": 2}}') == {"a": {"b": 2}}
 
 

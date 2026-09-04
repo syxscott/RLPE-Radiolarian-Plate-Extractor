@@ -24,6 +24,9 @@ the test runs offline.
 
 import os
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 # Safe env-var sentinels — required because the existing module body
 # unconditionally reads ANTHROPIC_API_KEY at top-level.
@@ -42,34 +45,50 @@ class _StubBackend:
         return {"error": "stubbed", "fallback_used": True, "panels": []}
 
 
-# Monkey-patch the symbol BEFORE gold_eval_anchored imports it. The
-# file uses ``from rlpe.llm_backends import MiniMaxM3Backend`` at
-# module load, so the binding is captured from rlpe.llm_backends at
-# the time of import — replacing the attribute on the source module
-# is sufficient.
-import rlpe.llm_backends  # noqa: E402
+def _import_gold_eval_anchored():
+    """Import ``gold_eval_anchored`` with ``MiniMaxM3Backend`` and
+    ``time.sleep`` stubbed, then RESTORE both attributes.
 
-rlpe.llm_backends.MiniMaxM3Backend = _StubBackend  # type: ignore[attr-defined]
+    Audit 2026-09-04 (CI regression): this file used to replace
+    ``rlpe.llm_backends.MiniMaxM3Backend`` with ``_StubBackend`` and
+    no-op ``time.sleep`` at module level and never restore them.
+    Every test file collected *after* this one then saw the stub
+    instead of the real backend class (→ AttributeError in
+    test_phase61 / test_run_research_eval_wiring / llm_backends
+    suites) and a no-op sleep (→ M9 backoff-jitter failures). The
+    stubs are only needed while ``gold_eval_anchored``'s module-level
+    backend construction + 60s paper loop execute, so keep them
+    scoped to the import.
+    """
+    import time as _time  # noqa: E402
+
+    import rlpe.llm_backends  # noqa: E402
+
+    real_backend = rlpe.llm_backends.MiniMaxM3Backend
+    real_sleep = _time.sleep
+    # Monkey-patch the symbol BEFORE gold_eval_anchored imports it. The
+    # file uses ``from rlpe.llm_backends import MiniMaxM3Backend`` at
+    # module load, so the binding is captured from rlpe.llm_backends at
+    # the time of import — replacing the attribute on the source module
+    # is sufficient.
+    rlpe.llm_backends.MiniMaxM3Backend = _StubBackend  # type: ignore[attr-defined]
+    _time.sleep = lambda *_a, **_kw: None
+    try:
+        import gold_eval_anchored
+
+        return gold_eval_anchored
+    finally:
+        rlpe.llm_backends.MiniMaxM3Backend = real_backend  # type: ignore[attr-defined]
+        _time.sleep = real_sleep
 
 
-# Stub out time.sleep globally BEFORE importing gold_eval_anchored so
-# its import-time 60s sleeps don't block the test runner. The autouse
-# fixture below keeps the stub alive only during the test functions
-# themselves (the function-level monkeypatch restores time.sleep on
-# teardown, so other tests in the same pytest session are unaffected).
-import time as _time  # noqa: E402
-
-_time.sleep = lambda *_a, **_kw: None
-
-
-sys.path.insert(0, "scripts")
+_gold_eval = _import_gold_eval_anchored()
 
 import pytest  # noqa: E402
-from gold_eval_anchored import (  # noqa: E402
-    compute_aggregate_with_ci,
-    load_split,
-    run_5fold_cv,
-)
+
+load_split = _gold_eval.load_split
+compute_aggregate_with_ci = _gold_eval.compute_aggregate_with_ci
+run_5fold_cv = _gold_eval.run_5fold_cv
 
 
 @pytest.fixture(autouse=True)
