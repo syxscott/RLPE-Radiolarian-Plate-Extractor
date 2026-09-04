@@ -947,7 +947,9 @@ class ResultsTab(QWidget):
         species = sorted({r.get("species", "") for r in self._all_rows if r.get("species")})
         families = sorted(
             {
-                ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy", {}).get("family")
+                (((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {}).get(
+                    "family"
+                )
                 for r in self._all_rows
                 if ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy")
             }
@@ -992,8 +994,7 @@ class ResultsTab(QWidget):
                         str(r.get("panel_id") or ""),
                         str(r.get("caption_snippet") or ""),
                         str(r.get("label_text") or ""),
-                        ((r.get("metadata") or {}).get("paleodb") or {})
-                        .get("taxonomy", {})
+                        (((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {})
                         .get("family")
                         or "",
                     ]
@@ -1004,9 +1005,9 @@ class ResultsTab(QWidget):
                 continue
             if family_filter:
                 fam = (
-                    ((r.get("metadata") or {}).get("paleodb") or {})
-                    .get("taxonomy", {})
-                    .get("family")
+                    (((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {}).get(
+                        "family"
+                    )
                 )
                 if fam != family_filter:
                     continue
@@ -1079,8 +1080,15 @@ class ResultsTab(QWidget):
     def _extract_column(self, row: dict[str, Any], key: str) -> Any:
         """Pull a display value out of a result row dict."""
         if key == "family":
+            # "or {}" at each hop: dict.get(k, default) only applies the
+            # default when the key is MISSING — real rows carry
+            # "taxonomy": null (PBDB reverse-fallback miss), which made
+            # this chain raise AttributeError and kill the whole
+            # results-table refresh (2026-09-04 user report).
             return (
-                ((row.get("metadata") or {}).get("paleodb") or {}).get("taxonomy", {}).get("family")
+                (((row.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {}).get(
+                    "family"
+                )
             )
         if key == "country":
             geo = (row.get("metadata") or {}).get("geology_links") or []

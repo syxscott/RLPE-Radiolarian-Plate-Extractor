@@ -605,7 +605,7 @@ def _bbox_tooltip(bbox: dict[str, Any]) -> str:
         parts.append(i18n._tr("preview.tooltip.coords_xy").format(x=f"{x:.0f}", y=f"{y:.0f}"))
         parts.append(i18n._tr("preview.tooltip.coords_wh").format(w=f"{w:.0f}", h=f"{h:.0f}"))
     family = (
-        (bbox.get("metadata") or {}).get("paleodb", {}).get("taxonomy", {}).get("family")
+        (((bbox.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {}).get("family")
         if bbox.get("metadata")
         else None
     )
