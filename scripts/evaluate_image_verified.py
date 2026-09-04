@@ -221,23 +221,71 @@ def evaluate_image_verified(
         n_string_match = sum(
             1 for g in gold_list if (g.figure_id or "", str(g.panel_id)) in pred_keys
         )
-        # Image-verified: EasyOCR each panel's crop, compare to gold panel_id
+        # Audit 2026-09-04 eval-7: image-verified F1 used to look up
+        # the panel crop by the GOLD panel_id string — but the
+        # pipeline writes crops keyed by the pred row's POSITION in
+        # the result list (pipeline.py:3163, 5950:
+        # ``f"panel_{idx:02d}.png"``), not by the pred panel_id
+        # string. When pred.panel_id != gold.panel_id (common — OCR
+        # misreads, LLM hallucinates) the gold-driven lookup returns
+        # ``None`` and the panel is silently skipped. When they DO
+        # match, the OCR re-reads the crop and trivially confirms
+        # the pred's already-correct string — i.e. the verification
+        # is TAUTOLOGICAL.
+        #
+        # Fix: iterate PREDS (with valid ``panel_path``) for crop
+        # lookup; match pred → gold by (figure_id, position index
+        # within the figure — pipeline preserves reading order);
+        # compare OCR'd label to the matched GOLD panel_id (real
+        # ground truth), not to pred's panel_id.
         n_image_verified = 0
         n_ocr_coverage = 0
         n_checked = 0
+        # Index gold panels by figure_id (preserves gold's input
+        # order, which mirrors reading order in the source paper).
+        gold_by_fig: dict[str, list[GoldPanel]] = defaultdict(list)
+        for g in gold_list:
+            gold_by_fig[g.figure_id or ""].append(g)
+        # Index preds by figure_id (preserves pipeline's emission
+        # order, which is also reading order).
+        pred_by_fig: dict[str, list[dict]] = defaultdict(list)
+        for p in pred_list:
+            pred_by_fig[p.get("figure_id", "")].append(p)
         if panels_root.exists() and reader is not None:
-            cap = max_panels_per_paper or len(gold_list)
-            for g in gold_list[:cap]:
-                crop = find_panel_crop(panels_root, pid, g.figure_id or "", str(g.panel_id))
-                if crop is None:
-                    continue
-                n_checked += 1
-                ocr_label = easyocr_panel_label(crop, reader=reader)
-                if ocr_label is None:
-                    continue
-                n_ocr_coverage += 1
-                if str(ocr_label).strip().lower() == str(g.panel_id).strip().lower():
-                    n_image_verified += 1
+            cap = max_panels_per_paper or sum(len(v) for v in pred_by_fig.values())
+            checked_so_far = 0
+            for fig_id, preds_in_fig in pred_by_fig.items():
+                golds_in_fig = gold_by_fig.get(fig_id, [])
+                for pred_idx, p in enumerate(preds_in_fig):
+                    if checked_so_far >= cap:
+                        break
+                    panel_path_str = p.get("panel_path")
+                    if not panel_path_str:
+                        # Pipeline never cropped this pred — skip
+                        # honestly rather than fabricate a path from
+                        # gold.panel_id.
+                        continue
+                    crop = Path(panel_path_str)
+                    if not crop.exists():
+                        # panel_path was written but the file has
+                        # since been moved / pruned. Still skip.
+                        continue
+                    n_checked += 1
+                    checked_so_far += 1
+                    ocr_label = easyocr_panel_label(crop, reader=reader)
+                    if ocr_label is None:
+                        continue
+                    n_ocr_coverage += 1
+                    # Match pred → gold by spatial position. If pred
+                    # has no corresponding gold (different figure
+                    # length), the verification for that pred is
+                    # skipped — it has no ground-truth label to
+                    # compare against.
+                    if pred_idx >= len(golds_in_fig):
+                        continue
+                    g = golds_in_fig[pred_idx]
+                    if str(ocr_label).strip().lower() == str(g.panel_id).strip().lower():
+                        n_image_verified += 1
         # String-match rate (same denominator as image-verified)
         # audit 2026-07-26 M14: was n_string_match / n_gold, but
         # iv_rate uses n_checked as denominator - mixing them makes
