@@ -222,7 +222,14 @@ jobs:
           import json
           with open('work/ci_eval.json') as f:
               eval_data = json.load(f)
-          f1 = eval_data['aggregate']['species_f1']
+          # Audit 2026-09-04 (CI regression): BL-28 renamed the
+          # micro-averaged aggregate key ``species_f1`` →
+          # ``species_f1_micro`` (with a ``species_f1_macro``
+          # companion) so it can't be confused with the per-paper
+          # PaperMetrics.species_f1 property. The assertion script
+          # still read the old key and crashed with KeyError on every
+          # run — even though the underlying F1 passed the gate.
+          f1 = eval_data['aggregate']['species_f1_micro']
           pm = eval_data['aggregate']['panel_match_rate']
           # Threshold pinned to empirically-observed ceiling of the
           # currently-committed predictions (work/combined_9_v17_FINAL.jsonl)

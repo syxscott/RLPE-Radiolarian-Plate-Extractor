@@ -1,16 +1,22 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from text_extract import extract_species_from_text
 
-_PDF_DIR = Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/data/pdfs")
+_PDF_DIR = Path(__file__).resolve().parents[1] / "data" / "pdfs"
 
 
 def _path(slug: str) -> Path:
-    for p in _PDF_DIR.glob(f"{slug}*"):
-        return p
-    raise FileNotFoundError(slug)
+    hits = list(_PDF_DIR.glob(f"{slug}*"))
+    if not hits:
+        # Corpus PDFs are not committed to the repo — CI checkouts
+        # (and any fresh clone without ``data/pdfs`` populated) must
+        # skip rather than fail (audit 2026-09-04 CI regression).
+        pytest.skip(f"{slug}* not present in data/pdfs (corpus not checked out)")
+    return hits[0]
 
 
 def test_extract_finds_binomials():

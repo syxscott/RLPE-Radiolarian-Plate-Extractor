@@ -48,7 +48,11 @@ class TestEvaluate:
         assert report.papers["p1"].species_fn == 0
         assert report.aggregate["species_precision"] == 1.0
         assert report.aggregate["species_recall"] == 1.0
-        assert report.aggregate["species_f1"] == 1.0
+        # BL-28 (audit 2026-09-01): the aggregate key is micro-averaged
+        # (with a macro-averaged companion) so it can't be confused with
+        # the per-paper PaperMetrics.species_f1 property.
+        assert report.aggregate["species_f1_micro"] == 1.0
+        assert report.aggregate["species_f1_macro"] == 1.0
 
     def test_wrong_species(self):
         gold = [GoldPanel("p1", "f1", "1", "Genus species")]
