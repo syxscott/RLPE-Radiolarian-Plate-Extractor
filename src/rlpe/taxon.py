@@ -238,17 +238,50 @@ def _is_valid_species(species: str | None) -> bool:
         return False
     # Must have either a real epithet OR a recognised open-nom shape.
     has_epithet = bool(epithet and epithet.strip())
+    # Audit 2026-09-04 taxon-1: "Genus n." tokenizes with the bare
+    # "n." landing in the epithet slot, slipping past the bare-"n."
+    # guard below. A single-letter "n" epithet is incomplete ICZN
+    # nomenclature either way.
+    if has_epithet and epithet.strip().rstrip(".").lower() == "n":
+        has_epithet = False
     qual_lower = (qualifier or "").strip().rstrip(".").lower()
     # "n." (new species) is only valid when paired with "sp." — bare "n."
     # without a following epithet is incomplete ICZN nomenclature.
     if qual_lower == "n":
         # bare "n." alone — reject; caller should use "n. sp." form instead
         return False
+    # Audit 2026-09-04 taxon-1: the membership test previously
+    # compared the WHOLE qualifier phrase against single words, so
+    # "cf. tumandae" / "gr. b" / "sp. 1" never matched and ~22% of
+    # gold-shaped rows were silently dropped by the hybrid-fill loop.
+    # Compare only the FIRST token of the phrase — "cf. tumandae" is
+    # the "cf" shape; the trailing comparison reference is content.
+    qual_first = qual_lower.split()[0].rstrip(".") if qual_lower else ""
     has_open_nom = bool(
         qualifier
-        and qual_lower in {"sp", "spp", "indet", "gr", "group", "subsp", "var", "nom", "cf", "aff"}
+        and qual_first
+        in {
+            "sp",
+            "spp",
+            "indet",
+            "gr",
+            "group",
+            "subsp",
+            "var",
+            "nom",
+            "cf",
+            "aff",
+            "gen",  # bandini 2011 convention: "Spumellaria gen"
+        }
     )
-    return has_epithet or has_open_nom
+    if has_epithet or has_open_nom:
+        return True
+    # Audit 2026-09-04 taxon-1: a bare genus ("Stichomitra") is a
+    # legitimate citation form in the radiolarian literature — accept
+    # a single token that survived the placeholder/surname guards
+    # above; anything longer without an epithet or open-nom shape
+    # stays rejected.
+    return len(s.split()) == 1
 
 
 @dataclass(slots=True)

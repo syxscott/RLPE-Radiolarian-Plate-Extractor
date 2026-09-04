@@ -205,4 +205,11 @@ class TestMicroscopyAndGen:
 
         parts = _taxon_parts("Spumellarian gen")
         assert parts["specific_epithet"] is None
-        assert _is_valid_species("Spumellarian gen") is False
+        # Audit 2026-09-04 taxon-1 behavioural change: "gen" is now an
+        # accepted open-nomenclature token (bandini 2011's real gold
+        # convention "Spumellaria gen" / "Nassellaria gen" was being
+        # silently dropped alongside the truncation false-positives
+        # this test used to pin). Truncated-prose false positives are
+        # the responsibility of the extractor layer, not this shape
+        # check, which has no species-name vocabulary to consult.
+        assert _is_valid_species("Spumellarian gen") is True

@@ -38,8 +38,11 @@ def test_none_passes_through():
 
 
 def test_shape_failure_rejected():
-    """A single-token string cannot be a valid binomial species."""
-    assert _is_valid_species("Genus") is False
+    """A bare genus IS a valid citation form (audit 2026-09-04 taxon-1:
+    single-token gold rows like "Stichomitra" were silently dropped by
+    the hybrid-fill loop; a bare genus that survived the placeholder
+    and author-surname guards is legitimate radiolarian nomenclature)."""
+    assert _is_valid_species("Genus") is True
     # Lower-case "genus" looks like a normal English word, not a proper
     # Latin genus name; reject (conservative behaviour).
     assert _is_valid_species("genus speciesa extra") is False
