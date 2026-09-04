@@ -5054,7 +5054,11 @@ Rules:
 - Include ALL visible specimen panels, even partially visible ones
 - FIRST: use the caption text to determine species for each label
 - If the caption uses ranges like "1-4. Species name", expand to individual entries
-- SECOND: if the caption does NOT mention species for a panel, try to identify the species from the image morphology using your knowledge of radiolarian taxonomy. Set confidence lower (0.3-0.5) to indicate this is a morphology-based guess, not a caption-confirmed identification.
+- SECOND: if the caption does NOT mention species for a panel, set
+  ``species: null`` and confidence to a low value (<0.3). Do NOT
+  guess the species from image morphology — radiolarian taxonomy
+  identification requires expert reference that an LLM does not
+  have. Set the panel's ``species`` field to null in this case.
 - If a panel has no identifiable label, use your best spatial inference
 - If the caption is a placeholder (auto-generated), return {"panels": []}
 - Do NOT include non-specimen elements (scale bars, maps, diagrams)
