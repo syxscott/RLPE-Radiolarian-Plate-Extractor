@@ -190,11 +190,7 @@ def _normalize_panel_id(s: str) -> str:
     # / micro sign / minus sign variants) so author and taxon names
     # with diacritics keep their identity.
     ocr_safe = stripped.translate(_OCR_CONFUSION_TRANSLATION)
-    ascii_folded = (
-        unicodedata.normalize("NFKD", ocr_safe)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
+    ascii_folded = unicodedata.normalize("NFKD", ocr_safe).encode("ascii", "ignore").decode("ascii")
     return ascii_folded.lower()
 
 

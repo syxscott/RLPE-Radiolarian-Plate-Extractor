@@ -28,8 +28,12 @@ from __future__ import annotations
 import collections
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from rlpe.gui.jobs_tab import JobsTab
 
 _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:

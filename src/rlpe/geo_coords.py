@@ -351,20 +351,36 @@ _PALEO_KEYWORDS_GEO = (
     # matched the American forms, causing 56 Ma occurrences in
     # "during the Palaeocene" text to be misclassified as modern
     # coordinates (corrupting downstream GBIF submissions).
-    "palaeogeographic", "palaeolatitude", "palaeolongitude",
-    "palaeocene", "in the palaeocene", "in palaeocene",
-    "palaeogene", "in the palaeogene", "in palaeogene",
-    "palaeozoic", "in the palaeozoic", "in palaeozoic",
+    "palaeogeographic",
+    "palaeolatitude",
+    "palaeolongitude",
+    "palaeocene",
+    "in the palaeocene",
+    "in palaeocene",
+    "palaeogene",
+    "in the palaeogene",
+    "in palaeogene",
+    "palaeozoic",
+    "in the palaeozoic",
+    "in palaeozoic",
     "palaeontological",
-    "cainozoic", "in the cainozoic", "in cainozoic",
-    "caenozoic", "in the caenozoic", "in caenozoic",
+    "cainozoic",
+    "in the cainozoic",
+    "in cainozoic",
+    "caenozoic",
+    "in the caenozoic",
+    "in caenozoic",
     # French spellings (De Wever 2001 et al.) — these need to be
     # matched case-insensitively too; the regex below uses
     # ``re.IGNORECASE`` so the literal accents pass through. Adding
     # them as plain strings lets the |alternation| work without
     # extra compilation.
-    "paléocène", "paléogène", "paléozoïque",
-    "mésozoïque", "cénozoïque", "cainozoïque",
+    "paléocène",
+    "paléogène",
+    "paléozoïque",
+    "mésozoïque",
+    "cénozoïque",
+    "cainozoïque",
 )
 
 

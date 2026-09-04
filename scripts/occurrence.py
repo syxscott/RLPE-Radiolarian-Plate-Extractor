@@ -6,6 +6,7 @@ Two preds are in the same occurrence group iff:
 
 The group id is deterministic: same input → same output.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -22,6 +23,7 @@ def _normalize_species_for_occurrence(species: str | None) -> str:
     if not species:
         return ""
     from rlpe.evaluation.metrics import _norm_species
+
     norm = _norm_species(species) or ""
     # Drop cf./aff. tokens (with their trailing period) so the
     # remaining tokens collapse to the bare binomial form.
@@ -41,8 +43,9 @@ def add_occurrence_groups(preds: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for p in preds:
         q = dict(p)
-        q['occurrence_group_id'] = occurrence_group_id(
-            p.get('paper_id', ''), p.get('species'),
+        q["occurrence_group_id"] = occurrence_group_id(
+            p.get("paper_id", ""),
+            p.get("species"),
         )
         out.append(q)
     return out

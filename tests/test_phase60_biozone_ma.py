@@ -35,8 +35,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlpe.stratigraphy import (  # noqa: E402
-    BiozoneMa,
     _BIOZONE_TO_MA,
+    BiozoneMa,
     lookup_biozone_ma,
     lookup_biozone_ma_legacy,
 )
@@ -154,6 +154,7 @@ def test_age_classification_carries_confidence():
     resulting AgeClassification must carry confidence 0.5 so
     downstream consumers can detect the (approx.) zones."""
     from rlpe.stratigraphy import find_ages_in_text
+
     out = find_ages_in_text("Sample S1 from UAZ 17 zone in the Valanginian.")
     # Find the biozone classification.
     biozone = [c for c in out if c.rank == "biozone"]

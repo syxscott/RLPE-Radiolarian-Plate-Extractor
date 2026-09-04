@@ -1702,6 +1702,7 @@ def _pbdb_lookup(body: str) -> dict[str, Any] | None:
 # High-level convenience: classify_all_in_text
 # ---------------------------------------------------------------------------
 
+
 # Phase 60 Plan 3 (Bug 3.11): curated biozone → Ma lookup table.
 #
 # Real radiolarian biostratigraphy uses named biozones that do not
@@ -1805,11 +1806,17 @@ _BIOZONE_TO_MA: dict[str, BiozoneMa] = {
     # interval — confidence=0.5 flags them as "use the section-based
     # age in PBDB submissions, NOT the zone midpoint" (BLOCKER-#7).
     "UAZ 13": BiozoneMa(142.6, 145.0, confidence=0.5),  # late Tithonian (approx.)
-    "UAZ 14": BiozoneMa(140.2, 142.6, confidence=0.5),  # latest Tithonian–early Berriasian (approx.)
+    "UAZ 14": BiozoneMa(
+        140.2, 142.6, confidence=0.5
+    ),  # latest Tithonian–early Berriasian (approx.)
     "UAZ 15": BiozoneMa(137.8, 140.2, confidence=0.5),  # Berriasian (approx.)
-    "UAZ 16": BiozoneMa(135.4, 137.8, confidence=0.5),  # late Berriasian–early Valanginian (approx.)
+    "UAZ 16": BiozoneMa(
+        135.4, 137.8, confidence=0.5
+    ),  # late Berriasian–early Valanginian (approx.)
     "UAZ 17": BiozoneMa(133.0, 135.4, confidence=0.5),  # Valanginian (approx.)
-    "UAZ 18": BiozoneMa(130.6, 133.0, confidence=0.5),  # late Valanginian–early Hauterivian (approx.)
+    "UAZ 18": BiozoneMa(
+        130.6, 133.0, confidence=0.5
+    ),  # late Valanginian–early Hauterivian (approx.)
     "UAZ 19": BiozoneMa(128.2, 130.6, confidence=0.5),  # Hauterivian (approx.)
     "UAZ 20": BiozoneMa(125.8, 128.2, confidence=0.5),  # late Hauterivian (approx.)
     "UAZ 21": BiozoneMa(123.4, 125.8, confidence=0.5),  # Hauterivian–Barremian boundary (approx.)
@@ -1823,7 +1830,9 @@ _BIOZONE_TO_MA: dict[str, BiozoneMa] = {
     # Valanginian: 139.8-132.6 Ma; Hauterivian: 132.6-125.77 Ma
     # Barremian: 125.77-121.4 Ma; Aptian: 121.4-113.0 Ma; Albian: 113.0-100.5 Ma
     "Pessagno Zone A": BiozoneMa(125.77, 132.6, confidence=0.85),  # Hauterivian
-    "Pessagno Zone B": BiozoneMa(121.4, 125.77, confidence=0.85),  # Barremian (lower Aptian boundary at 125.77)
+    "Pessagno Zone B": BiozoneMa(
+        121.4, 125.77, confidence=0.85
+    ),  # Barremian (lower Aptian boundary at 125.77)
     "Pessagno Zone C": BiozoneMa(113.0, 121.4, confidence=0.85),  # Aptian
     # Legacy radiolarian zonation (Riedel & Sanfilippo 1978)
     # — commonly cited in older bandini / pouille papers.

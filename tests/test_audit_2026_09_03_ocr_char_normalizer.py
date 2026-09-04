@@ -33,6 +33,7 @@ def _norm(s: str) -> str:
     when the public apply_corrections() entry point's paper-specific
     whitelist semantics shift."""
     from rlpe.ocr_corrections import _normalize_ocr_chars
+
     return _normalize_ocr_chars(s)
 
 
@@ -116,6 +117,7 @@ class TestLongVowelStripping:
         # "a" + combining-macron → "ā" (NFC precomposed form), then
         # the long-vowel table maps to base vowel.
         import unicodedata
+
         a_tilde = "a" + "̄"  # decomposed form
         assert unicodedata.normalize("NFC", a_tilde) == "ā"
         assert _norm(a_tilde) == "a"
@@ -151,33 +153,34 @@ class TestPrepassEndToEndViaApplyCorrections:
 
     def test_apply_corrections_digit_one(self):
         from rlpe.ocr_corrections import apply_corrections
+
         # Without the pre-pass, "Sponguru1" would round-trip unchanged.
         # The pre-pass normalises "1" to "l" before the C5 substring
         # table even sees it.
         out = apply_corrections("Sponguru1", paper_id=None)
-        assert "Spongurul" in out, (
-            f"apply_corrections did not normalise '1' to 'l': {out!r}"
-        )
+        assert "Spongurul" in out, f"apply_corrections did not normalise '1' to 'l': {out!r}"
 
     def test_apply_corrections_long_vowel(self):
         from rlpe.ocr_corrections import apply_corrections
+
         out = apply_corrections("Archaeodictyomitrā", paper_id=None)
-        assert out == "Archaeodictyomitra", (
-            f"apply_corrections did not strip macron: {out!r}"
-        )
+        assert out == "Archaeodictyomitra", f"apply_corrections did not strip macron: {out!r}"
 
     def test_apply_corrections_preserves_c5_rules(self):
         """The two C5 substring rules must still fire on the
         post-normalised string."""
         from rlpe.ocr_corrections import apply_corrections
+
         out = apply_corrections("Archaeodictyomitracf X", paper_id=None)
         assert "Archaeodictyomitra cf." in out
 
     def test_apply_corrections_passes_through_clean(self):
         from rlpe.ocr_corrections import apply_corrections
+
         assert apply_corrections("Theocorys", paper_id=None) == "Theocorys"
 
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

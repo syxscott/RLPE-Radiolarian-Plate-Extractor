@@ -34,6 +34,7 @@ import pytest
 def test_data_outbound_policy_default_is_api_redacted() -> None:
     """Without any opt-in, the default is the private posture."""
     from rlpe.llm_backends import MiniMaxM3Backend
+
     # Pass a fake API key so the api_key check at __post_init__ doesn't
     # fire; we are only asserting the policy field default here.
     b = MiniMaxM3Backend(api_key="fake-test-key", data_outbound_policy="api_redacted")
@@ -50,6 +51,7 @@ def test_data_outbound_policy_default_in_dataclass_definition() -> None:
     )
     # Match the dataclass default; allow optional inline comment.
     import re
+
     m = re.search(
         r'data_outbound_policy\s*:\s*str\s*=\s*["\']([^"\']+)["\']',
         src,
@@ -70,6 +72,7 @@ def test_cli_default_is_api_redacted() -> None:
         encoding="utf-8"
     )
     import re
+
     # The argument is registered in build_parser() with default=...
     m = re.search(
         r'--data-outbound-policy[^)]*default=["\']([^"\']+)["\']',
@@ -92,6 +95,7 @@ def test_api_full_without_opt_in_raises(monkeypatch: pytest.MonkeyPatch) -> None
     ValueError. The error message must point the operator at the
     opt-in knob so the fix is obvious."""
     from rlpe.llm_backends import MiniMaxM3Backend
+
     monkeypatch.delenv("RLPE_DATA_OUTBOUND_OPT_IN", raising=False)
     with pytest.raises(ValueError) as excinfo:
         MiniMaxM3Backend(api_key="fake-test-key", data_outbound_policy="api_full")
@@ -103,15 +107,12 @@ def test_api_full_without_opt_in_raises(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.parametrize("opt_in_value", ["1", "true", "yes", "on"])
-def test_api_full_with_opt_in_succeeds(
-    monkeypatch: pytest.MonkeyPatch, opt_in_value: str
-) -> None:
+def test_api_full_with_opt_in_succeeds(monkeypatch: pytest.MonkeyPatch, opt_in_value: str) -> None:
     """All four accepted opt-in spellings must unblock api_full."""
     from rlpe.llm_backends import MiniMaxM3Backend
+
     monkeypatch.setenv("RLPE_DATA_OUTBOUND_OPT_IN", opt_in_value)
-    b = MiniMaxM3Backend(
-        api_key="fake-test-key", data_outbound_policy="api_full"
-    )
+    b = MiniMaxM3Backend(api_key="fake-test-key", data_outbound_policy="api_full")
     assert b.data_outbound_policy == "api_full"
 
 
@@ -122,6 +123,7 @@ def test_api_redacted_does_not_require_opt_in(
     that would break every existing fresh install. The opt-in is
     strictly for the more permissive api_full mode."""
     from rlpe.llm_backends import MiniMaxM3Backend
+
     monkeypatch.delenv("RLPE_DATA_OUTBOUND_OPT_IN", raising=False)
     # Pass a fake API key — the api_redacted mode still requires one
     # for the SDK to initialise; the opt-in flag is an additional
@@ -135,6 +137,7 @@ def test_local_only_does_not_require_opt_in(
 ) -> None:
     """The local-only posture (no network) must also work without opt-in."""
     from rlpe.llm_backends import MiniMaxM3Backend
+
     monkeypatch.delenv("RLPE_DATA_OUTBOUND_OPT_IN", raising=False)
     b = MiniMaxM3Backend(api_key="", data_outbound_policy="local_only")
     assert b.data_outbound_policy == "local_only"
@@ -171,6 +174,7 @@ def test_require_api_key_passes_on_loopback_without_key(
     """When ``RLPE_API_KEY`` is unset but the bind is loopback,
     ``require_api_key`` is a no-op (local dev / test mode)."""
     from rlpe.api.app import require_api_key
+
     monkeypatch.delenv("RLPE_API_KEY", raising=False)
     monkeypatch.setenv("RLPE_HOST", "127.0.0.1")
     # Should not raise.
@@ -308,6 +312,7 @@ def test_run_web_server_loopback_prints_ephemeral_key(
 
     def _fake_run(*args, **kwargs):
         raise SystemExit(0)
+
     monkeypatch.setattr(uvicorn, "run", _fake_run)
 
     rc = run_web_server.main()
@@ -316,8 +321,6 @@ def test_run_web_server_loopback_prints_ephemeral_key(
     assert "[ephemeral-key]" in captured.err
     # The 64-char hex token is printed after the banner.
     import re
+
     m = re.search(r"RLPE_API_KEY=([0-9a-f]{64})", captured.err)
-    assert m is not None, (
-        "ephemeral key (64 hex chars) not found in stderr: "
-        + captured.err[:300]
-    )
+    assert m is not None, "ephemeral key (64 hex chars) not found in stderr: " + captured.err[:300]

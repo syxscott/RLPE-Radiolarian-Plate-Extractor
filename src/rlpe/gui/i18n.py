@@ -35,6 +35,7 @@ _LISTENERS: list[Callable[[str], None]] = []
 # callbacks may themselves call ``_tr()`` / ``set_language()``
 # without deadlocking.
 import threading as _threading
+
 _I18N_LOCK: _threading.RLock = _threading.RLock()
 
 

@@ -11,6 +11,7 @@ Outputs:
   - data/eval/yolo_comparison_3way.csv
   - docs/eval/yolo_comparison_3way.md
 """
+
 from __future__ import annotations
 
 import csv
@@ -83,11 +84,13 @@ def run_yolo_on_paper(model_path: Path, page_paths: list[Path]) -> dict:
             confs = boxes.conf.cpu().numpy()
             cls = boxes.cls.cpu().numpy().astype(int)
             for (x1, y1, x2, y2), cf, cl in zip(xyxy, confs, cls):
-                dets.append({
-                    "conf": float(cf),
-                    "class": int(cl),
-                    "bbox_xyxy": [float(x1), float(y1), float(x2), float(y2)],
-                })
+                dets.append(
+                    {
+                        "conf": float(cf),
+                        "class": int(cl),
+                        "bbox_xyxy": [float(x1), float(y1), float(x2), float(y2)],
+                    }
+                )
                 all_confs.append(float(cf))
                 total_dets += 1
         per_page[str(idx)] = {"page_num": idx, "detections": dets}
@@ -184,7 +187,9 @@ def main() -> None:
 
         gold_total, gold_figs = gold_panel_counts(slug)
         gold_pages = gold_pages_for_paper(slug)
-        print(f"  gold rows: {gold_total} ({len(gold_figs)} unique figures, pages {sorted(gold_pages)[:5]}...)")
+        print(
+            f"  gold rows: {gold_total} ({len(gold_figs)} unique figures, pages {sorted(gold_pages)[:5]}...)"
+        )
 
         for model_label, model_path in MODELS.items():
             if not model_path.exists():
@@ -207,22 +212,32 @@ def main() -> None:
             with open(raw_out, "w") as f:
                 json.dump(raw, f, indent=1)
             precision, recall, notes = evaluate_proxy(res["total_detections"], gold_total)
-            summary_rows.append({
-                "paper_id": slug,
-                "model": model_label,
-                "model_path": str(model_path),
-                "total_pages": total_pages,
-                "total_detections": res["total_detections"],
-                "avg_conf": round(res["avg_conf"], 4),
-                "inference_time_sec": round(res["inference_time_total_sec"], 3),
-                "approx_precision_proxy": precision,
-                "approx_recall_proxy": recall,
-                "notes": notes,
-            })
-            detail_rows.append((slug, model_label, res["total_detections"],
-                                round(res["avg_conf"], 4),
-                                round(res["inference_time_total_sec"], 3)))
-            print(f"     {res['total_detections']} dets, {res['inference_time_total_sec']:.2f}s, {notes}")
+            summary_rows.append(
+                {
+                    "paper_id": slug,
+                    "model": model_label,
+                    "model_path": str(model_path),
+                    "total_pages": total_pages,
+                    "total_detections": res["total_detections"],
+                    "avg_conf": round(res["avg_conf"], 4),
+                    "inference_time_sec": round(res["inference_time_total_sec"], 3),
+                    "approx_precision_proxy": precision,
+                    "approx_recall_proxy": recall,
+                    "notes": notes,
+                }
+            )
+            detail_rows.append(
+                (
+                    slug,
+                    model_label,
+                    res["total_detections"],
+                    round(res["avg_conf"], 4),
+                    round(res["inference_time_total_sec"], 3),
+                )
+            )
+            print(
+                f"     {res['total_detections']} dets, {res['inference_time_total_sec']:.2f}s, {notes}"
+            )
 
     # write CSV
     with open(CSV_OUT, "w", newline="") as f:
@@ -235,9 +250,13 @@ def main() -> None:
     lines: list[str] = []
     lines.append("# 3-Way YOLO Comparison on 5 v19 Papers\n")
     lines.append("**Date:** 2026-09-03  ")
-    lines.append("**Setup:** RTX 4090, ultralytics 8.4.106, torch 2.12.0+cu130, 150 DPI PDF render, DEFAULT model config.  ")
+    lines.append(
+        "**Setup:** RTX 4090, ultralytics 8.4.106, torch 2.12.0+cu130, 150 DPI PDF render, DEFAULT model config.  "
+    )
     lines.append("**Goal:** find best of-the-shelf detector for radiolarian figure panels.  ")
-    lines.append("**Note:** Gold rows are panel observations (no bbox), so precision/recall are *panel-count proxies*, not IoU-based.\n")
+    lines.append(
+        "**Note:** Gold rows are panel observations (no bbox), so precision/recall are *panel-count proxies*, not IoU-based.\n"
+    )
 
     lines.append("## Models\n")
     lines.append("| Label | Weights | Size |")
@@ -253,7 +272,9 @@ def main() -> None:
         gold_count_by_paper[slug] = sum(1 for _ in open(GOLD_DIR / f"{slug}.jsonl"))
 
     lines.append("## Per-paper, per-model raw results\n")
-    lines.append("| Paper | Model | Detections | Avg Conf | Time (s) | Gold Rows | P (proxy) | R (proxy) | Notes |")
+    lines.append(
+        "| Paper | Model | Detections | Avg Conf | Time (s) | Gold Rows | P (proxy) | R (proxy) | Notes |"
+    )
     lines.append("|---|---|---:|---:|---:|---:|---:|---:|---|")
     for row in summary_rows:
         gold_total = gold_count_by_paper.get(row["paper_id"], 0)
@@ -266,13 +287,17 @@ def main() -> None:
 
     # comparison table per task spec
     lines.append("## Per-paper A vs B vs C (det / time)\n")
-    lines.append("| Paper | A:yolo11x det/time | B:yolov8n det/time | C:radio_yolo_v1 det/time | gold rows |")
+    lines.append(
+        "| Paper | A:yolo11x det/time | B:yolov8n det/time | C:radio_yolo_v1 det/time | gold rows |"
+    )
     lines.append("|---|---|---|---|---:|")
     for slug in PAPERS:
         gold_total = gold_count_by_paper.get(slug, 0)
         cells = {}
         for label in ["A_yolo11x", "B_yolov8n", "C_radio_yolo_v1"]:
-            r = next((x for x in summary_rows if x["paper_id"] == slug and x["model"] == label), None)
+            r = next(
+                (x for x in summary_rows if x["paper_id"] == slug and x["model"] == label), None
+            )
             if r:
                 cells[label] = f"{r['total_detections']}/{r['inference_time_sec']:.1f}s"
             else:
@@ -286,7 +311,9 @@ def main() -> None:
     lines.append("## Aggregate (across 5 papers)\n")
     lines.append("| Model | Total dets | Avg conf | Total time | Avg P (proxy) | Avg R (proxy) |")
     lines.append("|---|---:|---:|---:|---:|---:|")
-    agg: dict[str, dict] = {label: {"dets": 0, "time": 0.0, "confs": [], "p": [], "r": []} for label in MODELS}
+    agg: dict[str, dict] = {
+        label: {"dets": 0, "time": 0.0, "confs": [], "p": [], "r": []} for label in MODELS
+    }
     for row in summary_rows:
         a = agg[row["model"]]
         a["dets"] += row["total_detections"]
@@ -299,15 +326,27 @@ def main() -> None:
         avg_p = statistics.mean(a["p"]) if a["p"] else 0
         avg_r = statistics.mean(a["r"]) if a["r"] else 0
         avg_c = statistics.mean(a["confs"]) if a["confs"] else 0
-        lines.append(f"| {label} | {a['dets']} | {avg_c:.3f} | {a['time']:.2f} | {avg_p:.2f} | {avg_r:.2f} |")
+        lines.append(
+            f"| {label} | {a['dets']} | {avg_c:.3f} | {a['time']:.2f} | {avg_p:.2f} | {avg_r:.2f} |"
+        )
     lines.append("")
 
     lines.append("## Interpretation\n")
-    lines.append("- **recall_proxy** = min(detections / gold_rows, 1.0) — proxies how well the model finds expected panels.")
-    lines.append("- **precision_proxy** = min(gold_rows / detections, 1.0) — penalizes over-detection; perfect if detections <= gold_rows.")
-    lines.append("- Gold rows = panel observations in `data/gold/<slug>.jsonl`; the user-curated ground truth has no bbox, so this is an approximate comparison only.")
-    lines.append("- **time** is wall-clock for one YOLO forward pass over ALL rendered pages (single batched call), excluding PDF→PNG rendering.")
-    lines.append("- DEFAULT config: no threshold/IoU tuning per model; whatever Ultralytics ships as `model(paths, ...)` defaults.")
+    lines.append(
+        "- **recall_proxy** = min(detections / gold_rows, 1.0) — proxies how well the model finds expected panels."
+    )
+    lines.append(
+        "- **precision_proxy** = min(gold_rows / detections, 1.0) — penalizes over-detection; perfect if detections <= gold_rows."
+    )
+    lines.append(
+        "- Gold rows = panel observations in `data/gold/<slug>.jsonl`; the user-curated ground truth has no bbox, so this is an approximate comparison only."
+    )
+    lines.append(
+        "- **time** is wall-clock for one YOLO forward pass over ALL rendered pages (single batched call), excluding PDF→PNG rendering."
+    )
+    lines.append(
+        "- DEFAULT config: no threshold/IoU tuning per model; whatever Ultralytics ships as `model(paths, ...)` defaults."
+    )
     lines.append("")
 
     with open(MD_OUT, "w") as f:
@@ -317,6 +356,7 @@ def main() -> None:
     # cleanup
     try:
         import torch
+
         torch.cuda.empty_cache()
     except Exception:
         pass

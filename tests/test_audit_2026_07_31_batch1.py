@@ -27,17 +27,21 @@ class TestUAZCalibration:
     def test_uaz7_is_jurassic(self):
         from rlpe.stratigraphy import lookup_biozone_ma
 
-        top, base = lookup_biozone_ma("UAZ 7")
+        ma = lookup_biozone_ma("UAZ 7")
+        top, base = ma.top_ma, ma.base_ma
         assert top is not None
         # UAZ 7 = late Bathonian–early Callovian (~163-165.3 Ma),
         # NOT Albian (100.5-113 Ma as before the fix).
         assert 155 <= top <= 168, f"UAZ 7 top should be ~163 Ma, got {top}"
         assert 155 <= base <= 168
+        # Confidence must be high — UAZ 1-12 are anchored against ICS stages.
+        assert ma.confidence >= 0.9, f"UAZ 7 confidence {ma.confidence} < 0.9"
 
     def test_uaz8_is_jurassic(self):
         from rlpe.stratigraphy import lookup_biozone_ma
 
-        top, base = lookup_biozone_ma("UAZ 8")
+        ma = lookup_biozone_ma("UAZ 8")
+        top = ma.top_ma
         # middle Callovian–early Oxfordian (~158-163 Ma)
         assert 150 <= top <= 166, f"UAZ 8 top should be ~158 Ma, got {top}"
 
@@ -45,7 +49,8 @@ class TestUAZCalibration:
         from rlpe.stratigraphy import lookup_biozone_ma
 
         for name in ("UAZ 10", "UAZ 11"):
-            top, base = lookup_biozone_ma(name)
+            ma = lookup_biozone_ma(name)
+            top, base = ma.top_ma, ma.base_ma
             assert top is not None and base is not None
             # Jurassic (145-160 Ma), NOT Santonian–Maastrichtian
             assert 140 <= top <= 160, f"{name} top should be ~150 Ma, got {top}"
@@ -54,16 +59,22 @@ class TestUAZCalibration:
     def test_uaz21_barremian_era(self):
         from rlpe.stratigraphy import lookup_biozone_ma
 
-        top, base = lookup_biozone_ma("UAZ 21")
+        ma = lookup_biozone_ma("UAZ 21")
+        top = ma.top_ma
         assert top is not None
         assert 120 <= top <= 127, f"UAZ 21 top should be ~125 Ma, got {top}"
+        # UAZ 13-21 are interpolated (confidence 0.5), per BLOCKER-#7.
+        assert ma.confidence < 0.7, (
+            f"UAZ 21 confidence {ma.confidence} should be < 0.7 (interpolated)"
+        )
 
     def test_all_uaz_1_21_present_and_ordered(self):
         from rlpe.stratigraphy import lookup_biozone_ma
 
         prev_top = None
         for i in range(1, 22):
-            top, base = lookup_biozone_ma(f"UAZ {i}")
+            ma = lookup_biozone_ma(f"UAZ {i}")
+            top, base = ma.top_ma, ma.base_ma
             assert top is not None, f"UAZ {i} missing"
             assert base is not None
             assert base > top, f"UAZ {i}: base {base} must be older than top {top}"
@@ -79,12 +90,13 @@ class TestUAZCalibration:
     def test_uaz_range_form_expands(self):
         from rlpe.stratigraphy import lookup_biozone_ma
 
-        top, base = lookup_biozone_ma("UAZ 4-7")
+        ma = lookup_biozone_ma("UAZ 4-7")
+        top, base = ma.top_ma, ma.base_ma
         assert top is not None
         # union of UAZ 4-7: youngest boundary = UAZ 7's top
         # (higher UAZ number = younger), oldest boundary = UAZ 4's base.
-        t7, _ = lookup_biozone_ma("UAZ 7")
-        _, b4 = lookup_biozone_ma("UAZ 4")
+        t7 = lookup_biozone_ma("UAZ 7").top_ma
+        b4 = lookup_biozone_ma("UAZ 4").base_ma
         assert abs(top - t7) < 1e-9, f"union top {top} should be UAZ 7 top {t7}"
         assert abs(base - b4) < 1e-9, f"union base {base} should be UAZ 4 base {b4}"
 
@@ -93,10 +105,10 @@ class TestUAZCalibration:
 
         # Hollis 1997 / O'Dogherty 1994 / Riedel & Sanfilippo zones
         # were already correct — they must not have changed.
-        t, b = lookup_biozone_ma("Buryella clinata Zone")
-        assert (56.0, 59.0) == (t, b)
-        t, b = lookup_biozone_ma("Buryella tetradica Zone")
-        assert (83.6, 89.0) == (t, b)
+        ma = lookup_biozone_ma("Buryella clinata Zone")
+        assert (ma.top_ma, ma.base_ma) == (56.0, 59.0)
+        ma = lookup_biozone_ma("Buryella tetradica Zone")
+        assert (ma.top_ma, ma.base_ma) == (83.6, 89.0)
 
 
 class TestRotationFormula:

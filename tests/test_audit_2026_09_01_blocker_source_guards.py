@@ -753,14 +753,8 @@ class TestRadiolarianPipelineHasClose(unittest.TestCase):
         # xfail until the protocol lands. The downstream code (Batch
         # Dialog, Run tab) does not use the context manager today.
         import pytest
-        pytest.xfail(
-            reason="RadiolarianPipeline.__enter__/__exit__ not implemented"
-        )
-        self.assertRegex(
-            src,
-            r"def\s+__exit__\(self,\s*exc_type,\s*exc,\s*tb\)\s*->\s*None:",
-            "RadiolarianPipeline.__exit__ must call self.close() (systemic #2)",
-        )
+
+        pytest.xfail(reason="RadiolarianPipeline.__enter__/__exit__ not implemented")
 
 
 class TestFigureIdLogicalKeyIncludesPlate(unittest.TestCase):
@@ -847,7 +841,7 @@ class TestLabelSortKeyUsesIntegerValue(unittest.TestCase):
         self.assertRegex(
             src,
             r"return\s+\(0,\s*int\(s\),\s*\"\"\)",
-            "_label_sort_key must return (0, int(s), \"\") for numeric labels (BL-24)",
+            '_label_sort_key must return (0, int(s), "") for numeric labels (BL-24)',
         )
 
 

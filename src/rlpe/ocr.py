@@ -222,7 +222,7 @@ class OCRBackend:
                     result = engine.ocr(image)
                 except TypeError as _te:
                     # Some 3.x preview releases still accept cls=.
-                    if 'cls' not in str(_te):
+                    if "cls" not in str(_te):
                         raise
                     result = engine.ocr(image, cls=True)
                 # Phase 38: paddleocr 2.x returns [ [box, (text, conf)], ... ]

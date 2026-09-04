@@ -11,6 +11,7 @@ Prompts are intentionally generic so the eval set doesn't leak into
 the prompt design. Markers are word-boundary regexes to avoid
 false-positives like "plate of food" routing to the SEM template.
 """
+
 from __future__ import annotations
 
 import re
@@ -53,38 +54,36 @@ def _build_prompt(goal: str, special: str) -> str:
 
 RANGE_CHART_PROMPT = _build_prompt(
     goal="Given a range chart caption and image, extract every radiolarian "
-         "species and the stratigraphic range it appears in.",
+    "species and the stratigraphic range it appears in.",
     special="Output one row per (species, range) pair visible in the chart. "
-            "label = species name; panel_id = the stratigraphic zone it appears in.",
+    "label = species name; panel_id = the stratigraphic zone it appears in.",
 )
 
 SEM_PLATE_PROMPT = _build_prompt(
     goal="Given a plate caption and image, extract every specimen panel "
-         "and identify the radiolarian species shown.",
+    "and identify the radiolarian species shown.",
     special="Output one row per numbered figure (Fig. 1, Fig. 2, etc.) "
-            "visible in the plate. label = the figure number; panel_id = same.",
+    "visible in the plate. label = the figure number; panel_id = same.",
 )
 
 MAP_PROMPT = _build_prompt(
-    goal="Given a map caption and image, extract any radiolarian-bearing "
-         "localities mentioned.",
+    goal="Given a map caption and image, extract any radiolarian-bearing localities mentioned.",
     special="Output one row per locality if the map shows radiolarian sites. "
-            "label = the locality id (e.g. 'Loc. 5'); panel_id = same.",
+    "label = the locality id (e.g. 'Loc. 5'); panel_id = same.",
 )
 
 GENERIC_PROMPT = _build_prompt(
-    goal="Given a figure caption and image, extract every radiolarian "
-         "specimen or locality shown.",
+    goal="Given a figure caption and image, extract every radiolarian specimen or locality shown.",
     special="Output one row per visible item. label = whatever the caption uses "
-            "to identify the item; panel_id = same.",
+    "to identify the item; panel_id = same.",
 )
 
 TEXT_MODE_PROMPT = _build_prompt(
     goal="Given a radiolarian paper's full text (no plate figures available), "
-         "extract every radiolarian species mentioned in the text along with its location.",
+    "extract every radiolarian species mentioned in the text along with its location.",
     special="Output one row per species, with 'location' describing the page or section. "
-            "label = the species name; panel_id = the page or section identifier. "
-            "If the paper is not about Radiolaria, set species=null.",
+    "label = the species name; panel_id = the page or section identifier. "
+    "If the paper is not about Radiolaria, set species=null.",
 )
 
 

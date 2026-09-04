@@ -719,9 +719,7 @@ class RunOutput(BaseModel):
         # ``model_validate(..., context=...)``. Sniff for skip_dedup.
         _info = locals().get("info")
         _skip = bool(
-            getattr(_info, "context", {}).get("skip_dedup", False)
-            if _info is not None
-            else False
+            getattr(_info, "context", {}).get("skip_dedup", False) if _info is not None else False
         )
         if _skip:
             return self
@@ -829,6 +827,4 @@ def validate_run_output(payload: dict[str, Any]) -> RunOutput:
     Raises ``pydantic.ValidationError`` on any mismatch. Returns the
     typed :class:`RunOutput` for downstream use.
     """
-    return RunOutput.model_validate(
-        payload, context={"skip_dedup": False}
-    )
+    return RunOutput.model_validate(payload, context={"skip_dedup": False})

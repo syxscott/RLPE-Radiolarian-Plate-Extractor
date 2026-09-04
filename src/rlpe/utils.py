@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable
+import threading
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -262,12 +263,12 @@ def read_text(path: Path, default: str = "") -> str:
 #   3. a return value (``default``) so the caller can keep moving.
 # ---------------------------------------------------------------------------
 _WARNINGS: list[dict[str, Any]] = []
-_WARNINGS_LOCK: "threading.Lock" = __import__("threading").Lock()
+_WARNINGS_LOCK = threading.Lock()
 
 
 def _safe_call(
     label: str,
-    fn: "Callable[..., Any]",
+    fn: Callable[..., Any],
     *args: Any,
     paper_id: str | None = None,
     default: Any = None,

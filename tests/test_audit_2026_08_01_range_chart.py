@@ -325,25 +325,30 @@ class TestStatusField:
 # are distinct species in De Wever 2001. The 1-char tolerance linked
 # them, contaminating the panel → sample → PBDB attribution.
 
+
 class TestSpeciesMatchToleranceTightened:
     """BLOCKER-#8 regression suite."""
 
     def test_cryptocapsa_tecta_texta_no_match(self):
         from rlpe.range_chart_extractor import _species_match
+
         # Same genus, 1-letter-different epithets — must NOT match.
         assert _species_match("Cryptocapsa tecta", "Cryptocapsa texta") is False
 
     def test_parvicingula_jamesi_jonesi_no_match(self):
         from rlpe.range_chart_extractor import _species_match
+
         # Different epithets that differ by 1 letter at the start.
         assert _species_match("Parvicingula jamesi", "Parvicingula jonesi") is False
 
     def test_exact_match_still_works(self):
         from rlpe.range_chart_extractor import _species_match
+
         assert _species_match("Archaeodictyomitra vulgaris", "Archaeodictyomitra vulgaris") is True
 
     def test_different_genus_no_match(self):
         from rlpe.range_chart_extractor import _species_match
+
         assert _species_match("Archaeodictyomitra vulgaris", "Pseudodictyomitra vulgaris") is False
 
     def test_bare_genus_match_still_works(self):
@@ -352,6 +357,7 @@ class TestSpeciesMatchToleranceTightened:
         the legitimate bare-genus match (the 2nd-word requirement
         was always preserved)."""
         from rlpe.range_chart_extractor import _species_match
+
         assert _species_match("Archaeodictyomitra", "Archaeodictyomitra vulgaris") is True
         assert _species_match("Archaeodictyomitra vulgaris", "Archaeodictyomitra") is True
 
@@ -360,4 +366,5 @@ class TestSpeciesMatchToleranceTightened:
         requires exact epithet equality. A 2+ char difference was
         already correctly rejected; verify the regression."""
         from rlpe.range_chart_extractor import _species_match
+
         assert _species_match("Cryptocapsa tecta", "Cryptocapsa magna") is False

@@ -323,10 +323,15 @@ class TestM7MultimodalDegradedSignal:
 # Bug M8: Anthropic SDK constructed with max_retries=0
 # ---------------------------------------------------------------------------
 class TestM8AnthropicMaxRetries:
-    def test_Anthropic_constructor_called_with_max_retries_zero(self):
+    def test_Anthropic_constructor_called_with_max_retries_zero(self, monkeypatch):
         """The Anthropic client must be constructed with max_retries=0
         so its internal retry loop doesn't multiply with our outer
-        3-attempt loop."""
+        3-attempt loop.
+        Audit 2026-09-03 (BLOCKER-#2): ``api_full`` requires the operator
+        opt-in env var. Provide it for this construction so the test
+        exercises the same code path the production CLI uses.
+        """
+        monkeypatch.setenv("RLPE_DATA_OUTBOUND_OPT_IN", "1")
         fake_anth = _make_fake_anthropic_module()
         fake_anth.Anthropic = mock.MagicMock()
 

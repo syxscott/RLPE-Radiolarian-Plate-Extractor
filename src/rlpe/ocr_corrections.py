@@ -265,14 +265,22 @@ _CORRECTION_RE = _build_correction_regex()
 
 _DIGIT_ONE_RE = re.compile(r"(?<=[A-Za-z])1")
 _CAPITAL_I_RE = re.compile(r"(?<=[a-z])I(?=[a-z])")
-_LONG_VOWEL_MAP = str.maketrans({
-    "ā": "a", "Ā": "A",
-    "ē": "e", "Ē": "E",
-    "ī": "i", "Ī": "I",
-    "ō": "o", "Ō": "O",
-    "ū": "u", "Ū": "U",
-    "ȳ": "y", "Ȳ": "Y",
-})
+_LONG_VOWEL_MAP = str.maketrans(
+    {
+        "ā": "a",
+        "Ā": "A",
+        "ē": "e",
+        "Ē": "E",
+        "ī": "i",
+        "Ī": "I",
+        "ō": "o",
+        "Ō": "O",
+        "ū": "u",
+        "Ū": "U",
+        "ȳ": "y",
+        "Ȳ": "Y",
+    }
+)
 
 
 def _normalize_ocr_chars(s: str) -> str:

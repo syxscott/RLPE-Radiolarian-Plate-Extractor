@@ -47,9 +47,7 @@ def save_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     import os as _os
     import tempfile as _tempfile
 
-    fd, tmp_path = _tempfile.mkstemp(
-        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
-    )
+    fd, tmp_path = _tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
         with _os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))

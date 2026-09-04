@@ -73,7 +73,10 @@ class TestSafeJsonLoads:
     def test_array_and_nested(self):
         from rlpe.m3_engine import _safe_json_loads
 
-        assert _safe_json_loads('[{"a": 1}]') == [{"a": 1}]
+        # Audit 2026-09-01: a top-level JSON array is unwrapped into its
+        # first dict element (callers expect a single-object return).
+        # So ``'[{"a": 1}]'`` now yields ``{"a": 1}``.
+        assert _safe_json_loads('[{"a": 1}]') == {"a": 1}
         assert _safe_json_loads('{"a": {"b": 2}}') == {"a": {"b": 2}}
 
 

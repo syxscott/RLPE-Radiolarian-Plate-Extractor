@@ -54,7 +54,13 @@ def _unquote(value: str) -> str:
     else:
         body = v
     # Decode standard backslash escapes — \", \\, \n, \r, \t
-    body = body.replace("\\\"", '"').replace("\\\\", "\\").replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t")
+    body = (
+        body.replace('\\"', '"')
+        .replace("\\\\", "\\")
+        .replace("\\n", "\n")
+        .replace("\\r", "\r")
+        .replace("\\t", "\t")
+    )
     return body
 
 

@@ -375,7 +375,8 @@ class TestRecoverBboxesIoUPairing:
         )
 
     def test_2d_position_hint_jumps_panel_to_correct_seg(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """When the LLM attaches an ``expected_centroid_x/y`` hint, the
         Hungarian cost should weight centroid proximity so a panel
@@ -402,14 +403,15 @@ class TestRecoverBboxesIoUPairing:
         # centroid (230, 240). This is the test of whether the
         # Hungarian cost picks up the hint.
         results = [
-            {"panel_id": "1", "bbox": None, "panel_path": None,
-             "metadata": {}},
-            {"panel_id": "2", "bbox": None, "panel_path": None,
-             "metadata": {"expected_centroid_x": 230, "expected_centroid_y": 240}},
-            {"panel_id": "3", "bbox": None, "panel_path": None,
-             "metadata": {}},
-            {"panel_id": "4", "bbox": None, "panel_path": None,
-             "metadata": {}},
+            {"panel_id": "1", "bbox": None, "panel_path": None, "metadata": {}},
+            {
+                "panel_id": "2",
+                "bbox": None,
+                "panel_path": None,
+                "metadata": {"expected_centroid_x": 230, "expected_centroid_y": 240},
+            },
+            {"panel_id": "3", "bbox": None, "panel_path": None, "metadata": {}},
+            {"panel_id": "4", "bbox": None, "panel_path": None, "metadata": {}},
         ]
         out = pipe._recover_bboxes_via_segmentation(
             results, plate, paper_id="p1", figure_id="od_p1_p1_pl01"
@@ -422,7 +424,8 @@ class TestRecoverBboxesIoUPairing:
         )
 
     def test_more_segs_than_panels_keeps_placeholder(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """If segmentation finds 5 CCs but LLM declared 3 panels,
         2 CCs are unpaired (background noise) and 3 panels get
@@ -459,7 +462,8 @@ class TestRecoverBboxesIoUPairing:
         )
 
     def test_more_panels_than_segs_warns_and_drops_extras(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """If LLM declared 4 panels but segmentation found only 2
         CCs (e.g. low contrast), 2 rows keep the placeholder bbox.
@@ -482,31 +486,26 @@ class TestRecoverBboxesIoUPairing:
         out = pipe._recover_bboxes_via_segmentation(
             results, plate, paper_id="p1", figure_id="od_p1_p1_pl01"
         )
-        real = sum(
-            1 for r in out
-            if r.get("bbox") not in (None, [0, 0, 0, 0])
-        )
+        real = sum(1 for r in out if r.get("bbox") not in (None, [0, 0, 0, 0]))
         # Only 2 panels get a real bbox; the other 2 stay placeholder.
         assert real == 2, f"Expected 2 real bboxes, got {real}"
         # The two that kept placeholders must NOT have a panel_path.
-        placeholders = [
-            r for r in out
-            if r.get("bbox") in (None, [0, 0, 0, 0])
-        ]
+        placeholders = [r for r in out if r.get("bbox") in (None, [0, 0, 0, 0])]
         assert len(placeholders) == 2
         for r in placeholders:
-            assert r.get("panel_path") is None, (
-                f"Placeholder row got a panel_path anyway: {r}"
-            )
+            assert r.get("panel_path") is None, f"Placeholder row got a panel_path anyway: {r}"
 
     def test_scipy_missing_falls_back_to_reading_order(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If scipy.optimize is unavailable (air-gapped install),
         the helper must still produce a correct assignment via
         the reading-order fallback. The historical index pairing
         is the natural fallback — preserve it."""
         import builtins
+
         real_import = builtins.__import__
 
         def _no_scipy(name, *args, **kwargs):

@@ -108,25 +108,15 @@ def _resolve_panel_path(panel_path: str, root: Path) -> Path | None:
     safe_paper = _glob.escape(tail.parent.parent.name)
     safe_fig = _glob.escape(tail.parent.name)
     safe_panel = _glob.escape(tail.name)
-    candidates = list(
-        root.glob(
-            f"work/*/panels/{safe_paper}/{safe_fig}/{safe_panel}"
-        )
-    )
+    candidates = list(root.glob(f"work/*/panels/{safe_paper}/{safe_fig}/{safe_panel}"))
     if not candidates:
         # Some runs (e.g. work/beccaro_only_out) put panels under an
         # extra ``output/`` segment. Try that layout too.
-        candidates = list(
-            root.glob(
-                f"work/*/output/panels/{safe_paper}/{safe_fig}/{safe_panel}"
-            )
-        )
+        candidates = list(root.glob(f"work/*/output/panels/{safe_paper}/{safe_fig}/{safe_panel}"))
     if not candidates:
         candidates = list(root.glob(f"work/*/panels/{safe_paper}/**/{safe_panel}"))
     if not candidates:
-        candidates = list(
-            root.glob(f"work/*/output/panels/{safe_paper}/**/{safe_panel}")
-        )
+        candidates = list(root.glob(f"work/*/output/panels/{safe_paper}/**/{safe_panel}"))
     if not candidates:
         return None
     # Audit 2026-09-01 BL-32: ``root.glob`` returns matches in
@@ -254,24 +244,22 @@ def run_image_label_check(
         # has a scale-bar unit ("µm"/"mm"/"cm"), drop the unit and use
         # the next-to-last number. This handles both single-number
         # panels ("3") and dual-number panels ("100µm 3").
-        if "tokens" in locals() and len(tokens) >= 2 and any(
-            u in " ".join(tokens).lower() for u in ("µm", "mm", "cm", "μm")
+        if (
+            "tokens" in locals()
+            and len(tokens) >= 2
+            and any(u in " ".join(tokens).lower() for u in ("µm", "mm", "cm", "μm"))
         ):
             # Walk back from the right; the first numeric token that
             # is NOT followed by a unit glyph is the panel label.
             unit_set = ("µm", "mm", "cm", "μm")
             last_unit_idx = max(
-                (
-                    i for i, tok in enumerate(tokens)
-                    if any(u in tok.lower() for u in unit_set)
-                ),
+                (i for i, tok in enumerate(tokens) if any(u in tok.lower() for u in unit_set)),
                 default=-1,
             )
             # Find the first pure-numeric token to the LEFT of the
             # scale-bar position.
             candidate_nums = [
-                int(tok.rstrip(".,:;")) for tok in tokens[:last_unit_idx]
-                if _NUM_RE.match(tok)
+                int(tok.rstrip(".,:;")) for tok in tokens[:last_unit_idx] if _NUM_RE.match(tok)
             ]
             if candidate_nums:
                 first = candidate_nums[-1]

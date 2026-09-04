@@ -880,8 +880,9 @@ def require_api_key(
                 status_code=503,
                 detail=(
                     "API requires RLPE_API_KEY when bound to a non-loopback "
-                    "host (current RLPE_HOST=" + os.environ.get("RLPE_HOST", "") +
-                    "). Set RLPE_API_KEY=<secret> before binding 0.0.0.0 or "
+                    "host (current RLPE_HOST="
+                    + os.environ.get("RLPE_HOST", "")
+                    + "). Set RLPE_API_KEY=<secret> before binding 0.0.0.0 or "
                     "any routable interface."
                 ),
                 headers={"WWW-Authenticate": "ApiKey"},
@@ -1411,7 +1412,6 @@ async def stream_job_progress(job_id: str):
         # is the canonical FastAPI/Starlette signal — the framework
         # sets it when the underlying ASGI send raises on a closed
         # connection.
-        import starlette.requests as _starlette_requests
 
         # Capture the request from the closure if available. The
         # ``stream_job_progress`` endpoint above passes ``request``
@@ -1430,8 +1430,7 @@ async def stream_job_progress(job_id: str):
                 try:
                     if req.is_disconnected():
                         logger.debug(
-                            "SSE client disconnected from job %s; "
-                            "stopping event stream",
+                            "SSE client disconnected from job %s; stopping event stream",
                             job_id,
                         )
                         return
@@ -2736,9 +2735,7 @@ def llm_status() -> dict[str, Any]:
         # the fail-secure posture (BLOCKER-#3) so a 0.0.0.0 listener
         # without an API key is impossible to miss in the UI.
         "data_outbound_policy_default": "api_redacted",
-        "data_outbound_opt_in_set": bool(
-            os.environ.get("RLPE_DATA_OUTBOUND_OPT_IN", "").strip()
-        ),
+        "data_outbound_opt_in_set": bool(os.environ.get("RLPE_DATA_OUTBOUND_OPT_IN", "").strip()),
         "host_bind": os.environ.get("RLPE_HOST", "127.0.0.1"),
         "api_auth_required": bool(os.environ.get("RLPE_API_KEY")),
         "api_key_configured": bool(
@@ -3449,6 +3446,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                         # image leave the lab?").
                         try:
                             import json as _json
+
                             _cfg_for_manifest = locals().get("cfg")
                             _policy_used = (
                                 getattr(_cfg_for_manifest, "data_outbound_policy", "unknown")
@@ -3463,9 +3461,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                                         "schema_version": "rlpe-manifest-1.0",
                                         "data_outbound_policy_used": _policy_used,
                                         "host_bind": os.environ.get("RLPE_HOST", "127.0.0.1"),
-                                        "api_auth_required": bool(
-                                            os.environ.get("RLPE_API_KEY")
-                                        ),
+                                        "api_auth_required": bool(os.environ.get("RLPE_API_KEY")),
                                     },
                                     ensure_ascii=False,
                                     indent=2,

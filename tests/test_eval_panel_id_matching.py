@@ -244,8 +244,7 @@ class TestFigureIdSchemaVariantMatching:
         # still propagating through the rest of the eval. The
         # pre-fix baseline of 172 is the floor we must not cross.
         assert m.panel_match >= 172, (
-            f"Bandini 2011 panel_match regressed to {m.panel_match}, "
-            f"below the pre-fix baseline 172"
+            f"Bandini 2011 panel_match regressed to {m.panel_match}, below the pre-fix baseline 172"
         )
         # The fix should lift panel_match_rate from 63% to >= 70%.
         assert m.panel_match_rate >= 0.70, (

@@ -7,14 +7,15 @@ prefixes), scores each block by structural anchor + binomial density
 + plate terminator markers, and picks the highest-scored block
 whose anchor matches `target_plate`.
 """
+
 from __future__ import annotations
 
 import re
-from typing import Optional, Pattern
+from re import Pattern
 
 # Shared binomial pattern + denylist (single source of truth, prevents
 # drift vs. text_extract).
-from binomial_utils import _BINOMIAL_RE, _BINOMIAL_DENY
+from binomial_utils import _BINOMIAL_DENY, _BINOMIAL_RE
 
 # Scoring weights
 ANCHOR_SCORE = 10
@@ -87,24 +88,24 @@ def _split_into_caption_blocks(text: str) -> list[str]:
     PDF text rarely has blank lines between captions, so we group
     consecutive non-anchor lines and start a new block at each anchor.
     """
-    lines = text.split('\n')
+    lines = text.split("\n")
     blocks: list[str] = []
     cur: list[str] = []
     for line in lines:
         stripped = line.strip()
         if not stripped:
             if cur:
-                blocks.append('\n'.join(cur))
+                blocks.append("\n".join(cur))
                 cur = []
             continue
         if _ANCHOR_LINE_RE.match(stripped):
             if cur:
-                blocks.append('\n'.join(cur))
+                blocks.append("\n".join(cur))
             cur = [stripped]
         else:
             cur.append(stripped)
     if cur:
-        blocks.append('\n'.join(cur))
+        blocks.append("\n".join(cur))
     return blocks
 
 
@@ -112,7 +113,7 @@ def select_caption(
     text: str,
     target_plate: int,
     min_anchor_score: int = ANCHOR_SCORE,
-) -> Optional[str]:
+) -> str | None:
     """Pick the best caption paragraph from `text` for `target_plate`.
 
     Returns None if no caption block matches the target plate. This is
@@ -127,7 +128,7 @@ def select_caption(
     n = int(target_plate)
     anchor_re = re.compile(_ANCHOR_N_RE_TEMPLATE.format(n=n), re.IGNORECASE | re.MULTILINE)
     # First pass: prefer blocks anchored to target_plate
-    best: Optional[str] = None
+    best: str | None = None
     best_score = 0
     for block in blocks:
         if len(block) > MAX_PARA_LEN:

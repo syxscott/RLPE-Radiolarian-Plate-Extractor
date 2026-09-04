@@ -4,6 +4,7 @@ Scans the full PDF text for binomial 'Genus species' patterns. No
 LLM call, no gold reference — generic heuristic only. Used as a
 fallback / supplement to M3 plate-mode extraction.
 """
+
 from __future__ import annotations
 
 import bisect
@@ -14,7 +15,7 @@ import pymupdf
 
 # Shared binomial pattern + denylist (single source of truth, prevents
 # drift vs. caption_fixer).
-from binomial_utils import _BINOMIAL_RE, _BINOMIAL_DENY
+from binomial_utils import _BINOMIAL_DENY, _BINOMIAL_RE
 
 
 def _normalize_species(genus: str, species: str) -> str:
@@ -78,13 +79,15 @@ def extract_species_from_text(
         seen.add(key)
         ctx_start = max(0, abs_start - 50)
         ctx_end = min(len(full_text), abs_start + 50 + len(m.group(0)))
-        out.append({
-            'paper_id': paper_id,
-            'species': m.group(0),
-            'normalized_species': norm,
-            'page_num': page_num,
-            'char_offset': abs_start,
-            'context_50char': full_text[ctx_start:ctx_end],
-            'extraction_method': 'text_regex',
-        })
+        out.append(
+            {
+                "paper_id": paper_id,
+                "species": m.group(0),
+                "normalized_species": norm,
+                "page_num": page_num,
+                "char_offset": abs_start,
+                "context_50char": full_text[ctx_start:ctx_end],
+                "extraction_method": "text_regex",
+            }
+        )
     return out

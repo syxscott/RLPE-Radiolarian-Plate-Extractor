@@ -26,6 +26,7 @@ class TestBritishPalaeoceneSpellings:
 
     def test_palaeocene_detected(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "...during the Palaeocene this region lay at 35°S, 110°E"
         idx = text.find("35")
         assert _is_paleo_text(text, idx) is True, (
@@ -34,24 +35,28 @@ class TestBritishPalaeoceneSpellings:
 
     def test_palaeogene_detected(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "reconstructed position in the Palaeogene at 25°N, 60°E"
         idx = text.find("25")
         assert _is_paleo_text(text, idx) is True
 
     def test_palaeozoic_detected(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "during the Palaeozoic, the region was situated at 45°S"
         idx = text.find("45")
         assert _is_paleo_text(text, idx) is True
 
     def test_cainozoic_detected(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "in the Cainozoic this region lay at 20°N, 30°E"
         idx = text.find("20")
         assert _is_paleo_text(text, idx) is True
 
     def test_palaeontological_detected(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "palaeontological evidence at 10°S, 80°E"
         idx = text.find("10")
         assert _is_paleo_text(text, idx) is True
@@ -62,20 +67,21 @@ class TestFrenchAccentSpellings:
 
     def test_paleocene_accent_detected(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "pendant le Paléocène, à 35°S, 110°E"
         idx = text.find("35")
-        assert _is_paleo_text(text, idx) is True, (
-            "French accented 'Paléocène' not detected"
-        )
+        assert _is_paleo_text(text, idx) is True, "French accented 'Paléocène' not detected"
 
     def test_mesozoique_detected(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "pendant le Mésozoïque, à 35°S, 110°E"
         idx = text.find("35")
         assert _is_paleo_text(text, idx) is True
 
     def test_cenozoique_detected(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "Cénozoïque, à 25°N, 60°E"
         idx = text.find("25")
         assert _is_paleo_text(text, idx) is True
@@ -87,18 +93,21 @@ class TestAmericanSpellingsStillWork:
 
     def test_paleocene_american_still_works(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "during the Paleocene this region lay at 35°S, 110°E"
         idx = text.find("35")
         assert _is_paleo_text(text, idx) is True
 
     def test_mesozoic_american_still_works(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "in the Mesozoic this region lay at 20°N, 30°E"
         idx = text.find("20")
         assert _is_paleo_text(text, idx) is True
 
     def test_cenozoic_american_still_works(self):
         from rlpe.geo_coords import _is_paleo_text
+
         text = "Cenozoic, 25°N, 60°E"
         idx = text.find("25")
         assert _is_paleo_text(text, idx) is True
@@ -110,19 +119,27 @@ class TestSourceGuard:
 
     def test_keywords_include_british_palaeo_variants(self):
         from rlpe.geo_coords import _PALEO_KEYWORDS_GEO
+
         table = " ".join(_PALEO_KEYWORDS_GEO)
         for kw in (
-            "palaeocene", "palaeogene", "palaeozoic",
-            "palaeontological", "cainozoic", "caenozoic",
-            "paléocène", "paléogène", "paléozoïque",
-            "mésozoïque", "cénozoïque",
+            "palaeocene",
+            "palaeogene",
+            "palaeozoic",
+            "palaeontological",
+            "cainozoic",
+            "caenozoic",
+            "paléocène",
+            "paléogène",
+            "paléozoïque",
+            "mésozoïque",
+            "cénozoïque",
         ):
             assert kw in _PALEO_KEYWORDS_GEO, (
-                f"_PALEO_KEYWORDS_GEO missing '{kw}' "
-                "(audit 2026-09-03 BLOCKER-#9 regression)"
+                f"_PALEO_KEYWORDS_GEO missing '{kw}' (audit 2026-09-03 BLOCKER-#9 regression)"
             )
 
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

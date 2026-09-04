@@ -112,9 +112,7 @@ class OpenDataLoaderExtractor:
         # pt so the F1 only drops due to a *visible* misconfiguration,
         # not because the system ate an unrelated setting.
         if not (0.0 < merge_gap_pt <= 1000.0):
-            raise ValueError(
-                f"merge_gap_pt must be in (0, 1000] (got {merge_gap_pt})"
-            )
+            raise ValueError(f"merge_gap_pt must be in (0, 1000] (got {merge_gap_pt})")
         self.merge_gap_pt = merge_gap_pt
         # Phase 28: stash the caption-pairing window. All OD path
         # functions that hard-coded a page-distance limit read this
@@ -130,9 +128,7 @@ class OpenDataLoaderExtractor:
         # F1 with no warning. Cap at 50 (50 * 4 = 200 pages, the
         # longest single-paper tail in the eval corpus).
         if not (1 <= caption_window <= 50):
-            raise ValueError(
-                f"caption_window must be in [1, 50] (got {caption_window})"
-            )
+            raise ValueError(f"caption_window must be in [1, 50] (got {caption_window})")
         self.caption_window = caption_window
         self._available: bool | None = None
         # Lazy EasyOCR engine + lock. The previous implementation
@@ -361,7 +357,7 @@ class OpenDataLoaderExtractor:
         pdf_path: Path,
         output_dir: Path,
         *,
-        cancel_event: "threading.Event | None" = None,
+        cancel_event: threading.Event | None = None,
         timeout_sec: float = 300.0,
     ) -> None:
         """Run ``opendataloader-pdf`` with cancel + timeout safety.
@@ -393,13 +389,9 @@ class OpenDataLoaderExtractor:
             "-c",
             "import opendataloader_pdf; "
             "opendataloader_pdf.convert("
-            "input_path=r'{pdf}', output_dir=r'{out}', format='json', "
-            "image_output='external', image_format=r'{fmt}', quiet=True"
-            ")".format(
-                pdf=str(pdf_path),
-                out=str(output_dir),
-                fmt=self.image_format,
-            ),
+            f"input_path=r'{str(pdf_path)}', output_dir=r'{str(output_dir)}', format='json', "
+            f"image_output='external', image_format=r'{self.image_format}', quiet=True"
+            ")",
         ]
         try:
             proc = subprocess.run(
@@ -417,8 +409,7 @@ class OpenDataLoaderExtractor:
                 )
         except subprocess.TimeoutExpired:
             logger.warning(
-                "opendataloader-pdf timed out after %.0fs for %s; "
-                "continuing with empty result set",
+                "opendataloader-pdf timed out after %.0fs for %s; continuing with empty result set",
                 timeout_sec,
                 pdf_path,
             )

@@ -7,6 +7,7 @@ setup had two near-identical hardcoded copies (one per module) plus a
 third in a drift-detection test, all of which could be updated in
 isolation without the others noticing.
 """
+
 from __future__ import annotations
 
 import re
@@ -20,9 +21,31 @@ _BINOMIAL_RE = re.compile(r"\b[A-Z][a-z]{3,}\s+[a-z]{3,}\b")
 
 # English false-positive denylist. Both consumers filter these out.
 # Lowercase canonical form (string ``.lower()`` is checked against this).
-_BINOMIAL_DENY = frozenset({
-    'species', 'genera', 'genus', 'sample', 'samples', 'individual',
-    'individuals', 'figure', 'figures', 'table', 'caption', 'locality',
-    'localities', 'text', 'word', 'words', 'material', 'materials',
-    'section', 'plate', 'many', 'most', 'several', 'each',
-})
+_BINOMIAL_DENY = frozenset(
+    {
+        "species",
+        "genera",
+        "genus",
+        "sample",
+        "samples",
+        "individual",
+        "individuals",
+        "figure",
+        "figures",
+        "table",
+        "caption",
+        "locality",
+        "localities",
+        "text",
+        "word",
+        "words",
+        "material",
+        "materials",
+        "section",
+        "plate",
+        "many",
+        "most",
+        "several",
+        "each",
+    }
+)

@@ -437,9 +437,7 @@ class PipelineConfig:
                     suggestions.append(f"{u!r} → did you mean {matches[0]!r}?")
                 else:
                     suggestions.append(repr(u))
-            strict = (
-                __import__("os").environ.get("RLPE_STRICT_EXTRA", "0") == "1"
-            )
+            strict = __import__("os").environ.get("RLPE_STRICT_EXTRA", "0") == "1"
             if strict:
                 raise ValueError(
                     f"Unknown extra config keys (strict mode): {sorted(unknown)}. "

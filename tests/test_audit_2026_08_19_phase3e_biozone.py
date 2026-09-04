@@ -63,7 +63,7 @@ def test_rp_zone_lookup():
     for name, exp_top, exp_base in cases:
         out = lookup_biozone_ma(name)
         assert out is not None, f"{name!r} not in biozone table"
-        ma_top, ma_base = out
+        ma_top, ma_base = out.top_ma, out.base_ma
         assert ma_top == exp_top, f"{name!r}: ma_top={ma_top} != {exp_top}"
         assert ma_base == exp_base, f"{name!r}: ma_base={ma_base} != {exp_base}"
 
@@ -92,7 +92,7 @@ def test_rp21_zone():
     """``RP 21`` (with space) must resolve to RP21."""
     out = lookup_biozone_ma("RP 21")
     assert out is not None
-    ma_top, ma_base = out
+    ma_top, ma_base = out.top_ma, out.base_ma
     assert ma_top == 0.0
     assert ma_base == 0.5
 
@@ -102,7 +102,7 @@ def test_rp6_rp7_range():
     union of both zones' Ma bounds (youngest top, oldest base)."""
     out = lookup_biozone_ma("RP6-RP7")
     assert out is not None
-    ma_top, ma_base = out
+    ma_top, ma_base = out.top_ma, out.base_ma
     # RP6 = (17.0, 18.5); RP7 = (14.5, 17.0) → union (14.5, 18.5)
     assert ma_top == 14.5
     assert ma_base == 18.5
@@ -120,7 +120,7 @@ def test_rn_zone_lookup():
     for name, exp_top, exp_base in cases:
         out = lookup_biozone_ma(name)
         assert out is not None, f"{name!r} not in biozone table"
-        ma_top, ma_base = out
+        ma_top, ma_base = out.top_ma, out.base_ma
         assert ma_top == exp_top, f"{name!r}: ma_top={ma_top} != {exp_top}"
         assert ma_base == exp_base, f"{name!r}: ma_base={ma_base} != {exp_base}"
 
@@ -134,7 +134,9 @@ def test_rn_unknown_subrange_does_not_throw():
     # Acceptable: either a successful single-zone lookup
     # (RN5-5 → RN5 = (15.0, 22.0)) OR a defensive ``None`` from the
     # helper. We require NO exception; we do NOT require a value.
-    assert out is None or out == (15.0, 22.0)
+    # The lookup now returns a BiozoneMa NamedTuple carrying
+    # (top_ma, base_ma, confidence); compare only the Ma fields.
+    assert out is None or (out.top_ma, out.base_ma) == (15.0, 22.0)
 
 
 def test_biozone_re_matches_rp_rn_forms():
@@ -373,8 +375,10 @@ def test_existing_biozone_lookup_still_works():
     additions must not have displaced or corrupted the existing
     entries (Bug 3.11 / Phase 60)."""
     assert lookup_biozone_ma("UAZ 5") is not None
-    assert lookup_biozone_ma("Buryella clinata Zone") == (56.0, 59.0)
-    assert lookup_biozone_ma("Cryptocephalus nigricae Zone") == (83.6, 86.3)
+    ma = lookup_biozone_ma("Buryella clinata Zone")
+    assert (ma.top_ma, ma.base_ma) == (56.0, 59.0)
+    ma = lookup_biozone_ma("Cryptocephalus nigricae Zone")
+    assert (ma.top_ma, ma.base_ma) == (83.6, 86.3)
 
 
 if __name__ == "__main__":

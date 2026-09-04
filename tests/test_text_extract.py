@@ -1,53 +1,56 @@
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from text_extract import extract_species_from_text
 
-_PDF_DIR = Path('/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/data/pdfs')
+_PDF_DIR = Path("/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/data/pdfs")
+
 
 def _path(slug: str) -> Path:
-    for p in _PDF_DIR.glob(f'{slug}*'):
+    for p in _PDF_DIR.glob(f"{slug}*"):
         return p
     raise FileNotFoundError(slug)
 
 
 def test_extract_finds_binomials():
-    rows = extract_species_from_text(_path('bandini2011'))
+    rows = extract_species_from_text(_path("bandini2011"))
     assert len(rows) > 0
     for r in rows:
-        assert 'paper_id' in r
-        assert 'species' in r
-        assert 'page_num' in r
-        assert r['extraction_method'] == 'text_regex'
-        assert isinstance(r['page_num'], int)
-        assert r['page_num'] >= 1
+        assert "paper_id" in r
+        assert "species" in r
+        assert "page_num" in r
+        assert r["extraction_method"] == "text_regex"
+        assert isinstance(r["page_num"], int)
+        assert r["page_num"] >= 1
 
 
 def test_extract_filters_english_phrases():
     """Denylist drops 'Many species', 'Most samples', 'Each individual', etc."""
-    rows = extract_species_from_text(_path('bandini2011'))
-    species = {r['species'] for r in rows}
-    for forbidden in ['Many species', 'Most samples', 'Each individual']:
+    rows = extract_species_from_text(_path("bandini2011"))
+    species = {r["species"] for r in rows}
+    for forbidden in ["Many species", "Most samples", "Each individual"]:
         assert forbidden not in species
 
 
 def test_extract_includes_location():
     """Each row has page_num and char_offset for traceability."""
-    rows = extract_species_from_text(_path('bandini2011'))
+    rows = extract_species_from_text(_path("bandini2011"))
     for r in rows:
-        assert r['page_num'] >= 1
-        assert r['char_offset'] >= 0
-        assert r['context_50char']  # non-empty string
-        assert isinstance(r['context_50char'], str)
+        assert r["page_num"] >= 1
+        assert r["char_offset"] >= 0
+        assert r["context_50char"]  # non-empty string
+        assert isinstance(r["context_50char"], str)
 
 
 def test_extract_dedups_same_species_same_page():
     """Same normalized species on same page appears only once."""
-    rows = extract_species_from_text(_path('bandini2011'))
+    rows = extract_species_from_text(_path("bandini2011"))
     from collections import Counter
-    by_key = Counter((r['paper_id'], r['normalized_species'], r['page_num']) for r in rows)
+
+    by_key = Counter((r["paper_id"], r["normalized_species"], r["page_num"]) for r in rows)
     max_count = max(by_key.values())
-    assert max_count <= 1, f'found duplicate (paper, sp, page) keys: {max_count}'
+    assert max_count <= 1, f"found duplicate (paper, sp, page) keys: {max_count}"
 
 
 # Note: the previous ``test_extract_uses_known_denylist`` drift detection
@@ -66,8 +69,9 @@ def test_extract_nonexistent_file_raises():
     """
     import pymupdf
     import pytest
+
     with pytest.raises((FileNotFoundError, OSError, pymupdf.FileNotFoundError)):
-        extract_species_from_text('/nonexistent/path/to/missing.pdf')
+        extract_species_from_text("/nonexistent/path/to/missing.pdf")
 
 
 def test_extract_handles_hyphenated_binomials():
@@ -77,16 +81,14 @@ def test_extract_handles_hyphenated_binomials():
     import os
     import tempfile
 
-    pdf_path = _make_pdf_with_text(
-        'Williriedellum carpathicum-forma is a subspecies.'
-    )
+    pdf_path = _make_pdf_with_text("Williriedellum carpathicum-forma is a subspecies.")
     try:
-        rows = extract_species_from_text(pdf_path, paper_id='test')
-        species = {r['species'] for r in rows}
-        assert 'Williriedellum carpathicum' in species
+        rows = extract_species_from_text(pdf_path, paper_id="test")
+        species = {r["species"] for r in rows}
+        assert "Williriedellum carpathicum" in species
         # The full hyphenated form does NOT match as a single binomial
         # (the regex needs whitespace-separated words).
-        assert 'Williriedellum carpathicum-forma' not in species
+        assert "Williriedellum carpathicum-forma" not in species
     finally:
         os.unlink(pdf_path)
 
@@ -103,16 +105,14 @@ def test_extract_handles_unicode_no_match():
     """
     import os
 
-    pdf_path = _make_pdf_with_text(
-        '放射虫 Williriedellum carpathicum 和 Many samples 都是化石'
-    )
+    pdf_path = _make_pdf_with_text("放射虫 Williriedellum carpathicum 和 Many samples 都是化石")
     try:
-        rows = extract_species_from_text(pdf_path, paper_id='test')
-        species = {r['species'] for r in rows}
+        rows = extract_species_from_text(pdf_path, paper_id="test")
+        species = {r["species"] for r in rows}
         # Latin binomial survives the regex + denylist.
-        assert 'Williriedellum carpathicum' in species
+        assert "Williriedellum carpathicum" in species
         # The ASCII denylist catches 'Many samples'.
-        assert 'Many samples' not in species
+        assert "Many samples" not in species
         # Exactly one binomial comes through (no CJK matches).
         assert len(species) == 1
     finally:
@@ -122,10 +122,12 @@ def test_extract_handles_unicode_no_match():
 def _make_pdf_with_text(body: str) -> str:
     """Build a single-page PDF containing the given text on it."""
     import tempfile
+
     import pymupdf
 
-    fd, pdf_path = tempfile.mkstemp(suffix='.pdf')
+    fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
     import os as _os
+
     _os.close(fd)
     doc = pymupdf.open()
     page = doc.new_page()
