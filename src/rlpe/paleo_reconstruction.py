@@ -62,6 +62,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -583,8 +584,15 @@ def infer_plate_id(
     if locality:
         loc_lower = locality.lower()
         for k, v in COUNTRY_PLATE.items():
-            # Match "Sicily" against locality "Favignana, Sicily"
-            if k in loc_lower or k.capitalize() in locality:
+            # Audit 2026-09-04 geo-6: the previous ``k in loc_lower``
+            # substring match mis-fired on embedded tokens — e.g.
+            # "oman" is a substring of "Romania" so any Romanian
+            # locality (Bucovina, Carpathians) was mis-routed to
+            # the Arabia plate. Require a word boundary on BOTH
+            # sides of the keyword so "Sultanate of Oman" still
+            # matches (the keyword is a standalone token) but
+            # "Romania" does NOT.
+            if re.search(rf"\b{re.escape(k)}\b", loc_lower):
                 return v
 
     # 3) Modern-coord heuristic — very rough bucket assignment
