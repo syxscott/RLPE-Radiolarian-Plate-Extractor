@@ -729,7 +729,8 @@ class RadiolarianPipeline:
                         f"0 result rows. Downstream figure-caption pairing, "
                         f"panel-matching, or species-name resolution may "
                         f"have rejected every detected figure. Check "
-                        f"work/od_output/ for the structural tree and "
+                        f"{self.config.resolved_output_dir() / 'od_output'} "
+                        f"for the structural tree and "
                         f"``matches.jsonl`` (likely empty) for the actual "
                         f"stage that produced zero output."
                     )
@@ -881,6 +882,46 @@ class RadiolarianPipeline:
         else:
             # ------ GROBID + layout path (default) -----------------------------
             rows = self._process_one_pdf_grobid(paper_id, pdf_path)
+
+        # Audit 2026-09-05 (completeness test, Soeka incident): a paper
+        # that survives ingestion but yields ZERO rows used to vanish
+        # silently — nothing in run_output.warnings, nothing in the
+        # export, only a console line (with a wrong path hint), and the
+        # checkpoint marker was still written so a resumed batch would
+        # skip it forever. Emit an ingestion-warning stub row so the
+        # failure is visible in run_output.warnings (P2-7 machinery
+        # keeps it alive through _finalize_rows' stub filter via the
+        # ``ingestion_warning`` metadata flag) and in every exporter.
+        if not rows:
+            rows = [
+                {
+                    "paper_id": paper_id,
+                    "figure_id": "_ingestion_zero_rows",
+                    "panel_id": None,
+                    "species": None,
+                    "panel_path": None,
+                    "bbox": None,
+                    "confidence": 0.0,
+                    "label_text": None,
+                    "caption_snippet": pdf_path.name,
+                    "ocr_text": None,
+                    "paper_metadata": None,
+                    "metadata": {
+                        "extraction_source": "zero_rows",
+                        "ingestion_error": (
+                            "0 rows after extraction + all fallbacks; "
+                            "figure-caption pairing or panel matching "
+                            "rejected every detected figure"
+                        ),
+                        "ingestion_warning": True,
+                    },
+                }
+            ]
+            logger.warning(
+                "paper %s (%s) produced 0 result rows; emitting _ingestion_zero_rows warning stub",
+                paper_id,
+                pdf_path.name,
+            )
 
         # Audit 2026-09-05 (tier3-B2): the cross-figure linker used to run
         # HERE, after both inner paths had already called
@@ -1807,6 +1848,16 @@ class RadiolarianPipeline:
             # otherwise try to segment a chart as if it were a plate and
             # produce bogus panels).
             fig_type = classify_figure_type(pair.caption_text, primary_path)
+            # Audit 2026-09-05 (orphan-page rescue): OCR-recovered
+            # captions are degraded (misread characters, lost headers —
+            # "Figs. [-2. Heliodiscuc...") and routinely fail the
+            # plate-keyword classification, falling into "other". But a
+            # page was only rescued BECAUSE its caption band carried a
+            # plate/figure marker, so treat rescued figures as plates —
+            # otherwise the "other" skip below would drop them again
+            # and the rescue would be pointless.
+            if fig_type == "other" and (pair.metadata or {}).get("caption_recovered_via"):
+                fig_type = "plate"
             if fig_type == "range_chart":
                 # OD sometimes fails to associate the chart image with
                 # its caption (the chart has no embedded image metadata

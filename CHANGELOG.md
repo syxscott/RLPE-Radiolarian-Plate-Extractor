@@ -5,6 +5,54 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 14] - 2026-09-05 — Extraction completeness: orphan plate-page rescue + zero-row visibility
+
+A random 3-paper sample vs manual-reading completeness test found one paper
+(Soeka_2019) extracted as **0 rows** — both SEM plates (24 panels, 19 caption
+clauses, 6 new species) silently lost because the caption pages' text layer
+uses a shifted font encoding ("Plate" stored as "3ODWH"). Two fixes:
+
+### Added (page-level orphan rescue)
+- `opendataloader_extractor.py` — `_rescue_orphan_plate_pages()`: for any page
+  that carries images but NO figure pair (the Soeka failure mode: text-layer
+  caption detection fails on obfuscated/missing text), render the caption band
+  below the images, OCR it (EasyOCR, same machinery as the existing empty-
+  caption fallback), and promote the page to a figure when the OCR text carries
+  a caption marker. Lenient matching: plural "Figs. N" forms, OCR noise
+  between marker and digit ("Figs. [-2"), and header-less species-clause lists
+  (3+ numbered clauses) all pass; duplicate captions of existing figures are
+  suppressed (difflib ≥ 0.8); images covering <15% of the page (logos) are
+  skipped. Promoted figures carry
+  `metadata.caption_recovered_via="ocr_page_rescue"` (confidence 0.55).
+- `pipeline.py` — rescued figures are treated as plates: their OCR-degraded
+  captions routinely fail `classify_figure_type` ("other"), which would have
+  dropped them again right after the rescue.
+
+### Fixed (zero-row visibility)
+- `pipeline.py` — a paper yielding 0 rows after all fallbacks now emits an
+  `_ingestion_zero_rows` warning stub row (`ingestion_warning=True`), which
+  survives `_finalize_rows` and surfaces in `run_output.warnings` and every
+  exporter — previously only a console line with a wrong path hint, plus a
+  checkpoint marker that made resumed batches skip the paper forever. The
+  console hint path (`work/od_output/`) now points at the run's actual
+  `resolved_output_dir()/od_output`.
+
+### Verification (Soeka_2019, full pipeline, MiniMax M3, ¥0.28 / 31 calls)
+- before: 0 rows, no warnings, silent skip on resume;
+- after: 8 panels across both rescued plates, 7 species (incl. 3 of Soeka's
+  new species: *Actinoma panujui*, *Spongotrochus buskamali*,
+  *Songotrochus kholiqi*), every spot-checked panel→species pair matches the
+  plate captions read by a human from the rendered page. Panel count remains
+  below the human baseline (OpenCV segmentation on 12-panel plates without
+  SAM2) — extraction recall improved from 0% to ~33% of panels / ~41% of
+  species, with 100% precision on the recovered pairs.
+
+### Tests
+- `tests/test_od_page_rescue_2026_09_05.py` — 7 tests: synthetic PDF rescue
+  (fake EasyOCR injection), marker/clause-list acceptance, duplicate-caption
+  suppression, small-image skip, real-Soeka integration sentinel (skipped
+  when corpus/EasyOCR absent), zero-row stub emission + finalize survival.
+
 ## [Unreleased 13] - 2026-09-05 — GUI: results-tab splitter collapse fix
 
 ### Fixed (GUI)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import re
@@ -203,6 +204,18 @@ class OpenDataLoaderExtractor:
             # the figure on the page so downstream caption parsing
             # has something to work with.
             figures = self._ocr_missing_captions(figures, pdf_path)
+            # Audit 2026-09-05 (completeness test): page-level rescue for
+            # orphan plate pages. Soeka_2019 lost BOTH SEM plates (24
+            # panels, 19 caption clauses) because the caption pages'
+            # text layer uses a shifted encoding ("Plate" → "3ODWH"),
+            # so ``_find_plate_captions`` found nothing and those pages
+            # never became figure entries — ``_ocr_missing_captions``
+            # only fires for figures that EXIST with an empty caption.
+            # This pass renders the caption band of any page that
+            # carries images but no figure pair, OCRs it, and promotes
+            # the page to a figure when the OCR text looks like a real
+            # caption (Plate/Fig marker).
+            figures = self._rescue_orphan_plate_pages(pdf_path, figures, data, out, paper_id)
             return OpenDataLoaderResult(
                 paper_id=paper_id,
                 json_data=data,
@@ -353,6 +366,190 @@ class OpenDataLoaderExtractor:
         finally:
             doc.close()
         return out
+
+    def _rescue_orphan_plate_pages(
+        self,
+        pdf_path: Path,
+        figures: list[FigureCaptionPair],
+        data: dict[str, Any],
+        output_dir: Path,
+        paper_id: str,
+    ) -> list[FigureCaptionPair]:
+        """Promote image-bearing pages that NO figure pair covers into
+        figures, using OCR on the page's caption band.
+
+        Audit 2026-09-05 (completeness test, Soeka_2019 incident): the
+        standard paths all depend on the PDF text layer —
+        ``_find_plate_captions`` regex-matches "Plate N" text, and the
+        merge-by-image fallback relies on OD's caption/image linkage.
+        When a caption page's text layer is missing or uses a shifted
+        font encoding (observed: "Plate" stored as "3ODWH", ASCII +29),
+        those pages never become figures and every panel on them is
+        silently lost — ``_ocr_missing_captions`` cannot help because
+        it only fires for figures that already exist with an empty
+        caption.
+
+        This pass is the LAST-chance net:
+
+        1. Collect every ``image`` element from the OD tree; compute
+           the set of pages already covered by extracted figures.
+        2. For each uncovered page, merge its images spatially
+           (``_merge_nearby_images``) and skip groups whose union
+           bbox is under 15% of the page area (logos, decorations).
+        3. Render the caption band under the image group and OCR it
+           (same machinery as ``_ocr_missing_captions``). The page is
+           promoted ONLY when the OCR text starts with a recognisable
+           caption marker (``Plate N`` / ``Fig. N`` / 図版 N / 图版 N) —
+           otherwise the page is left alone (no fabricated captions).
+        4. Promoted figures carry
+           ``metadata["caption_recovered_via"] = "ocr_page_rescue"``
+           so downstream stages (and auditors) can trace their origin.
+
+        Cost: one OCR call per uncovered image page (~seconds each on
+        EasyOCR CPU). Rescuing nothing (no uncovered pages, EasyOCR
+        unavailable, or no caption-looking OCR) returns the input
+        unchanged.
+        """
+        # Bail out early on missing optional deps, mirroring
+        # _ocr_missing_captions' conservative dependency handling.
+        try:
+            import easyocr  # noqa: F401
+            import fitz  # PyMuPDF
+            import numpy as np
+        except Exception:
+            logger.info("EasyOCR/PyMuPDF unavailable; skipping orphan-page rescue")
+            return figures
+        ocr_engine = self._get_or_init_ocr_engine()
+        if ocr_engine is None:
+            return figures
+
+        kids: list[dict[str, Any]] = (data or {}).get("kids") or []
+        if not kids:
+            return figures
+        all_images = [el for el in _iter_all_elements(kids) if el.get("type") == "image"]
+        if not all_images:
+            return figures
+
+        covered_pages = {fig.page_number for fig in figures if fig.page_number >= 1}
+        by_page: dict[int, list[dict[str, Any]]] = {}
+        for img in all_images:
+            try:
+                page = int(img.get("page number", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if page >= 1 and page not in covered_pages:
+                by_page.setdefault(page, []).append(img)
+        if not by_page:
+            return figures
+
+        existing_ids = {fig.figure_id for fig in figures}
+        rescued: list[FigureCaptionPair] = []
+        try:
+            doc = fitz.open(str(pdf_path))
+        except Exception:
+            logger.warning("PyMuPDF could not open %s; orphan-page rescue disabled", pdf_path)
+            return figures
+
+        try:
+            for page in sorted(by_page):
+                page_images = by_page[page]
+                page_index = page - 1
+                if page_index >= len(doc):
+                    continue
+                # Skip small decorations: a group must cover >= 15% of
+                # the page area to be worth an OCR call.
+                groups = _merge_nearby_images(page_images, gap_pt=self.merge_gap_pt)
+                page_area = float(doc[page_index].rect.width) * float(doc[page_index].rect.height)
+                for group_idx, group in enumerate(groups, start=1):
+                    bbox = _union_bbox(group)
+                    if bbox is None:
+                        continue
+                    left, bottom, right, top = bbox
+                    if (right - left) * (top - bottom) < 0.15 * page_area:
+                        continue
+                    recovered = _ocr_caption_band(doc, page_index, bbox, ocr_engine, np)
+                    if not recovered:
+                        continue
+                    ok, probe = _rescue_orphan_plate_pages_marker_check(recovered)
+                    if not ok:
+                        logger.debug(
+                            "orphan-page rescue: page %d OCR text %r lacks a "
+                            "caption marker; skipping",
+                            page,
+                            probe[:40],
+                        )
+                        continue
+                    # Duplicate-caption guard: OD sometimes leaves a
+                    # stray image on a neighbouring page whose caption
+                    # band reads the SAME caption as an existing pair
+                    # (observed on Soeka p3, duplicating p4's Figure 2
+                    # chart caption). Near-identical text = same
+                    # figure, not a new one.
+                    is_dup = False
+                    for existing in figures:
+                        ratio = difflib.SequenceMatcher(
+                            None,
+                            recovered[:200].lower(),
+                            (existing.caption_text or "")[:200].lower(),
+                        ).ratio()
+                        if ratio >= 0.8:
+                            is_dup = True
+                            break
+                    if is_dup:
+                        logger.debug(
+                            "orphan-page rescue: page %d OCR caption duplicates "
+                            "an existing figure's caption; skipping",
+                            page,
+                        )
+                        continue
+                    image_paths = _resolve_image_paths(group, output_dir, paper_id)
+                    if not image_paths:
+                        continue
+                    # figure_id: prefer an OCR'd "Plate N" number so the
+                    # id matches the paper's own numbering; else fall
+                    # back to a page-scoped rescue id.
+                    plate_m = re.search(r"Plate\s+(\d+)", probe, re.IGNORECASE)
+                    if plate_m:
+                        figure_id = f"od_plate_{paper_id}_p{page:03d}_pl{int(plate_m.group(1)):02d}"
+                    else:
+                        figure_id = f"od_plate_{paper_id}_p{page:03d}_ocr{group_idx}"
+                    # Dedup against existing and previously rescued ids.
+                    base_id = figure_id
+                    suffix = 2
+                    while figure_id in existing_ids:
+                        figure_id = f"{base_id}_r{suffix}"
+                        suffix += 1
+                    existing_ids.add(figure_id)
+                    rescued.append(
+                        FigureCaptionPair(
+                            figure_id=figure_id,
+                            page_number=page,
+                            image_paths=image_paths,
+                            caption_text=recovered,
+                            merged_bbox=bbox,
+                            metadata={
+                                "caption_recovered_via": "ocr_page_rescue",
+                                "caption_recovered_confidence": 0.55,
+                                "orphan_rescue_group": group_idx,
+                            },
+                        )
+                    )
+                    logger.info(
+                        "orphan-page rescue: page %d promoted to %s "
+                        "(caption recovered via OCR, %d chars)",
+                        page,
+                        figure_id,
+                        len(recovered),
+                    )
+        finally:
+            doc.close()
+        if rescued:
+            logger.info(
+                "orphan-page rescue recovered %d figure(s) for paper=%s",
+                len(rescued),
+                paper_id,
+            )
+        return figures + rescued
 
     # -- internals ----------------------------------------------------------
 
@@ -1415,6 +1612,52 @@ _FIG_CAPTION_RE = re.compile(
     r"^\s*Fig(?:ure)?\s*\.?\s*(\d+)([a-z]?)\s*([.\s])\s*(\S)",
     re.IGNORECASE,
 )
+
+# Audit 2026-09-05 (orphan-page rescue): lenient caption-marker probe.
+# Unlike the anchored regexes above, this is SEARCHED (not matched) in
+# the first ~120 chars of band OCR text because OCR ordering often
+# drops the "Plate N" header (it sits ABOVE the image bbox) and
+# captions frequently open with the plural "Figs. 1-2." form, which
+# defeats both the "Plate" anchor and _FIG_CAPTION_RE's singular
+# "Fig\s*(\d+)" shape ("Figs" has an intervening "s").
+_RESCUE_CAPTION_MARKER_RE = re.compile(
+    r"(?:Plate|Figs?|Figure|図版|図|图版|图)\s*\.?\s*[^\d]{0,3}\d",
+    re.IGNORECASE,
+)
+
+# Clause-list heuristic for band OCR that lost its header entirely
+# (observed on Soeka p10: EasyOCR read "Spongatractus pachystylus
+# (Ehrenberg) 8. Amphicraspedum prolixum ... 9. Actinoma panujui ..."
+# — the species clauses survived but every "Figs."/“Plate” token was
+# dropped). A real plate caption lists numbered clauses; requiring 3+
+# number-prefixed capitalized words keeps body-text bands from firing.
+_RESCUE_CLAUSE_LIST_RE = re.compile(r"\b\d{1,2}\s*\.?\s+[A-Z][a-z]{3,}")
+
+
+def _rescue_orphan_plate_pages_marker_check(recovered: str) -> tuple[bool, str]:
+    """Decide whether band-OCR ``recovered`` text looks like a figure
+    caption. Returns ``(ok, probe)`` — ``probe`` is the truncated text
+    the caller may reuse for logging / plate-number extraction.
+
+    Lenient by design (audit 2026-09-05, Soeka incident): OCR text
+    often starts mid-caption ("Figs. 1-2. Species ..." — the plural
+    form defeats both _PLATE_CAPTION_RE's "Plate" anchor and
+    _FIG_CAPTION_RE's singular "Fig" shape; the "Plate N" header itself
+    may sit ABOVE the image bbox and never reach the band; OCR noise
+    can corrupt the digit, e.g. "Figs. [-2"), so:
+
+    1. SEARCH (don't anchor) for a caption marker within the first
+       120 chars, allowing up to 3 noise chars before the digit.
+    2. OR accept a header-less species-clause list: 3+ matches of
+       ``\\d{1,2}.? Capitalized-word`` anywhere in the text.
+    """
+    probe = recovered.lstrip()[:120]
+    if _RESCUE_CAPTION_MARKER_RE.search(probe):
+        return True, probe
+    if len(_RESCUE_CLAUSE_LIST_RE.findall(recovered)) >= 3:
+        return True, probe
+    return False, probe
+
 
 # Phase 27: Japanese caption markers. JA radiolarian papers use 図版
 # (``zuhan`` = plate, literally "picture-book") for plate-level captions
