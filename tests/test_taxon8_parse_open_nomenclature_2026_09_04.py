@@ -99,13 +99,12 @@ class TestCallerNoLongerRestitchesQualifier:
     keeps the exact input species string."""
 
     def test_research_eval_caller_does_not_restitch(self):
-        import importlib
-
         # Importing the module triggers module-level references; if
         # the old ``f"{sp}{qual_str}"`` assembly is still in source we
         # need to know — assert by AST scan that the bad pattern is
         # gone.
         import ast
+        import importlib
 
         path = _ROOT / "scripts" / "run_research_eval.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))

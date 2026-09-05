@@ -49,17 +49,13 @@ class TestWiringCharacterNormalizer:
         assert _normalize_species("Sponguru1 torsionis") == "Spongurul torsionis"
 
     def test_m3_normalize_species_long_vowel_folded(self):
-        assert _normalize_species("Archaeodictyomitrā apiarium") == (
-            "Archaeodictyomitra apiarium"
-        )
+        assert _normalize_species("Archaeodictyomitrā apiarium") == ("Archaeodictyomitra apiarium")
 
     def test_m3_normalize_species_capital_i_folded(self):
         assert _normalize_species("TheocorIs robusta") == "Theocorls robusta"
 
     def test_m3_normalize_species_clean_name_untouched(self):
-        assert _normalize_species("Follicucullus scholasticus") == (
-            "Follicucullus scholasticus"
-        )
+        assert _normalize_species("Follicucullus scholasticus") == ("Follicucullus scholasticus")
 
     def test_extract_taxa_caption_digit_one_recovered(self):
         # The mangled genus must be extracted at all (pre-normalization
@@ -68,25 +64,19 @@ class TestWiringCharacterNormalizer:
         assert any(t == "Spongurul spinosa" for t in taxa), taxa
 
     def test_extract_taxa_caption_macron_recovered(self):
-        taxa = extract_taxa_from_caption(
-            "Fig. 2: Archaeodictyomitrā apiarium (Pl. 4, Figs. 8-9)."
-        )
+        taxa = extract_taxa_from_caption("Fig. 2: Archaeodictyomitrā apiarium (Pl. 4, Figs. 8-9).")
         assert any(t == "Archaeodictyomitra apiarium" for t in taxa), taxa
 
     def test_extract_taxa_caption_numeric_identifier_not_corrupted(self):
         # "sp. 1" style identifiers must keep their digit: the 1 sits
         # after a space, so the digit-one rule must not fire and turn
         # figure/identifier numbers into letter noise ("spl").
-        taxa = extract_taxa_from_caption(
-            "Fig. 1 shows Archaeodictyomitra spinosa sp. 1."
-        )
+        taxa = extract_taxa_from_caption("Fig. 1 shows Archaeodictyomitra spinosa sp. 1.")
         assert any(t == "Archaeodictyomitra spinosa" for t in taxa), taxa
         assert not any("spl" in t for t in taxa), taxa
 
     def test_extract_taxa_clean_caption_unchanged(self):
-        taxa = extract_taxa_from_caption(
-            "Fig. 3: Follicucullus scholasticus (Pl. 2, Fig. 1)."
-        )
+        taxa = extract_taxa_from_caption("Fig. 3: Follicucullus scholasticus (Pl. 2, Fig. 1).")
         assert any(t == "Follicucullus scholasticus" for t in taxa), taxa
 
 
@@ -111,9 +101,7 @@ class TestSourceGuardProductionCaller:
             "correction layer is dead code again (audit 2026-09-04 taxon-2)"
         )
         # And the importers must include the wired production paths.
-        assert any(
-            "m3_engine" in i or "association" in i for i in importers
-        ), importers
+        assert any("m3_engine" in i or "association" in i for i in importers), importers
 
     def test_m3_engine_normalizes_before_gold_rules(self):
         """The char pass must run on the raw species string, not after

@@ -38,9 +38,7 @@ class TestSubstringFalsePositivesRejected:
         # Carpathian site (Bucovina) was mis-routed to the "Arabia"
         # plate, producing wrong paleo coordinates.
         plate = infer_plate_id(locality="Bucovina, Romania")
-        assert plate != "Arabia", (
-            f"Romania must not match 'oman' substring; got {plate!r}"
-        )
+        assert plate != "Arabia", f"Romania must not match 'oman' substring; got {plate!r}"
         assert plate == "Eurasia", plate
 
     def test_romania_explicit_country(self):

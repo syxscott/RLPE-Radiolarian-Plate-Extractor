@@ -43,9 +43,7 @@ def _write_od(tmp: Path, kids: list[dict]) -> None:
 def _dupes(pairs: list[FigureCaptionPair]) -> dict[str, int]:
     return {
         name: n
-        for name, n in Counter(
-            Path(p).name for f in pairs for p in (f.image_paths or [])
-        ).items()
+        for name, n in Counter(Path(p).name for f in pairs for p in (f.image_paths or [])).items()
         if n > 1
     }
 
@@ -131,14 +129,10 @@ def test_two_rescued_captions_cannot_share_one_image():
             },
         ]
         _write_od(tmp, kids)
-        rescued = _make_extractor()._extract_unpaired_captions(
-            {"kids": kids}, [], tmp, "paperX"
-        )
+        rescued = _make_extractor()._extract_unpaired_captions({"kids": kids}, [], tmp, "paperX")
         assert len(rescued) == 2, f"expected both captions rescued, got {rescued!r}"
         dupes = _dupes(rescued)
-        assert not dupes, (
-            f"Two rescued captions share one image: {dupes}. pipe-1 regression."
-        )
+        assert not dupes, f"Two rescued captions share one image: {dupes}. pipe-1 regression."
 
 
 def test_rescued_captions_still_claim_a_stub_owned_image():
@@ -177,9 +171,7 @@ def test_rescued_captions_still_claim_a_stub_owned_image():
         )
         assert rescued, "Round 21 regression: real Fig. caption was not rescued"
         assert any(
-            Path(p).name == "imageFile1.png"
-            for r in rescued
-            for p in (r.image_paths or [])
+            Path(p).name == "imageFile1.png" for r in rescued for p in (r.image_paths or [])
         ), (
             "Rescue stopped claiming a stub-owned image — the Round 21 "
             "real-caption-wins contract regressed."

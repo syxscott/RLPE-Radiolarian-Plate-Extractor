@@ -34,7 +34,6 @@ if str(_SRC) not in sys.path:
 
 from rlpe.evaluation.gold import normalize_species
 
-
 _GOLD_DIR = Path(__file__).resolve().parent.parent / "data" / "gold"
 
 
@@ -45,12 +44,8 @@ class TestGoldMisspellingFixed:
         # The fix is on disk; loading and checking is sufficient and
         # survives any future re-ordering.
         rows = load_gold(_GOLD_DIR / "hollis2006.jsonl")
-        misspell_rows = [
-            r for r in rows if (r.species or "").startswith("Amphiscraspedum")
-        ]
-        accepted_rows = [
-            r for r in rows if (r.species or "").startswith("Amphicraspedum")
-        ]
+        misspell_rows = [r for r in rows if (r.species or "").startswith("Amphiscraspedum")]
+        accepted_rows = [r for r in rows if (r.species or "").startswith("Amphicraspedum")]
         assert not misspell_rows, (
             "gold still contains the non-accepted genus 'Amphiscraspedum' "
             f"on rows {[(r.panel_id, r.species) for r in misspell_rows]}"
@@ -75,6 +70,5 @@ class TestSourceGuardNoMisspellingInGold:
                 if "Amphiscraspedum" in line:
                     offenders.append(f"{path.name}:{ln}")
         assert not offenders, (
-            f"gold directory still contains the non-accepted genus "
-            f"'Amphiscraspedum': {offenders}"
+            f"gold directory still contains the non-accepted genus 'Amphiscraspedum': {offenders}"
         )

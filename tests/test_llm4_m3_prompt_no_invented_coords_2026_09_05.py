@@ -155,8 +155,8 @@ class TestPromptForbidsCoordinateInvention:
         body_lower = body.lower()
         matched = any(p in body_lower for p in phrases)
         assert matched, (
-            f"audit 2026-09-04 llm-4: litholog_column prompt must "
-            f"explicitly forbid inventing coordinates."
+            "audit 2026-09-04 llm-4: litholog_column prompt must "
+            "explicitly forbid inventing coordinates."
         )
 
     def test_paleogeographic_prompt_explicitly_says_no_invention(self):
@@ -175,6 +175,6 @@ class TestPromptForbidsCoordinateInvention:
         body_lower = body.lower()
         matched = any(p in body_lower for p in phrases)
         assert matched, (
-            f"audit 2026-09-04 llm-4: paleogeographic_map prompt "
-            f"must explicitly forbid inventing coordinates."
+            "audit 2026-09-04 llm-4: paleogeographic_map prompt "
+            "must explicitly forbid inventing coordinates."
         )

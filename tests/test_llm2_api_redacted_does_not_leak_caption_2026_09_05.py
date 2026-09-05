@@ -79,11 +79,11 @@ class TestApplyOutboundPolicyRedactsCaption:
         )
         redacted_caption = result[2]
         assert redacted_caption != sample_caption, (
-            f"audit 2026-09-04 llm-2: api_redacted must redact "
-            f"caption_text but returned it unchanged. "
-            f"This is the bug: the policy signature accepts caption_text "
-            f"but the body ignores it, so the full paper caption "
-            f"leaves the machine despite the user opting out."
+            "audit 2026-09-04 llm-2: api_redacted must redact "
+            "caption_text but returned it unchanged. "
+            "This is the bug: the policy signature accepts caption_text "
+            "but the body ignores it, so the full paper caption "
+            "leaves the machine despite the user opting out."
         )
         assert redacted_caption == "" or "<redacted>" in redacted_caption.lower(), (
             f"audit 2026-09-04 llm-2: redacted caption must be empty "
@@ -106,8 +106,7 @@ class TestApplyOutboundPolicyRedactsCaption:
         # reduced (the printed panel IDs alone aren't sensitive, but
         # they could be — the safe default is to drop them too).
         assert redacted_ocr == [] or redacted_ocr is None, (
-            f"audit 2026-09-04 llm-2: api_redacted must strip "
-            f"ocr_labels, got {redacted_ocr}"
+            f"audit 2026-09-04 llm-2: api_redacted must strip ocr_labels, got {redacted_ocr}"
         )
 
     def test_api_full_passes_caption_through(self):

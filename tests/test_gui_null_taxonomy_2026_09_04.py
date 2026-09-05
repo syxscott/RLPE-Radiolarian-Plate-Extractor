@@ -169,7 +169,9 @@ class TestFilterRowsNullTaxonomy:
         # blob from the same broken chain. "follicucullus" matches the
         # null-taxonomy row via species but not the OK row (its family
         # "Follicucullidae" does not contain that substring).
-        rows = self._tab([ROW_TAXONOMY_NULL, ROW_TAXONOMY_OK], search="follicucullus")._filter_rows()
+        rows = self._tab(
+            [ROW_TAXONOMY_NULL, ROW_TAXONOMY_OK], search="follicucullus"
+        )._filter_rows()
         assert [r["figure_id"] for r in rows] == ["f"]
 
     def test_family_filter_over_null_taxonomy_row(self):
@@ -206,9 +208,7 @@ class TestNoLiteralDefaultChainHops:
         dicts, never null.)"""
         offenders = []
         for path in sorted((_SRC / "rlpe" / "gui").rglob("*.py")):
-            for lineno, line in enumerate(
-                path.read_text(encoding="utf-8").splitlines(), start=1
-            ):
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
                 stripped = line.strip()
                 if stripped.startswith("#"):
                     continue
@@ -224,5 +224,5 @@ class TestNoLiteralDefaultChainHops:
 # persisted matches.jsonl rows (proven by the user's real job output).
 re_default_hop = re.compile(
     r'\.get\("(?:metadata|paleodb|taxonomy|geology_links|occurrences|bbox|bounding_box)",'
-    r'\s*\{\}\)'
+    r"\s*\{\}\)"
 )

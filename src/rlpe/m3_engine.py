@@ -388,8 +388,8 @@ PROMPT_REGISTRY: dict[str, str] = {
         # locality / country strings.
         "Do not invent or guess latitude / longitude from a locality "
         "or country name. Emit them as null unless the figure or "
-        "caption explicitly states coordinates (e.g. \"outcrop at "
-        "44.0 N, -107.9 E\" or a map graticule).\n\n"
+        'caption explicitly states coordinates (e.g. "outcrop at '
+        '44.0 N, -107.9 E" or a map graticule).\n\n'
         "Return strict JSON only, no markdown fences:\n\n"
         "{\n"
         '  "geo": [{"age": str|null, "chronostratigraphy": str|null, '
@@ -611,7 +611,7 @@ PROMPT_REGISTRY: dict[str, str] = {
         # are explicitly printed on the map (graticule, scale, or
         # explicit "X°N Y°E" label).
         "Do not invent or guess latitude / longitude from a country "
-        "name (\"filled circle in Italy\" is NOT a coordinate). Emit "
+        'name ("filled circle in Italy" is NOT a coordinate). Emit '
         "coordinates as null unless they are explicitly printed on "
         "the map.\n\n"
         "Return strict JSON only, no markdown fences:\n\n"

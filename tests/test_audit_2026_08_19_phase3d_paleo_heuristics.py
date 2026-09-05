@@ -337,8 +337,7 @@ class TestM5GeoCoordsBrackets:
         # (Phase 3D) pinned.
         c = parse_coordinate("（35.7N,110.3E）")
         assert c is not None, (
-            "'（35.7N,110.3E）' (full-width brackets, no space, with "
-            "hemisphere) must parse"
+            "'（35.7N,110.3E）' (full-width brackets, no space, with hemisphere) must parse"
         )
         assert abs(c.latitude - 35.7) < 0.01
         assert abs(c.longitude - 110.3) < 0.01

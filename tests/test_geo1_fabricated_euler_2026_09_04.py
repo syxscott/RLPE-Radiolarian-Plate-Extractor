@@ -58,7 +58,12 @@ class TestFabricatedIndoAustralianRemoved:
         assert plat is None and plon is None
 
     def test_enrich_does_not_export_fake_paleo_coords(self):
-        rec = {"latitude": -35.3, "longitude": 149.1, "age": "Late Cretaceous", "country": "Australia"}
+        rec = {
+            "latitude": -35.3,
+            "longitude": 149.1,
+            "age": "Late Cretaceous",
+            "country": "Australia",
+        }
         pr.enrich_geology_record(rec)
         assert "paleo_latitude" not in rec
         assert "paleo_longitude" not in rec
@@ -73,7 +78,8 @@ class TestDegeneratePoleGuard:
         # Simulate the exact historical bug: inject a spin-axis table
         # for a non-polar plate; reconstruction must refuse.
         monkeypatch.setitem(
-            pr.EULER_POLES, "TestPlate",
+            pr.EULER_POLES,
+            "TestPlate",
             [(0.0, 0.0, 0.0, 0.0), (100.0, -90.0, 0.0, -20.0)],
         )
         assert pr._interpolate_euler("TestPlate", 100.0) is None
@@ -113,12 +119,12 @@ class TestHonestModelLabel:
         pr.enrich_geology_record(rec)
         assert rec.get("reconstruction_model") == "embedded-approximate"
 
-    def test_external_file_plate_labelled_seton2012(self, tmp_path, monkeypatch, _restore_euler_poles):
+    def test_external_file_plate_labelled_seton2012(
+        self, tmp_path, monkeypatch, _restore_euler_poles
+    ):
         rot = tmp_path / "Seton_etal_2012_ESR.rot"
         rot.write_text(
-            "# test rotation file\n"
-            "101 0.0 0.0 0.0 0.0\n"
-            "101 130.0 60.0 50.0 10.2\n",
+            "# test rotation file\n101 0.0 0.0 0.0 0.0\n101 130.0 60.0 50.0 10.2\n",
             encoding="utf-8",
         )
         monkeypatch.setattr(pr, "_EXTERNAL_MODEL_PLATES", set())

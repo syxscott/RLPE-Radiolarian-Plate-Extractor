@@ -78,7 +78,7 @@ class TestLLMFirstPromptForbidsMorphologyGuess:
             f"silent. Found forbidden phrases: {bad}. The model is not "
             f"a radiolarian expert — this rule causes fabricated "
             f"species names in DwC exports. Replace with explicit "
-            f"\"set species: null\" rule."
+            f'"set species: null" rule.'
         )
 
     def test_species_null_when_caption_silent(self):
@@ -140,8 +140,7 @@ class TestLLMFirstPromptForbidsMorphologyGuess:
             if "morphology" not in rule_lower:
                 continue
             has_negation = any(
-                neg in rule_lower
-                for neg in ["do not", "don't", "never", "must not", "mustn't"]
+                neg in rule_lower for neg in ["do not", "don't", "never", "must not", "mustn't"]
             )
             if not has_negation:
                 bad_rules.append(rule.strip()[:200])

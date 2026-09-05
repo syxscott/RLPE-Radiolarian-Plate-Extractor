@@ -59,10 +59,11 @@ def test_cf_qualifier_preserved_adversarial():
     """ADVERSARIAL: the old (overfit) rule stripped ' aff. <epithet>' and
     ' cf. <epithet>'. The current norm must NOT do this — these are
     legitimate open-nomenclature signals."""
-    # 'cf.' preserved with epithet (note: Archaeo→Archeo canonicalization
-    # applies; the cf. preservation is the property we're testing).
+    # 'cf.' preserved with epithet (note: the Archaeo/Archeo fold
+    # canonicalises to "Archaeo" since taxon-6 (c5229c4) made the fold
+    # bidirectional; the cf. preservation is the property we're testing).
     assert _norm_species("Hiscocapsa cf. kaminogoensis") == "Hiscocapsa cf. kaminogoensis"
-    assert _norm_species("Archaeodictyomitra cf. tumandae") == "Archeodictyomitra cf. tumandae"
+    assert _norm_species("Archaeodictyomitra cf. tumandae") == "Archaeodictyomitra cf. tumandae"
     assert _norm_species("Williriedellum cf. carpathicum") == "Williriedellum cf. carpathicum"
 
 
@@ -156,9 +157,10 @@ def test_bare_sp_stripped_at_end():
 
 def test_sp_with_letter_preserved():
     """'X sp. B' has a meaningful morphotype identifier — must NOT collapse.
-    Note: Archaeo→Archeo canonicalization applies."""
-    assert _norm_species("Archaeodictyomitra sp. A") == "Archeodictyomitra sp. A"
-    assert _norm_species("Archaeodictyomitra sp. B") == "Archeodictyomitra sp. B"
+    Note: the Archaeo/Archeo fold canonicalises to "Archaeo" (taxon-6,
+    c5229c4)."""
+    assert _norm_species("Archaeodictyomitra sp. A") == "Archaeodictyomitra sp. A"
+    assert _norm_species("Archaeodictyomitra sp. B") == "Archaeodictyomitra sp. B"
 
 
 def test_genus_initial_unchanged_under_strict():

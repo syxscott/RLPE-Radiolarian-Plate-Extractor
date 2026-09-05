@@ -28,9 +28,9 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from rlpe.geo_coords import _DECIMAL_RE, parse_coordinate  # noqa: E402
-
 import pytest  # noqa: E402
+
+from rlpe.geo_coords import _DECIMAL_RE, parse_coordinate  # noqa: E402
 
 
 class TestHemisphereRequired:

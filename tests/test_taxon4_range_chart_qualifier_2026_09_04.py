@@ -66,20 +66,14 @@ class TestSpeciesMatchQualifierAware:
         assert _species_match("Parvicingula jamesi", "Parvicingula aff. jamesi") is False
 
     def test_same_cf_cf_matches(self):
-        assert _species_match(
-            "Parvicingula cf. jamesi", "Parvicingula cf. jamesi"
-        ) is True
+        assert _species_match("Parvicingula cf. jamesi", "Parvicingula cf. jamesi") is True
 
     def test_same_aff_aff_matches(self):
-        assert _species_match(
-            "Parvicingula aff. jamesi", "Parvicingula aff. jamesi"
-        ) is True
+        assert _species_match("Parvicingula aff. jamesi", "Parvicingula aff. jamesi") is True
 
     def test_definite_definite_still_matches(self):
         # No qualifier on either side: behaviour unchanged.
-        assert _species_match(
-            "Parvicingula jamesi", "Parvicingula jamesi"
-        ) is True
+        assert _species_match("Parvicingula jamesi", "Parvicingula jamesi") is True
 
     def test_bare_genus_vs_definite_still_matches(self):
         # Existing behaviour pinned: a bare genus links to its definite

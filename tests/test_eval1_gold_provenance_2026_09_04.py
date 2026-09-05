@@ -62,9 +62,7 @@ class TestJsonReportProvenance:
         rep.gold_provenance = "image-verified by two human annotators (2026-09)"
         target = write_json_report(rep, tmp_path / "r.json")
         data = json.loads(target.read_text(encoding="utf-8"))
-        assert data["gold_provenance"] == (
-            "image-verified by two human annotators (2026-09)"
-        )
+        assert data["gold_provenance"] == ("image-verified by two human annotators (2026-09)")
 
 
 class TestMarkdownReportProvenance:

@@ -278,8 +278,6 @@ class TestSourceGuard:
             "in the neogene",
             "in the pleistocene",
         ):
-            assert needle in _PALEO_KEYWORDS, (
-                f"_PALEO_KEYWORDS missing qualified form {needle!r}"
-            )
+            assert needle in _PALEO_KEYWORDS, f"_PALEO_KEYWORDS missing qualified form {needle!r}"
         for needle in ("today", "present-day"):
             assert needle in _MODERN_KEYWORDS, f"_MODERN_KEYWORDS missing {needle!r}"

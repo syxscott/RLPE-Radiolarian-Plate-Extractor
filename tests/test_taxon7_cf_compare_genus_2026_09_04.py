@@ -49,9 +49,7 @@ class TestCfCompareSurfacesFullComparedBinomial:
         taxa = extract_taxa_from_caption(
             "Stichomitra cf. Stichocapsa excelsa",
         )
-        assert any(
-            "Stichocapsa" in t and "excelsa" in t for t in taxa
-        ), taxa
+        assert any("Stichocapsa" in t and "excelsa" in t for t in taxa), taxa
 
     def test_aff_form_also_surfaces_genus(self):
         taxa = extract_taxa_from_caption(

@@ -71,9 +71,7 @@ class TestSafeWhitelistRulesStillActive:
     working — the fix removed three rules, not the whole layer."""
 
     def test_hollis2006_author_suffix_strip(self):
-        out = ocr_corrections.apply_corrections(
-            "Theocorys? phyzella Foreman", "hollis2006"
-        )
+        out = ocr_corrections.apply_corrections("Theocorys? phyzella Foreman", "hollis2006")
         assert "Foreman" not in out, out
 
     def test_axoprunum_aff_recovery(self):

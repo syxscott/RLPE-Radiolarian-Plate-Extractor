@@ -85,10 +85,17 @@ def _make_easyocr_stub(monkeypatch: pytest.MonkeyPatch, label_map: dict[str, str
         return label_map.get(str(image_path))
 
     monkeypatch.setattr(evmod, "easyocr_panel_label", stub)
-    # Stub the easyocr.Reader init the eval does once, so the eval
-    # thinks it has a real reader (otherwise it sets reader=None
-    # and skips the OCR loop entirely).
-    import easyocr as _easyocr
+    # Audit 2026-09-05: inject a FAKE ``easyocr`` module instead of
+    # importing the real one — the CI test extras don't include
+    # easyocr, and this stub never needs real OCR. Injecting into
+    # ``sys.modules`` also means the eval's own lazy
+    # ``import easyocr`` resolves to the fake, so the eval sees a
+    # usable reader and runs the full OCR loop on every environment.
+    import types
+
+    _fake_easyocr = types.ModuleType("easyocr")
+    monkeypatch.setitem(sys.modules, "easyocr", _fake_easyocr)
+    import easyocr as _easyocr  # noqa: E402 — resolves to the injected fake
 
     class _DummyReader:
         def readtext(self, img, detail=1):  # noqa: ARG002

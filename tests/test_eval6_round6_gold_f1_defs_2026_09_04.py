@@ -51,8 +51,10 @@ class TestF1KeyNaming:
         src = (_ROOT / "scripts" / "eval_round6_gold.py").read_text(encoding="utf-8")
         # The fix doesn't rename micro["f1"] (that's the canonical
         # micro value), but the script docstring must document it.
-        assert "species_f1_micro" in src or "F1 (micro)" in src or (
-            "micro" in src.lower() and "harmonic" in src.lower()
+        assert (
+            "species_f1_micro" in src
+            or "F1 (micro)" in src
+            or ("micro" in src.lower() and "harmonic" in src.lower())
         ), (
             "audit 2026-09-04 eval-6: script docstring must document "
             "which F1 formula micro['f1'] uses."
@@ -75,8 +77,8 @@ class TestNormalizeSpeciesDocumented:
         # for). Source guard: the function carries a DEPRECATED /
         # round6-only warning.
         src = (_ROOT / "scripts" / "eval_round6_gold.py").read_text(encoding="utf-8")
-        assert "DEPRECATED" in src or "round6-only" in src or (
-            "Use rlpe.evaluation.metrics" in src
+        assert (
+            "DEPRECATED" in src or "round6-only" in src or ("Use rlpe.evaluation.metrics" in src)
         ), (
             "audit 2026-09-04 eval-6: scripts/eval_round6_gold.py must "
             "mark its local normalize_species as legacy / round6-only "

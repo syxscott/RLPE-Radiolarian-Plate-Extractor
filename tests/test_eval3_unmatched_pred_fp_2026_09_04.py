@@ -28,8 +28,8 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from rlpe.evaluation.metrics import evaluate  # noqa: E402
 from rlpe.evaluation.gold import GoldPanel  # noqa: E402
+from rlpe.evaluation.metrics import evaluate  # noqa: E402
 
 
 def _gold_row(paper_id="p1", figure_id="fig_1", panel_id="1", species="Genus alpha"):

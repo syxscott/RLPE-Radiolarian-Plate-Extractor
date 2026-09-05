@@ -56,7 +56,7 @@ class TestPrefersClassifiedModernCoordinate:
             lambda *args, **kwargs: (None, None),
         )
         rec = {
-            "latitude": 30.0,         # first-found, happens to be paleo
+            "latitude": 30.0,  # first-found, happens to be paleo
             "longitude": 40.0,
             "modern_latitude": 10.0,  # classified modern
             "modern_longitude": 20.0,
@@ -110,7 +110,7 @@ class TestPrefersClassifiedModernCoordinate:
         monkeypatch.setattr(pr, "reconstruct_paleo_position", fake_recon)
 
         rec = {
-            "latitude": 30.0,         # paleo in this scenario
+            "latitude": 30.0,  # paleo in this scenario
             "longitude": 40.0,
             "modern_latitude": 10.0,  # real modern
             "modern_longitude": 20.0,

@@ -62,10 +62,7 @@ _BARE_NAMES = (
 
 class TestNoBareEpochInPaleoKeywords:
     def test_no_bare_epoch_entries(self):
-        offenders = [
-            kw for kw in _PALEO_KEYWORDS
-            if kw.lower().strip() in _BARE_NAMES
-        ]
+        offenders = [kw for kw in _PALEO_KEYWORDS if kw.lower().strip() in _BARE_NAMES]
         assert not offenders, (
             "audit 2026-09-04 geo-3 regression: bare epoch/era names in "
             "_PALEO_KEYWORDS trigger paleo classification on paleogeographic "
@@ -77,10 +74,22 @@ class TestNoBareEpochInPaleoKeywords:
         # ("in", "during", "the") OR a numeric / qualifier cue ("Ma",
         # "ago", "reconstructed"). A bare noun alone is forbidden.
         qualified_markers = (
-            " in ", "during", "the ", "ago", "ma ", "mya", "reconstructed",
-            "was located", "was situated", "lay at", "deposition",
-            "paleogeographic", "paleolatitude", "paleolongitude",
-            "at the time", "at that time",
+            " in ",
+            "during",
+            "the ",
+            "ago",
+            "ma ",
+            "mya",
+            "reconstructed",
+            "was located",
+            "was situated",
+            "lay at",
+            "deposition",
+            "paleogeographic",
+            "paleolatitude",
+            "paleolongitude",
+            "at the time",
+            "at that time",
         )
         # A leading-space check handles the "in X" forms (e.g. "in triassic"
         # is preceded by a word boundary).
@@ -110,18 +119,13 @@ class TestNoBareEpochInPaleoKeywords:
         ms = text.index("Sicily")
         me = text.index("Italy") + len("Italy")
         label = _classify_coordinate_age(text, ms, me)
-        assert label != "paleo", (
-            f"runtime mis-classified as paleo: {label!r}"
-        )
+        assert label != "paleo", f"runtime mis-classified as paleo: {label!r}"
 
     def test_qualified_paleo_phrase_still_detected(self):
         # Sanity: the qualified form still triggers paleo.
         from rlpe.geology_extraction import _classify_coordinate_age
 
-        text = (
-            "At 38.1N, 14.3E during the Cretaceous "
-            "the region was at 12S paleolatitude."
-        )
+        text = "At 38.1N, 14.3E during the Cretaceous the region was at 12S paleolatitude."
         ms = text.index("38.1")
         me = text.index("14.3") + len("14.3")
         label = _classify_coordinate_age(text, ms, me)

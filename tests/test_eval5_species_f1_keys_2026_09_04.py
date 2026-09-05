@@ -86,8 +86,9 @@ class TestAggregateBackCompatAlias:
         # is exposed via evaluate's result. Construct a tiny
         # report with the back-compat key explicitly to pin the
         # contract.
-        from rlpe.evaluation.report import write_json_report
         import json
+
+        from rlpe.evaluation.report import write_json_report
 
         rep = EvaluationReport(
             papers={"p1": _build_pm(tp=5, fp=3, fn=5)},

@@ -52,7 +52,6 @@ def normalize_species(s: str | None) -> str:
     F1 numbers than the production evaluator. New eval scripts must
     NOT use this — they should call
     ``rlpe.evaluation.metrics.evaluate(gold, preds)`` instead.
-    """
 
     Drops:
       - "?" uncertainty markers and empty "(?:)" / "()" groups
