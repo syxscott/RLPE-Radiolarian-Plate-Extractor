@@ -127,6 +127,15 @@ class ImagePreviewWidget(QWidget):
 
         self._path_label = tr_label("preview.no_image", object_name="preview.path_label")
         self._path_label.setObjectName("metricLabel")
+        # Audit 2026-09-05 (results-tab splitter collapse): cap the
+        # label's minimum width. An explicit minimum overrides the
+        # QLabel minimumSizeHint (the full text width when word wrap is
+        # off), so a long image path can no longer raise this widget's
+        # minimum width and invalidate the results tab's horizontal
+        # QSplitter geometry. See :meth:`_set_path_label_text` for the
+        # full incident notes and the regression test
+        # tests/test_gui_path_label_splitter_2026_09_05.py.
+        self._path_label.setMinimumWidth(1)
         bar.addWidget(self._path_label, 1)
 
         # Phase 37 audit fix: use i18n keys for the toolbar buttons so
@@ -175,6 +184,31 @@ class ImagePreviewWidget(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    def _set_path_label_text(self, text: str, tooltip: str | None = None) -> None:
+        """Set the toolbar path label with eliding + a tooltip.
+
+        Audit 2026-09-05 (results-tab splitter collapse): the label
+        previously received the FULL image path via ``setText``. With
+        word wrap off, ``QLabel.minimumSizeHint()`` equals the full
+        text width, so a long output path silently raised the whole
+        :class:`ImagePreviewWidget` minimum width to that pixel width
+        (reproduced at 945 px). The results tab's horizontal splitter
+        then held an invalid layout, and the FIRST user interaction
+        with the divider handle — even a bare click — snapped the
+        divider to the far left, pinning the detail pane at its 500 px
+        minimum or pushing it out of the window on narrower displays
+        ("右侧的数据直接消失"). The explicit ``setMinimumWidth(1)`` in
+        :meth:`_build_ui` decouples the layout constraint from the
+        text; this helper additionally elides the display text and
+        keeps the full string reachable as a tooltip.
+        """
+        if tooltip is None:
+            tooltip = text
+        metrics = self._path_label.fontMetrics()
+        elided = metrics.elidedText(text, Qt.ElideMiddle, max(self._path_label.width(), 120))
+        self._path_label.setText(elided)
+        self._path_label.setToolTip(tooltip)
+
     def set_image(self, image_path: Path | str | None) -> None:
         """Load an image from disk and display it."""
         if image_path is None:
@@ -187,7 +221,7 @@ class ImagePreviewWidget(QWidget):
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
             self._text_items.clear()  # Phase 55: also clear text items (bugfix)
-            self._path_label.setText(i18n._tr("preview.no_image"))
+            self._set_path_label_text(i18n._tr("preview.no_image"), tooltip="")
             return
         path = Path(image_path)
         self._current_path = path
@@ -196,7 +230,9 @@ class ImagePreviewWidget(QWidget):
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
             self._text_items.clear()  # Phase 55: also clear text items (bugfix)
-            self._path_label.setText(i18n._tr("preview.missing").format(name=path.name))
+            self._set_path_label_text(
+                i18n._tr("preview.missing").format(name=path.name), tooltip=str(path)
+            )
             return
         pix = self._load_pixmap(path)
         if pix is None:
@@ -204,7 +240,9 @@ class ImagePreviewWidget(QWidget):
             self._scene.clear()
             self._bbox_items.clear()  # Phase 41: clear bbox items too
             self._text_items.clear()  # Phase 55: also clear text items (bugfix)
-            self._path_label.setText(i18n._tr("preview.failed").format(name=path.name))
+            self._set_path_label_text(
+                i18n._tr("preview.failed").format(name=path.name), tooltip=str(path)
+            )
             return
         # audit 2026-08-01 W1 (C1): _overlay_bboxes reads self._pixmap
         # to detect off-image bboxes; before this fix the field was
@@ -222,7 +260,7 @@ class ImagePreviewWidget(QWidget):
         self._scene.setSceneRect(QRectF(pix.rect()))
         # Reset zoom and fit
         self._zoom = 1.0
-        self._path_label.setText(str(path))
+        self._set_path_label_text(str(path), tooltip=str(path))
         self._view.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
         # Re-overlay bboxes
         self._overlay_bboxes()

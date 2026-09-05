@@ -5,6 +5,27 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 13] - 2026-09-05 — GUI: results-tab splitter collapse fix
+
+### Fixed (GUI)
+- `gui/image_preview.py` — the toolbar path label received the FULL image
+  path via `setText()`; with word wrap off, `QLabel.minimumSizeHint()` equals
+  the full text width, so a long output path silently raised
+  `ImagePreviewWidget.minimumSizeHint()` from 413 px to 945+ px (3801 px for
+  very long paths). The Results tab's horizontal QSplitter then held an
+  invalid layout, and the first user interaction with the divider handle —
+  even a bare click — snapped the divider to the far left, pinning the
+  detail pane at its 500 px minimum or pushing it out of the window on
+  narrower displays ("右侧的数据直接消失"). The label now has an explicit
+  `setMinimumWidth(1)`, the display text is elided (ElideMiddle), and the
+  full path stays reachable via a tooltip (`_set_path_label_text`).
+- `tests/test_gui_path_label_splitter_2026_09_05.py` — 3 regression tests
+  (min-width bounded under `show()`, elide+tooltip contract, end-to-end
+  splitter-dividend invariance). PySide6 imports are deliberately
+  function-local so the conftest SIGSEGV guard does not classify the module
+  as Qt-runtime and skip it on the PySide6 6.11 + Python 3.11 CI combo;
+  verified all three FAIL on the pre-fix code and PASS on the fix.
+
 ## [Unreleased 12] - 2026-09-05 — Tier-2/3 extractor wiring fixes
 
 Fixes the "computed but dropped / wired but unreachable" class of defects found by the
