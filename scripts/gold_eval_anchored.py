@@ -130,9 +130,7 @@ for i, slug in enumerate(slugs):
             break  # first qualifying paragraph wins (no scoring)
     if best_para is None:
         best_para = page_text
-    print(
-        f"  caption ({len(best_para)} chars): {best_para[:120]}..."
-    )
+    print(f"  caption ({len(best_para)} chars): {best_para[:120]}...")
 
     # Render page
     doc = pymupdf.open(str(pdf_path))

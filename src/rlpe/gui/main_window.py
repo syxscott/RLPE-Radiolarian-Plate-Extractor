@@ -374,9 +374,7 @@ class MainWindow(QMainWindow):
             # Run tab's collect_settings() path; without them the worker
             # always resolved data_outbound_policy to local_only.
             "MiniMax_api_key": str(self._qsettings.value("MiniMax_api_key", "")),
-            "data_outbound_policy": str(
-                self._qsettings.value("data_outbound_policy", "auto")
-            ),
+            "data_outbound_policy": str(self._qsettings.value("data_outbound_policy", "auto")),
             "MiniMax_thinking_budget": self._qint(self._qsettings, "MiniMax_thinking_budget", 1024),
             "MiniMax_max_output_tokens": self._qint(
                 self._qsettings, "MiniMax_max_output_tokens", 2048

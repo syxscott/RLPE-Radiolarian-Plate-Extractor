@@ -155,8 +155,7 @@ class PipelineWorker(QThread):
             policy = str(cfg.extra.get("data_outbound_policy", ""))
             if policy == "local_only":
                 self._emit_log(
-                    "LLM outbound policy: local_only "
-                    "(LLM disabled — rule-based extraction only)"
+                    "LLM outbound policy: local_only (LLM disabled — rule-based extraction only)"
                 )
             else:
                 self._emit_log(f"LLM outbound policy: {policy}")

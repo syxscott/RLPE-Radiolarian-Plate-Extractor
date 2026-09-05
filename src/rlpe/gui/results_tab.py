@@ -994,8 +994,9 @@ class ResultsTab(QWidget):
                         str(r.get("panel_id") or ""),
                         str(r.get("caption_snippet") or ""),
                         str(r.get("label_text") or ""),
-                        (((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {})
-                        .get("family")
+                        (
+                            ((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {}
+                        ).get("family")
                         or "",
                     ]
                 ).lower()
@@ -1004,10 +1005,8 @@ class ResultsTab(QWidget):
             if species_filter and r.get("species") != species_filter:
                 continue
             if family_filter:
-                fam = (
-                    (((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {}).get(
-                        "family"
-                    )
+                fam = (((r.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {}).get(
+                    "family"
                 )
                 if fam != family_filter:
                     continue
@@ -1085,10 +1084,8 @@ class ResultsTab(QWidget):
             # "taxonomy": null (PBDB reverse-fallback miss), which made
             # this chain raise AttributeError and kill the whole
             # results-table refresh (2026-09-04 user report).
-            return (
-                (((row.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {}).get(
-                    "family"
-                )
+            return (((row.get("metadata") or {}).get("paleodb") or {}).get("taxonomy") or {}).get(
+                "family"
             )
         if key == "country":
             geo = (row.get("metadata") or {}).get("geology_links") or []

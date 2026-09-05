@@ -696,8 +696,7 @@ class OpenDataLoaderExtractor:
             image_paths = [
                 p
                 for p in image_paths
-                if Path(p).name not in claimed_basenames
-                and Path(p).name not in used_basenames
+                if Path(p).name not in claimed_basenames and Path(p).name not in used_basenames
             ]
             used_basenames.update(Path(p).name for p in image_paths)
             plate_imgs = [chosen_img] if image_paths else []
@@ -2062,10 +2061,9 @@ def _build_figures_from_plate_captions(
     # BUG-2 two-pass order: fig-kind first (precise same-page anchor),
     # then plate-kind (window-based). Within each pass the captions
     # keep document order.
-    ordered = (
-        [c for c in plate_captions if c.get("kind") == "fig"]
-        + [c for c in plate_captions if c.get("kind") != "fig"]
-    )
+    ordered = [c for c in plate_captions if c.get("kind") == "fig"] + [
+        c for c in plate_captions if c.get("kind") != "fig"
+    ]
     n = len(ordered)
     for idx, cap in enumerate(ordered):
         is_fig = cap.get("kind") == "fig"

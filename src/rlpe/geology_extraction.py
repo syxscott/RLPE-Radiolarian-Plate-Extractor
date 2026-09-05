@@ -1226,9 +1226,7 @@ def _extract_first_coord(
     # letter NOT be surrounded by alphabetic chars (so "Northeast"
     # still doesn't count). The cartographic convention permits
     # ``5N`` glued to the digit.
-    has_hemisphere = bool(
-        re.search(r"(?<![A-Za-z])[NSEWnsew](?![A-Za-z])", raw)
-    )
+    has_hemisphere = bool(re.search(r"(?<![A-Za-z])[NSEWnsew](?![A-Za-z])", raw))
     has_degree = "°" in raw
     if not has_hemisphere and not has_degree:
         return None, None, None, None

@@ -157,6 +157,8 @@ def _extract_author_initial(text: str, match: re.Match[str]) -> str | None:
     pre = text[start : match.start(2)]
     m = _AUTHOR_INITIAL_RE.search(pre)
     return f"{m.group(1)}." if m else None
+
+
 _SINGLE_UPPER = re.compile(r"[A-Z]")
 _SINGLE_DIGITS = re.compile(r"\d{1,2}")
 _SPECIES_QUAL = re.compile(r"\b(sp\.|spp\.|cf\.|aff\.)\b", re.IGNORECASE)
