@@ -313,25 +313,36 @@ def _flush_print(*args, **kwargs):
 
 
 def apply_log_level(quiet: bool, verbose: bool) -> None:
-    """Set the ``rlpe.cli`` logger level based on ``--quiet`` /
+    """Set the package-wide logger level based on ``--quiet`` /
     ``--verbose``.
 
     ``--quiet`` trumps ``--verbose`` when both are passed (matching
     GNU ``getopt`` convention) so a typo'd shell line can never
     silently flood the console.
 
-    Phase F-3 NIT: was re-fetching ``logging.getLogger("rlpe.cli")``
-    on every call. Now uses the module-level ``_CLI_LOGGER`` so the
-    logger is consistent with the rest of this module's logging and
-    tests can monkeypatch a fixture instead of every call site.
+    Audit 2026-09-06 (truthfulness audit A4/A5): the level used to be
+    applied only to the ``rlpe.cli`` logger, which emits nothing at
+    INFO/DEBUG — so both flags were no-ops while the interesting traces
+    (pipeline stages, OCR, LLM calls) live on the ``rlpe`` package
+    loggers. Apply the level to the ``rlpe`` package logger so
+    ``--verbose`` actually surfaces pipeline/m3_engine/llm_backends
+    DEBUG traces and ``--quiet`` silences WARNING chatter.
     """
 
-    if quiet:
-        _CLI_LOGGER.setLevel(logging.ERROR)
-    elif verbose:
-        _CLI_LOGGER.setLevel(logging.DEBUG)
-    else:
-        _CLI_LOGGER.setLevel(logging.WARNING)
+    level = logging.DEBUG if verbose else (logging.ERROR if quiet else logging.WARNING)
+    pkg_logger = logging.getLogger("rlpe")
+    pkg_logger.setLevel(level)
+    _CLI_LOGGER.setLevel(level)
+    if verbose and not pkg_logger.handlers and not logging.getLogger().handlers:
+        # No handler configured anywhere (the pipeline loggers propagate
+        # to root, whose lastResort handler drops DEBUG/INFO) — attach a
+        # stderr stream handler so --verbose traces are actually visible.
+        _handler = logging.StreamHandler()
+        _handler.setFormatter(
+            logging.Formatter("[%(asctime)s] [%(levelname)s] %(name)s: %(message)s")
+        )
+        pkg_logger.addHandler(_handler)
+        pkg_logger.propagate = False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -912,8 +923,12 @@ def _maybe_load_config(args: argparse.Namespace) -> dict | None:
     # (see Phase F-3 NIT) so this call is direct.
     try:
         cfg = _load_config(config_path)
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, KeyError) as exc:
         # Corrupt config must not block the CLI. Warn and continue.
+        # Audit 2026-09-06: KeyError added — config_io indexes
+        # payload["pdf_dir"]/["work_dir"] directly, so a config missing
+        # those keys escaped as a raw traceback instead of the
+        # designed warn-and-continue path.
         _flush_print(
             f"WARNING: --config {config_path} could not be loaded (ignoring): {exc}",
             file=sys.stderr,
@@ -1101,8 +1116,18 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         render_dpi=args.render_dpi,
         save_intermediate=args.save_intermediate,
         # audit 2026-07-26: forward YOLO flags (only override when set).
+        # Audit 2026-09-06 (truthfulness audit B-friction): the old
+        # ``(args.yolo_model_path or "")`` forwarded an empty string,
+        # overriding the PipelineConfig default
+        # (models/radiolarian_yolo_v1.pt) and tripping the config
+        # ValueError — bare `--use-yolo-figures` always crashed at
+        # configure time. Fall back to the packaged default instead.
         use_yolo_figures=args.use_yolo_figures,
-        yolo_model_path=(args.yolo_model_path or ""),
+        yolo_model_path=(
+            (args.yolo_model_path or "models/radiolarian_yolo_v1.pt")
+            if args.use_yolo_figures
+            else ""
+        ),
         yolo_conf_threshold=(args.yolo_conf if args.yolo_conf is not None else 0.25),
         yolo_iou_threshold=(args.yolo_iou if args.yolo_iou is not None else 0.45),
         # Phase 28: forward the two caption-window knobs. Both fields

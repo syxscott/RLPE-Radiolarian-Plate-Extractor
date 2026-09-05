@@ -306,6 +306,33 @@ class RadiolarianPipeline:
             logger.info(
                 "Pipeline: using ANTHROPIC_API_KEY as MiniMax_api_key (Anthropic env-var fallback)"
             )
+        # Audit 2026-09-06 (truthfulness audit, fake-flag A1/A2): wire
+        # ``--deterministic`` / ``--deterministic-seed``. The helper
+        # ``llm_backends.resolve_deterministic_kwargs`` was fully
+        # implemented (temperature=0, greedy decode, RNG seeding) but
+        # had ZERO callers — both CLI flags were silent no-ops. Apply
+        # it here, before any LLM runtime is constructed: seed the
+        # python/numpy/torch RNGs and force the M3 sampling params to
+        # temperature 0 (M3Engine._apply_config_sampling_params reads
+        # ``m3_temperature`` from this extra dict at construction).
+        if self.config.extra.get("deterministic"):
+            from .llm_backends import (
+                DEFAULT_DETERMINISTIC_SEED,
+                resolve_deterministic_kwargs,
+            )
+
+            seed_raw = self.config.extra.get("deterministic_seed")
+            try:
+                seed = int(seed_raw) if seed_raw is not None else DEFAULT_DETERMINISTIC_SEED
+            except (TypeError, ValueError):
+                seed = DEFAULT_DETERMINISTIC_SEED
+            resolve_deterministic_kwargs(deterministic=True, seed=seed)
+            self.config.extra.setdefault("deterministic_seed", seed)
+            self.config.extra["m3_temperature"] = 0.0
+            logger.info(
+                "Deterministic mode enabled: RNGs seeded with %d, m3_temperature forced to 0.0",
+                seed,
+            )
         self._try_init_gemma()
 
     @property
@@ -875,6 +902,14 @@ class RadiolarianPipeline:
     def _process_one_pdf(self, pdf_path: Path) -> list[dict[str, Any]]:
         paper_id = stable_id(pdf_path)
         self._emit_progress(0, 1, f"Loading {pdf_path.name}…")
+
+        # Audit 2026-09-06 (coverage-25 run): the OD↔GROBID recursion
+        # depth counter is per-THREAD and previously persisted across
+        # papers; combined with the rejection-path leak it snowballed
+        # until every paper after the first few on each worker was
+        # instantly rejected. Reset it at every paper boundary — the
+        # recursion bound is per-paper by design.
+        self._od_grobid_depth.depth = 0
 
         # ------ OpenDataLoader path (opt-in) -----------------------------------
         if self.config.extra.get("use_opendataloader", False):
@@ -1481,10 +1516,29 @@ class RadiolarianPipeline:
 
     def _enter_od_grobid_guard(self, paper_id: str, path_name: str) -> bool:
         """Enter the OD↔GROBID fallback chain; False means the chain is
-        already too deep and the caller must NOT recurse further."""
+        already too deep and the caller must NOT recurse further.
+
+        Audit 2026-09-06 (coverage-25 run): the rejection path used to
+        KEEP the incremented depth — the caller returns its stub before
+        reaching the ``finally`` that calls ``_exit_od_grobid_guard``,
+        so every rejected paper permanently leaked +1 into the
+        thread-local counter. In a 25-paper batch this snowballed:
+        depths observed 3,4,5,…,22 across consecutive papers, each
+        paper after the first few instantly rejected and emitted as a
+        zero-row stub. Roll the increment back on rejection, and
+        ``_process_one_pdf`` additionally resets the counter per paper
+        (the bound is per-paper recursion depth by design)."""
         depth = getattr(self._od_grobid_depth, "depth", 0) + 1
-        self._od_grobid_depth.depth = depth
-        if depth >= 3:
+        if depth >= 4:
+            # Cap=4, not 3: the LEGITIMATE fallback chain is exactly
+            # OD(1) → GROBID(2) → OD-retry(3) — when GROBID is down and
+            # OD's first pass found nothing, the OD-retry at depth 3 is
+            # the paper's last real chance. The old cap=3 rejected that
+            # retry as a "cycle", so in any GROBID-down environment
+            # every paper whose first OD pass came up empty was stamped
+            # ``_ingestion_od_cycle`` without processing. The 4th enter
+            # (GROBID again after the retry) is the actual infinite
+            # cycle the guard exists to stop.
             logger.warning(
                 "OD↔GROBID fallback cycle detected for %s (%s at depth=%d); "
                 "abandoning recursive fallback.",
@@ -1493,6 +1547,7 @@ class RadiolarianPipeline:
                 depth,
             )
             return False
+        self._od_grobid_depth.depth = depth
         return True
 
     def _exit_od_grobid_guard(self) -> None:
@@ -1719,6 +1774,17 @@ class RadiolarianPipeline:
         use_geology_llm = (
             bool(self.config.extra.get("use_geology_llm", False)) and self.gemma_runtime is not None
         )
+        # Audit 2026-09-06 (truthfulness audit, CLI friction): the flag
+        # silently degraded to regex-only extraction when no LLM runtime
+        # was configured — surface the no-op once per paper instead.
+        if self.config.extra.get("use_geology_llm", False) and self.gemma_runtime is None:
+            logger.warning(
+                "use_geology_llm=True but no LLM runtime is configured "
+                "(--use-gemma4 / --llm-backend MiniMax with a key, or a "
+                "local backend); falling back to regex-only geology "
+                "extraction for %s",
+                paper_id,
+            )
         section_links: dict[str, list[dict[str, Any]]] = {}
         knowledge_graph: dict[str, Any] | None = None
         if od_result.fulltext_sections:

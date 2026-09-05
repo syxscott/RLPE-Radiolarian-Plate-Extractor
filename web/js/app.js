@@ -3167,6 +3167,7 @@ async function refreshLLMStatus() {
                     🔗 申请 MiniMax Token Plan
                 </a>
             `;
+        }
     } catch (err) {
         // Phase F-2 M1: handle AbortError (timeout) explicitly.
         if (iconEl) iconEl.textContent = '❌';

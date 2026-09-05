@@ -5,6 +5,73 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 15/16] - 2026-09-06 — batch-runner depth-guard fix + truthfulness audit + README rewrite
+
+### Fixed (batch correctness — found by the 25-paper coverage run)
+- `pipeline.py` — the OD↔GROBID recursion depth counter leaked +1 per
+  rejected paper (the rejection path returned before the `finally` that
+  decrements) and persisted across papers on each worker thread: in a
+  25-paper batch, depths snowballed 3→22 and every paper after the first
+  few was instantly rejected into a zero-row stub. Fix: roll back the
+  increment on rejection + reset the counter at every paper boundary +
+  raise the cap 3→4 (the legitimate chain is OD→GROBID→OD-retry; the old
+  cap=3 rejected that last real retry whenever GROBID was down, stamping
+  `_ingestion_od_cycle` on perfectly processable papers).
+  Regression tests: `tests/test_od_grobid_depth_leak_2026_09_06.py`
+  (all red on the old code, green on the fix). This bug also invalidated
+  the 3-paper completeness test's Collell "ingestion failed" conclusion.
+- `web/js/app.js` — syntax error (missing brace in `refreshLLMStatus`)
+  killed the ENTIRE web SPA (node --check: Unexpected token 'catch');
+  the broken file had been committed.
+
+### Fixed (truthfulness audit — three-agent sweep of CLI / web / dead code)
+- `--deterministic` / `--deterministic-seed` were silent no-ops:
+  `llm_backends.resolve_deterministic_kwargs` was fully implemented but
+  had ZERO callers. Now applied at pipeline init (RNG seeding +
+  `m3_temperature=0`).
+- Web extra builder silently dropped `gemma_conf_threshold` and
+  `m3_prompt_lang` (CLI forwarded both); both now forwarded.
+  `deterministic` / `deterministic_seed` / `MiniMax_interactive` added to
+  JobOptions for CLI parity and warning-noise removal.
+- Bare `--use-yolo-figures` (and any web YOLO job) crashed at configure
+  time: an empty `yolo_model_path` overrode the packaged default
+  (models/radiolarian_yolo_v1.pt) and tripped the config ValueError. Both
+  paths now fall back to the default weights.
+- Web xlsx export: `localities` / `paleo_coordinates` sheets were
+  permanently empty (job dict keys were read but never written); the job
+  completion path now caches them from run_output.json.
+- `-q/--verbose` only touched the `rlpe.cli` logger (which emits nothing
+  at those levels); now applied package-wide with a stream handler for
+  verbose traces.
+- `--config` with missing pdf_dir/work_dir escaped as a raw KeyError
+  traceback; now included in the warn-and-continue handler.
+- `--use-geology-llm` without an LLM runtime now warns per paper instead
+  of silently degrading to regex-only.
+- xlsx paper/species filters are case-insensitive as the endpoint
+  docstring always claimed; upload-limit hint corrected 256 MB → 100 MB.
+- `docs/openapi-1.1.0.json` regenerated against the current app (paths
+  only — JobOptions is validated from a raw dict and was never in the
+  spec).
+
+### Documented (not fixed — recorded in README 已知限制)
+- `ocr_corrections` dictionary layer is test-only (never wired into
+  production); `--taxon-model` choices have no runtime effect
+  (TaxoNERD 1.5.x ignores the kwarg); 7 orphan modules
+  (metrics/batch/preprocess/matching/io/tei/bootstrap); 4 schema fields
+  with no producer (source_pdf, pdf_sha256, caption_source,
+  caption_panel_range); SSE/WS endpoints have no frontend client.
+
+### README
+- Full rewrite against verified reality: real capability table from the
+  25-paper coverage test, truthfulness-audited CLI flag table, honest
+  evaluation section (0.075 event + coverage numbers), known-limitations
+  matrix, condensed annotation guide.
+
+### Tests
+- `tests/test_truthfulness_audit_2026_09_06.py` — 6 tests (deterministic
+  wiring, web forwarding source-guards, YOLO default fallback, app.js
+  parses).
+
 ## [Unreleased 14] - 2026-09-05 — Extraction completeness: orphan plate-page rescue + zero-row visibility
 
 A random 3-paper sample vs manual-reading completeness test found one paper

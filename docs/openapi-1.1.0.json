@@ -2,6 +2,7 @@
   "components": {
     "schemas": {
       "BatchDeleteRequest": {
+        "additionalProperties": false,
         "properties": {
           "delete_files": {
             "default": true,
@@ -12,6 +13,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 200,
             "title": "Job Ids",
             "type": "array"
           }
@@ -45,6 +47,20 @@
           "file"
         ],
         "title": "Body_upload_pdf_jobs_upload_post",
+        "type": "object"
+      },
+      "DeleteRowsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "row_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Row Ids",
+            "type": "array"
+          }
+        },
+        "title": "DeleteRowsRequest",
         "type": "object"
       },
       "FallbackDecisionRequest": {
@@ -159,6 +175,31 @@
       },
       "ResultRecord": {
         "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "caption_snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption Snippet"
+          },
           "confidence": {
             "title": "Confidence",
             "type": "number"
@@ -189,6 +230,22 @@
             ],
             "title": "Label Text"
           },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "ocr_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ocr Text"
+          },
           "panel_id": {
             "anyOf": [
               {
@@ -199,6 +256,17 @@
               }
             ],
             "title": "Panel Id"
+          },
+          "panel_local_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Panel Local Path"
           },
           "panel_path": {
             "anyOf": [
@@ -214,6 +282,29 @@
           "paper_id": {
             "title": "Paper Id",
             "type": "string"
+          },
+          "paper_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Metadata"
+          },
+          "row_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Id"
           },
           "species": {
             "anyOf": [
@@ -236,6 +327,7 @@
         "type": "object"
       },
       "ReviewCorrection": {
+        "additionalProperties": false,
         "properties": {
           "corrected_label": {
             "anyOf": [
@@ -262,6 +354,17 @@
           "figure_id": {
             "title": "Figure Id",
             "type": "string"
+          },
+          "image_verified": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Verified"
           },
           "notes": {
             "anyOf": [
@@ -306,6 +409,47 @@
           "figure_id"
         ],
         "title": "ReviewCorrection",
+        "type": "object"
+      },
+      "TestLLMRequest": {
+        "additionalProperties": false,
+        "description": "Body for /system/test-llm \u2014 all fields optional, falls back to env.\n\nPhase F-3 NIT: was ``extra=\"ignore\"`` which silently accepted\ntypos like ``api_kye`` (rather than ``api_key``) \u2014 the test would\nthen proceed with the typo'd field ignored, making the request\nfall back to the env var and pass even when the operator thought\nthey had entered a custom key. Aligned with the project's\ngeneral ``extra=\"forbid\"`` convention (e.g. ``BatchDeleteRequest``\ndeclared further above) so typos surface as a 422 instead.",
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "title": "TestLLMRequest",
         "type": "object"
       },
       "ValidationError": {
@@ -473,6 +617,24 @@
       "post": {
         "description": "Delete multiple jobs in one call. Returns a per-job status list.",
         "operationId": "batch_delete_jobs_jobs_batch_delete_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -513,6 +675,24 @@
     "/jobs/upload": {
       "post": {
         "operationId": "upload_pdf_jobs_upload_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -571,6 +751,22 @@
               "title": "Delete Files",
               "type": "boolean"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
           }
         ],
         "responses": {
@@ -608,6 +804,22 @@
             "schema": {
               "title": "Job Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
             }
           }
         ],
@@ -648,6 +860,22 @@
             "schema": {
               "title": "Job Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
             }
           }
         ],
@@ -690,7 +918,7 @@
     },
     "/jobs/{job_id}/cancel": {
       "post": {
-        "description": "Cancel a pending or running job.",
+        "description": "Cancel a pending or running job.\n\nReturns ``was_running`` (True if the job was already past the \"queued\"\nstate when cancelled) and ``cancelled_at`` (ISO timestamp) so the UI\ncan distinguish \"user cancel\" from \"server auto-cancel\" and show a\nsensible toast.",
         "operationId": "cancel_job_jobs__job_id__cancel_post",
         "parameters": [
           {
@@ -700,6 +928,22 @@
             "schema": {
               "title": "Job Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
             }
           }
         ],
@@ -724,6 +968,108 @@
           }
         },
         "summary": "Cancel Job"
+      }
+    },
+    "/jobs/{job_id}/export.xlsx": {
+      "get": {
+        "description": "Download a multi-sheet .xlsx for one job.\n\nRound 24: the user requested an Excel export that captures\nALL data (Round 23 CSV is one sheet; this endpoint produces\n5 sheets \u2014 panels, geology_contexts, localities,\npaleo_coordinates, legend). The endpoint streams the bytes\nvia ``StreamingResponse`` so a 10\u2075-row workbook doesn't\nblock the worker thread.\n\nSheets are produced by ``rlpe.exporters.xlsx.write_xlsx``\nwhich already sanitises formula-injection (CWE-1236) and\nuses ``openpyxl`` (transitive via the install env at\nversion 3.1.5).\n\naudit 2026-08-17 (WEB-B5): the optional ``paper_ids`` /\n``species`` / ``panel_ids`` / ``search`` query parameters\nrow-filter the panels sheet so the .xlsx download can mirror\nthe operator's UI filter (without these, the export always\nproduced the full job and silently disagreed with the\nvisible table). Each list param is comma-separated; values\nare matched case-insensitively. ``search`` does a substring\nmatch across paper_id, species, panel_id, figure_id and the\nfirst geology-link's formation/locality/country/age/lithology.",
+        "operationId": "export_job_xlsx_jobs__job_id__export_xlsx_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paper_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paper Ids"
+            }
+          },
+          {
+            "in": "query",
+            "name": "species",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Species"
+            }
+          },
+          {
+            "in": "query",
+            "name": "panel_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Panel Ids"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Job Xlsx"
       }
     },
     "/jobs/{job_id}/files/{file_path}": {
@@ -848,6 +1194,44 @@
         "summary": "Job Status"
       }
     },
+    "/jobs/{job_id}/stream": {
+      "get": {
+        "description": "Server-Sent Events stream of job progress.\n\naudit 2026-08-19 phase 5e (M-25): the polling ``/jobs/{id}/status``\nendpoint above is fine for the dev console but not for the live\nweb UI \u2014 a 1-5s polling cadence wastes a connection per tab and\nmisses progress updates between polls. SSE pushes every status\nchange the moment the worker writes it, and ``EventSource`` is\nbuilt into every browser (no library needed).\n\nWire format: ``text/event-stream`` with one event per status tick:\n\n    data: {\"job_id\": \"...\", \"status\": \"running\", \"progress\": 42, ...}\\n\\n\n\nThe stream closes after the job reaches a terminal state\n(``done`` / ``failed`` / ``cancelled``). 404 jobs emit one\n``not_found`` event then close. Clients should treat any\nstream-closed event as \"stop polling\".",
+        "operationId": "stream_job_progress_jobs__job_id__stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Job Progress"
+      }
+    },
     "/js/{file_path}": {
       "get": {
         "operationId": "web_js_js__file_path__get",
@@ -886,9 +1270,80 @@
       }
     },
     "/results": {
+      "delete": {
+        "description": "Clear every result row across every done job.\n\nKeeps the job metadata (so ``/jobs`` listings, ``/system/info``\ntotals, and any in-flight pipeline runs are unaffected). Returns\nthe total number of rows removed.\n\naudit 2026-08-01 W1 / M19: now also rewrites ``matches.jsonl``\nfor each affected job so a server restart reloads the empty\nstate. Previously only ``job[\"result\"]`` was mutated in memory,\nso the on-disk ``matches.jsonl`` retained the rows and the next\n``_load_existing_jobs_from_disk()`` call would resurrect them\non restart \u2014 confusing for the operator who tried to clear the\ntable.",
+        "operationId": "delete_all_results_results_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Delete All Results Results Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete All Results"
+      },
       "get": {
-        "description": "Get all accumulated results from completed jobs.",
+        "description": "Get all accumulated results from completed jobs.\n\nRound 23 audit: this endpoint previously returned the FULL\nresult set with no pagination. With 1000+ panels across many\njobs, the response could be huge (causing frontend lag or\ntimeouts). The new ``?limit=N&offset=M`` query params enable\npagination. ``limit`` is capped at 5000 to prevent abuse.\n\nThe response is ordered by ``(job_id, paper_id, figure_id,\npanel_id)`` so pagination is stable across requests. The\nresponse headers are NOT extended with a total-count link\nbecause computing it would require walking all rows anyway;\nthe frontend asks for the next page until an empty page is\nreturned (length 0) \u2014 implicit pagination.",
         "operationId": "get_results_results_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -903,14 +1358,101 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Results"
       }
     },
+    "/results/batch": {
+      "delete": {
+        "description": "Delete specific result rows by ``row_id``.\n\nRequest body: ``{\"row_ids\": [\"job_id:paper:figure:panel\", ...]}``.\nRows whose row_id is unknown are silently skipped (idempotent).\nReturns the number of rows actually removed and the not-found count.\n\naudit 2026-08-01 W1 / M19: persists the new ``job[\"result\"]``\nback to ``matches.jsonl`` for each touched job so a restart\ndoesn't undo the deletion.",
+        "operationId": "delete_results_batch_results_batch_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteRowsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Results Batch Results Batch Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Results Batch"
+      }
+    },
     "/review/correction": {
       "post": {
         "operationId": "submit_correction_review_correction_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -963,6 +1505,93 @@
           }
         },
         "summary": "System Info"
+      }
+    },
+    "/system/llm-status": {
+      "get": {
+        "description": "Report whether MiniMax / local LLM keys are configured.\n\nThe frontend's onboarding banner uses this to render either:\n    - \"\u2705 API Key \u5df2\u4ece .env \u8bfb\u53d6 (sk-...abc)\"  (key_configured=True)\n    - \"\u26a0\ufe0f \u672a\u914d\u7f6e API Key \u2014 [\u7acb\u5373\u8bbe\u7f6e]\"           (key_configured=False)\n\nNever returns the raw key. The masked preview helps operators\nconfirm WHICH key is loaded when they have multiple .env files.\nAlso returns aggregated MiniMax usage if any jobs have made calls.",
+        "operationId": "llm_status_system_llm_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Llm Status System Llm Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Llm Status"
+      }
+    },
+    "/system/test-llm": {
+      "post": {
+        "description": "Send a minimal request to the MiniMax M3 endpoint to verify the key.\n\nThe response shape matches the frontend's expectations:\n    {\"ok\": true,  \"latency_ms\": 412, \"model\": \"MiniMax-M3\"}\n    {\"ok\": false, \"error\": \"401 Unauthorized: ...\"}\n\nThe test payload is intentionally tiny \u2014 a single \"Reply OK\" prompt\nwith a 64-token output cap \u2014 so a successful call costs <\u00a50.001.\nFailures return ok=false with the exception type so the frontend\ncan render a useful message (\"Key invalid\", \"Network error\", ...).",
+        "operationId": "test_llm_system_test_llm_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TestLLMRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Test Llm System Test Llm Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Llm"
       }
     }
   }

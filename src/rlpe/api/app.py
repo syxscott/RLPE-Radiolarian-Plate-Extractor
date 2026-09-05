@@ -334,6 +334,16 @@ class JobOptions(BaseModel):
     # beccaro/takahashi. Field added to fix the silent default.
     m3_prompt_lang: str = "auto"  # auto | en | zh | ja | fr | de | ru
     data_outbound_policy: str = "api_redacted"  # api_full | api_redacted | local_only
+    # Audit 2026-09-06 (B1): the web form sends this field on every LLM
+    # upload; declaring it stops the "dropped unknown fields" warning
+    # noise (the extra builder already setdefaults it to False for web
+    # jobs — web mode never blocks on stdin).
+    MiniMax_interactive: bool | None = None
+    # Audit 2026-09-06 (B11): parity with the CLI's --deterministic /
+    # --deterministic-seed (previously web jobs could not opt into
+    # reproducible decode; the pipeline now honours these keys).
+    deterministic: bool | None = None
+    deterministic_seed: int | None = None
     # Default to api_redacted (caption text + plate region; sensitive
     # fields stripped before sending) so the web UI does not
     # silently send the full PDF text to the LLM backend. Operators
@@ -1687,9 +1697,16 @@ def export_job_xlsx(
         from ..exporters.xlsx import write_xlsx
 
         def _panel_filter(p: dict[str, Any]) -> bool:
-            if paper_id_list and p.get("paper_id") not in paper_id_list:
+            # Audit 2026-09-06 (A7): paper/species/panel filters are now
+            # case-insensitive, matching the endpoint docstring's claim
+            # (the free-text search_term already lowercased its blob).
+            if paper_id_list and str(p.get("paper_id") or "").casefold() not in {
+                s.casefold() for s in paper_id_list
+            }:
                 return False
-            if species_list and p.get("species") not in species_list:
+            if species_list and str(p.get("species") or "").casefold() not in {
+                s.casefold() for s in species_list
+            }:
                 return False
             if panel_id_list and str(p.get("panel_id") or "") not in panel_id_list:
                 return False
@@ -3174,6 +3191,18 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             # Round 18 multi-modal geology vision
             "use_geo_vision",
             "geo_vision_figure_types",
+            # Audit 2026-09-06 (truthfulness audit A2/A3): these two
+            # JobOptions fields were collected by the web form and read
+            # by the pipeline from ``config.extra`` — but were missing
+            # from this forwarding list, so the web path silently
+            # dropped them (the CLI forwards both). gemma_conf_threshold
+            # is read at pipeline.py:6949; m3_prompt_lang at
+            # pipeline.py:5708/6106.
+            "gemma_conf_threshold",
+            "m3_prompt_lang",
+            # Audit 2026-09-06 (B11): deterministic decode parity.
+            "deterministic",
+            "deterministic_seed",
         ):
             if key in options and options[key] is not None:
                 extra[key] = options[key]
@@ -3230,9 +3259,16 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             pipeline_kwargs["od_caption_window"] = int(options["od_caption_window"])
         # YOLO figure detection is opt-in; forward its complete configuration
         # only when enabled so the PipelineConfig defaults remain unchanged.
+        # Audit 2026-09-06 (truthfulness audit B2): an empty
+        # yolo_model_path used to be forwarded verbatim, overriding the
+        # PipelineConfig default (models/radiolarian_yolo_v1.pt) and
+        # tripping the config ValueError — every web YOLO job failed at
+        # configure time. Fall back to the packaged default instead.
         if options.get("use_yolo_figures"):
             pipeline_kwargs["use_yolo_figures"] = True
-            pipeline_kwargs["yolo_model_path"] = options.get("yolo_model_path", "")
+            pipeline_kwargs["yolo_model_path"] = (
+                options.get("yolo_model_path") or "models/radiolarian_yolo_v1.pt"
+            )
             pipeline_kwargs["yolo_conf_threshold"] = float(options.get("yolo_conf_threshold", 0.25))
             pipeline_kwargs["yolo_iou_threshold"] = float(options.get("yolo_iou_threshold", 0.45))
             pipeline_kwargs["yolo_device"] = options.get("yolo_device", "auto")
@@ -3382,6 +3418,25 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         # pipeline failure, OOM during inference).
         _pipeline = RadiolarianPipeline(cfg, progress_callback=_on_progress)
         rows = _pipeline.run()
+        # Audit 2026-09-06 (truthfulness audit A4): the xlsx export
+        # reads geology_contexts / localities / paleo_coordinates from
+        # the job dict, but nothing ever wrote them — both sheets were
+        # permanently empty for web jobs. Load the pipeline's canonical
+        # run_output.json (written by run()) and cache the three
+        # paper-level views alongside the rows.
+        paper_views: dict[str, list] = {}
+        try:
+            _ro_path = WORK_DIR / job_id / "output" / "manifests" / "run_output.json"
+            if _ro_path.is_file():
+                with open(_ro_path, encoding="utf-8") as _ro_fh:
+                    _run_output = json.load(_ro_fh)
+                paper_views = {
+                    "geology_contexts": _run_output.get("geology_contexts") or [],
+                    "localities": _run_output.get("localities") or [],
+                    "paleo_coordinates": _run_output.get("paleo_coordinates") or [],
+                }
+        except Exception:
+            logger.debug("could not load run_output.json for %s; xlsx views stay empty", job_id)
         normalized_rows: list[dict[str, Any]] = []
         job_root = (WORK_DIR / job_id).resolve()
         for row in rows:
@@ -3417,75 +3472,80 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         with RESULT_LOCK:
             entry = RESULT_CACHE.get(job_id)
             if entry is not None:
+                # Audit 2026-09-06 (A4): cache the paper-level views
+                # for the xlsx exporter (previously never written →
+                # localities / paleo_coordinates sheets always empty).
+                if paper_views:
+                    entry.update(paper_views)
                 # If a cancel/delete slipped in between run() returning and
                 # this lock, don't resurrect the job into "done".
-                if entry.get("status") not in {"cancelled"}:
-                    entry["progress"] = 90
-                    entry["status"] = "done"
-                    entry["result"] = normalized_rows
-                    if normalized_rows:
-                        entry["detail"] = f"Generated {len(normalized_rows)} result rows"
-                    else:
-                        entry["detail"] = "Pipeline finished but no panels/matches were produced"
-                    entry["progress"] = 100
-                    # audit 2026-08-01 W1 / M18: drop the
-                    # ``complete.flag`` so a future restart of the
-                    # server (or a ``_load_existing_jobs_from_disk``
-                    # call) loads this job with ``status="done"``
-                    # rather than ``"partial"``. The flag is written
-                    # AFTER the cache transition so a crash between
-                    # the flag write and the cache write would just
-                    # show the job as "partial" on next load (safe
-                    # under-reporting) — never "done" with stale
-                    # rows (unsafe over-reporting).
+            if entry.get("status") not in {"cancelled"}:
+                entry["progress"] = 90
+                entry["status"] = "done"
+                entry["result"] = normalized_rows
+                if normalized_rows:
+                    entry["detail"] = f"Generated {len(normalized_rows)} result rows"
+                else:
+                    entry["detail"] = "Pipeline finished but no panels/matches were produced"
+                entry["progress"] = 100
+                # audit 2026-08-01 W1 / M18: drop the
+                # ``complete.flag`` so a future restart of the
+                # server (or a ``_load_existing_jobs_from_disk``
+                # call) loads this job with ``status="done"``
+                # rather than ``"partial"``. The flag is written
+                # AFTER the cache transition so a crash between
+                # the flag write and the cache write would just
+                # show the job as "partial" on next load (safe
+                # under-reporting) — never "done" with stale
+                # rows (unsafe over-reporting).
+                try:
+                    manifests_dir = WORK_DIR / job_id / "output" / "manifests"
+                    ensure_dir(manifests_dir)
+                    (manifests_dir / "complete.flag").write_text(
+                        datetime.now().isoformat(), encoding="utf-8"
+                    )
+                    # Audit 2026-09-03 (BLOCKER-#2): also write a
+                    # structured ``manifest.json`` capturing the
+                    # provenance that downstream audit / IRB review
+                    # can rely on, especially the data_outbound_policy
+                    # actually used at runtime (the default flipped
+                    # from ``api_full`` to ``api_redacted`` so
+                    # external reviewers can confirm what data left
+                    # the machine for THIS job — a paid MiniMax API
+                    # receipt is the kind of thing you need on hand
+                    # when an editor asks "did this paper's panel
+                    # image leave the lab?").
                     try:
-                        manifests_dir = WORK_DIR / job_id / "output" / "manifests"
-                        ensure_dir(manifests_dir)
-                        (manifests_dir / "complete.flag").write_text(
-                            datetime.now().isoformat(), encoding="utf-8"
-                        )
-                        # Audit 2026-09-03 (BLOCKER-#2): also write a
-                        # structured ``manifest.json`` capturing the
-                        # provenance that downstream audit / IRB review
-                        # can rely on, especially the data_outbound_policy
-                        # actually used at runtime (the default flipped
-                        # from ``api_full`` to ``api_redacted`` so
-                        # external reviewers can confirm what data left
-                        # the machine for THIS job — a paid MiniMax API
-                        # receipt is the kind of thing you need on hand
-                        # when an editor asks "did this paper's panel
-                        # image leave the lab?").
-                        try:
-                            import json as _json
+                        import json as _json
 
-                            _cfg_for_manifest = locals().get("cfg")
-                            _policy_used = (
-                                getattr(_cfg_for_manifest, "data_outbound_policy", "unknown")
-                                if _cfg_for_manifest is not None
-                                else "unknown"
-                            )
-                            (manifests_dir / "manifest.json").write_text(
-                                _json.dumps(
-                                    {
-                                        "job_id": job_id,
-                                        "completed_at_utc": datetime.now().isoformat(),
-                                        "schema_version": "rlpe-manifest-1.0",
-                                        "data_outbound_policy_used": _policy_used,
-                                        "host_bind": os.environ.get("RLPE_HOST", "127.0.0.1"),
-                                        "api_auth_required": bool(os.environ.get("RLPE_API_KEY")),
-                                    },
-                                    ensure_ascii=False,
-                                    indent=2,
-                                ),
-                                encoding="utf-8",
-                            )
-                        except Exception:
-                            # Manifest is informational, never break the job.
-                            logger.exception("Failed to write manifest.json for job %s", job_id)
+                        _cfg_for_manifest = locals().get("cfg")
+                        _policy_used = (
+                            getattr(_cfg_for_manifest, "data_outbound_policy", "unknown")
+                            if _cfg_for_manifest is not None
+                            else "unknown"
+                        )
+                        (manifests_dir / "manifest.json").write_text(
+                            _json.dumps(
+                                {
+                                    "job_id": job_id,
+                                    "completed_at_utc": datetime.now().isoformat(),
+                                    "schema_version": "rlpe-manifest-1.0",
+                                    "data_outbound_policy_used": _policy_used,
+                                    "host_bind": os.environ.get("RLPE_HOST", "127.0.0.1"),
+                                    "api_auth_required": bool(os.environ.get("RLPE_API_KEY")),
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
                     except Exception:
-                        # Flag is a hint, not a contract — never let
-                        # it break a successful job.
-                        logger.exception("Failed to write complete.flag for job %s", job_id)
+                        # Manifest is informational, never break the job.
+                        logger.exception("Failed to write manifest.json for job %s", job_id)
+                except Exception:
+                    # Flag is a hint, not a contract — never let
+                    # it break a successful job.
+                    logger.exception("Failed to write complete.flag for job %s", job_id)
     except _JobCancelledError:
         # Cancellation raised from the progress callback. Keep the
         # "cancelled" status that /jobs/{id}/cancel set; don't overwrite it
