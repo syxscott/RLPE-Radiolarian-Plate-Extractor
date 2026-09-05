@@ -144,19 +144,29 @@ def test_paleo_reconstruction_module_exists():
 
 
 def test_paleo_enrichment_wired_into_pipeline():
-    """``_process_one_pdf`` must call ``enrich_geology_record`` for each
+    """``_finalize_rows`` must call ``enrich_geology_record`` for each
     result row so paleo_lat/lon + plate_id are populated after the
-    regex / vision extractors finish."""
+    regex / vision extractors finish.
+
+    Audit 2026-09-05 (tier3-D4): the call site moved from the GROBID
+    chain into ``_finalize_rows`` (shared by both extraction paths) so
+    the default OD path — and every LLM-first row — gets paleo
+    enrichment too. The guard tracks the new location.
+    """
     src = _read("src/rlpe/pipeline.py")
     assert "enrich_geology_record" in src, (
         "Pipeline doesn't call enrich_geology_record. The C fix is "
         "staged in the module but never invoked."
     )
-    # Must iterate over geology_links inside each result row's metadata.
-    idx = src.find("for gl in md.get")
+    # Must import the helper inside _finalize_rows and iterate the
+    # geology_links list of each kept row.
+    assert "from .paleo_reconstruction import enrich_geology_record" in src, (
+        "Pipeline must import enrich_geology_record in _finalize_rows."
+    )
+    idx = src.find("for gl in geo_links:")
     assert idx > 0, (
-        "Pipeline must iterate `for gl in md.get('geology_links', [])` "
-        "to enrich each link in place."
+        "Pipeline must iterate `for gl in geo_links:` inside "
+        "_finalize_rows to enrich each link in place."
     )
 
 

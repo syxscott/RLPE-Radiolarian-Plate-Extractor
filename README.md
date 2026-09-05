@@ -42,6 +42,16 @@ Key wins:
 - New radiolarian-trained YOLO detector (replaces generic COCO model)
 - Schema v1.2.0 with morphology records + review priority
 
+> **2026-09-05 (schema v1.3.0) extractor wiring fixes**: `--m3-stage-6` and
+> `--use-geo-vision` now implicitly enable the M3 engine (previously they
+> silently produced nothing without `--m3-enhanced-mode`); the knowledge
+> graph and range-chart extracts (sections / species_ranges / biozones) are
+> exported as `RunOutput.knowledge_graphs` / `RunOutput.range_charts`;
+> PBDB taxonomy and paleo-coordinate enrichment now also cover LLM-first
+> rows; the map→range-chart location bridge is revived
+> (`PanelMetadata.matched_location`); `--use-paleodb` works on the default
+> LLM-first path.
+
 See `work/F1_PROGRESS_2026_08_02.md` and `work/AUDIT_FOLLOWUP_2026_08_02.md` for details.
 
 ---

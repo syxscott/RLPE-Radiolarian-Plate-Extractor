@@ -122,6 +122,12 @@ _KNOWN_EXTRA_KEYS = {
     # ``m3_stage_6`` at line 211, ``m3_per_panel_*`` at lines
     # 218-220). Code that wrote them to ``cfg.extra`` was wrong
     # and would have tripped the unknown-keys warning. Removed.
+    # Audit 2026-09-05 (tier3-D2): ``m3_stage_6`` is back — BOTH the
+    # CLI and the Web extra builder write it into ``extra``, and
+    # ``__post_init__`` now promotes it onto the typed field. Without
+    # whitelisting it, every ``--m3-stage-6`` run tripped the
+    # unknown-extra-key warning.
+    "m3_stage_6",
     # LLM-first extraction (opt-in; default True when Gemma runtime is set)
     "use_llm_first",
     # Multi-modal geology vision (Commit 2 / Round 3)
@@ -143,6 +149,13 @@ _KNOWN_EXTRA_KEYS = {
     # Phase 61 Plan 4 (Bug 4.10): optional name of a fallback LLM backend
     # for 4xx-then-retry.
     "fallback_llm_backend",
+    # Audit 2026-09-05 (tier3-A6): both keys are read by pipeline.py
+    # (``run`` resume check and the cross-figure-linker gate) but were
+    # missing here, so setting them via a JSON config file tripped the
+    # unknown-extra-key warning (and a hard failure under
+    # RLPE_STRICT_EXTRA=1).
+    "resume",
+    "cross_figure_linker_enabled",
     # Sweep 6 (audit 2026-08-02 C4): the five YOLO knobs (use_yolo_figures,
     # yolo_model_path, yolo_conf_threshold, yolo_iou_threshold,
     # yolo_device) used to be listed here as legitimate extras, but
@@ -363,6 +376,18 @@ class PipelineConfig:
         # Audit 2026-08-02: M3 morphology Stage-6 validation. Coerce
         # incoming types (string from YAML/JSON) and clamp to safe
         # ranges so a bad operator value doesn't crash the run.
+        # Audit 2026-09-05 (tier3-D2 follow-up): promote
+        # ``extra["m3_stage_6"]`` onto the typed field. Both the CLI and
+        # the Web extra builder write the key into ``extra``, but only
+        # the CLI also set the typed attribute — a web job with
+        # ``m3_stage_6: true`` never reached
+        # ``_apply_morphology_enrichment`` (which reads the typed
+        # field) and silently produced nothing. ``None`` (the CLI's
+        # BooleanOptionalAction default) is skipped; an explicit CLI
+        # flag still wins because it assigns the typed field after
+        # construction.
+        if self.extra.get("m3_stage_6") is not None:
+            self.m3_stage_6 = bool(self.extra["m3_stage_6"])
         try:
             self.m3_stage_6 = bool(self.m3_stage_6)
             self.m3_morphology_max_species_per_paper = int(self.m3_morphology_max_species_per_paper)

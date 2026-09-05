@@ -2,7 +2,7 @@
 
 This document describes the canonical output shape of an RLPE run.
 The machine-readable JSON Schema lives at `schemas/rlpe-v1.0.0.json`.
-Newer schema versions (`v1.1.0`, `v1.2.0`) are listed under "Schema versions" below.
+Newer schema versions (`v1.1.0`, `v1.2.0`, `v1.3.0`) are listed under "Schema versions" below.
 
 ## Top-level shape
 
@@ -27,6 +27,7 @@ Newer schema versions (`v1.1.0`, `v1.2.0`) are listed under "Schema versions" be
 | `1.0.0` | shipped | Initial release. `PanelRecord`, `ScaleBarRecord`, `GeologyLinkRecord`, `PaperMetadataRecord`. |
 | `1.1.0` | shipped (2026-08-02) | Adds 3 `PanelRecord` fields: `confidence_interval_low`, `confidence_interval_high`, `image_verified`, `review_priority`. |
 | `1.2.0` | shipped (2026-08-02) | Adds `MorphologyRecord` (Stage 6, opt-in via `--m3-stage-6`). |
+| `1.3.0` | shipped (2026-09-05) | Adds `RunOutput.knowledge_graphs` / `RunOutput.range_charts` (paper-level views, previously computed but dropped) and `PanelMetadata.matched_location` (map→range-chart bridge result). `ScaleBarRecord.warning` and per-entry `GeologyLinkRecord.link_source` / `figure_id` are now actually populated by the converter. |
 
 ## Provenance
 
@@ -56,6 +57,9 @@ A single detected specimen panel.
 | `paper_id` | string | yes | Internal paper hash. Stable across re-runs. |
 | `figure_id` | string | yes | `od_plate_<hash>_p<NNN>_pl<NN>` or similar. |
 | `panel_id` | string \| null | no | Label printed in the figure ("A", "1", "12b"). |
+| `caption_panel_id` | string \| null | no | The panel label as derived from the caption text. |
+| `printed_panel_id` | string \| null | no | **(pixel evidence)** The panel label as OCR-read from the panel image itself. Only stamped by the classical OCR path — the LLM-first path deliberately leaves it empty because a caption-derived id is NOT pixel evidence. |
+| `canonical_panel_id` | string \| null | no | **(v1.3.0+ populated)** Unifying label: `printed_panel_id` (image evidence) wins, else `caption_panel_id`, else falls back to `panel_id`. |
 | `species` | string \| null | no | Latin name from the caption parser / taxon recognizer. |
 | `panel_path` | string \| null | no | Absolute path to the cropped panel PNG. |
 | `bbox` | [int×4] \| null | no | `[x, y, w, h]` in PDF coordinates. |
@@ -80,11 +84,11 @@ A single detected specimen panel.
 | `figure_number` | string \| null | "1", "2", etc. |
 | `page_index` | int \| null | 1-indexed page in the source PDF. |
 | `matcher_used` | bool | True if the neural matcher was used. |
-| `matcher_type` | string | "heuristic" \| "neural" |
+| `matcher_type` | string | "heuristic" \| "neural" \| "llm_first" — **(v1.3.0+ honest)** rows produced by the LLM-first path carry `extraction_method="llm_first"` and previously defaulted to a misleading `"heuristic"` label. |
 | `matcher_conf` | float | 0..1 |
 | `caption_pairs_used` | bool | True if caption-parser pairs drove the match. |
 | `scale_bar` | object \| null | See ScaleBarRecord. |
-| `geology_links` | array | List of GeologyLinkRecord. |
+| `geology_links` | array | List of GeologyLinkRecord. **(v1.3.0+)** per-entry `link_source` / `figure_id` provenance is populated by the converter. |
 | `m3_diagnostic` | object | M3 stage output (when used). |
 | `extraction_source` | string | "opendataloader" \| "grobid" \| "m3" |
 

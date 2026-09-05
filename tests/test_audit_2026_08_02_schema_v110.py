@@ -42,9 +42,12 @@ class TestSchemaV110:
         # (confidence_interval_*, image_verified, review_priority)
         # still exist on PanelRecord in v1.2.0 — they're just now
         # properly populated by the pipeline.
+        # Audit 2026-09-05 (tier3-C6): v1.3.0 adds
+        # RunOutput.knowledge_graphs / range_charts; the v1.1.0/v1.2.0
+        # surfaces are unchanged, so keep this a floor check.
         from rlpe.schema_models import SCHEMA_VERSION
 
-        assert SCHEMA_VERSION == "1.2.0"
+        assert SCHEMA_VERSION >= "1.2.0"
 
     def test_panel_record_accepts_new_fields(self):
         from rlpe.schema_models import PanelRecord

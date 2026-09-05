@@ -67,6 +67,7 @@ def _paper_figure(
     formation: str | None = None,
     age: str | None = None,
     paper_id: str = "p1",
+    image_path: str | None = "tiny.png",
 ) -> dict[str, Any]:
     return {
         "paper_id": paper_id,
@@ -75,6 +76,11 @@ def _paper_figure(
         "caption": caption,
         "formation": formation,
         "age": age,
+        # Audit 2026-09-05 (tier3-B4): the visual linker requires a
+        # loadable image. Default is a fake path resolved by the
+        # autouse ``_fake_image_loader`` fixture below; pass None to
+        # exercise the "no image → skip" contract.
+        "image_path": image_path,
     }
 
 
@@ -120,6 +126,27 @@ class _FakeM3Engine:
 # ---------------------------------------------------------------------------
 # Trigger condition tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _fake_image_loader(monkeypatch):
+    """Audit 2026-09-05 (tier3-B4): ``link_visual_coordinates`` now
+    loads real images and skips the M3 call when loading fails. The
+    trigger-logic tests pass fake paths (``"tiny.png"``) — patch the
+    loader so any non-empty string path resolves to a real 48x48 PNG
+    (above the M3 32px tiny-image guard) while ``None`` still fails,
+    preserving the "no image → skip" contract.
+    """
+    from PIL import Image
+
+    import rlpe.cross_figure_linker as _cfl
+
+    def _loader(path: Any) -> Any:
+        if not path or not isinstance(path, str):
+            return None
+        return Image.new("RGB", (48, 48), color=(128, 128, 128))
+
+    monkeypatch.setattr(_cfl, "_load_figure_image", _loader)
 
 
 class TestTriggerSkipsWhenStrategy1Matched:
@@ -267,9 +294,15 @@ class TestTriggerRequiresPlateAndStrat:
         assert out == [[]]
         assert m3.calls == []
 
-    def test_fires_for_paleogeographic_map_too(self):
+    def test_fires_for_paleogeographic_map_too(self, tmp_path):
         """The trigger condition accepts ANY strat column / litholog /
         paleogeographic_map / range_chart as the target figure."""
+        from PIL import Image
+
+        plate_png = tmp_path / "plate.png"
+        map_png = tmp_path / "map.png"
+        for p in (plate_png, map_png):
+            Image.new("RGB", (48, 48), color=(128, 128, 128)).save(p)
         panels = [
             _plate_panel(
                 link_source=LINK_SOURCE_LOCALITY,
@@ -277,12 +310,39 @@ class TestTriggerRequiresPlateAndStrat:
             )
         ]
         figures = [
-            _paper_figure(figure_id="fig1", figure_type="plate"),
-            _paper_figure(figure_id="fig_map_1", figure_type="paleogeographic_map"),
+            _paper_figure(
+                figure_id="fig1",
+                figure_type="plate",
+                image_path=str(plate_png),
+            ),
+            _paper_figure(
+                figure_id="fig_map_1",
+                figure_type="paleogeographic_map",
+                image_path=str(map_png),
+            ),
         ]
         m3 = _FakeM3Engine()
         out = link_visual_coordinates(panels, figures, m3)
         assert len(out[0]) == 1
+
+    def test_skipped_when_images_unloadable(self):
+        """Audit 2026-09-05 (tier3-B4): without loadable images the
+        M3 visual call is skipped entirely (previously it was called
+        with ``None, None`` — a guaranteed-empty per-panel call)."""
+        panels = [
+            _plate_panel(
+                link_source=LINK_SOURCE_LOCALITY,
+                link_confidence=0.7,
+            )
+        ]
+        figures = [
+            _paper_figure(figure_id="fig1", figure_type="plate", image_path=None),
+            _paper_figure(figure_id="fig_strat_3", figure_type="strat_column", image_path=None),
+        ]
+        m3 = _FakeM3Engine()
+        out = link_visual_coordinates(panels, figures, m3)
+        assert out == [[]]
+        assert m3.calls == []
 
 
 class TestEngineNone:

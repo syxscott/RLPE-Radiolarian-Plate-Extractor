@@ -61,8 +61,8 @@ from __future__ import annotations
 import logging
 import math
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -517,7 +517,8 @@ def ensure_rotation_source() -> int:
     if merged:
         logger.info(
             "paleo_reconstruction: %d plate(s) now use real Seton 2012 "
-            "rotations from RLPE_SETON2012_ROT", merged,
+            "rotations from RLPE_SETON2012_ROT",
+            merged,
         )
     return merged
 
@@ -972,6 +973,12 @@ def enrich_geology_record(record: dict[str, Any]) -> None:
     No-op when modern coords or age are missing (we don't guess).
     """
     try:
+        # Audit 2026-09-05 (tier3-D4): idempotency guard. The call site
+        # moved to ``_finalize_rows`` (both extraction paths); a record
+        # already carrying a paleo position must not be re-anchored and
+        # double-rotated.
+        if record.get("paleo_latitude") is not None:
+            return
         # Audit 2026-09-04 geo-2: prefer the producer-classified
         # ``modern_latitude`` / ``modern_longitude`` when present.
         # The bare ``latitude`` / ``longitude`` fields hold the

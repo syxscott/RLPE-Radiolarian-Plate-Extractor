@@ -234,6 +234,10 @@ class OpenDataLoaderExtractor:
         Concurrent threads may race on first call, but EasyOCR's own
         internal state is set up such that one thread wins and the
         loser just does a redundant init that we discard.
+
+        audit 2026-08-19 phase 6E NIT-5: added ``-> Any`` return-type
+        annotation. ``self._ocr_engine`` is either ``None`` or an
+        ``easyocr.Reader``; both round-trip through ``Any``.
         """
         if self._ocr_engine is not None:
             return self._ocr_engine

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .metrics import DEFAULT_GOLD_PROVENANCE, EvaluationReport, PaperMetrics
+from .metrics import EvaluationReport, PaperMetrics
 
 
 def write_json_report(report: EvaluationReport, target: Path) -> Path:

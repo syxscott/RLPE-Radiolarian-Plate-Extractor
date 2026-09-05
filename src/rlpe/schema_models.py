@@ -23,7 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SCHEMA_VERSION = "1.2.0"
+SCHEMA_VERSION = "1.3.0"
 
 # Strict mode for exported records. ``extra="forbid"`` means a JSONL
 # record with an unknown field is rejected, which protects downstream
@@ -574,6 +574,16 @@ class PanelMetadata(BaseModel):
     #   source: str — always "m3_visual" for Phase C entries
     # Default empty list so legacy Phase A records remain valid.
     cross_figure_visual_links: list[dict[str, Any]] = Field(default_factory=list)
+    # Audit 2026-09-05 (tier3-B6): export channel for the revived
+    # map→range-chart bridge (``_cross_link_map_and_range_chart``).
+    # Each entry has keys: section (range-chart section code),
+    # location (matched map location name), match_type (substring /
+    # prefix2 / acronym) and map_figure (the map's figure_id). The
+    # bridge wrote this to ``metadata.matched_location`` but the
+    # schema never carried it, so the bridging result was computed
+    # and dropped on every run. Default empty list so legacy records
+    # remain valid.
+    matched_location: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PanelRecord(BaseModel):
@@ -675,6 +685,17 @@ class RunOutput(BaseModel):
     localities: list[LocalityRecord] = Field(default_factory=list)
     paleo_coordinates: list[PaleoCoordinateRecord] = Field(default_factory=list)
     morphologies: list[MorphologyRecord] = Field(default_factory=list)
+    # Audit 2026-09-05 (tier3-C6, schema 1.3.0): paper-level views for
+    # the knowledge graph and range-chart extractors. Both were
+    # computed per paper but had no export channel — the graph was
+    # passed to ``_process_region`` which only wrote it to
+    # ``save_intermediate`` manifests, and the RangeChartResult lived
+    # solely on stub rows that ``_finalize_rows`` strips. Free-form
+    # dicts (graph shape from ``build_knowledge_graph``; chart shape
+    # from ``RangeChartResult.to_dict()`` plus a ``figure_id`` key) so
+    # downstream consumers round-trip without re-marshalling.
+    knowledge_graphs: list[dict[str, Any]] = Field(default_factory=list)
+    range_charts: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[WarningRecord] = Field(default_factory=list)
 
     @model_validator(mode="wrap")  # type: ignore[arg-type]

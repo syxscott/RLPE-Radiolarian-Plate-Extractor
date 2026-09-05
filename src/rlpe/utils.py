@@ -336,3 +336,38 @@ def drain_warnings() -> list[dict[str, Any]]:
         out = list(_WARNINGS)
         _WARNINGS.clear()
         return out
+
+
+def record_warning(
+    label: str,
+    message: str,
+    paper_id: str | None = None,
+) -> None:
+    """Append a run-level warning without raising or swallowing a call.
+
+    Audit 2026-09-05 (tier3-B7/D5): some conditions are worth
+    surfacing in ``run_output.json`` even though the pipeline handles
+    them gracefully — e.g. a range chart skipped for a missing API
+    key, or Stage 6 morphology enabled without an M3 engine. The
+    entry shape mirrors :func:`_safe_call`'s so ``drain_warnings``
+    consumers see a uniform list.
+    """
+    entry = {
+        "label": label,
+        "paper_id": paper_id,
+        "message": str(message)[:500],
+        "timestamp": __import__("time").time(),
+    }
+    with _WARNINGS_LOCK:
+        _WARNINGS.append(entry)
+    try:
+        import logging as _logging
+
+        _logging.getLogger("rlpe.utils").warning(
+            "record_warning[%s paper=%s]: %s",
+            label,
+            paper_id or "?",
+            entry["message"],
+        )
+    except Exception:
+        pass

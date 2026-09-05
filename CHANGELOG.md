@@ -5,6 +5,72 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 12] - 2026-09-05 — Tier-2/3 extractor wiring fixes
+
+Fixes the "computed but dropped / wired but unreachable" class of defects found by the
+extractor-coverage review. Schema bumped to **v1.3.0** (additive only).
+
+### Fixed (cross-figure linker)
+- `pipeline.py` — linker now runs BEFORE `_finalize_rows` on the OD path (the figure
+  index depends on stub rows that finalize strips); the outer post-finalize call in
+  `_process_one_pdf` was removed (it double-ran the GROBID path and overwrote good
+  `link_source` values with `"unlinked"`).
+- `pipeline.py` — `"unlinked"` linker results no longer append a junk
+  `{confidence: 0.0, evidence_text: "no strategy matched"}` geology_links entry (these
+  leaked into `run_output.geology_contexts`); the linker is idempotent against double
+  invocation.
+- `cross_figure_linker.py` — `link_visual_coordinates` now loads REAL figure images
+  (paths stamped onto the figure views by the pipeline); previously it passed
+  `None, None` — a guaranteed-empty per-panel M3 call — so the visual channel had
+  never produced output. The inference call is also hoisted to once per paper.
+- `pipeline.py` — revived the map→range-chart bridge (`_cross_link_map_and_range_chart`):
+  it now accepts geo-vision map rows (`figure_type` map / paleogeographic_map) in
+  addition to legacy `MAP_CONTEXT` rows, and geo vision runs BEFORE the bridge on both
+  paths.
+
+### Added (export channels for previously-dropped data — schema 1.3.0)
+- `schema_models.py` — `RunOutput.knowledge_graphs` / `RunOutput.range_charts`
+  paper-level views; `PanelMetadata.matched_location`.
+- `pipeline.py` — `_paper_knowledge_graphs` / `_paper_range_charts` captures (mirrors
+  `_paper_morphologies`); range-chart results (incl. `species_ranges`) and knowledge
+  graphs now survive to `run_output.json`.
+- `converters.py` — `ScaleBarRecord.warning` (2x-10x source-disagreement flag),
+  per-entry `GeologyLinkRecord.link_source` / `figure_id`, and `matched_location` are
+  mapped into the export (all three were written upstream but never mapped).
+- `converters.py` — `matcher_type` honesty: LLM-first rows no longer default to
+  `"heuristic"`.
+- `pipeline.py` — `_finalize_rows` stamps `canonical_panel_id` (printed > caption
+  rule) and `sample_id` / `sample_ids` (per-panel, from the caption snippet).
+- `sample_id_extractor.py` — `extract_sample_code_ids` (underscore-inclusive
+  `Sample B_DP2`-style codes).
+- `pipeline.py` — a key-less range chart and an engine-less Stage 6 now emit
+  run-level warnings (`record_warning` in `utils.py`) instead of silent stubs/debug logs.
+
+### Fixed (wiring holes)
+- `cli.py` — `--m3-stage-6` and `--use-geo-vision` now implicitly enable
+  `m3_enhanced_mode` (the engine was never built without it, so both features silently
+  produced nothing).
+- `api/app.py` — the web extra builder mirrors the CLI's implicit opt-in; previously
+  `use_geo_vision=True` (the JobOptions default) was a silent no-op because
+  `m3_enhanced_mode` was dropped by `model_dump(exclude_none=True)`. Additionally
+  `config.py` now PROMOTES `extra["m3_stage_6"]` onto the typed field (`__post_init__`)
+  and re-whitelists the key — a web job with `m3_stage_6: true` previously never
+  reached the typed attribute and silently produced no morphology records.
+- `pipeline.py` — PBDB enrichment moved to a paper-level pass on the finalized rows:
+  the old per-figure classical-tail placement was unreachable for LLM-first rows (the
+  default path) and double-looked-up species across figures.
+- `pipeline.py` — paleogeographic enrichment (`enrich_geology_record`) moved into
+  `_finalize_rows` (both paths, LLM-first included); previously GROBID-only. Made
+  idempotent against double rotation.
+- `config.py` — `resume` and `cross_figure_linker_enabled` added to
+  `_KNOWN_EXTRA_KEYS` (config-file use tripped the unknown-key warning).
+
+### Tests
+- `tests/test_audit_2026_09_05_tier23_wiring.py` — 25 behavioural + source-guard tests
+- updates: `test_phase65_pipeline_linker.py` (unlinked contract), `test_phase66_pipeline.py`
+  (real-image fixtures), `test_phase66_visual_trigger.py` (image loader fixture),
+  `test_round18_abc_complete.py` (enrich guard), schema version pins.
+
 ## [Unreleased 11] - 2026-08-02 — Audit 2026-08-02 fix wave
 
 8 commits applied across W0-W7 audits + 2026-08-02 follow-up fixes.

@@ -834,6 +834,28 @@ def _has_plate_and_anchor(
     return (plate is not None and anchor is not None, plate, anchor)
 
 
+def _load_figure_image(path: Any) -> Any:
+    """Load a figure image from a row path, returning ``None`` on failure.
+
+    Audit 2026-09-05 (tier3-B4): ``link_visual_coordinates`` used to
+    pass ``None`` for both images, which ``M3Engine.
+    cross_figure_visual_inference`` rejects on its tiny-image guard —
+    the visual channel could never produce output in production. The
+    pipeline now threads row-level image paths through the figure
+    views; this helper converts them to PIL images lazily.
+    """
+    if not path or not isinstance(path, str):
+        return None
+    try:
+        from PIL import Image as _PILImage
+
+        img = _PILImage.open(path)
+        img.load()
+        return img
+    except Exception:
+        return None
+
+
 def link_visual_coordinates(
     panels: Iterable[Any],
     paper_figures: Iterable[PaperFigureLike],
@@ -856,6 +878,10 @@ def link_visual_coordinates(
         the "Strategy 1 already nailed it" case.
     paper_figures : iterable
         Paper-level figure summaries (Phase B FigureRecord or dict).
+        Each figure may carry an ``image_path`` key (the pipeline
+        stamps it from the row's ``panel_path`` /
+        ``metadata.figure_image_path``); without it the visual call
+        is skipped.
     m3_engine : optional
         A ``M3Engine`` instance with a
         ``cross_figure_visual_inference(plate_image, strat_image,
@@ -887,12 +913,24 @@ def link_visual_coordinates(
     * The plate + anchor requirement is structural: without a strat
       column or map, there's nothing to visually link to. A paper
       with only plates is Phase A's territory.
+    * Audit 2026-09-05 (tier3-B4): the M3 inference result is
+      paper-level (both captions are fixed per paper), so the call is
+      made ONCE and the links are shared across panels — the previous
+      per-panel loop re-issued N identical calls. Panels whose images
+      can't be loaded get empty lists without burning a vision call.
     * The caller is responsible for writing the inner lists into
       ``panel.metadata.cross_figure_visual_links`` (Task C.4 does
       this from the pipeline).
     """
     panels_list = list(panels)
     figures_list = list(paper_figures)
+
+    # Trigger condition (panel side): at least one panel whose Phase A
+    # Strategy 1 didn't already nail it. If every panel is
+    # sample_match, there is nothing to refine — skip without loading
+    # images or calling M3.
+    if all(_panel_link_source(p) == LINK_SOURCE_SAMPLE for p in panels_list):
+        return [[] for _ in panels_list]
 
     has_both, plate_fig, anchor_fig = _has_plate_and_anchor(figures_list)
     if not has_both:
@@ -906,64 +944,70 @@ def link_visual_coordinates(
     if not callable(visual_method):
         return [[] for _ in panels_list]
 
-    # We don't actually have real images at this layer (the pipeline
-    # passes them in separately in Task C.4). For the trigger-logic
-    # function we pass None — the visual method handles missing
-    # images via its ``image.width < 32`` early-return path.
+    # Audit 2026-09-05 (tier3-B4): load the real plate + anchor images
+    # from the row paths the pipeline stamped onto the figure views.
+    # Without BOTH images the M3 method bails on its tiny-image guard
+    # and returns empty for every panel, so skip the call entirely
+    # (previously this passed ``None, None`` — a guaranteed-empty,
+    # per-panel API-shaped call).
+    plate_image = _load_figure_image(plate_fig.get("image_path")) if plate_fig is not None else None
+    anchor_image = (
+        _load_figure_image(anchor_fig.get("image_path")) if anchor_fig is not None else None
+    )
+    if plate_image is None or anchor_image is None:
+        return [[] for _ in panels_list]
+
     plate_caption = _figure_caption(plate_fig) if plate_fig is not None else ""
     anchor_caption = _figure_caption(anchor_fig) if anchor_fig is not None else ""
     anchor_id = str(anchor_fig.get("figure_id") or "") if anchor_fig is not None else ""
 
+    try:
+        result = visual_method(
+            plate_image,
+            anchor_image,
+            plate_caption,
+            anchor_caption,
+        )
+    except Exception:
+        # Defensive: a backend exception must never propagate up
+        # the pipeline. Phase C silently degrades to empty.
+        return [[] for _ in panels_list]
+    panels_data = result.get("plate_panels") if isinstance(result, dict) else None
+    if not isinstance(panels_data, list) or not panels_data:
+        return [[] for _ in panels_list]
+
+    # Build the shared per-paper link list. We emit one link per panel
+    # entry M3 returned; the panel itself doesn't filter by
+    # cell_label (the schema stores them all and the GUI picks
+    # the right one per printed_panel_id).
+    links: list[dict[str, Any]] = []
+    for entry in panels_data:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            conf = float(entry.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        conf = max(0.0, min(1.0, conf))
+        links.append(
+            {
+                "target_figure_id": anchor_id,
+                "target_layer": entry.get("links_to_strat_layer"),
+                "target_age": entry.get("links_to_age"),
+                "target_formation": entry.get("links_to_formation"),
+                "confidence": conf,
+                "source": VISUAL_LINK_SOURCE,
+            }
+        )
+
     out: list[list[dict[str, Any]]] = []
     for panel in panels_list:
-        link_source = _panel_link_source(panel)
         # The trigger condition: skip panels whose Phase A Strategy 1
         # already nailed them. Everything else (locality_match,
         # m3_inference, unlinked) gets the visual treatment.
-        if link_source == LINK_SOURCE_SAMPLE:
+        if _panel_link_source(panel) == LINK_SOURCE_SAMPLE:
             out.append([])
-            continue
-
-        try:
-            result = visual_method(
-                None,
-                None,
-                plate_caption,
-                anchor_caption,
-            )
-        except Exception:
-            # Defensive: a backend exception must never propagate up
-            # the pipeline. Phase C silently degrades to empty.
-            out.append([])
-            continue
-        panels_data = result.get("plate_panels") if isinstance(result, dict) else None
-        if not isinstance(panels_data, list) or not panels_data:
-            out.append([])
-            continue
-
-        # Build the per-panel link list. We emit one link per panel
-        # entry M3 returned; the panel itself doesn't filter by
-        # cell_label (the schema stores them all and the GUI picks
-        # the right one per printed_panel_id).
-        links: list[dict[str, Any]] = []
-        for entry in panels_data:
-            if not isinstance(entry, dict):
-                continue
-            try:
-                conf = float(entry.get("confidence", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                conf = 0.0
-            conf = max(0.0, min(1.0, conf))
-            links.append(
-                {
-                    "target_figure_id": anchor_id,
-                    "target_layer": entry.get("links_to_strat_layer"),
-                    "target_age": entry.get("links_to_age"),
-                    "target_formation": entry.get("links_to_formation"),
-                    "confidence": conf,
-                    "source": VISUAL_LINK_SOURCE,
-                }
-            )
-        out.append(links)
+        else:
+            out.append(list(links))
 
     return out

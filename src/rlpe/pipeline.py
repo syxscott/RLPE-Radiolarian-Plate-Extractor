@@ -270,6 +270,17 @@ class RadiolarianPipeline:
         # is serialised by the executor), drained in ``run()`` once
         # the workers have all returned.
         self._paper_morphologies: dict[str, list[dict[str, Any]]] = {}
+        # Audit 2026-09-05 (tier3-C1): paper-level capture for the
+        # knowledge graph and range-chart extractors, mirroring the
+        # ``_paper_morphologies`` pattern. Both payloads were computed
+        # per paper but had no persistence channel — the knowledge
+        # graph was passed to ``_process_region`` which only wrote it
+        # to ``save_intermediate`` manifests, and the RangeChartResult
+        # lived solely on stub rows that ``_finalize_rows`` strips.
+        # Drained by ``run()`` into ``RunOutput.knowledge_graphs`` /
+        # ``RunOutput.range_charts``.
+        self._paper_knowledge_graphs: dict[str, dict[str, Any]] = {}
+        self._paper_range_charts: dict[str, list[dict[str, Any]]] = {}
         # Phase 59 (Bug 2.5): serialise progress-callback invocations.
         # Multiple worker threads can finish PDFs concurrently and
         # invoke ``_progress_cb`` simultaneously; without this lock,
@@ -647,10 +658,20 @@ class RadiolarianPipeline:
                 paper_morphologies: list[dict[str, Any]] = []
                 for recs in self._paper_morphologies.values():
                     paper_morphologies.extend(recs)
+                # Audit 2026-09-05 (tier3-C4): drain the knowledge-graph
+                # and range-chart captures into the canonical RunOutput.
+                paper_knowledge_graphs: list[dict[str, Any]] = [
+                    kg for kg in self._paper_knowledge_graphs.values() if kg
+                ]
+                paper_range_charts: list[dict[str, Any]] = []
+                for charts in self._paper_range_charts.values():
+                    paper_range_charts.extend(charts)
                 run_output_dict = run_output_from_provenance(
                     provenance_record,
                     match_results,
                     paper_morphologies=paper_morphologies,
+                    paper_knowledge_graphs=paper_knowledge_graphs,
+                    paper_range_charts=paper_range_charts,
                 )
                 sys.modules[__name__].__dict__["_safe_write_json"](
                     manifest_path.parent / "run_output.json", run_output_dict
@@ -861,18 +882,31 @@ class RadiolarianPipeline:
             # ------ GROBID + layout path (default) -----------------------------
             rows = self._process_one_pdf_grobid(paper_id, pdf_path)
 
-        # Phase 65 Plan A.4: cross-figure linker — link each plate panel
-        # to the paper's strat column / litholog / paleogeographic map
-        # via Sample ID direct match → Locality share → M3 inference.
-        # Runs after all figure extraction so the linker sees the
-        # complete geology-link context. No-op if the config flag is off
-        # (default on).
-        if self.config.extra.get("cross_figure_linker_enabled", True):
+        # Audit 2026-09-05 (tier3-B2): the cross-figure linker used to run
+        # HERE, after both inner paths had already called
+        # ``_finalize_rows``. That call site was removed: (a) on the OD
+        # path the stub rows carrying the linker's figure index were
+        # already stripped, so the linker degraded every panel to
+        # "unlinked"; (b) on the GROBID path it ran a SECOND time after
+        # the pre-finalize call at the end of
+        # ``_process_one_pdf_grobid``, overwriting good link_source
+        # values and appending duplicate geology_links entries. Both
+        # paths now call the linker exactly once, inside their inner
+        # functions, before ``_finalize_rows``.
+
+        # Audit 2026-09-05 (tier3-D3): paper-level PBDB enrichment,
+        # gated on ``use_paleodb`` (default off). Runs ONCE per paper
+        # on the finalized rows (dicts) so LLM-first rows — which the
+        # old per-figure classical-tail placement could never reach —
+        # get PBDB taxonomy too. The PaleoDB client's disk cache and
+        # the unique-species dedup inside ``_attach_paleodb_metadata``
+        # keep this to one HTTP lookup per unique taxon.
+        if self.config.extra.get("use_paleodb") and rows:
             try:
-                rows = self._apply_cross_figure_linker(rows, paper_id)
-            except Exception as exc:  # pragma: no cover - defensive
+                self._attach_paleodb_metadata(rows)
+            except Exception as exc:  # defensive — PBDB must never kill a run
                 logger.warning(
-                    "cross_figure_linker failed for paper=%s: %s",
+                    "paper-level PBDB enrichment failed for %s: %s",
                     paper_id,
                     exc,
                 )
@@ -960,13 +994,40 @@ class RadiolarianPipeline:
         operator can still reconcile them by hand.
         """
         # Collect map locations per paper.
+        #
+        # Audit 2026-09-05 (tier3-B5): revive the map→range-chart
+        # bridge. The only accepted input used to be
+        # ``panel_id == "MAP_CONTEXT"`` rows, whose producer was removed
+        # long ago — the bridge had effectively been dead code. Now we
+        # ALSO read any row whose figure_type is ``map`` /
+        # ``paleogeographic_map`` (the geo-vision stubs on the OD path
+        # and the classified figure rows on the GROBID path), pulling
+        # location names from ``metadata.location_names`` or, failing
+        # that, from the ``locality`` fields of its geo-vision
+        # ``geology_links``.
         map_locs_by_paper: dict[str, list[tuple[str, str]]] = {}
         for r in results:
-            if r.get("panel_id") != "MAP_CONTEXT":
+            md = r.get("metadata") or {}
+            ftype = str(md.get("figure_type") or "").lower()
+            is_map_row = r.get("panel_id") == "MAP_CONTEXT" or ftype in (
+                "map",
+                "paleogeographic_map",
+            )
+            if not is_map_row:
                 continue
             pid = r.get("paper_id")
-            md = r.get("metadata") or {}
-            for loc in md.get("location_names") or []:
+            locs = [str(loc) for loc in (md.get("location_names") or []) if loc]
+            if not locs:
+                seen_locs: set[str] = set()
+                for g in md.get("geology_links") or []:
+                    if not isinstance(g, dict):
+                        continue
+                    loc = str(g.get("locality") or "").strip()
+                    key = loc.casefold()
+                    if loc and key not in seen_locs:
+                        seen_locs.add(key)
+                        locs.append(loc)
+            for loc in locs:
                 if loc:
                     map_locs_by_paper.setdefault(pid, []).append((loc, r.get("figure_id", "")))
         if not map_locs_by_paper:
@@ -974,9 +1035,11 @@ class RadiolarianPipeline:
 
         for r in results:
             pid = r.get("paper_id")
-            if r.get("panel_id") == "MAP_CONTEXT":
-                continue
             md = r.get("metadata") or {}
+            ftype = str(md.get("figure_type") or "").lower()
+            # Map rows themselves are bridge INPUTS, never targets.
+            if r.get("panel_id") == "MAP_CONTEXT" or ftype in ("map", "paleogeographic_map"):
+                continue
             sections = set()
             for link in md.get("geology_links") or []:
                 sec = link.get("locality")
@@ -1101,6 +1164,17 @@ class RadiolarianPipeline:
                 paper_id,
                 figure_id,
             )
+            # Audit 2026-09-05 (tier3-B7): surface the skip as a
+            # run-level warning. Previously the only trace was a stub
+            # row that ``_finalize_rows`` strips, so operators had no
+            # idea range charts in this paper were never extracted.
+            from .utils import record_warning
+
+            record_warning(
+                "range_chart_skipped_no_api_key",
+                f"range chart {figure_id} skipped: no ANTHROPIC_API_KEY set",
+                paper_id=paper_id,
+            )
             return [
                 {
                     "paper_id": paper_id,
@@ -1129,6 +1203,17 @@ class RadiolarianPipeline:
             api_key=api_key,
             base_url=base_url,
             model=model,
+        )
+        # Audit 2026-09-05 (tier3-C3): capture the full chart at paper
+        # level. The stub rows carrying ``metadata.range_chart`` are
+        # dropped by ``_finalize_rows`` (``_STUB_PANEL_IDS``) and no
+        # converter ever mapped them, so the extracted
+        # sections / species_ranges / biozones never survived to the
+        # export. ``run()`` merges ``_paper_range_charts`` into
+        # ``RunOutput.range_charts``. Error-status results are captured
+        # too so the failure is visible in the export (M21 contract).
+        self._paper_range_charts.setdefault(paper_id, []).append(
+            {"figure_id": figure_id, **chart.to_dict()}
         )
         # Build stub panel records (one per species_range entry) so
         # downstream code can join by figure_id. Each stub carries the
@@ -1602,6 +1687,12 @@ class RadiolarianPipeline:
                 llm_runtime=self.gemma_runtime if use_geology_llm else None,
             )
             knowledge_graph = build_knowledge_graph(section_links)
+            # Audit 2026-09-05 (tier3-C2): capture the graph at paper
+            # level so it survives to ``RunOutput.knowledge_graphs``
+            # (previously it only reached ``save_intermediate``
+            # manifests via ``_process_region``).
+            if knowledge_graph:
+                self._paper_knowledge_graphs[paper_id] = knowledge_graph
 
         results: list[dict[str, Any]] = []
         n_figs = len(figures)
@@ -2094,10 +2185,6 @@ class RadiolarianPipeline:
         # connects the visual stratigraphy data to the panel records
         # that drive the DwC export.
         results = self._link_range_chart_geology(results)
-        # After range-chart links are attached, bridge any map-figure
-        # location names to range-chart section abbreviations so a
-        # downstream consumer can pivot by either representation.
-        results = self._cross_link_map_and_range_chart(results)
         # Round-3 multi-modal geology vision: ask MiniMax-M3 to read
         # the figure image + caption and emit structured geology fields
         # (lithology, formation, member, group, country, biozone, Ma
@@ -2106,6 +2193,11 @@ class RadiolarianPipeline:
         # geology_links — no dedup (deferred to a future cleanup).
         if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
             results = self._apply_geo_vision(results, paper_id)
+        # Audit 2026-09-05 (tier3-B5): the map→range-chart bridge now
+        # runs AFTER geo vision so the map rows' vision-derived
+        # geology_links (the revived location-name source) already
+        # exist when the bridge collects them.
+        results = self._cross_link_map_and_range_chart(results)
         # Round-4 P2-5: Stage 3 bbox + crop enrichment. When M3 Stage 3
         # produced ``m3_panels`` with bbox+visible_label for this figure
         # (gated on ``m3_stage3_enabled`` opt-in + Stage 3 enabled), crop
@@ -2165,6 +2257,24 @@ class RadiolarianPipeline:
             results = self._apply_morphology_enrichment(
                 results, paper_id, od_result.fulltext_sections
             )
+        # Audit 2026-09-05 (tier3-B1): run the cross-figure linker HERE,
+        # BEFORE ``_finalize_rows`` strips the stub rows. The linker's
+        # figure index is built from rows whose figure_type is
+        # strat_column / litholog_column / paleogeographic_map /
+        # range_chart — which only exist as GEO_VISION_* / MAP_CONTEXT /
+        # RANGE_CHART stub rows. The previous call site was in
+        # ``_process_one_pdf`` AFTER ``_finalize_rows`` had already
+        # deleted every stub, so the index was always empty and every
+        # panel was tagged "unlinked" (with a junk geology_links entry).
+        if self.config.extra.get("cross_figure_linker_enabled", True):
+            try:
+                results = self._apply_cross_figure_linker(results, paper_id)
+            except Exception as exc:  # defensive — mirrors the GROBID-path gate
+                logger.warning(
+                    "cross_figure_linker failed for paper=%s (OD path): %s",
+                    paper_id,
+                    exc,
+                )
         # Round 11: dedup + drop stub rows + drop empty/invalid rows.
         # See ``_finalize_rows`` for the bug fixes this addresses.
         return self._finalize_rows(results)
@@ -3714,6 +3824,21 @@ class RadiolarianPipeline:
         if not self.config.m3_stage_6:
             return rows
         if self.m3_engine is None:
+            # Audit 2026-09-05 (tier3-D5): surface the misconfig as a
+            # run-level warning. Previously a bare debug log — an
+            # operator passing ``--m3-stage-6`` without an M3 engine
+            # (e.g. without ``m3_enhanced_mode``) saw zero output with
+            # no trace anywhere.
+            from .utils import record_warning
+
+            record_warning(
+                "m3_stage6_no_engine",
+                "m3_stage_6 is enabled but no M3 engine was built "
+                "(requires m3_enhanced_mode=True and a usable LLM "
+                "backend); morphology extraction produced nothing this "
+                "run",
+                paper_id=paper_id,
+            )
             logger.debug(
                 "_apply_morphology_enrichment: no M3 engine; skipping paper=%s",
                 paper_id,
@@ -3957,8 +4082,11 @@ class RadiolarianPipeline:
             ftype = str(md.get("figure_type") or row.get("figure_type") or "").lower()
             if ftype in (
                 "strat_column",
+                "stratigraphic_column",
                 "litholog_column",
+                "litholog",
                 "paleogeographic_map",
+                "map",
                 "range_chart",
             ):
                 paper_figures.append(row)
@@ -3998,6 +4126,11 @@ class RadiolarianPipeline:
                     "formation": formation,
                     "age": age,
                     "locality": locality,
+                    # Audit 2026-09-05 (tier3-B4): row-level image path so
+                    # ``link_visual_coordinates`` can load the real anchor
+                    # figure image (previously it received None and the
+                    # M3 visual channel could never fire).
+                    "image_path": row.get("panel_path") or md.get("figure_image_path"),
                     # Audit 2026-08-16 (A3): stamp figure_number so
                     # ``_extract_figure_number`` in cross_figure_linker
                     # uses Step 1 (figure_number field) instead of
@@ -4061,6 +4194,23 @@ class RadiolarianPipeline:
             fid = row.get("figure_id") or md.get("figure_id") or ""
             lr = by_panel_id.get((fid, pid))
             if lr is None:
+                continue
+            # Audit 2026-09-05 (tier3-B3): noise + idempotency guards.
+            # (a) An "unlinked" result (no strategy matched) used to
+            #     append a junk geology_links entry
+            #     ``{confidence: 0.0, evidence_text: "no strategy
+            #     matched"}`` to every panel AND overwrite any
+            #     link_source an earlier linker pass had stamped; the
+            #     junk then leaked into run_output.geology_contexts.
+            #     Skip unlinked results entirely.
+            # (b) If a real link_source is already present (e.g. the
+            #     GROBID path ran the linker pre-finalize), don't
+            #     re-link — makes the linker idempotent against double
+            #     invocation.
+            prev_source = md.get("link_source")
+            if prev_source and prev_source != "unlinked":
+                continue
+            if lr.source == "unlinked":
                 continue
             existing = list(md.get("geology_links") or [])
             existing.append(
@@ -4127,6 +4277,9 @@ class RadiolarianPipeline:
                         "paper_id": paper_id,
                         "figure_type": str(pmd.get("figure_type") or "plate"),
                         "caption": pmd.get("caption") or pmd.get("caption_text") or "",
+                        # Audit 2026-09-05 (tier3-B4): prefer the full
+                        # figure image over an individual panel crop.
+                        "image_path": pmd.get("figure_image_path") or prow.get("panel_path"),
                     }
                 )
 
@@ -4315,6 +4468,10 @@ class RadiolarianPipeline:
                 llm_runtime=self.gemma_runtime if use_geology_llm else None,
             )
             knowledge_graph = build_knowledge_graph(section_links)
+            # Audit 2026-09-05 (tier3-C2): paper-level capture, mirrors
+            # the OD-path site.
+            if knowledge_graph:
+                self._paper_knowledge_graphs[paper_id] = knowledge_graph
 
         if not pages:
             return []
@@ -4539,9 +4696,12 @@ class RadiolarianPipeline:
         # Audit BUG-2: pre-fix, this block was missing, so GROBID papers
         # silently skipped all four enrichment steps.
         results = self._link_range_chart_geology(results)
-        results = self._cross_link_map_and_range_chart(results)
+        # Audit 2026-09-05 (tier3-B5): mirror the OD-path order — geo
+        # vision BEFORE the map→range-chart bridge, so the bridge sees
+        # the vision-derived map location names.
         if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
             results = self._apply_geo_vision(results, paper_id)
+        results = self._cross_link_map_and_range_chart(results)
         # Audit 2026-08-17: read the typed ``m3_stage3_enabled``
         # attribute directly (not ``config.extra.get(...)``). The CLI
         # wires the value into the constructor as a typed kwarg, but
@@ -4587,18 +4747,11 @@ class RadiolarianPipeline:
             )
         # Round 11: post-process pipeline output (dedup + stub-row filter).
         # See ``_finalize_rows`` docstring for what each rule does.
-        # Round 18: enrich each row's geology_links with paleo
-        # coordinates + plate_id + reconstruction_model via
-        # ``paleo_reconstruction.enrich_geology_record``. The
-        # enrichment is in-place and a no-op when modern coords or an
-        # age are missing.
-        from .paleo_reconstruction import enrich_geology_record
-
-        for r in results:
-            md = r.get("metadata") or {}
-            for gl in md.get("geology_links") or []:
-                if isinstance(gl, dict):
-                    enrich_geology_record(gl)
+        # Audit 2026-09-05 (tier3-D4): the per-path geology-link paleo
+        # enrichment moved INTO ``_finalize_rows`` so the OD path (and
+        # every LLM-first row) gets it too — this GROBID-only loop was
+        # the sole call site, which is why no committed OD-path artifact
+        # ever carried a non-null paleo_latitude.
         # Audit 2026-08-02: Stage 6 morphology enrichment (GROBID
         # path). Same opt-in + dedup + privacy rules as the OD path
         # — see ``_apply_morphology_enrichment`` for the full logic.
@@ -4917,6 +5070,72 @@ class RadiolarianPipeline:
         # optional panel_path prefix; they override species and/or
         # panel label on the matching rows.
         kept = self._apply_review_corrections(kept)
+
+        # Audit 2026-09-05 (tier3-A4/A5): stamp per-panel identifiers
+        # that the schema declares but no stage produced.
+        #
+        # canonical_panel_id: the image-evidence ``printed_panel_id``
+        # wins (pixel-level OCR of the printed panel label), otherwise
+        # the caption-derived ``caption_panel_id``. When neither exists
+        # the converter (``panel_record_from_match``) keeps its legacy
+        # ``match.panel_id`` fallback, so we don't stamp anything here.
+        #
+        # sample_id / sample_ids: ``PanelRecord.sample_id`` reads
+        # ``metadata["sample_id"]`` but nothing wrote it, so the field
+        # was always None while the top-level ``samples`` view (built
+        # by the converter from the same captions) carried the data.
+        # "loc"-kind tokens are excluded — they are place names, not
+        # specimen identifiers.
+        from .sample_id_extractor import (
+            extract_sample_code_ids as _extract_sample_code_ids,
+        )
+        from .sample_id_extractor import extract_sample_ids as _extract_sample_ids
+
+        for r in kept:
+            md = r.setdefault("metadata", {})
+            if not md.get("canonical_panel_id"):
+                canonical = md.get("printed_panel_id") or md.get("caption_panel_id")
+                if canonical:
+                    md["canonical_panel_id"] = str(canonical)
+            if not (md.get("sample_id") or md.get("sample_ids")):
+                snippet = r.get("caption_snippet") or ""
+                if snippet:
+                    # Code-form values first (underscore-inclusive, e.g.
+                    # "B_DP2"); base extractor values that are mere
+                    # truncations of a collected value ("B") are dropped.
+                    code_vals = [s.value for s in _extract_sample_code_ids(snippet) if s.value]
+                    lowered = {v.casefold() for v in code_vals}
+                    ids: list[str] = list(code_vals)
+                    for s in _extract_sample_ids(snippet):
+                        if s.kind not in ("sample", "id") or not s.value:
+                            continue
+                        key = s.value.casefold()
+                        if key in lowered or any(k.startswith(key) for k in lowered):
+                            continue
+                        lowered.add(key)
+                        ids.append(s.value)
+                    if ids:
+                        md["sample_ids"] = ids
+                        md["sample_id"] = ids[0]
+
+        # Audit 2026-09-05 (tier3-D4): paleogeographic enrichment for
+        # every row's geology_links, on BOTH extraction paths. The only
+        # call site used to be the GROBID chain, so the default OD path
+        # — and every LLM-first row — shipped without paleo coordinates.
+        # Idempotent (see the guard in
+        # ``paleo_reconstruction.enrich_geology_record``); a no-op when
+        # modern coords / age / plate inference are missing (it never
+        # guesses).
+        from .paleo_reconstruction import enrich_geology_record as _enrich_geo
+
+        for r in kept:
+            md = r.get("metadata") or {}
+            geo_links = md.get("geology_links")
+            if not geo_links:
+                continue
+            for gl in geo_links:
+                if isinstance(gl, dict):
+                    _enrich_geo(gl)
 
         # audit 2026-07-31: low-confidence rows must be flagged for
         # review. A confidence < 0.5 row previously shipped with
@@ -6228,11 +6447,12 @@ Rules:
             m.metadata["m3_diagnostic"] = m3_diag
 
         # ---- Optional Paleobiology Database (PBDB) enrichment ----------------
-        # Opt-in via config.extra["use_paleodb"]. Looks up each unique species
-        # name from this figure and attaches taxonomy hierarchy + occurrence
-        # records to m.metadata["paleodb"].  Failures degrade silently.
-        if self.config.extra.get("use_paleodb"):
-            self._attach_paleodb_metadata(matches)
+        # Audit 2026-09-05 (tier3-D3): this per-figure classical-tail
+        # call was removed. PBDB now runs ONCE per paper, at the end of
+        # ``_process_one_pdf``, on the finalized rows — the old
+        # placement was unreachable for LLM-first rows (the LLM-first
+        # branch returns early from ``_process_region``) and double-
+        # looked-up species across figures of the same paper.
 
         results: list[dict[str, Any]] = [m.to_dict() for m in matches]
 
@@ -6789,19 +7009,38 @@ Rules:
         }
         if min_interval_cfg is not None:
             paleo_kwargs["min_interval"] = float(min_interval_cfg)
+
+        # Audit 2026-09-05 (tier3-D3): accept both MatchResult objects
+        # (the legacy classical per-figure tail) and plain row dicts
+        # (the paper-level call site in ``_process_one_pdf``, where
+        # rows have already been finalized to dicts by
+        # ``_finalize_rows``).
+        def _row_species(m: Any) -> str:
+            if isinstance(m, dict):
+                return str(m.get("species") or "")
+            return str(getattr(m, "species", "") or "")
+
+        def _row_set_paleodb(m: Any, payload: dict[str, Any]) -> None:
+            if isinstance(m, dict):
+                md = m.setdefault("metadata", {})
+            else:
+                md = m.metadata
+            md["paleodb"] = payload
+
         try:
             client = PaleoDB(**paleo_kwargs)
         except Exception as exc:
             logger.warning("PaleoDB init failed: %s", exc)
             for m in matches:
-                m.metadata["paleodb"] = {"error": str(exc)}
+                _row_set_paleodb(m, {"error": str(exc)})
             return
 
         # Deduplicate species names so we only do one lookup per unique taxon
         unique_species: dict[str, None] = {}
         for m in matches:
-            if m.species and m.species.strip():
-                unique_species.setdefault(m.species.strip(), None)
+            sp = _row_species(m)
+            if sp and sp.strip():
+                unique_species.setdefault(sp.strip(), None)
 
         for name in unique_species:
             try:
@@ -6861,8 +7100,8 @@ Rules:
                 "looked_up": True,
             }
             for m in matches:
-                if (m.species or "").strip() == name:
-                    m.metadata["paleodb"] = payload
+                if _row_species(m).strip() == name:
+                    _row_set_paleodb(m, payload)
 
     @staticmethod
     def _collect_fallback_error_info(
@@ -7040,6 +7279,10 @@ Rules:
                 ),
             )
         knowledge_graph = build_knowledge_graph(section_links) if section_links else None
+        # Audit 2026-09-05 (tier3-C2): paper-level capture, mirrors the
+        # OD / GROBID sites.
+        if knowledge_graph:
+            self._paper_knowledge_graphs[paper_id] = knowledge_graph
 
         # Two-pass: enumerate total regions across all pages so the progress
         # callback can map (current, total) onto a smooth 30-90% band.

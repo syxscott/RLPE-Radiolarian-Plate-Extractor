@@ -100,6 +100,12 @@ def _scale_bar_from_meta(meta: dict[str, Any]) -> ScaleBarRecord | None:
         pixel_length=sb.get("pixel_length"),
         um_per_px=sb.get("um_per_px"),
         confidence=sb.get("confidence", 0.0) or 0.0,
+        # Audit 2026-09-05 (tier3-A1): forward the merge sanity-check
+        # flag ("scale_bar_disagreement" / "scale_bar_10x_disagreement"
+        # from ``scale_bar.merge_scale_info``). The field was declared
+        # on ScaleBarRecord but never mapped, so a 2x-10x source
+        # disagreement was invisible in every export.
+        warning=sb.get("warning"),
     )
 
 
@@ -157,6 +163,16 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
                 coordinate_uncertainty_in_meters=_coordinate_uncertainty_for(
                     g.get("coord_source", "") or ""
                 ),
+                # Audit 2026-09-05 (tier3-A2): forward the per-entry
+                # link provenance. ``link_source`` (sample_match /
+                # locality_match / m3_inference / geo_vision_point /
+                # geo_vision_layer / cross_figure_linker:*) and
+                # ``figure_id`` (source figure of the link) were
+                # written by the geo-vision / cross-figure stages but
+                # never mapped, so exports could not trace a geology
+                # fact back to the figure that produced it.
+                link_source=g.get("link_source"),
+                figure_id=g.get("figure_id"),
             )
         )
     return out
@@ -199,6 +215,15 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
         for entry in raw_visual_links:
             if isinstance(entry, dict):
                 visual_links.append(entry)
+    # Audit 2026-09-05 (tier3-B6): forward the revived map→range-chart
+    # bridge result (section ↔ location matches). Filter to dicts only
+    # so a corrupted list doesn't break the export.
+    raw_matched_location = meta.get("matched_location")
+    matched_location: list[dict[str, Any]] = []
+    if isinstance(raw_matched_location, list):
+        for entry in raw_matched_location:
+            if isinstance(entry, dict):
+                matched_location.append(entry)
     # audit 2026-07-31: forward PBDB taxonomy onto the exported
     # metadata so the DwC-A exporter can fill kingdom…family (the
     # columns were hard-coded empty because PanelRecord never carried
@@ -214,7 +239,15 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
         figure_number=meta.get("figure_number"),
         page_index=meta.get("page_index"),
         matcher_used=bool(meta.get("matcher_used", False)),
-        matcher_type=str(meta.get("matcher_type", "heuristic")),
+        # Audit 2026-09-05 (tier3-A3): the hardcoded "heuristic" default
+        # mislabelled every LLM-first row (which never writes
+        # ``matcher_type``) as heuristic matching. When the row carries
+        # an ``extraction_method``, surface it instead so the exported
+        # provenance reflects the path that actually produced the row.
+        matcher_type=str(
+            meta.get("matcher_type")
+            or ("llm_first" if meta.get("extraction_method") == "llm_first" else "heuristic")
+        ),
         matcher_conf=float(meta.get("matcher_conf", 0.0) or 0.0),
         caption_pairs_used=bool(meta.get("caption_pairs_used", False)),
         scale_bar=_scale_bar_from_meta(meta),
@@ -230,6 +263,7 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
         link_confidence=link_confidence_val,
         link_figure_id=link_figure_id_val,
         cross_figure_visual_links=visual_links,
+        matched_location=matched_location,
     )
 
 
@@ -1092,6 +1126,8 @@ def run_output_from_provenance(
     matches: list[MatchResult] | None,
     *,
     paper_morphologies: list[dict[str, Any]] | None = None,
+    paper_knowledge_graphs: list[dict[str, Any]] | None = None,
+    paper_range_charts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-serializable RunOutput dict from a provenance and a
     list of ``MatchResult`` instances. Use this before writing the
@@ -1164,6 +1200,19 @@ def run_output_from_provenance(
     morphology_dump = morphology_records_from_matches(
         matches, paper_morphologies=paper_morphologies
     )
+    # Audit 2026-09-05 (tier3-C5): paper-level knowledge-graph and
+    # range-chart views, captured by the pipeline (``_paper_
+    # knowledge_graphs`` / ``_paper_range_charts``) and drained by
+    # ``run()``. Both payloads were previously computed and dropped:
+    # the graph only reached ``save_intermediate`` manifests and the
+    # range charts lived solely on stub rows that ``_finalize_rows``
+    # strips. Free-form dicts (the graph shape comes from
+    # ``geology_extraction.build_knowledge_graph``, the chart shape
+    # from ``range_chart_extractor.RangeChartResult.to_dict()`` with a
+    # ``figure_id`` key added) so the export round-trips without a
+    # nested Pydantic model.
+    knowledge_graphs_dump = [kg for kg in (paper_knowledge_graphs or []) if kg]
+    range_charts_dump = [rc for rc in (paper_range_charts or []) if rc]
     return {
         "schema_version": provenance.schema_version,
         "provenance": provenance.model_dump(),
@@ -1176,6 +1225,8 @@ def run_output_from_provenance(
         "localities": locality_dump,
         "paleo_coordinates": paleo_dump,
         "morphologies": morphology_dump,
+        "knowledge_graphs": knowledge_graphs_dump,
+        "range_charts": range_charts_dump,
         "warnings": warnings_dump,
     }
 
@@ -2246,9 +2297,7 @@ def paleo_coordinates_from_localities(
             # the 50 km figure is only meaningful for the published
             # rotation file; embedded approximations must not claim it.
             coordinate_uncertainty_in_meters=(
-                50000.0
-                if reconstruction_model_label(plate_id) == "Seton 2012"
-                else None
+                50000.0 if reconstruction_model_label(plate_id) == "Seton 2012" else None
             ),
         )
         out.append(rec.model_dump())

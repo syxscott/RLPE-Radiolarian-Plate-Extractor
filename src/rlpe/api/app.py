@@ -3179,6 +3179,17 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 extra[key] = options[key]
         if options.get("use_gemma4"):
             extra["use_gemma4"] = True
+        # Audit 2026-09-05 (tier3-D2): mirror the CLI's implicit
+        # m3_enhanced_mode opt-in (cli.py). ``use_geo_vision`` defaults
+        # to True in JobOptions while ``m3_enhanced_mode`` defaults to
+        # None — which ``model_dump(exclude_none=True)`` drops before
+        # it reaches this dict — so the pipeline never received
+        # m3_enhanced_mode and never built the M3 engine: geo vision
+        # and Stage-6 morphology silently no-op'd on every default web
+        # job despite the "Default ON" field default. An explicit
+        # ``m3_enhanced_mode=False`` from the client still wins.
+        if options.get("use_geo_vision") or options.get("m3_stage_6"):
+            extra.setdefault("m3_enhanced_mode", True)
         # For web mode, we never block on stdin; default to non-interactive.
         extra.setdefault("MiniMax_interactive", False)
 

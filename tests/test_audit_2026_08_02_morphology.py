@@ -301,7 +301,10 @@ class TestSchemaMorphology:
     """Schema v1.2.0 surface — MorphologyRecord + TaxonRecord.morphology_ids."""
 
     def test_schema_version_bumped(self) -> None:
-        assert SCHEMA_VERSION == "1.2.0"
+        # Audit 2026-09-05 (tier3-C6): schema bumped to 1.3.0 for the
+        # RunOutput.knowledge_graphs / range_charts views; the Stage-6
+        # MorphologyRecord surface introduced in 1.2.0 is unchanged.
+        assert SCHEMA_VERSION >= "1.2.0"
 
     def test_morphology_record_defaults(self) -> None:
         rec = MorphologyRecord(

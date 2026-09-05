@@ -824,7 +824,7 @@ class TestProductDataPackage:
         ``RunOutput.schema_version`` echoed by ``validate_run_output``
         is a contract break and must fail this test.
         """
-        assert SCHEMA_VERSION == "1.2.0"
+        assert SCHEMA_VERSION == "1.3.0"
         prov = ProvenanceRecord(**build_provenance().to_dict())
         ro = validate_run_output(
             {
@@ -833,4 +833,4 @@ class TestProductDataPackage:
                 "panels": [],
             }
         )
-        assert ro.schema_version == "1.2.0"
+        assert ro.schema_version == "1.3.0"

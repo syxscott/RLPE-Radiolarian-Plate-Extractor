@@ -82,8 +82,16 @@ class TestSampleIDLinkThroughPipeline:
         rows = [plate, strat]
         out = pipe._apply_cross_figure_linker(rows, paper_id="p1")
         plate_out = out[0]
-        assert plate_out["metadata"]["link_source"] == "unlinked"
-        assert plate_out["metadata"]["link_confidence"] == 0.0
+        # Audit 2026-09-05 (tier3-B3): unlinked results no longer stamp
+        # link_source / link_confidence and no longer append a junk
+        # ``{confidence: 0.0, evidence_text: "no strategy matched"}``
+        # geology_links entry. Absence of a stamp IS the unlinked
+        # signal; the junk entries previously leaked into
+        # run_output.geology_contexts.
+        assert not plate_out["metadata"].get("link_source")
+        assert "link_confidence" not in plate_out["metadata"]
+        gl = plate_out["metadata"].get("geology_links") or []
+        assert gl == []
 
 
 class TestLocalityLinkThroughPipeline:

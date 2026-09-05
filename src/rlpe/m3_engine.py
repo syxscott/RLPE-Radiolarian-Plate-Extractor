@@ -39,7 +39,6 @@ from typing import Any
 from PIL import Image
 
 from .grobid import PipelineCancelledError  # noqa: E402
-from .ocr_corrections import _normalize_ocr_chars  # noqa: E402
 
 # Import FallbackRecommendedError to detect when backend recommends switching
 from .llm_backends import (  # noqa: E402
@@ -48,6 +47,7 @@ from .llm_backends import (  # noqa: E402
     LLMRateLimitError,
     _apply_geo_whitelist,
 )
+from .ocr_corrections import _normalize_ocr_chars  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

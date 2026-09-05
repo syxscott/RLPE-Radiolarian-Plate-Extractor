@@ -108,8 +108,21 @@ class TestF3EAsciiBanner:
 
         monkeypatch.setattr(sys, "stdout", _BoomStream())
         # Force a fresh import: clear any cached version.
+        # Audit 2026-09-05: pop ONLY the launcher module itself. The
+        # previous ``name.startswith("rlpe.")`` purge dropped every
+        # ``rlpe.*`` module from sys.modules — modules that other test
+        # files had already imported and bound by reference. Later
+        # tests then re-imported fresh copies while their earlier
+        # ``from rlpe.x import y`` bindings still pointed at the old
+        # module dicts, silently breaking monkeypatch-based fixtures
+        # (e.g. the ``_fake_image_loader`` fixture in
+        # test_phase66_visual_trigger.py patched a different module
+        # object than the one the test's imported function used). The
+        # NIT-2 tests below prove popping just ``run_web_server`` is
+        # sufficient: ``rlpe.api.app`` re-reads its env vars from the
+        # (cached) module attributes that this test doesn't touch.
         for name in list(sys.modules):
-            if name == "run_web_server" or name.startswith("rlpe."):
+            if name == "run_web_server":
                 sys.modules.pop(name, None)
         mod = _load_module()
         assert mod._USE_BOX_BANNER is False, (

@@ -478,6 +478,41 @@ def extract_sample_ids(caption: str) -> list[SampleID]:
     return out
 
 
+# Audit 2026-09-05 (tier3-A4): underscore-inclusive ``Sample X`` /
+# ``specimen X`` form. The base ``_SAMPLE_RE`` above stops at an
+# underscore (``Sample B_DP2`` → ``B``) because its callers expect bare
+# tokens; the panel-level ``sample_id`` stamp in ``_finalize_rows``
+# needs the FULL code as written (``B_DP2``).
+_SAMPLE_CODE_RE = re.compile(
+    r"\b(?:sample|specimen)\s+([A-Za-z0-9][A-Za-z0-9_\-]*)",
+    re.IGNORECASE,
+)
+_SAMPLE_CODE_STOPWORDS = frozenset({"ids", "id", "numbers", "number", "list", "preparation"})
+
+
+def extract_sample_code_ids(caption: str) -> list[SampleID]:
+    """Extract ``Sample X`` / ``specimen X`` tokens, underscores included.
+
+    Companion to :func:`extract_sample_ids` — same ``SampleID`` shape,
+    same dedup rules — but the captured value keeps ``_`` so codes like
+    ``B_DP2`` / ``Al74_300`` survive intact.
+    """
+    if not caption:
+        return []
+    out: list[SampleID] = []
+    seen: set[str] = set()
+    for m in _SAMPLE_CODE_RE.finditer(caption):
+        value = m.group(1).strip()
+        if not value or value.casefold() in _SAMPLE_CODE_STOPWORDS:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(SampleID(kind="sample", value=value, confidence=0.95))
+    return out
+
+
 def _normalize_locality_phrase(phrase: str) -> str | None:
     """Normalize a raw locality capture: strip leading articles, strip
     trailing stopwords, then check the blocklist (exact + substring).

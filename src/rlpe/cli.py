@@ -1228,7 +1228,18 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     # path implies the engine. Users who want to disable ``m3_enhanced_mode``
     # entirely can set ``--no-m3-enhanced-mode`` after their M3 flag and
     # the explicit value wins (later assignment below).
-    elif args.m3_per_panel or args.use_m3_stage3 or args.m3_multi_plate_enrich:
+    # Audit 2026-09-05 (tier3-D1): ``--m3-stage-6`` (morphology) and
+    # ``--use-geo-vision`` (geology vision) also require the engine.
+    # Pre-fix, passing either flag alone left ``m3_engine = None`` and
+    # the feature silently produced nothing (Stage 6: debug log only;
+    # geo vision: gate short-circuit).
+    elif (
+        args.m3_per_panel
+        or args.use_m3_stage3
+        or args.m3_multi_plate_enrich
+        or args.m3_stage_6
+        or args.use_geo_vision
+    ):
         cfg.extra["m3_enhanced_mode"] = True
     for n in args.m3_disable_stage or []:
         cfg.extra[f"m3_stage_{n}"] = False

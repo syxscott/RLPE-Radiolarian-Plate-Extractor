@@ -139,7 +139,7 @@ TAXON_CF_COMPARE_PATTERN = re.compile(
 _AUTHOR_INITIAL_RE = re.compile(r"\b([A-Z])\.")
 
 
-def _extract_author_initial(text: str, match: "re.Match[str]") -> str | None:
+def _extract_author_initial(text: str, match: re.Match[str]) -> str | None:
     """Audit 2026-09-04 taxon-7 helper.
 
     When :data:`TAXON_CF_COMPARE_PATTERN` matched the author-initial

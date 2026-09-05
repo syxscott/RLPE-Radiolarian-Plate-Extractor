@@ -115,7 +115,13 @@ class TestSweep6C4KnownExtraKeys:
             "yolo_conf_threshold",
             "yolo_iou_threshold",
             "yolo_device",
-            "m3_stage_6",
+            # Audit 2026-09-05 (tier3-D2): ``m3_stage_6`` was REMOVED from
+            # this list. Unlike the other nine (pure shadowing hazards),
+            # ``m3_stage_6`` is legitimately written into ``extra`` by
+            # BOTH the CLI and the Web extra builder, and
+            # ``PipelineConfig.__post_init__`` now PROMOTES it onto the
+            # typed field (a web job with ``m3_stage_6: true`` previously
+            # never reached the typed attribute and silently no-op'd).
             "m3_per_panel_enabled",
             "m3_per_panel_min_conf",
             "m3_per_panel_max_per_figure",
@@ -123,7 +129,7 @@ class TestSweep6C4KnownExtraKeys:
         ],
     )
     def test_redundant_key_removed(self, redundant_key):
-        """The 10 redundant keys must NOT be in ``_KNOWN_EXTRA_KEYS`` —
+        """The 9 redundant keys must NOT be in ``_KNOWN_EXTRA_KEYS`` —
         they're real PipelineConfig dataclass fields, so listing them
         here let ``cli.py`` get away with ``cfg.extra['m3_stage_6'] = ...``
         instead of writing to the typed attribute."""
@@ -147,23 +153,30 @@ class TestSweep6C4KnownExtraKeys:
                 f"the 10 real-typed-attr duplicates were removed."
             )
 
-    def test_warning_fires_for_legacy_cfg_extra_m3_stage_6(self):
-        """If someone re-introduces ``cfg.extra['m3_stage_6'] = ...``,
-        the unknown-keys warning must fire."""
+    def test_extra_m3_stage_6_promotes_to_typed_field(self):
+        """Audit 2026-09-05 (tier3-D2): ``cfg.extra['m3_stage_6']`` is now
+        a legitimate transport — ``__post_init__`` promotes it onto the
+        typed ``m3_stage_6`` attribute. Pre-fix, the Web extra builder
+        wrote the key into ``extra`` but nothing promoted it, so a web
+        job with ``m3_stage_6: true`` silently produced no morphology
+        records."""
         from rlpe.config import PipelineConfig
 
         cfg = PipelineConfig(
             pdf_dir=Path("/tmp"),
             work_dir=Path("/tmp"),
+            extra={"m3_stage_6": True},
         )
-        cfg.extra["m3_stage_6"] = True
-        # Re-run __post_init__ to fire the warning.
-        cfg.__post_init__()
-        # We don't assert on the warning text — just that the key is no
-        # longer in the allow-list (covered above) and that
-        # `cfg.extra['m3_stage_6']` is still present (validation is
-        # warn-only, not raise).
-        assert "m3_stage_6" not in _KNOWN_EXTRA_KEYS
+        assert cfg.m3_stage_6 is True
+        # And the key no longer trips the unknown-keys warning.
+        assert "m3_stage_6" in _KNOWN_EXTRA_KEYS
+        # None (CLI's BooleanOptionalAction default) must NOT promote.
+        cfg2 = PipelineConfig(
+            pdf_dir=Path("/tmp"),
+            work_dir=Path("/tmp"),
+            extra={"m3_stage_6": None},
+        )
+        assert cfg2.m3_stage_6 is False
 
 
 class TestSweep6CliUsesTypedAttribute:

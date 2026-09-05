@@ -9,6 +9,21 @@ import pytest
 from rlpe.config import PipelineConfig
 
 
+def _make_tiny_png(tmp_path: Any, name: str) -> str:
+    """Write a 48x48 PNG (above the M3 tiny-image 32px guard).
+
+    Audit 2026-09-05 (tier3-B4): the visual linker now REQUIRES
+    loadable images — previously it passed ``None, None`` and the M3
+    method bailed on its tiny-image guard, so the channel could never
+    fire. Tests must supply real image files to exercise it.
+    """
+    from PIL import Image
+
+    p = tmp_path / name
+    Image.new("RGB", (48, 48), color=(200, 200, 200)).save(p)
+    return str(p)
+
+
 def _make_plate_row(
     panel_id: str = "p1",
     figure_id: str = "fig1",
@@ -16,12 +31,15 @@ def _make_plate_row(
     species: str | None = "Genus species",
     paper_id: str = "p1",
     link_source: str | None = None,
+    image_path: str | None = None,
 ) -> dict[str, Any]:
     md: dict[str, Any] = {
         "figure_type": "plate",
         "caption": caption,
         "caption_snippet": caption,
     }
+    if image_path is not None:
+        md["figure_image_path"] = image_path
     if link_source is not None:
         md["link_source"] = link_source
         md["link_confidence"] = 1.0 if link_source == "sample_match" else 0.7
@@ -41,11 +59,13 @@ def _make_strat_row(
     figure_id: str = "strat1",
     caption: str = "Scaglia Fm, Late Triassic",
     paper_id: str = "p1",
+    image_path: str | None = None,
 ) -> dict[str, Any]:
     return {
         "paper_id": paper_id,
         "figure_id": figure_id,
         "panel_id": None,
+        "panel_path": image_path,
         "metadata": {
             "figure_type": "strat_column",
             "caption": caption,
@@ -58,11 +78,13 @@ def _make_map_row(
     figure_id: str = "map1",
     caption: str = "Paleogeographic map",
     paper_id: str = "p1",
+    image_path: str | None = None,
 ) -> dict[str, Any]:
     return {
         "paper_id": paper_id,
         "figure_id": figure_id,
         "panel_id": None,
+        "panel_path": image_path,
         "metadata": {
             "figure_type": "paleogeographic_map",
             "caption": caption,
@@ -107,15 +129,21 @@ def pipe(tmp_path):
 
 
 class TestVisualLinkerIntegration:
-    def test_visual_linker_writes_to_metadata(self, pipe):
+    def test_visual_linker_writes_to_metadata(self, pipe, tmp_path):
         """When Strategy 1 didn't fire and the paper has plate + strat,
         the visual linker's output lands in metadata.cross_figure_visual_links."""
         plate = _make_plate_row(
             panel_id="p1",
             caption="Specimen from Italy",
             link_source="locality_match",
+            # tier3-B4: the visual channel now requires loadable images.
+            image_path=_make_tiny_png(tmp_path, "plate.png"),
         )
-        strat = _make_strat_row(figure_id="strat1", caption="Scaglia Fm")
+        strat = _make_strat_row(
+            figure_id="strat1",
+            caption="Scaglia Fm",
+            image_path=_make_tiny_png(tmp_path, "strat.png"),
+        )
         rows = [plate, strat]
         pipe.m3_engine = _FakeM3Visual()
         out = pipe._apply_cross_figure_linker(rows, paper_id="p1")
@@ -164,16 +192,23 @@ class TestVisualLinkerIntegration:
         assert links == []
         assert m3.calls == 0
 
-    def test_visual_linker_supports_paleogeographic_map(self, pipe):
+    def test_visual_linker_supports_paleogeographic_map(self, pipe, tmp_path):
         """Paleogeographic map counts as an anchor figure."""
         plate = _make_plate_row(
             panel_id="p1",
             caption="Italy specimen",
             link_source="locality_match",
+            image_path=_make_tiny_png(tmp_path, "plate.png"),
         )
         m3 = _FakeM3Visual()
         pipe.m3_engine = m3
-        rows = [plate, _make_map_row(figure_id="map1")]
+        rows = [
+            plate,
+            _make_map_row(
+                figure_id="map1",
+                image_path=_make_tiny_png(tmp_path, "map.png"),
+            ),
+        ]
         out = pipe._apply_cross_figure_linker(rows, paper_id="p1")
         plate_out = out[0]
         links = plate_out["metadata"].get("cross_figure_visual_links") or []
