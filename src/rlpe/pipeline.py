@@ -56,6 +56,7 @@ from .grobid import GrobidClient, PipelineCancelledError, parse_paper_metadata_f
 from .layout import (
     choose_best_page,
     detect_figure_regions,
+    detect_figure_regions_yolo,
     extract_figure_number,
     find_plate_pages,
     render_pdf_pages,
@@ -281,6 +282,10 @@ class RadiolarianPipeline:
         # ``RunOutput.range_charts``.
         self._paper_knowledge_graphs: dict[str, dict[str, Any]] = {}
         self._paper_range_charts: dict[str, list[dict[str, Any]]] = {}
+        # F6 (audit 2026-09-07): captions already processed through the
+        # range-chart path this run — dedups OD's duplicate range-chart
+        # figures (Munasri p007_09/p007_10 burned one M3 call each).
+        self._seen_range_chart_captions: set[str] = set()
         # Phase 59 (Bug 2.5): serialise progress-callback invocations.
         # Multiple worker threads can finish PDFs concurrently and
         # invoke ``_progress_cb`` simultaneously; without this lock,
@@ -1903,6 +1908,13 @@ class RadiolarianPipeline:
                     primary_path = cand_path
                     region_img = cand
             if primary_path is None or region_img is None:
+                # F5 (audit 2026-09-07): silent skips here cost the
+                # Munasri investigation real time — surface every drop.
+                logger.info(
+                    "OD figure loop: %s skipped (no readable image; %d image_paths failed imread)",
+                    pair.figure_id,
+                    len(pair.image_paths or []),
+                )
                 continue
 
             # ---- Range-chart detection ----
@@ -1925,6 +1937,24 @@ class RadiolarianPipeline:
             if fig_type == "other" and (pair.metadata or {}).get("caption_recovered_via"):
                 fig_type = "plate"
             if fig_type == "range_chart":
+                # F6 (audit 2026-09-07): OD sometimes emits the SAME
+                # range-chart figure twice under different figure_ids
+                # (Munasri p007_09/p007_10 both captioned "Figure 5:
+                # Paleolatitudinal model…") — each duplicate burned an
+                # M3 vision call. Skip when an identical caption already
+                # went through the range-chart path in this paper.
+                _rc_cap_key = (pair.caption_text or "").strip().lower()
+                if _rc_cap_key and _rc_cap_key in self._seen_range_chart_captions:
+                    logger.info(
+                        "range_chart %s skipped: duplicate of an already-"
+                        "processed range-chart caption",
+                        pair.figure_id,
+                    )
+                    self._emit_progress(
+                        fig_idx, n_figs, f"[{fig_idx}/{n_figs}] range_chart (duplicate) → skip"
+                    )
+                    continue
+                self._seen_range_chart_captions.add(_rc_cap_key)
                 # OD sometimes fails to associate the chart image with
                 # its caption (the chart has no embedded image metadata
                 # in the PDF text layer, so the caption-image pairing
@@ -2095,28 +2125,40 @@ class RadiolarianPipeline:
                         figures, pair, od_result.json_data
                     )
                 if schematic_image_path is not None and self.m3_engine is not None:
-                    try:
-                        from PIL import Image as _PILImage
-
-                        with _PILImage.open(schematic_image_path) as im:
-                            schematic_image = im.convert("RGB")
-                        schematic_data = self._m3_call_with_fallback(
-                            self.m3_engine.extract_schematic,
-                            image=schematic_image,
-                            caption=pair.caption_text or "",
-                            figure_type=fig_type,
-                            paper_id=paper_id,
-                            figure_id=pair.figure_id,
-                        )
-                    except Exception as exc:
+                    # F9 (audit 2026-09-06): during a MiniMax 5xx storm,
+                    # skip schematic calls — they burn retries on calls
+                    # that will fail anyway. The stub below still fires
+                    # so the figure stays visible.
+                    _backend = getattr(self.m3_engine, "backend", None)
+                    if getattr(_backend, "in_5xx_storm", lambda: False)():
                         logger.warning(
-                            "schematic_vision %s failed for %s/%s: %s",
-                            fig_type,
-                            paper_id,
+                            "schematic %s skipped: MiniMax 5xx storm active",
                             pair.figure_id,
-                            exc,
                         )
                         schematic_data = None
+                    else:
+                        try:
+                            from PIL import Image as _PILImage
+
+                            with _PILImage.open(schematic_image_path) as im:
+                                schematic_image = im.convert("RGB")
+                            schematic_data = self._m3_call_with_fallback(
+                                self.m3_engine.extract_schematic,
+                                image=schematic_image,
+                                caption=pair.caption_text or "",
+                                figure_type=fig_type,
+                                paper_id=paper_id,
+                                figure_id=pair.figure_id,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "schematic_vision %s failed for %s/%s: %s",
+                                fig_type,
+                                paper_id,
+                                pair.figure_id,
+                                exc,
+                            )
+                            schematic_data = None
                 # Strip the leading-underscore provenance fields
                 # before storing on the metadata. The downstream
                 # JSONL exporter carries these as provenance columns
@@ -6151,34 +6193,66 @@ Rules:
                     )
                     m3_diag["stage2_class"] = m3_plate_cls.to_dict()
                     if not m3_plate_cls.is_radiolarian_plate:
-                        logger.info(
-                            "M3 Stage 2: %s/%s rejected (not a radiolarian plate): %s",
-                            paper_id,
-                            figure_id,
-                            m3_plate_cls.reasoning[:120],
+                        # F4 (audit 2026-09-07): caption-evidence override.
+                        # A caption carrying >=2 taxon entities or >=3
+                        # numbered species clauses is strong a-priori
+                        # evidence of a real radiolarian plate; Stage 2's
+                        # one-shot vision verdict misfired on exactly this
+                        # shape (Munasri_2023: a 19-clause plate rejected
+                        # as "diagram"). Only override on strong evidence
+                        # — weak/absent captions still take the rejection
+                        # (Cenosphaera case: a conodont figure with no
+                        # caption evidence must stay rejected).
+                        _cap_evidence = max(
+                            len(getattr(caption, "entities", []) or []),
+                            len(
+                                re.findall(
+                                    r"(?:Figs?|Fig\.?|Plate|Pl\.)\s*\d+"
+                                    r"|\(\s*\d{1,3}\s*[,–\-]\s*\d{1,3}\s*\)"
+                                    r"|\b\d{1,2}\.\d{1,2}\.?\b",
+                                    caption.caption or "",
+                                )
+                            ),
                         )
-                        # Annotate each potential panel as "rejected by classifier"
-                        # and return an empty match list with the diagnostic saved.
-                        if self.config.save_intermediate:
-                            sys.modules[__name__].__dict__["_safe_write_json"](
-                                self.config.manifests_dir()
-                                / paper_id
-                                / f"{slugify(figure_id)}.json",
-                                {
-                                    "paper_id": paper_id,
-                                    "figure_id": figure_id,
-                                    "caption": caption.caption,
-                                    "figure_number": caption.figure_number,
-                                    "page_index": best_page_index,
-                                    "region": asdict(region),
-                                    "m3_diagnostic": m3_diag,
-                                    "m3_rejected": True,
-                                    "m3_rejection_reason": m3_plate_cls.reasoning,
-                                    "panels": [],
-                                    "matches": [],
-                                },
+                        if _cap_evidence >= 2:
+                            m3_diag["stage2_overridden"] = True
+                            logger.info(
+                                "M3 Stage 2 rejected %s/%s but the caption "
+                                "carries strong plate evidence (%d signals); "
+                                "overriding and continuing",
+                                paper_id,
+                                figure_id,
+                                _cap_evidence,
                             )
-                        return []
+                        else:
+                            logger.info(
+                                "M3 Stage 2: %s/%s rejected (not a radiolarian plate): %s",
+                                paper_id,
+                                figure_id,
+                                m3_plate_cls.reasoning[:120],
+                            )
+                            # Annotate each potential panel as "rejected by classifier"
+                            # and return an empty match list with the diagnostic saved.
+                            if self.config.save_intermediate:
+                                sys.modules[__name__].__dict__["_safe_write_json"](
+                                    self.config.manifests_dir()
+                                    / paper_id
+                                    / f"{slugify(figure_id)}.json",
+                                    {
+                                        "paper_id": paper_id,
+                                        "figure_id": figure_id,
+                                        "caption": caption.caption,
+                                        "figure_number": caption.figure_number,
+                                        "page_index": best_page_index,
+                                        "region": asdict(region),
+                                        "m3_diagnostic": m3_diag,
+                                        "m3_rejected": True,
+                                        "m3_rejection_reason": m3_plate_cls.reasoning,
+                                        "panels": [],
+                                        "matches": [],
+                                    },
+                                )
+                            return []
                 # Stage 3: panel segmentation hint
                 if self.m3_engine._stage_enabled(3):
                     hint = (
@@ -6195,8 +6269,72 @@ Rules:
                 m3_plate_cls = None
 
         # ---- Classical CV: panel segmentation + OCR + rule-based match ----------
-        with self._seg_lock:
-            panels = self.segmenter.segment_image(region_img)
+        # F7 (audit 2026-09-07): YOLO panel detector — when
+        # ``od_panel_detector == "yolo"`` the E2-trained radiolarian-panel
+        # weights (24/24 on the Soeka validation plates vs 8/24 for
+        # OpenCV) replace the classical connected-component segmenter as
+        # the FIRST-choice panel finder on the OD path. Falls back to
+        # OpenCV when the weights are missing or inference raises.
+        _yolo_panels_used = False
+        if (
+            self.config.extra.get("od_panel_detector") == "yolo"
+            and self.config.use_yolo_figures
+            and self.config.yolo_model_path
+        ):
+            try:
+                from .layout import PageRecord as _YoloPage
+
+                # F7: detect on the region crop when available, else on
+                # the full rendered page image.
+                _yolo_img_path = getattr(region, "crop_path", None) or ""
+                if not _yolo_img_path:
+                    raise ValueError("region has no crop_path for YOLO detection")
+                _yolo_page = _YoloPage(
+                    page_index=best_page_index or 0,
+                    image_path=_yolo_img_path,
+                    text=caption.caption or "",
+                )
+                # Use the E2-trained panel weights by default — the
+                # yolo_model_path default (radiolarian_yolo_v1.pt) is the
+                # FIGURE detector (0/24 on Soeka panels), while
+                # panel_detector_v1.pt is the panel detector validated at
+                # 24/24. An operator can still point yolo_model_path at a
+                # custom panel model explicitly.
+                _panel_model = self.config.yolo_model_path
+                if not _panel_model or _panel_model.endswith("radiolarian_yolo_v1.pt"):
+                    _panel_model = "models/panel_detector_v1.pt"
+                _yolo_regions = detect_figure_regions_yolo(
+                    _yolo_page,
+                    model_path=_panel_model,
+                    conf=max(self.config.yolo_conf_threshold, 0.4),
+                    iou=self.config.yolo_iou_threshold,
+                    device=self.config.yolo_device,
+                )
+                panels = [
+                    PanelCandidate(
+                        panel_id=f"P{i + 1}",
+                        bbox=(int(r.bbox[0]), int(r.bbox[1]), int(r.bbox[2]), int(r.bbox[3])),
+                        score=float(r.score),
+                        metadata={"method": "yolo_panel_detector"},
+                    )
+                    for i, r in enumerate(_yolo_regions)
+                ]
+                _yolo_panels_used = True
+                logger.info(
+                    "YOLO panel detector: %d panels on %s (OpenCV would have been used)",
+                    len(panels),
+                    figure_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "YOLO panel detection failed for %s; falling back to OpenCV: %s",
+                    figure_id,
+                    exc,
+                )
+                panels = []
+        if not _yolo_panels_used:
+            with self._seg_lock:
+                panels = self.segmenter.segment_image(region_img)
         # OCR is intentionally not locked at this layer — see __init__ for
         # the rationale. Engine init is protected inside OCRBackend itself.
         if (not panels or len(panels) == 0) and m3_panels:

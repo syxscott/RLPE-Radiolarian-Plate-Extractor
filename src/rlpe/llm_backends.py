@@ -1961,7 +1961,21 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 "(data_outbound_policy=local_only or SDK not installed)."
             )
         last_exc: Exception | None = None
-        for attempt in range(self.max_retries):
+        # Audit 2026-09-06 (F9): 5xx "system error (1033)" storms observed
+        # during the 40-paper coverage run — 40 groups × 3 retries all
+        # failed with the standard 1s/2s/4s backoff. Server overload
+        # needs a longer window: give 5xx one extra attempt and step the
+        # backoff 2s → 8s → 30s → 60s. 429 keeps the Retry-After-driven
+        # short cycle.
+        extra_5xx_attempt = False
+        max_attempts = self.max_retries + 1
+        last_exc_5xx = False
+        for attempt in range(max_attempts):
+            # F9: the extra slot beyond ``max_retries`` is reserved for
+            # 5xx storms — a 429/connection error exhausts the normal
+            # retries without touching it.
+            if attempt >= self.max_retries and not last_exc_5xx:
+                break
             # Audit M7: bump total_calls BEFORE the API call so a
             # failed attempt (the final one in a retry-exhausted
             # sequence) is still counted. If the call succeeds we
@@ -2025,6 +2039,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
             except anthropic_mod.APIStatusError as exc:
                 last_exc = exc
                 status = getattr(exc, "status_code", 500)
+                last_exc_5xx = status >= 500
                 # Retry policy:
                 #   - 5xx and 429: always retry (transient).
                 #   - 401 / 403: retry — these are often transient, e.g. an
@@ -2049,6 +2064,22 @@ class MiniMaxM3Backend(BaseLLMBackend):
                             status,
                             attempt + 1,
                             retry_after,
+                            wait,
+                            # M11: redact API keys that may appear in exception text.
+                            _redact_api_keys(str(exc)),
+                        )
+                    elif status >= 500:
+                        # F9 (audit 2026-09-06): 5xx server-overload
+                        # storms ("system error (1033)") need a longer
+                        # window than 1s/2s/4s — observed 40 consecutive
+                        # 3-retry exhaustions during the 40-paper run.
+                        # Backoff 2s → 8s → 30s → 60s (the 4th hop rides
+                        # the extra 5xx-only attempt slot).
+                        wait = (2.0, 8.0, 30.0, 60.0)[min(attempt, 3)] + random.uniform(0, 1)
+                        logger.warning(
+                            "MiniMax %d (attempt %d), sleeping %ds: %s",
+                            status,
+                            attempt + 1,
                             wait,
                             # M11: redact API keys that may appear in exception text.
                             _redact_api_keys(str(exc)),
@@ -2131,15 +2162,42 @@ class MiniMaxM3Backend(BaseLLMBackend):
         with self._lock:
             self.total_errors += 1
         if last_exc is not None:
-            logger.exception(
+            # F9 (audit 2026-09-06): the old ``logger.exception`` call
+            # ran OUTSIDE the except block, so ``exc_info=True`` captured
+            # an empty handler and printed a spurious "NoneType: None"
+            # line under every retry-exhausted call. Pass the real
+            # exception explicitly instead.
+            if last_exc_5xx:
+                self._storm_count = getattr(self, "_storm_count", 0) + 1
+                self._storm_last = time.time()
+            else:
+                self._storm_count = 0
+            if getattr(self, "_storm_count", 0) >= 3:
+                logger.warning(
+                    "MiniMax 5xx storm: %d consecutive exhausted calls — "
+                    "non-core vision calls (geo-vision/schematic) will be "
+                    "skipped for 5 minutes (pipeline checks "
+                    "backend.in_5xx_storm())",
+                    self._storm_count,
+                )
+            logger.error(
                 "MiniMax API call failed after %d retries: %s: %s",
                 self.max_retries,
                 type(last_exc).__name__,
                 # M11: redact API keys that may appear in exception text.
                 _redact_api_keys(str(last_exc)),
+                exc_info=last_exc,
             )
             raise last_exc
         raise RuntimeError("MiniMax call failed without explicit exception")
+
+    def in_5xx_storm(self) -> bool:
+        """F9: True while consecutive 5xx retry-exhaustions (>=3) mark a
+        server-side storm within the last 5 minutes. The pipeline skips
+        non-core vision calls (geo-vision / schematic) during a storm —
+        they burn retries on calls that will fail anyway."""
+        until = getattr(self, "_storm_last", 0.0) + 300.0
+        return getattr(self, "_storm_count", 0) >= 3 and time.time() < until
 
     def _extract_text(self, response) -> str:
         for block in response.content:

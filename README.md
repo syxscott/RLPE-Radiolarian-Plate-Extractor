@@ -236,8 +236,8 @@ FastAPI 服务（`run_web_server.py`）端点清单见
 
 | 问题 | 影响 | 状态 |
 |---|---|---|
-| 全页扫描图版不支持 | 日刊老文献整篇为 0 | 需整页 OCR，未实现 |
-| M3 Stage 2 偶发误判图版为 diagram | Munasri 类论文 panel 全丢 | 已定位，待修 |
+| 全页扫描图版 | 整页 OCR 抢救已实现（2026-09-07），图注可恢复；panel 仍依赖版面质量 | 已修复（F1） |
+| M3 Stage 2 误判图版为 diagram | caption 证据 ≥2 信号时自动覆盖；弱图注仍拒绝 | 已修复（F4） |
 | caption 配对缺口 | Xiao 类论文部分图版无图注 | 部分由 rescue 覆盖 |
 | SAM2 本环境初始化失败 | 分割退化为 OpenCV（panel 召回降） | 环境问题；YOLO 替代已验证 24/24（`work/yolo_compare/`） |
 | `ocr_corrections` 纠错词典未接入生产 | OCR 物种名纠错仅测试可用 | 已审计标记 |

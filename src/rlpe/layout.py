@@ -307,7 +307,18 @@ def detect_figure_regions_yolo(
                     "or disable YOLO in Settings."
                 ) from exc
             try:
-                _loaded_model = YOLO(str(model_path), device=device)
+                # Audit 2026-09-07: YOLO() does not accept a ``device``
+                # constructor kwarg in ultralytics >=8.3 (inference device
+                # is selected per-predict call). The old
+                # ``YOLO(path, device=...)`` raised
+                # "unexpected keyword argument 'device'" on every load.
+                # The TypeError fallback stays for older ultralytics
+                # whose stubs accepted the kwarg; mypy is silenced since
+                # the installed stubs reject it but old versions need it.
+                try:
+                    _loaded_model = YOLO(str(model_path))  # type: ignore[call-arg]
+                except TypeError:
+                    _loaded_model = YOLO(str(model_path), device=device)  # type: ignore[call-arg]
             except Exception as exc:
                 raise RuntimeError(
                     f"YOLO model failed to load from {model_path}: {exc}. "

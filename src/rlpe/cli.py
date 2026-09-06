@@ -543,6 +543,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="YOLO IoU threshold (0.0-1.0, default 0.45).",
     )
+    # F7 (audit 2026-09-07): panel detector for the OpenDataLoader path.
+    # "opencv" (default) = classical connected-component segmenter;
+    # "yolo" = the radiolarian-panel-trained YOLO weights
+    # (models/panel_detector_v1.pt, 24/24 on the Soeka validation
+    # plates vs 8/24 for OpenCV). Requires --use-yolo-figures for the
+    # model-path/device plumbing.
+    p.add_argument(
+        "--od-panel-detector",
+        choices=("opencv", "yolo"),
+        default=None,
+        help="Panel detector for the OpenDataLoader path (default: opencv). "
+        "'yolo' uses the radiolarian-panel-trained weights and requires "
+        "--use-yolo-figures for model-path/device plumbing.",
+    )
     p.add_argument("--sam2-checkpoint", type=str, default=None)
     p.add_argument("--sam2-model-cfg", type=str, default=None)
     p.add_argument("--sam2-grid-size", type=int, default=6)
@@ -1266,6 +1280,13 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         or args.use_geo_vision
     ):
         cfg.extra["m3_enhanced_mode"] = True
+    # F7 (audit 2026-09-07): panel-detector selection for the OD path.
+    if args.od_panel_detector is not None:
+        cfg.extra["od_panel_detector"] = args.od_panel_detector
+    # Bare --use-yolo-figures implies the YOLO panel detector (the
+    # packaged radiolarian weights) rather than the weak OpenCV fallback.
+    if args.use_yolo_figures and args.od_panel_detector is None:
+        cfg.extra.setdefault("od_panel_detector", "yolo")
     for n in args.m3_disable_stage or []:
         cfg.extra[f"m3_stage_{n}"] = False
     if args.m3_match_samples:

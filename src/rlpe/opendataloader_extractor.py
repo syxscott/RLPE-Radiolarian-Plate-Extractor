@@ -348,7 +348,21 @@ class OpenDataLoaderExtractor:
                 if cache_key in ocr_cache:
                     recovered = ocr_cache[cache_key]
                 else:
-                    recovered = _ocr_caption_band(doc, page_index, fig.merged_bbox, ocr_engine, np)
+                    # F1 (audit 2026-09-06): full-page figures (scanned
+                    # plates covering >60% of the page) have no caption
+                    # band below — OCR the whole page instead. Motoyama-
+                    # style papers: 10 empty-caption figures, one per
+                    # scanned plate page.
+                    l0, b0, r0, t0 = fig.merged_bbox
+                    _page_area = float(doc[page_index].rect.width) * float(
+                        doc[page_index].rect.height
+                    )
+                    if (r0 - l0) * (t0 - b0) > 0.6 * _page_area:
+                        recovered = _ocr_full_page(doc, page_index, ocr_engine, np)
+                    else:
+                        recovered = _ocr_caption_band(
+                            doc, page_index, fig.merged_bbox, ocr_engine, np
+                        )
                     ocr_cache[cache_key] = recovered
                 if recovered:
                     fig.metadata = dict(fig.metadata or {})
@@ -467,7 +481,15 @@ class OpenDataLoaderExtractor:
                     left, bottom, right, top = bbox
                     if (right - left) * (top - bottom) < 0.15 * page_area:
                         continue
-                    recovered = _ocr_caption_band(doc, page_index, bbox, ocr_engine, np)
+                    # F1 (audit 2026-09-06): full-page scanned plates —
+                    # when the image group covers >60% of the page there
+                    # is no caption band "below" the figure; the caption
+                    # is printed ON the plate itself. OCR the whole page.
+                    coverage = (right - left) * (top - bottom) / page_area
+                    if coverage > 0.6:
+                        recovered = _ocr_full_page(doc, page_index, ocr_engine, np)
+                    else:
+                        recovered = _ocr_caption_band(doc, page_index, bbox, ocr_engine, np)
                     if not recovered:
                         continue
                     ok, probe = _rescue_orphan_plate_pages_marker_check(recovered)
@@ -1457,6 +1479,47 @@ def _bbox_top(el: dict[str, Any]) -> float:
 # ---- caption OCR fallback --------------------------------------------------
 
 
+def _ocr_full_page(
+    doc: Any,
+    page_index: int,
+    ocr_engine: Any,
+    np_module: Any,
+    zoom: float = 2.0,
+) -> str | None:
+    """Render the WHOLE page and OCR it.
+
+    F1 (audit 2026-09-06): full-page scanned plates have no caption band
+    "below" the figure — the caption is printed ON the plate. Renders at
+    2x (a 595×842pt page → 1190×1684px, comfortable for EasyOCR) and
+    returns the OCR text joined in reading order. Caller applies the
+    caption-marker / clause-list checks.
+    """
+    try:
+        page = doc[page_index]
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB, alpha=False)
+        img = np_module.frombuffer(pix.samples, dtype=np_module.uint8).reshape(
+            pix.height, pix.width, 3
+        )
+        import cv2
+
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        try:
+            results = ocr_engine.readtext(img_bgr)
+        except Exception:
+            return None
+        if not results:
+            return None
+        results = sorted(
+            [r for r in results if r[2] >= 0.2],
+            key=lambda r: (min(p[1] for p in r[0]), min(p[0] for p in r[0])),
+        )
+        text = " ".join(r[1] for r in results).strip()
+        return text or None
+    except Exception:
+        return None
+
+
 def _ocr_caption_band(
     doc: Any,
     page_index: int,
@@ -1710,6 +1773,54 @@ _ZH_FIG_CAPTION_RE = re.compile(
 )
 
 
+def _try_decode_font_shift(text: str) -> str | None:
+    """F2 (audit 2026-09-06): try constant-ASCII-shift decodes of
+    ``text`` and return the decode that reads as a caption header.
+
+    JGSJ-cluster PDFs emit caption text through fonts whose ToUnicode
+    CMap is a constant ASCII offset — Soeka_2019 stores "Plate" as
+    "3ODWH" (+0x1D) and "Figs" as ")LJV", which defeats every caption
+    regex on the text layer. Readable captions (matching any caption
+    regex as-is) pass through unchanged; mixed-font elements whose
+    decode yields <90% letters/space are rejected so readable runs are
+    never corrupted. Acceptance is a SOFT marker check (decoded text
+    starts with Plate/Figs/Figure/図版/图版) — the digit often lives in
+    a separate element, so requiring the full anchored regex here would
+    miss exactly the Soeka shape. Returns ``None`` when no shift in
+    [0x01, 0x2F] produces a caption-header hit.
+    """
+    if not text or len(text.strip()) < 4:
+        return None
+    stripped = text.lstrip()
+    if (
+        _PLATE_CAPTION_RE.match(stripped)
+        or _FIG_CAPTION_RE.match(stripped)
+        or _JA_PLATE_CAPTION_RE.match(stripped)
+        or _JA_FIG_CAPTION_RE.match(stripped)
+        or _ZH_PLATE_CAPTION_RE.match(stripped)
+        or _ZH_FIG_CAPTION_RE.match(stripped)
+    ):
+        return None  # already readable — nothing to decode
+    best: str | None = None
+    best_score = 0.0
+    for shift in range(0x01, 0x30):
+        decoded = "".join(chr(ord(c) + shift) if 0x20 <= ord(c) + shift < 0x7F else c for c in text)
+        dstripped = decoded.lstrip()
+        # Soft marker: decoded header reads like a caption opening.
+        if not re.match(
+            r"^\s*(?:Plate|Figs?|Figure|図版|图版)\b", dstripped, re.IGNORECASE
+        ) and not re.match(r"^\s*(?:図|图)\s*\d", dstripped):
+            continue
+        letters = sum(1 for c in decoded if c.isalpha() or c in " .,()-–&'")
+        ratio = letters / max(len(decoded), 1)
+        if ratio > best_score:
+            best_score = ratio
+            best = decoded
+    if best and best_score >= 0.9:
+        return best
+    return None
+
+
 def _is_caption_kind_marker(low: str) -> bool:
     """Return True if ``low`` (caption text, lowercased) starts with a kind
     marker we route on.
@@ -1928,6 +2039,16 @@ def _find_plate_captions(
         content = (kid.get("content") or "").strip()
         if not content:
             continue
+        # F2 (audit 2026-09-06): font-shift decode. JGSJ-cluster papers
+        # emit caption text through fonts whose ToUnicode CMap is a
+        # constant ASCII shift — Soeka_2019 stores "Plate" as "3ODWH"
+        # (+0x1D) and "Figs" as ")LJV". If the raw content matches no
+        # caption pattern, try constant-shift decodes; a decode that
+        # hits a caption pattern AND is ≥90% letters/space wins.
+        decoded = _try_decode_font_shift(content)
+        if decoded:
+            content = decoded
+            kid["font_shift_decoded"] = True
         # Try Plate N first (preferred — radiolarian-plate papers use this
         # convention). Fall back to Fig. N for review/synthesis papers
         # that use "Fig. 1..6" numbering instead (Wever 2006 et al.).

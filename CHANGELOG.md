@@ -5,6 +5,71 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 17] - 2026-09-07 — coverage-driven fixes: scanned plates, font-shift decode, Stage 2 override, YOLO panels
+
+Fixes from the 40-paper random coverage test
+(`work/coverage40/COVERAGE40_REPORT.md`): 24/40 papers produced zero rows;
+attribution identified four fixable clusters.
+
+### Added (F1/F2 — scanned-plate & encoding clusters)
+- `opendataloader_extractor.py` — `_ocr_full_page()`: when a figure covers
+  >60% of the page there is no caption band below it (Motoyama-style
+  scanned plates); OCR the whole page instead. Wired into both
+  `_ocr_missing_captions` (empty-caption figures) and the orphan-page
+  rescue. Motoyama A/B: 10/10 figures recovered captions (was 0/10).
+- `opendataloader_extractor.py` — `_try_decode_font_shift()`: JGSJ-cluster
+  PDFs emit caption text through constant-ASCII-shift fonts (Soeka stores
+  "Plate" as "3ODWH", +0x1D). `_find_plate_captions` now tries shifts
+  0x01–0x2F and accepts a decode that opens with a caption marker and is
+  ≥90% letters/space; readable text passes through untouched and mixed
+  elements are rejected (never corrupt readable runs).
+
+### Fixed (F4/F5/F6 — downstream misjudgement & observability)
+- `pipeline.py` — Stage 2 caption-evidence override: a caption with ≥2
+  taxon entities / numbered clauses now overrides an
+  `is_radiolarian_plate=False` verdict (Munasri's 19-clause plate was
+  rejected as "diagram"). Weak captions still take the rejection
+  (Cenosphaera conodont figure stays filtered).
+- `pipeline.py` — duplicate range-chart caption suppression (Munasri
+  p007_09/p007_10 burned one M3 call each on an identical caption).
+- `pipeline.py` — per-figure skip logging in the OD loop (the "5 of 6
+  figures vanished silently" investigation cost).
+
+### Added (F7 — YOLO panel detector)
+- `--od-panel-detector {opencv,yolo}` CLI flag +
+  `models/panel_detector_v1.pt` (E2-trained radiolarian-panel weights,
+  24/24 on Soeka validation plates vs 8/24 OpenCV). Bare
+  `--use-yolo-figures` implies the YOLO detector. Wired into
+  `_process_region` as the first-choice segmenter with OpenCV fallback.
+- `layout.py` — YOLO() no longer receives the invalid `device` ctor
+  kwarg (ultralytics >=8.3 rejected it on EVERY load: "unexpected
+  keyword argument 'device'").
+
+### Fixed (F9 — MiniMax 5xx resilience)
+- `llm_backends.py` — 5xx backoff deepened to 2s/8s/30s/60s with one
+  extra attempt beyond max_retries (the 40-paper run saw 40 consecutive
+  3-retry exhaustions of "system error (1033)"); a 5xx-storm counter
+  exposes `in_5xx_storm()` so the pipeline can skip non-core vision
+  calls; the spurious "NoneType: None" traceback tail is gone
+  (`logger.exception` → `logger.error(exc_info=last_exc)`).
+
+### Verified (F10)
+- Cenosphaera sp. hallucination candidate confirmed REAL (the model
+  labelled a conodont figure as radiolarian) — validates the Stage 2
+  filter's importance and the F4 override's strong-evidence threshold.
+
+### A/B validation (Soeka + Munasri + Motoyama, full pipeline)
+- Soeka: 8 → 9 rows; Munasri: 0 → 2 rows; Motoyama_2005: 0 → 1 row.
+- Remaining known gap (documented): species=0 on species-LIST-table
+  papers — caption pairs parse correctly (1→Dictyomitra formosa) but
+  LLM-first rows without species don't fall back to the pair lookup;
+  next-step item.
+
+### Tests
+- `tests/test_coverage_fixes_2026_09_07.py` — 17 tests (font-shift
+  decode, full-page marker check, Stage 2 override source guard,
+  range-chart dedup init, YOLO wiring guards, 5xx storm + log fix).
+
 ## [Unreleased 15/16] - 2026-09-06 — batch-runner depth-guard fix + truthfulness audit + README rewrite
 
 ### Fixed (batch correctness — found by the 25-paper coverage run)

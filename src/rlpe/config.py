@@ -154,6 +154,8 @@ _KNOWN_EXTRA_KEYS = {
     # missing here, so setting them via a JSON config file tripped the
     # unknown-extra-key warning (and a hard failure under
     # RLPE_STRICT_EXTRA=1).
+    # Audit 2026-09-07 (F7): YOLO panel detector for the OD path.
+    "od_panel_detector",
     "resume",
     "cross_figure_linker_enabled",
     # Sweep 6 (audit 2026-08-02 C4): the five YOLO knobs (use_yolo_figures,
