@@ -5797,10 +5797,22 @@ Rules:
                 # regex over-matching on degenerate captions (rare
                 # but seen on wever2006 1918-panel runs).
                 caption_has_more = bool(pair_lookup) and len(pair_lookup) > len(llm_results)
+                # Audit 2026-09-07 (F12): fire hybrid whenever ANY row is
+                # missing species AND caption pairs exist — the previous
+                # gate required missing_species (any None species in
+                # llm_results) but missed the case where LLM-first
+                # returned 0 rows entirely (e.g. Stage 2 rejected the
+                # figure and the override produced rows without species).
+                # Also always fire when pair_lookup exists and
+                # llm_results is empty — caption pairs are the ground
+                # truth at that point.
+                has_none_species = any(not r.get("species") for r in llm_results)
                 if (
                     missing_species
+                    or has_none_species
                     or len(llm_results) < 2
                     or (caption_has_more and len(pair_lookup) <= 100)
+                    or (not llm_results and pair_lookup)
                 ):
                     if pair_lookup:
                         # 1) Fill in species for any LLM rows that had None.
