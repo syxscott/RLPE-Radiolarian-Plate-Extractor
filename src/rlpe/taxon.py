@@ -196,6 +196,40 @@ def _is_valid_species(species: str | None) -> bool:
     s = species.strip()
     if not s:
         return True
+    # Audit 2026-09-07 (F11): figure-caption fragments leaking as species.
+    # The LLM sometimes copies "Photographs of polished rock surfaces…"
+    # or "Photomicrographs showing the…" from figure captions into the
+    # species field. These are always wrong.
+    if s.lower().startswith(("photograph", "photomi", "photomicro")):
+        return False
+    # Audit 2026-09-07 (F11): ultra-short fragments ("Ih") are OCR noise
+    # or truncation artefacts, never real taxon names.
+    if len(s) <= 2:
+        return False
+    # Audit 2026-09-07 (F11): descriptive text / figure caption fragments.
+    # Real species names never contain English function words ("the",
+    # "of", "with", "and", "in", "from") or exceed ~6 words before the
+    # author citation. A >40-char string with function words is a
+    # caption fragment or descriptive text, not a species.
+    if len(s) > 40:
+        _function_words = {
+            "the",
+            "of",
+            "with",
+            "and",
+            "in",
+            "to",
+            "for",
+            "from",
+            "containing",
+            "showing",
+            "intercalated",
+        }
+        words = s.lower().split()
+        if any(w in _function_words for w in words):
+            return False
+        if len(words) > 6:
+            return False
     # Cheap placeholder-token guard. The LLM sometimes emits these
     # when it cannot determine the species from the image alone.
     placeholder_tokens = {
@@ -204,6 +238,7 @@ def _is_valid_species(species: str | None) -> bool:
         "indeterminate",
         "unknown",
         "unidentified",
+        "unresolved",
         "n. gen.",
         "n. sp.",
         "new genus",
