@@ -834,14 +834,16 @@ body {
 }
 
 .results-table td {
-    padding: 0.65rem 0.75rem;
+    padding: 0.5rem 0.65rem;
     border-bottom: 1px solid var(--border-color);
     color: var(--text-base);
     vertical-align: middle;
+    font-size: 0.85rem;
+    line-height: 1.45;
 }
 
 .results-table tbody tr {
-    transition: background 80ms linear;
+    transition: background 120ms ease;
 }
 
 .results-table tbody tr:hover {
@@ -850,6 +852,27 @@ body {
 
 .results-table tbody tr:last-child td {
     border-bottom: none;
+}
+
+/* Audit 2026-09-07: paper_id / figure_id are long hash strings —
+   truncate with ellipsis and show full value in hover tooltip. */
+.results-table td.col-paper-id,
+.results-table td.col-figure-id {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+/* Audit 2026-09-07: species column needs room for long binomials. */
+.results-table td.col-species {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Geology summary cell (Round 18 audit: operator requested
@@ -884,6 +907,32 @@ body {
     font-weight: 600;
     letter-spacing: 0.02em;
     font-variant-numeric: tabular-nums;
+}
+
+/* Audit 2026-09-07: italicize Latin species names (taxonomic convention)
+   and add a subtle left border for visual anchoring in the results table. */
+.species-name {
+    font-style: italic;
+    color: var(--text-dark);
+}
+
+.modal-species-name {
+    font-size: 1.05rem;
+    letter-spacing: 0.01em;
+}
+
+/* F11+: badge showing additional geology link count beyond the first. */
+.geo-more-badge {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.05rem 0.35rem;
+    background: var(--primary-soft);
+    color: var(--primary-dark);
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    cursor: help;
 }
 
 .badge {
@@ -1200,14 +1249,16 @@ body {
 }
 
 .thumbnail-img {
-    width: 56px;
-    height: 56px;
+    width: 64px;
+    height: 64px;
     object-fit: cover;
     border-radius: var(--radius-sm);
     cursor: zoom-in;
     transition: var(--transition);
     border: 1px solid var(--border-color);
     background: var(--bg-lighter);
+    /* Audit 2026-09-07: subtle inner shadow for depth. */
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
 }
 
 .thumbnail-img:hover {

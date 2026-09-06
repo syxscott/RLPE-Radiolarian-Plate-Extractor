@@ -1884,22 +1884,20 @@ function renderResults() {
             <td class="col-check">
                 <input type="checkbox" class="results-row-check" data-row-id="${escapeHtml(r.row_id || '')}" aria-label="选中此行">
             </td>
-            <td>${escapeHtml(r.paper_id)}</td>
-            <td>${escapeHtml(r.figure_id)}</td>
+            <td class="col-paper-id" title="${paperId}">${escapeHtml(r.paper_id)}</td>
+            <td class="col-figure-id" title="${figureId}">${escapeHtml(r.figure_id)}</td>
             <td>${escapeHtml(r.panel_id) || 'N/A'}</td>
             <td>${ocrCell}</td>
-            <td>${escapeHtml(r.species) || 'N/A'}</td>
+            <td class="col-species">${r.species
+                ? `<em class="species-name" title="${species}">${species}</em>`
+                : '<span class="text-muted">N/A</span>'}</td>
             <td>
                 <span class="confidence-badge ${getConfidenceClass(r.confidence || 0)}">
-                    ${((r.confidence || 0) * 100).toFixed(0)}%
+                    ${((r.confidence || 0) * 100).toFixed(0)}% ${getConfidenceLabel(r.confidence || 0)}
                 </span>
             </td>
             <td class="col-geo">
                 ${(() => {
-                    // Compact geology summary for the table cell:
-                    // show the first link's age (and Ma range when
-                    // available). Keeps the cell scannable without
-                    // forcing the operator to open the modal.
                     const links = ((r.metadata && r.metadata.geology_links) || []);
                     if (!links.length) return '<span class="text-muted">—</span>';
                     const g = links[0];
@@ -1907,13 +1905,16 @@ function renderResults() {
                     const ma = (g.ma_top != null && g.ma_base != null)
                         ? `<div class="col-geo-ma">${(+g.ma_top).toFixed(1)}–${(+g.ma_base).toFixed(1)} Ma</div>`
                         : '';
+                    const more = links.length > 1
+                        ? `<span class="geo-more-badge">+${links.length - 1}</span>`
+                        : '';
                     return age
-                        ? `<div class="col-geo-age"><strong>${escapeHtml(age)}</strong></div>${ma}`
+                        ? `<div class="col-geo-age"><strong>${escapeHtml(age)}</strong>${more}</div>${ma}`
                         : ma || '<span class="text-muted">—</span>';
                 })()}
             </td>
             <td>
-                ${r.panel_path ? `<img src="${panelPathEscaped}" class="thumbnail-img" data-record-index="${recordIndex}" data-species="${species}" alt="panel thumbnail">` : 'N/A'}
+                ${r.panel_path ? `<img src="${panelPathEscaped}" class="thumbnail-img" loading="lazy" data-record-index="${recordIndex}" data-species="${species}" alt="panel thumbnail">` : '<span class="text-muted">—</span>'}
             </td>
             <td>
                 <button class="btn btn-small" data-correct-index="${recordIndex}">纠正</button>
@@ -2227,6 +2228,13 @@ function getConfidenceClass(confidence) {
     return 'confidence-low';
 }
 
+function getConfidenceLabel(confidence) {
+    const c = confidence || 0;
+    if (c >= 0.8) return 'High';
+    if (c >= 0.5) return 'Med';
+    return 'Low';
+}
+
 function updateStats() {
     const stats = {
         total: resultsData.length,
@@ -2495,8 +2503,9 @@ function openImageModal(src, title, record) {
                 <div class="modal-row"><span class="modal-label">图版 ID:</span> <code>${escapeHtml(record.figure_id || 'N/A')}</code></div>
                 <div class="modal-row"><span class="modal-label">Panel 标签:</span> <code>${escapeHtml(record.panel_id || 'N/A')}</code></div>
                 <div class="modal-row"><span class="modal-label">Panel 来源:</span> ${ocrBadge}</div>
-                <div class="modal-row"><span class="modal-label">物种:</span> <strong>${escapeHtml(record.species || 'N/A')}</strong></div>
-                <div class="modal-row"><span class="modal-label">置信度:</span> ${((record.confidence || 0) * 100).toFixed(0)}%</div>
+                <div class="modal-row"><span class="modal-label">物种:</span> ${record.species ? `<em class="species-name modal-species-name">${escapeHtml(record.species)}</em>` : '<span class="text-muted">N/A</span>'}</div>
+                <div class="modal-row"><span class="modal-label">置信度:</span> ${((record.confidence || 0) * 100).toFixed(0)}% <span class="confidence-badge ${getConfidenceClass(record.confidence || 0)}">${getConfidenceLabel(record.confidence || 0)}</span></div>
+                ${(md.extraction_method || md.extraction_source) ? `<div class="modal-row"><span class="modal-label">提取方法:</span> <code>${escapeHtml(md.extraction_method || md.extraction_source || '')}</code></div>` : ''}
                 ${geoScope ? `<div class="modal-row"><span class="modal-label">地质范围:</span> ${scopeBadge}</div>` : ''}
                 ${reassignNote}
                 ${record.bbox && Array.isArray(record.bbox) && record.bbox.some(v => v > 0) ? `<div class="modal-row"><span class="modal-label">BBox:</span> <code>[${record.bbox.map(v => escapeHtml(String(v))).join(', ')}]</code></div>` : ''}
