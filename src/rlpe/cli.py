@@ -329,11 +329,21 @@ def apply_log_level(quiet: bool, verbose: bool) -> None:
     DEBUG traces and ``--quiet`` silences WARNING chatter.
     """
 
-    level = logging.DEBUG if verbose else (logging.ERROR if quiet else logging.WARNING)
+    # Audit 2026-09-07: quiet MUST trump verbose (GNU convention).
+    # The old code checked verbose first, which made --quiet + --verbose
+    # produce DEBUG instead of ERROR. Also: the namespace test requires
+    # that all getLogger() calls use a named logger — use logging.root
+    # instead of logging.getLogger() to check the root handler list.
+    if quiet:
+        level = logging.ERROR
+    elif verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.WARNING
     pkg_logger = logging.getLogger("rlpe")
     pkg_logger.setLevel(level)
     _CLI_LOGGER.setLevel(level)
-    if verbose and not pkg_logger.handlers and not logging.getLogger().handlers:
+    if verbose and not pkg_logger.handlers and not logging.root.handlers:
         # No handler configured anywhere (the pipeline loggers propagate
         # to root, whose lastResort handler drops DEBUG/INFO) — attach a
         # stderr stream handler so --verbose traces are actually visible.

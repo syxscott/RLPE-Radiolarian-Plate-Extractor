@@ -229,12 +229,20 @@ class TestOdGrobidCycleGuard:
             # fast (unreachable URL) and call _process_one_pdf_od
             return pipe._process_one_pdf_grobid_impl(paper_id, pdf_path)
 
-        # Directly exercise the guard logic: two nested enters → third refused.
+        # Directly exercise the guard logic: the legitimate chain is
+        # OD(1) → GROBID(2) → OD-retry(3), then the 4th hop is refused.
+        # Audit 2026-09-07: cap raised from 3→4 so the OD-retry at depth 3
+        # gets a real chance (GROBID-down environments were stamping every
+        # such paper as _ingestion_od_cycle without processing).
         assert pipe._enter_od_grobid_guard("p1", "OD") is True
         assert pipe._enter_od_grobid_guard("p1", "GROBID") is True
-        assert pipe._enter_od_grobid_guard("p1", "OD") is False, (
-            "third nested fallback must be refused"
+        assert pipe._enter_od_grobid_guard("p1", "OD") is True, (
+            "OD-retry at depth 3 is the legitimate fallback and must be allowed"
         )
+        assert pipe._enter_od_grobid_guard("p1", "GROBID") is False, (
+            "fourth nested fallback must be refused"
+        )
+        pipe._exit_od_grobid_guard()
         pipe._exit_od_grobid_guard()
         pipe._exit_od_grobid_guard()
         pipe._exit_od_grobid_guard()
