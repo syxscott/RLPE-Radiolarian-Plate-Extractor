@@ -283,8 +283,12 @@ class RadiolarianPipeline:
         self._paper_knowledge_graphs: dict[str, dict[str, Any]] = {}
         self._paper_range_charts: dict[str, list[dict[str, Any]]] = {}
         # F6 (audit 2026-09-07): captions already processed through the
-        # range-chart path this run — dedups OD's duplicate range-chart
-        # figures (Munasri p007_09/p007_10 burned one M3 call each).
+        # range-chart path — dedups OD's duplicate range-chart figures
+        # (Munasri p007_09/p007_10 burned one M3 call each).
+        # IMPORTANT: this set is per-PAPER, not per-run. It must be
+        # cleared at each paper boundary (see _process_one_pdf) to
+        # avoid incorrectly skipping duplicate captions from DIFFERENT
+        # papers in a batch run.
         self._seen_range_chart_captions: set[str] = set()
         # Phase 59 (Bug 2.5): serialise progress-callback invocations.
         # Multiple worker threads can finish PDFs concurrently and
@@ -915,6 +919,11 @@ class RadiolarianPipeline:
         # instantly rejected. Reset it at every paper boundary — the
         # recursion bound is per-paper by design.
         self._od_grobid_depth.depth = 0
+
+        # F6 (audit 2026-09-07): also clear the range-chart caption
+        # dedup set — otherwise paper B's identically-captioned range
+        # chart would be incorrectly skipped after paper A's.
+        self._seen_range_chart_captions.clear()
 
         # ------ OpenDataLoader path (opt-in) -----------------------------------
         if self.config.extra.get("use_opendataloader", False):
@@ -5797,22 +5806,19 @@ Rules:
                 # regex over-matching on degenerate captions (rare
                 # but seen on wever2006 1918-panel runs).
                 caption_has_more = bool(pair_lookup) and len(pair_lookup) > len(llm_results)
-                # Audit 2026-09-07 (F12): fire hybrid whenever ANY row is
-                # missing species AND caption pairs exist — the previous
-                # gate required missing_species (any None species in
-                # llm_results) but missed the case where LLM-first
-                # returned 0 rows entirely (e.g. Stage 2 rejected the
-                # figure and the override produced rows without species).
-                # Also always fire when pair_lookup exists and
-                # llm_results is empty — caption pairs are the ground
-                # truth at that point.
-                has_none_species = any(not r.get("species") for r in llm_results)
+                # Audit 2026-09-07 (F12, REVISED after self-review):
+                # The previous version of this gate added
+                # ``has_none_species`` (redundant — ``missing_species``
+                # is the same check as a list) and
+                # ``(not llm_results and pair_lookup)`` (useless — the
+                # fill loop iterates llm_results which is empty, so it
+                # enters the block but does nothing). Both removed.
+                # The gate is now back to the original logic but with
+                # clearer comments about what each condition covers.
                 if (
                     missing_species
-                    or has_none_species
                     or len(llm_results) < 2
                     or (caption_has_more and len(pair_lookup) <= 100)
-                    or (not llm_results and pair_lookup)
                 ):
                     if pair_lookup:
                         # 1) Fill in species for any LLM rows that had None.
