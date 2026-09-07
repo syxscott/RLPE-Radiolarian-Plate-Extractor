@@ -2275,6 +2275,32 @@ function updateStats() {
     if (statsContainer) {
         statsContainer.innerHTML = statsHtml;
     }
+
+    // Audit 2026-09-07: fetch and display paper-level views
+    // (knowledge_graphs / range_charts) from run_output.json.
+    const currentJobId = resultsTableState.job_id || (resultsData[0] && resultsData[0].job_id);
+    if (!currentJobId) return;
+    const paperViewsContainer = document.getElementById('paper-views');
+    if (!paperViewsContainer) return;
+    fetch(resolveAssetUrl(`output/manifests/run_output.json`, currentJobId))
+        .then(r => r.ok ? r.json() : null)
+        .then(ro => {
+            if (!ro) { paperViewsContainer.innerHTML = ''; return; }
+            const kg = ro.knowledge_graphs || [];
+            const rc = ro.range_charts || [];
+            if (!kg.length && !rc.length) { paperViewsContainer.innerHTML = ''; return; }
+            let html = '<div class="card paper-views-card"><h2>论文级数据</h2>';
+            if (kg.length) {
+                html += `<div class="paper-view-item"><strong>知识图谱</strong>：${kg.length} 篇论文的物种–样品–地质关系图（详见 run_output.json）</div>`;
+            }
+            if (rc.length) {
+                const totalRanges = rc.reduce((s, c) => s + (c.species_ranges || []).length, 0);
+                html += `<div class="paper-view-item"><strong>分布表</strong>：${rc.length} 个图版，共 ${totalRanges} 条物种延限记录（详见 run_output.json）</div>`;
+            }
+            html += '</div>';
+            paperViewsContainer.innerHTML = html;
+        })
+        .catch(() => { paperViewsContainer.innerHTML = ''; });
 }
 
 document.getElementById('result-search')?.addEventListener('input', () => { resultsTableState.page = 1; renderResults(); });

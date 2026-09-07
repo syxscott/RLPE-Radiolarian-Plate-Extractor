@@ -7,6 +7,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+# Audit 2026-09-07: deduplicate the IoU implementation — association.py
+# has the identical function; import rather than maintain a copy.
+from .association import _iou  # noqa: F401 — re-exported for self._iou call sites
 from .types import PanelCandidate
 
 
@@ -427,20 +430,8 @@ class PanelSegmenter:
             kept.append(c)
         return kept
 
-    @staticmethod
-    def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
-        ax, ay, aw, ah = a
-        bx, by, bw, bh = b
-        ax2, ay2 = ax + aw, ay + ah
-        bx2, by2 = bx + bw, by + bh
-        ix1, iy1 = max(ax, bx), max(ay, by)
-        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-        iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
-        inter = iw * ih
-        if inter <= 0:
-            return 0.0
-        union = aw * ah + bw * bh - inter
-        return inter / max(1, union)
+    # Audit 2026-09-07: delegate to association._iou (dedup).
+    _iou = staticmethod(_iou)
 
     @staticmethod
     def _dedup_points(
