@@ -181,7 +181,8 @@ matches.jsonl + run_output.json（schema v1.3.0）→ 导出器族
 | 性能 | `--num-workers`（1-32）`--render-dpi` | 并发与渲染精度 |
 | 导出 | `--export-csv / --export-json / --export-jsonl` | 三通道独立触发 |
 | 数据合规 | `--data-outbound-policy api_redacted\|api_full\|local_only` + `--i-understand-data-leaves-my-machine` | 出站策略（默认 api_redacted） |
-| 视觉 | `--use-yolo-figures [--yolo-model-path]`（默认放射虫微调模型）；`--sam2-checkpoint` | YOLO 图版检测（GROBID 路径）/SAM2 分割（缺文件静默回退 OpenCV） |
+| 视觉 | `--use-yolo-figures [--yolo-model-path]`；`--od-panel-detector opencv\|yolo`；`--sam2-checkpoint` | YOLO 图版检测 / panel 检测器选择（yolo = E2 训练权重）/ SAM2 分割 |
+| 流程 | `--no-llm-first`；`--resume`；`--no-cross-figure-linker` | 禁用 LLM-first / 断点续跑 / 禁用跨图链接器（2026-09-07 接线） |
 
 <details>
 <summary>已修复的虚假旗标（历史记录）</summary>

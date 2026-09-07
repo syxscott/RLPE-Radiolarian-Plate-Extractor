@@ -1,8 +1,8 @@
 # RLPE Output Schema Reference
 
 This document describes the canonical output shape of an RLPE run.
-The machine-readable JSON Schema lives at `schemas/rlpe-v1.0.0.json`.
-Newer schema versions (`v1.1.0`, `v1.2.0`, `v1.3.0`) are listed under "Schema versions" below.
+The machine-readable JSON Schema lives at `schemas/rlpe-v1.3.0.json`.
+Earlier schema versions (`v1.0.0`–`v1.2.0`) are kept for reference.
 
 ## Top-level shape
 
