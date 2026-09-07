@@ -461,6 +461,14 @@ class RadiolarianPipeline:
             self.gemma_runtime = None
             self.config.extra["gemma_init_error"] = str(exc)
             logger.warning("Gemma4 backend init failed: %s", exc)
+            # Audit 2026-09-07: surface in run_output.warnings (was a
+            # dead letter — written to config.extra but never consumed).
+            from .utils import record_warning
+
+            record_warning(
+                "gemma_init_error",
+                f"LLM backend init failed: {exc}",
+            )
             return
 
         # Build the M3 semantic engine (5-stage). Round 16 audit: was

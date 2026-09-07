@@ -850,6 +850,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Look up matched species against the Paleobiology Database "
         "(taxonomy + occurrence records). Off by default.",
     )
+    # Audit 2026-09-07: expose config-only keys that previously had no
+    # CLI wiring (read by pipeline but only settable via JSON config).
+    p.add_argument(
+        "--no-llm-first",
+        action="store_true",
+        help="Disable the LLM-first extraction path and use the "
+        "classical CV+rules pipeline exclusively.",
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip papers that have a checkpoint marker from a previous "
+        "run (useful for resuming interrupted batch jobs).",
+    )
+    p.add_argument(
+        "--no-cross-figure-linker",
+        action="store_true",
+        help="Disable the cross-figure linker (strat column / map / "
+        "range chart linkage). On by default.",
+    )
     p.add_argument(
         "--paleodb-max-occurrences",
         type=int,
@@ -1261,6 +1281,10 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             "paleodb_endpoint": args.paleodb_endpoint,
             "paleodb_cache_dir": args.paleodb_cache_dir,
             "paleodb_offline": args.paleodb_offline,
+            # Audit 2026-09-07: wire previously config-only keys.
+            "use_llm_first": not args.no_llm_first,
+            "resume": args.resume,
+            "cross_figure_linker_enabled": not args.no_cross_figure_linker,
         },
     )
     # Inject M3 engine config. We only set ``m3_enhanced_mode`` if the user
