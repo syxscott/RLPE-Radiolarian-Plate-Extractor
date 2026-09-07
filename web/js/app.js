@@ -2282,7 +2282,7 @@ function updateStats() {
     if (!currentJobId) return;
     const paperViewsContainer = document.getElementById('paper-views');
     if (!paperViewsContainer) return;
-    fetch(resolveAssetUrl(`output/manifests/run_output.json`, currentJobId))
+    fetchWithTimeout(resolveAssetUrl(`output/manifests/run_output.json`, currentJobId))
         .then(r => r.ok ? r.json() : null)
         .then(ro => {
             if (!ro) { paperViewsContainer.innerHTML = ''; return; }

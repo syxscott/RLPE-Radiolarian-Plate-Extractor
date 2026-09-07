@@ -202,6 +202,13 @@ def _is_valid_species(species: str | None) -> bool:
     # species field. These are always wrong.
     if s.lower().startswith(("photograph", "photomi", "photomicro")):
         return False
+    # Audit 2026-09-07 (F13): chemical formulas (SiO2, TiOz, CaCO3) are
+    # not species. A valid genus has only its first char uppercase; a
+    # string with mid-word uppercase (SiO2, CaCO3) is a formula.
+    if re.match(r"^\S+$", s.strip()) and re.search(r"(?<=.)[A-Z]", s.strip()):
+        return False
+    if re.match(r"^\S+\s+(?:plots?|data|values|records)$", s.strip(), re.IGNORECASE):
+        return False
     # Audit 2026-09-07 (F11): ultra-short fragments ("Ih") are OCR noise
     # or truncation artefacts, never real taxon names.
     if len(s) <= 2:
