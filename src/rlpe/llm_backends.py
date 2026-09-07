@@ -2040,12 +2040,11 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 last_exc = exc
                 status = getattr(exc, "status_code", 500)
                 last_exc_5xx = status >= 500
-                # Retry policy:
+                # Retry policy (M10 revision):
                 #   - 5xx and 429: always retry (transient).
-                #   - 401 / 403: retry — these are often transient, e.g. an
-                #     auth token that expired mid-session or a key
-                #     rotation; the second attempt will surface the real
-                #     failure to the user if it's permanent.
+                #   - 401 / 403: NOT retried — M10 determined these are
+                #     NOT transient; retrying wastes quota and won't fix
+                #     a bad/missing/expired key. Re-raise immediately.
                 #   - All other 4xx (400 / 404 / 422): fail fast, the
                 #     request is malformed or the resource doesn't
                 #     exist and retrying won't help.

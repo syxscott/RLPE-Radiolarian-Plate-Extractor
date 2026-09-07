@@ -961,7 +961,6 @@ def match_panels(
     # heuristic. Falls back silently if pairs are empty or don't match.
     pair_lookup: dict[str, str] = {}
     caption_pairs_used = False
-    caption_pairs_source = ""
     if caption_pairs:
         for cp in caption_pairs:
             sp = getattr(cp, "species", None)
@@ -974,7 +973,6 @@ def match_panels(
             _add_label_base_aliases(cp, pair_lookup)
         if pair_lookup:
             caption_pairs_used = True
-            caption_pairs_source = "m3_llm"
     # Fallback: when M3 didn't run, build the same lookup via the regex
     # caption parser that M3 uses internally. This rescues the common case
     # of "figs 1-2. SpeciesA: ... figs 3-4. SpeciesB: ..." captions where the
@@ -995,7 +993,6 @@ def match_panels(
                 _add_label_base_aliases(cp, pair_lookup)
             if pair_lookup:
                 caption_pairs_used = True
-                caption_pairs_source = "regex"
         except Exception as exc:
             logger.debug("caption regex fallback failed: %s", exc)
 

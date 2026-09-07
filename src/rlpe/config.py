@@ -139,6 +139,10 @@ _KNOWN_EXTRA_KEYS = {
     "paleodb_endpoint",
     "paleodb_cache_dir",
     "paleodb_offline",
+    # Audit 2026-09-07: read by pipeline.py:7277 but was missing from
+    # this whitelist — JSON config writes triggered the unknown-key
+    # warning (and hard failure under RLPE_STRICT_EXTRA=1).
+    "paleodb_min_interval",
     # Phase 61 Plan 4 (Bug 4.3): reproducible-runs knob. When True, every
     # LLM backend sets temperature=0.0 / do_sample=False and seeds the
     # Python + numpy + torch RNGs so two consecutive runs on the same

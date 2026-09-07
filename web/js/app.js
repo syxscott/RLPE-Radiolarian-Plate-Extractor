@@ -2317,14 +2317,6 @@ function getFilteredResults() {
     return filterRows(resultsData, searchTerm, filterJob);
 }
 
-// CSV cell formatter: handles null/undefined, escapes embedded quotes by
-// doubling them (RFC 4180), wraps in double quotes.
-function csvCell(v) {
-    if (v == null) return '""';
-    const s = String(v);
-    return `"${s.replace(/"/g, '""')}"`;
-}
-
 document.getElementById('export-btn')?.addEventListener('click', async () => {
     // Round 24: replaced client-side CSV with a backend Excel
     // (multi-sheet .xlsx via openpyxl). The endpoint

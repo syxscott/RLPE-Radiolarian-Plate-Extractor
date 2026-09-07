@@ -65,7 +65,6 @@ from .m3_engine import CaptionPair, M3Engine, PanelBox, PanelMatch
 from .ocr import OCRBackend, normalize_ocr_tokens
 from .provenance.stamp import build_provenance
 from .range_chart_extractor import (
-    RangeChartResult,
     build_geology_links_for_panels,
     classify_figure_type,
     extract_range_chart,
@@ -732,8 +731,9 @@ class RadiolarianPipeline:
         # ``manifest.json`` next to ``run_output.json`` so a triage
         # grep can spot the failure surface without loading the
         # whole run, and (b) merge the warning list into the
-        # in-memory RunOutput so the export CLIs (``--export-warnings``)
-        # emit the same data. The manifest is intentionally small and
+        # in-memory RunOutput so the manifest.json warnings block
+        # reflects the same data the export scripts would see. The
+        # manifest is intentionally small and
         # HUMAN-READABLE — it complements ``run_output.json`` which is
         # machine-readable schema.
         try:
@@ -4545,8 +4545,9 @@ class RadiolarianPipeline:
         # retry loop burns ``max_retries * timeout`` seconds (up to
         # 900s by default) hammering a closed port. Probe first; if
         # the server doesn't respond to /api/isalive, skip GROBID
-        # entirely and go straight to the OD fallback. The user
-        # can disable this via ``--grobid-no-probe`` for tests.
+        # entirely and go straight to the OD fallback. The user can
+        # set ``grobid_no_probe`` via a JSON config file for tests
+        # (there is no CLI flag for it).
         if not self.config.extra.get("grobid_no_probe", False):
             try:
                 if not self.grobid.is_available(probe_timeout=2.0):
@@ -4606,7 +4607,11 @@ class RadiolarianPipeline:
 
         if not grobid_result.success:
             error = grobid_result.error or "GROBID returned no result"
-            logger.warning("GROBID failed (%s); figures will be empty", error)
+            logger.warning(
+                "GROBID failed (%s); TEI captions empty — will fall back "
+                "to OpenDataLoader unless disable_od_fallback is set",
+                error,
+            )
         tei_captions = grobid_result.captions if grobid_result.success else []
         # Extract paper-level metadata (DOI, abstract, authors, journal, year, ...)
         # from the GROBID TEI. Falls back to an empty record on failure.
