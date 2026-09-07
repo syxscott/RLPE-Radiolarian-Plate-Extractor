@@ -245,6 +245,16 @@ FastAPI 服务（`run_web_server.py`）端点清单见
 | 死模块待清理 | `metrics.py`/`batch.py`/`preprocess.py`/`matching.py`/`io.py`/`tei.py`/`bootstrap.py` 无调用方 | 已审计标记 |
 | knowledge_graphs / range_charts 明细 | 已进 run_output（v1.3.0），Web 结果视图未展示 | 可经文件端点获取 |
 | MCP/API 多 worker 部署 | FALLBACK_PENDING 进程内 | 单机部署无影响 |
+| **物种列表表格回退** | Munasri 型：caption pairs 正确解析但 LLM-first 行 species=None 未回退到 pair 查找 | **待实现**（F12 增强了触发条件但未覆盖 0-row 情况） |
+| **无人工 image-verified gold 集** | 0.075 事件证明 string F1 ≠ 真实准确率；无法给出可发表的准确率声明 | **最大阻塞项**；标定模板已生成（`data/gold_calibration/`） |
+| **eval-smoke CI 门红** | 冻结快照（2026-06-27）对收紧后的评估器得 0.87 < 0.92 | 需 GPU + API 重新生成或调阈值 |
+| **JGSJ/BSJ 出版商集群** | ~10/40 篇失败；文本层编码或无图注配对 | F1/F2 部分缓解；panel 切分仍受限于扫描质量 |
+| **MiniMax API 依赖** | 物种提取质量完全依赖云端 API；500 风暴时降级 | 5xx 韧性已加强；本地后端质量未对标 |
+| 5 个 config 键无 CLI/GUI 生产者 | `use_llm_first`/`resume`/`cross_figure_linker_enabled`/`grobid_no_probe`/`fallback_llm_backend` | 仅 JSON config 可设 |
+| `fallback_llm_backend` 不可达 | 4xx 回退推荐特性（Phase 61 Bug 4.10）从 CLI/GUI 无法配置 | 无 CLI flag |
+| `_iou` 双实现 | association.py 和 segmentation.py 各一份 | 可独立漂移 |
+| `gemma_init_error` 只写不读 | 初始化失败信息是死信 | 可接入 run_output.warnings |
+| SSE/WS 无前端客户端 | 服务端实现完整且有测试，前端暂用轮询 | 功能无损 |
 
 审计轨迹：本仓库采用"审计 → 修复 → 源码守卫测试"闭环，历次审计
 （2026-08-01/02、09-01、09-04、09-05、09-06）的修复以
