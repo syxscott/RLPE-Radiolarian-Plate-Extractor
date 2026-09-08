@@ -143,6 +143,10 @@ _KNOWN_EXTRA_KEYS = {
     # this whitelist — JSON config writes triggered the unknown-key
     # warning (and hard failure under RLPE_STRICT_EXTRA=1).
     "paleodb_min_interval",
+    # Audit 2026-09-07: read by llm_backends.py:2776/2778 (Gemma
+    # temperature / top_p sampling params). Previously missing.
+    "gemma_temperature",
+    "gemma_top_p",
     # Phase 61 Plan 4 (Bug 4.3): reproducible-runs knob. When True, every
     # LLM backend sets temperature=0.0 / do_sample=False and seeds the
     # Python + numpy + torch RNGs so two consecutive runs on the same

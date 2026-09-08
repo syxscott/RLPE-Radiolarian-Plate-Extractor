@@ -870,6 +870,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the cross-figure linker (strat column / map / "
         "range chart linkage). On by default.",
     )
+    # F14 (audit 2026-09-07): expose the 4xx fallback backend selection
+    # (Phase 61 Plan 4 Bug 4.10 implemented ``set_fallback_backend`` but
+    # no entry point could configure it).
+    p.add_argument(
+        "--fallback-llm-backend",
+        type=str,
+        default=None,
+        help="LLM backend to switch to when a 4xx error occurs "
+        "(e.g. 'llamacpp' or 'ollama'). Requires the target backend "
+        "to be properly configured.",
+    )
     p.add_argument(
         "--paleodb-max-occurrences",
         type=int,
@@ -1285,6 +1296,10 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             "use_llm_first": not args.no_llm_first,
             "resume": args.resume,
             "cross_figure_linker_enabled": not args.no_cross_figure_linker,
+            # Audit 2026-09-07 (F14): expose the 4xx fallback backend
+            # selection — Phase 61 Plan 4 (Bug 4.10) implemented
+            # ``set_fallback_backend`` but no entry point could set it.
+            "fallback_llm_backend": args.fallback_llm_backend,
         },
     )
     # Inject M3 engine config. We only set ``m3_enhanced_mode`` if the user
