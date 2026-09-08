@@ -362,7 +362,20 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
         for kw in _FIGURE_TYPE_PROMPT_KEYWORDS[specific]:
             if kw in low:
                 return specific
-    # 7. Fallback.
+    # 8. Audit 2026-09-07: species-clause override. If the caption
+    # contains >=2 species-clause patterns (numbered list, "Genus
+    # species" binomial, or "Figs N-M" references), this is very
+    # likely a plate even though no explicit keyword matched. This
+    # catches the "other" gap that silently dropped Munasri-type
+    # papers whose species lists use non-standard numbering.
+    _species_clause = re.compile(
+        r"(?:\d{1,2}\s*[.):]\s+[A-Z][a-z]{2,})"  # "1. Dictyomitra"
+        r"|(?:[A-Z][a-z]{3,}\s+[a-z]{3,})"  # "Dictyomitra formosa"
+        r"|(?:Figs?\s+\d)",  # "Figs 1" / "Fig 2"
+    )
+    if len(_species_clause.findall(caption)) >= 2:
+        return "plate"
+    # 9. Fallback.
     return "other"
 
 

@@ -1151,7 +1151,7 @@ _CAPTION_CLAUSE_RE = re.compile(
     # a "Fig." anchor). The alternative form is gated on the next
     # char being an uppercase letter (genus name) so prose like
     # "1. Introduction" doesn't match.
-    r"(?:(?:[Ff]ig(?:s|ure|ures)?\.?)\s*|\d+\.\s+(?=[A-Z]))"
+    r"(?:(?:[Ff]ig(?:s|ure|ures)?\.?)\s*|\d+\.\s+(?=[A-Z])|\d+\s+[—–]\s+(?=[A-Z]))"
     # audit 2026-07-31: the label list only accepted pure digits, so
     # the very common letter-suffixed forms ("figs 12-14b",
     # "figs 1a-b") failed to match the whole clause and the panel
