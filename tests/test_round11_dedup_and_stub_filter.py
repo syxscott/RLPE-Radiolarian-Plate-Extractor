@@ -87,7 +87,9 @@ def test_finalize_rows_helper_exists():
     assert '"MAP_CONTEXT"' in src_text
     assert '"RANGE_CHART"' in src_text
     # Wired into both _process_one_pdf_od and _process_one_pdf_grobid
-    assert src_text.count("self._finalize_rows(results)") >= 2, (
+    # F16 (2026-09-08): both call sites now pass pdf_path for the
+    # panel-image paper short-name prefix.
+    assert src_text.count("self._finalize_rows(results") >= 2, (
         "_finalize_rows must be called at the end of BOTH "
         "_process_one_pdf_od and _process_one_pdf_grobid"
     )

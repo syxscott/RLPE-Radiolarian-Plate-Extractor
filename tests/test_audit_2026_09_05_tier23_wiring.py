@@ -175,7 +175,7 @@ class TestLinkerWiringGuards:
         src = _read("pipeline.py")
         inner = src[src.find("def _process_one_pdf_od_inner") :]
         inner = inner[: inner.find("def ", 10)]
-        finalize_idx = inner.find("return self._finalize_rows(results)")
+        finalize_idx = inner.find("return self._finalize_rows(results")
         linker_idx = inner.find("self._apply_cross_figure_linker(results, paper_id)")
         assert finalize_idx > 0, "OD inner must still call _finalize_rows"
         assert 0 < linker_idx < finalize_idx, (

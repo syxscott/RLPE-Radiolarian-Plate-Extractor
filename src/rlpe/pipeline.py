@@ -2453,7 +2453,7 @@ class RadiolarianPipeline:
                 )
         # Round 11: dedup + drop stub rows + drop empty/invalid rows.
         # See ``_finalize_rows`` for the bug fixes this addresses.
-        return self._finalize_rows(results)
+        return self._finalize_rows(results, pdf_path=pdf_path)
 
     def _apply_stage3_bbox_crops(
         self,
@@ -4940,7 +4940,7 @@ class RadiolarianPipeline:
             results = self._apply_morphology_enrichment(
                 results, paper_id, grobid_result.fulltext_sections
             )
-        return self._finalize_rows(results)
+        return self._finalize_rows(results, pdf_path=pdf_path)
 
     # ----- Round 11 post-processing -------------------------------------------------
     # ----- Round 12 post-processing -------------------------------------------------
@@ -5030,8 +5030,18 @@ class RadiolarianPipeline:
 
         return [m for m in matches if _label_in_caption2(getattr(m, "panel_id", None) or "")]
 
-    def _finalize_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _finalize_rows(
+        self,
+        rows: list[dict[str, Any]],
+        pdf_path: Path | None = None,
+    ) -> list[dict[str, Any]]:
         """Round 11 post-processing for one paper's emitted rows.
+
+        ``pdf_path`` (F16) feeds the paper short-name builder for the
+        panel-image rename: when paper_metadata.authors is garbage
+        (GROBID sometimes captures a subtitle instead of author
+        names, e.g. Soeka 2019 → "(Spesies Baru Radiolaria ...)"),
+        the PDF filename stem is used instead.
 
         Three bug fixes in one pass:
 
@@ -5340,11 +5350,23 @@ class RadiolarianPipeline:
         # a file named "Dictyomitra_formosa_panel_05.png" is immediately
         # identifiable without cross-referencing the JSONL.
         #
-        # Naming: {safe_species}_{original_basename}
-        #   e.g. "Dictyomitra_formosa_panel_05.png"
+        # Naming: {paper_short}_{safe_species}_{original_basename}
+        #   e.g. "Bandini_2011_Dictyomitra_formosa_panel_05.png"
+        # The paper short name (first author + year) is extracted from
+        # paper_metadata so images from different papers are clearly
+        # distinguishable in a flat database directory.
         # Species=None or empty → keep original name (no rename).
         # Rename failures (permissions, path too long) are logged and
         # the original name is kept.
+
+        # Build per-paper short names (first author + year) once.
+        paper_short_names: dict[str, str] = {}
+        for r in kept:
+            pid = r.get("paper_id") or ""
+            if pid in paper_short_names:
+                continue
+            pm = r.get("paper_metadata") or {}
+            paper_short_names[pid] = self._paper_short_name(pm, pdf_path)
 
         for r in kept:
             sp = (r.get("species") or "").strip()
@@ -5354,27 +5376,112 @@ class RadiolarianPipeline:
             old = Path(pp)
             if not old.exists():
                 continue
-            # Sanitise: keep alphanumeric + underscore + hyphen, replace
-            # everything else (spaces, dots, cf./aff. markers, etc.)
-            safe = re.sub(r"_", " ", sp).strip("_")
-            # Collapse consecutive underscores
-            safe = re.sub(r"_+", "_", safe)
-            if not safe or safe == old.stem:
+            # Build prefix: paper short name for disambiguation
+            pid = r.get("paper_id") or ""
+            prefix = paper_short_names.get(pid, "")
+            # Sanitise species for use in a filename: drop subgenus
+            # parentheses ("Cyrtocapsa (Mirineis) amphora" →
+            # "Cyrtocapsa amphora"), then drop characters that are
+            # unsafe or noisy in filenames, then collapse whitespace
+            # and underscores into single underscores.
+            safe = re.sub(r"\s*\([^)]*\)", " ", sp)
+            safe = re.sub(r"[^\w\s.-]", "", safe)
+            safe = re.sub(r"[\s_]+", "_", safe).strip("_")
+            if not safe:
                 continue
-            new_name = f"{safe}_{old.name}"
+            # Build new name: [paper_short_]species_original
+            parts = []
+            if prefix:
+                parts.append(prefix)
+            parts.append(safe)
+            parts.append(old.name)
+            new_name = "_".join(parts)
             new_path = old.parent / new_name
             if new_path == old:
                 continue
             try:
                 old.rename(new_path)
                 r["panel_path"] = str(new_path)
-                # Also update the local path if the API resolved it
                 if r.get("metadata", {}).get("panel_local_path"):
                     r["metadata"]["panel_local_path"] = str(new_path)
             except OSError as exc:
                 logger.debug("panel rename failed for %s: %s", pp, exc)
 
         return kept
+
+    @staticmethod
+    def _plausible_name_token(token: str) -> bool:
+        """True when *token* looks like a person/institution name
+        usable in a filename.
+
+        Accepts Unicode letters with internal dots/hyphens/apostrophes
+        ("Müller", "Sanz-López", "O'Dogherty"); rejects empty strings,
+        tokens starting with an opening bracket (Soeka 2019's
+        GROBID-parsed subtitle "(Spesies Baru ...)" → token "(Spesies"),
+        tokens containing digits (page numbers, "Input2" author
+        markers), and degenerate lengths.
+        """
+        raw = token.strip().strip(",;")
+        if raw.startswith(("(", "[", "{")):
+            return False
+        t = raw.strip("()[]{}\"'“”«»")
+        if not (2 <= len(t) <= 40):
+            return False
+        if any(ch.isdigit() for ch in t):
+            return False
+        # Allow internal separators between letters only.
+        core = re.sub(r"[.\-'’]", "", t)
+        if not core or not core.replace(" ", "").isalpha():
+            return False
+        return True
+
+    def _paper_short_name(
+        self,
+        paper_meta: dict[str, Any] | None,
+        pdf_path: Path | None,
+    ) -> str:
+        """Human-readable citation prefix for panel image filenames.
+
+        Preference order (F16): first author's first word + year
+        ("Bandini_2011") → PDF filename stem before the first " - "
+        ("Soeka_2019 - ... .pdf" → "Soeka_2019") → year alone → "".
+        Every candidate is passed through ``_plausible_name_token``;
+        the paper_id hash remains the authoritative key in the JSONL
+        either way, so a skipped prefix never misattributes rows.
+        """
+        pm = paper_meta or {}
+        year = pm.get("year")
+        year_s = str(year).strip() if year else ""
+        if not re.fullmatch(r"\d{4}", year_s or ""):
+            year_s = ""
+
+        authors = pm.get("authors") or []
+        if authors and isinstance(authors, list) and authors[0]:
+            first = str(authors[0]).split()[0].rstrip(",").strip()
+            if self._plausible_name_token(first):
+                return f"{first}_{year_s}" if year_s else first
+
+        if pdf_path is not None:
+            head = pdf_path.stem.split(" - ")[0].strip()
+            # Split a trailing year off the head so "Soeka_2019" stays
+            # "Soeka_2019" instead of duplicating the metadata year
+            # ("Soeka_2019_2019"), and so the digits don't fail the
+            # name plausibility check.
+            m = re.match(r"^(.*?)[_\s-]?((?:19|20)\d{2})$", head)
+            stem_name = (m.group(1) if m else head).strip("_ ")
+            stem_year = m.group(2) if m else ""
+            use_year = year_s or stem_year
+            # Journal-style multi-word heads ("Scientific Contributions
+            # Oil and Gas") collapse to their first word.
+            words = stem_name.split()
+            if len(words) > 2:
+                stem_name = words[0]
+            if self._plausible_name_token(stem_name):
+                return f"{stem_name}_{use_year}" if use_year else stem_name
+            if use_year:
+                return use_year
+
+        return year_s
 
     def _apply_review_corrections(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Overlay human review corrections on finalized rows.

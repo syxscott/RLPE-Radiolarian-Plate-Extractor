@@ -96,7 +96,7 @@ def _run_grobid_path(
         "_cross_link_map_and_range_chart",
         "_finalize_rows",
     ):
-        monkeypatch.setattr(pipe, name, lambda rows: rows)
+        monkeypatch.setattr(pipe, name, lambda rows, pdf_path=None: rows)
 
     seen: list[FigureRegion] = []
 

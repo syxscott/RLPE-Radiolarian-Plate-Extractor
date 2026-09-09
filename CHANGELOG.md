@@ -1,9 +1,39 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to RLPE are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased 18] - 2026-09-08 — panel-image naming: paper short name + sanitised species
+
+### Fixed (F16)
+- `pipeline.py` — panel-image rename (F15) produced invalid or garbage
+  prefixes. Two bugs:
+  - Species sanitisation was inverted: underscores were converted to
+    spaces, so renamed files contained spaces
+    ("Bandini_2011_Dictyomitra formosa_panel_05.png"). Now whitespace
+    and underscores collapse to single underscores, subgenus
+    parentheses are dropped ("Cryptamphora (Cryptamphora) strebli" →
+    "Cryptamphora_strebli"), and filename-unsafe characters
+    (parentheses, "?" uncertainty markers) are stripped.
+  - Paper short names came from `paper_metadata.authors[0]` unvetted;
+    Soeka 2019's GROBID-parsed author list is the Indonesian subtitle
+    "(Spesies Baru Radiolaria dari Pulau Buton, ...)" → prefix
+    "(Spesies_2019_...". The new `_paper_short_name` validates the
+    author token (`_plausible_name_token`: rejects bracket-led
+    fragments, digit-bearing markers like "Input2", degenerate
+    lengths; accepts Unicode surnames "Müller", "Sanz-López") and
+    falls back to the PDF filename stem before the first " - "
+    (Soeka_2019 - ... .pdf → "Soeka_2019", year not duplicated), then
+    to the bare year. Both `_process_one_pdf_{od,grobid}` now pass
+    `pdf_path` into `_finalize_rows`.
+- Tests: `test_audit_2026_08_02_{multi_region,max_regions_per_caption}`
+  monkeypatch lambdas accept the new `pdf_path` kwarg; source-grep
+  assertions updated for the new call form. New
+  `tests/test_f16_paper_short_name_2026_09_08.py` (13 cases) locks the
+  Soeka fallback, subgenus/uncertainty-marker handling, and the
+  plausible-name gate.
 
 ## [Unreleased 17] - 2026-09-07 — coverage-driven fixes: scanned plates, font-shift decode, Stage 2 override, YOLO panels
 
