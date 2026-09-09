@@ -5335,6 +5335,45 @@ class RadiolarianPipeline:
                     reasons.append("low_confidence")
                 md["review_reasons"] = reasons
 
+        # F15 (audit 2026-09-08): rename panel images to include their
+        # species name. The user requested this for database building —
+        # a file named "Dictyomitra_formosa_panel_05.png" is immediately
+        # identifiable without cross-referencing the JSONL.
+        #
+        # Naming: {safe_species}_{original_basename}
+        #   e.g. "Dictyomitra_formosa_panel_05.png"
+        # Species=None or empty → keep original name (no rename).
+        # Rename failures (permissions, path too long) are logged and
+        # the original name is kept.
+
+        for r in kept:
+            sp = (r.get("species") or "").strip()
+            pp = r.get("panel_path")
+            if not sp or not pp:
+                continue
+            old = Path(pp)
+            if not old.exists():
+                continue
+            # Sanitise: keep alphanumeric + underscore + hyphen, replace
+            # everything else (spaces, dots, cf./aff. markers, etc.)
+            safe = re.sub(r"_", " ", sp).strip("_")
+            # Collapse consecutive underscores
+            safe = re.sub(r"_+", "_", safe)
+            if not safe or safe == old.stem:
+                continue
+            new_name = f"{safe}_{old.name}"
+            new_path = old.parent / new_name
+            if new_path == old:
+                continue
+            try:
+                old.rename(new_path)
+                r["panel_path"] = str(new_path)
+                # Also update the local path if the API resolved it
+                if r.get("metadata", {}).get("panel_local_path"):
+                    r["metadata"]["panel_local_path"] = str(new_path)
+            except OSError as exc:
+                logger.debug("panel rename failed for %s: %s", pp, exc)
+
         return kept
 
     def _apply_review_corrections(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
