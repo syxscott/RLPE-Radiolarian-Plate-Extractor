@@ -1171,7 +1171,22 @@ def run_output_from_provenance(
     # define warnings_dump at the end — caused an F821 undefined-
     # name error in the Round 23 cleanup pass.
     warnings_dump = warnings_from_matches(matches)
-    paper_dump, paper_warns = paper_records_from_matches(matches)
+    # F14 (audit 2026-09-07): build paper_id → (source_pdf, sha256)
+    # mapping from the provenance's input_sha256 dict so PaperRecord
+    # can populate its previously-dead source_pdf / pdf_sha256 fields.
+    pdf_info: dict[str, tuple[str, str]] = {}
+    try:
+        from pathlib import Path as _Path
+
+        from rlpe.utils import stable_id as _sid
+
+        for filepath, sha256 in (provenance.input_sha256 or {}).items():
+            _pid = _sid(_Path(filepath))
+            basename = _Path(filepath).name
+            pdf_info[_pid] = (basename, sha256)
+    except Exception:
+        pass
+    paper_dump, paper_warns = paper_records_from_matches(matches, pdf_info=pdf_info)
     if paper_warns:
         warnings_dump = warnings_dump + paper_warns
     figure_dump = figure_records_from_matches(matches)
@@ -1233,6 +1248,8 @@ def run_output_from_provenance(
 
 def paper_records_from_matches(
     matches: list[MatchResult],
+    *,
+    pdf_info: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build paper-level records from matches.
 
@@ -1242,7 +1259,14 @@ def paper_records_from_matches(
     missing for Crossref). These flow into ``RunOutput.warnings``
     so the operator sees backend failures in the UI rather than
     only in server logs.
+
+    Audit 2026-09-07 (F14): ``pdf_info`` maps ``paper_id`` to
+    ``(source_pdf_filename, sha256_hex)`` and is used to populate
+    the previously-dead ``source_pdf`` / ``pdf_sha256`` fields.
+    The mapping is built by ``run_output_from_provenance`` from
+    the provenance's ``input_sha256`` dict.
     """
+    pdf_map = pdf_info or {}
     seen: dict[str, dict[str, Any]] = {}
     warnings_out: list[dict[str, Any]] = []
     for m in matches:
@@ -1264,8 +1288,10 @@ def paper_records_from_matches(
             keywords=pm.keywords if pm else [],
             publisher=pm.publisher if pm else None,
             page_count=pm.page_count if pm else None,
-            source_pdf=None,
-            pdf_sha256=None,
+            # Audit 2026-09-07 (F14): populate from provenance SHA256
+            # mapping (was hardcoded to None since schema v1.0).
+            source_pdf=pdf_map.get(pid, ("", ""))[0] or None,
+            pdf_sha256=pdf_map.get(pid, ("", ""))[1] or None,
             source=pm.source if pm else "",
             confidence=pm.confidence if pm else 0.0,
         )
