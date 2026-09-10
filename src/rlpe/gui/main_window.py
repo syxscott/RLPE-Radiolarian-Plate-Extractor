@@ -371,11 +371,11 @@ class MainWindow(QMainWindow):
             "yolo_iou_threshold": self._qfloat(self._qsettings, "yolo_iou_threshold", 0.45),
             "llm_backend": self._qsettings.value("llm_backend", "anthropic"),
             "llm_prompt_lang": self._qsettings.value("llm_prompt_lang", "auto"),
-            "llm_model": self._qsettings.value("llm_model", ""),
-            # BUG-1 (audit 2026-09-04): carry the LLM auth keys into the
-            # Run tab's collect_settings() path; without them the worker
-            # always resolved data_outbound_policy to local_only.
-            "llm_api_key": str(self._qsettings.value("llm_api_key", "")),
+            # F18: llm_model / llm_api_key / llm_base_url are no longer
+            # mirrored here — runs resolve the ACTIVE preset from the
+            # shared ~/.rlpe/llm_api.json at pipeline-build time, and the
+            # worker's outbound-policy resolver falls through to the same
+            # file/env chain when the cache has no key.
             "data_outbound_policy": str(self._qsettings.value("data_outbound_policy", "auto")),
             "llm_thinking_budget": self._qint(self._qsettings, "llm_thinking_budget", 1024),
             "llm_max_output_tokens": self._qint(self._qsettings, "llm_max_output_tokens", 2048),

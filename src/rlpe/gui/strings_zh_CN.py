@@ -403,6 +403,7 @@ STRINGS = {
     "apitab.edit": "编辑",
     "apitab.delete": "删除",
     "apitab.test": "测试连接",
+    "apitab.test.running": "测试中…",
     "apitab.form_group": "预设编辑",
     "apitab.form.new": "新增预设",
     "apitab.form.edit": "编辑预设",

@@ -468,6 +468,7 @@ STRINGS = {
     "apitab.edit": "Edit",
     "apitab.delete": "Delete",
     "apitab.test": "Test connection",
+    "apitab.test.running": "Testing…",
     "apitab.form_group": "Preset editor",
     "apitab.form.new": "New preset",
     "apitab.form.edit": "Edit preset",

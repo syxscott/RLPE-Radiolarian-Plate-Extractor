@@ -58,6 +58,25 @@ tab in both the Web UI and the desktop GUI.
   key. The settings tab also no longer writes the presets file (a flat
   write would corrupt the v2 layout).
 
+### Fixed (F18 self-review pass, same day)
+- `gui/api_tab.py` — the connection test ran its HTTP request on the
+  GUI thread (window frozen up to the backend timeout). Now dispatched
+  to a daemon thread with the outcome marshalled back through a queued
+  `_test_finished` signal (button disabled while running).
+- `gui/api_tab.py` — one-time migration of legacy QSettings provider
+  credentials (`MiniMax_api_key` / `llm_api_key` / `m3_model` /
+  `llm_model`) into an initial preset, so upgrading from pre-F18 never
+  strands the user's key; skipped when presets already exist.
+- `gui/main_window.py` — `_load_settings_cache` no longer mirrors
+  `llm_api_key` / `llm_model` from QSettings into the shared cache
+  (stale credentials could skew the worker's outbound-policy decision).
+- `web/index.html` — the onboarding banner still pointed at the removed
+  settings-tab card; now directs to the 「API 配置」 tab.
+- Patch-integrity fix during review: the threaded-test rewrite had
+  partially failed to apply (ruff had reformatted the target), leaving
+  a `_test_finished.connect` to a not-yet-existing method — caught by
+  the offscreen construction E2E and completed.
+
 ### Tests
 - New: multi-preset storage suite (v1→v2 migration, upsert/activate/
   delete-current-promotes-first, stable migrated ids, compat-save

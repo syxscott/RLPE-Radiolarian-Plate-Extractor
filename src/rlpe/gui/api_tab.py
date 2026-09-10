@@ -13,6 +13,7 @@ stored key".
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from PySide6.QtCore import Signal
@@ -39,6 +40,9 @@ class ApiTab(QWidget):
 
     # Emitted after the presets file changed (other tabs may refresh).
     providers_changed = Signal()
+    # Emitted by the connection-test worker thread; queued into the GUI
+    # thread so the QMessageBox calls stay on the main thread.
+    _test_finished = Signal(dict, str)
 
     def __init__(self, settings: dict[str, Any], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,7 +50,56 @@ class ApiTab(QWidget):
         self._editing_id: str | None = None  # None = form creates a new preset
         self._log = get_gui_logger()
         self._build_ui()
+        self._migrate_legacy_qsettings()
         self._reload()
+
+    def _migrate_legacy_qsettings(self) -> None:
+        """One-time migration: pre-F18 GUI versions stored the provider
+        key/model in QSettings ("MiniMax_api_key" / "llm_api_key" /
+        "m3_model" / "llm_model"). If the presets file has no presets
+        yet, promote those values into an initial preset so an upgrade
+        never strands the user's key (F18 review fix)."""
+        from ..llm_settings import ProviderConfig, list_providers, upsert_provider
+
+        try:
+            if list_providers():
+                return
+            key = str(
+                self._qsettings_legacy_value("MiniMax_api_key")
+                or self._qsettings_legacy_value("llm_api_key")
+                or ""
+            )
+            model = str(
+                self._qsettings_legacy_value("m3_model")
+                or self._qsettings_legacy_value("llm_model")
+                or ""
+            )
+            base_url = str(self._qsettings_legacy_value("llm_base_url") or "")
+            if not (key or model or base_url):
+                return
+            upsert_provider(
+                ProviderConfig(
+                    name=self._tr_default_name(),
+                    base_url=base_url,
+                    api_key=key,
+                    model=model,
+                )
+            )
+            self._log.info("api_tab: migrated legacy QSettings API config into presets file")
+        except Exception:
+            self._log.debug("legacy API-config migration failed", exc_info=True)
+
+    @staticmethod
+    def _qsettings_legacy_value(key: str) -> Any:
+        from PySide6.QtCore import QSettings
+
+        from .constants import APP_AUTHOR, APP_NAME
+
+        return QSettings(APP_AUTHOR, APP_NAME).value(key, "") or ""
+
+    @staticmethod
+    def _tr_default_name() -> str:
+        return _tr("apitab.default_name")
 
     # ------------------------------------------------------------------
     # UI
@@ -80,6 +133,7 @@ class ApiTab(QWidget):
         self._delete_btn.clicked.connect(self._on_delete)
         self._test_btn = tr_button("apitab.test")
         self._test_btn.clicked.connect(self._on_test_connection)
+        self._test_finished.connect(self._on_test_finished)
         for btn in (self._activate_btn, self._edit_btn, self._delete_btn, self._test_btn):
             btn_row.addWidget(btn)
         btn_row.addStretch(1)
@@ -263,7 +317,15 @@ class ApiTab(QWidget):
         self.providers_changed.emit()
 
     def _on_test_connection(self) -> None:
-        """Run the /system/test-llm-equivalent against the ACTIVE preset."""
+        """Ping the ACTIVE preset on a worker thread.
+
+        The HTTP call must NOT run on the GUI thread — a slow or hung
+        endpoint would freeze the whole window for up to the backend
+        timeout (F18 review fix). Config resolution happens here (fast,
+        local); the request runs in a daemon thread and reports back
+        through a queued Qt signal so the dialogs stay on the main
+        thread.
+        """
         from ..llm_backends import (
             AnthropicCompatBackend,
             resolve_llm_api_key,
@@ -295,10 +357,35 @@ class ApiTab(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, _tr("apitab.test"), str(exc))
             return
-        result = backend.infer_text(
-            system_prompt="You are a connection test. Reply with exactly: OK",
-            user_prompt="ping",
-        )
+
+        self._test_btn.setEnabled(False)
+        self._test_btn.setText(_tr("apitab.test.running"))
+        threading.Thread(
+            target=self._test_connection_worker,
+            args=(backend, model),
+            daemon=True,
+        ).start()
+
+    def _test_connection_worker(self, backend: Any, fallback_model: str) -> None:
+        """Blocking ping; runs on a daemon thread. The result is
+        marshalled back to the GUI thread through a queued signal."""
+        try:
+            result = backend.infer_text(
+                system_prompt="You are a connection test. Reply with exactly: OK",
+                user_prompt="ping",
+            )
+        except Exception as exc:
+            result = {
+                "fallback_used": True,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            }
+        self._test_finished.emit(result, fallback_model)
+
+    def _on_test_finished(self, result: dict[str, Any], fallback_model: str) -> None:
+        """Back on the GUI thread: render the ping outcome."""
+        self._test_btn.setEnabled(True)
+        self._test_btn.setText(_tr("apitab.test"))
         if result.get("fallback_used") and result.get("error_type", "").lower() not in {
             "jsonparseerror",
             "valueerror",
@@ -310,7 +397,7 @@ class ApiTab(QWidget):
                 self,
                 _tr("apitab.test"),
                 _tr("apitab.test.ok").format(
-                    model=result.get("model_version") or model,
+                    model=result.get("model_version") or fallback_model,
                     tokens=usage.get("input_tokens"),
                 ),
             )
