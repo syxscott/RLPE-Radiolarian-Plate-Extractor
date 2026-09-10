@@ -44,6 +44,21 @@ the fixes below address the blast radius and the data loss.
   path ("Portrait of", "New", "Report of the collection", ...) are
   rejected as species.
 
+### Fixed (F19 UI-review pass — GUI API tab interaction)
+- `gui/api_tab.py` — a scheme-less API address (e.g.
+  "api.example.com/anthropic") could be SAVED and only failed at run
+  time with the SSRF-guard error; save now validates the http(s)
+  scheme + host up front. Same validation added to the web endpoints
+  `POST /system/llm-providers` and `POST /system/llm-config` (400 with
+  actionable detail).
+- `gui/api_tab.py` — 启用/编辑/删除 are disabled while no preset is
+  selected (previously always clickable no-ops); the state follows
+  list reloads and selection changes.
+- Interaction surface verified offscreen (10-step click-through):
+  empty-state safety, first-preset auto-activation, form reset on
+  save/delete-while-editing, key-preservation on edit, duplicate
+  names, i18n live-switch, button state machine.
+
 ### Tests
 - New: batch isolation suite (worker round-trip incl. secret handoff,
   crash/timeout stubs, resume merge, journal recovery, 0600 config).

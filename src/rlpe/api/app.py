@@ -2832,6 +2832,15 @@ def post_llm_config(
         saved.model = req.model.strip()
     if req.api_key is not None:
         saved.api_key = req.api_key.strip()  # "" clears the key
+    if saved.base_url:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(saved.base_url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"base_url must include an http(s) scheme and host, got {saved.base_url!r}",
+            )
     if req.api_key and not saved.base_url:
         raise HTTPException(
             status_code=400,
@@ -2906,6 +2915,18 @@ def save_llm_provider(
     if req.id and existing is None:
         raise HTTPException(status_code=404, detail=f"Unknown provider id: {req.id}")
     api_key = existing.api_key if req.api_key is None else req.api_key.strip()
+    # F19 review: reject scheme-less addresses at save time instead of
+    # letting the run fail later with the SSRF-guard error.
+    from urllib.parse import urlparse
+
+    effective_base = req.base_url.strip() or (existing.base_url if existing else "")
+    if effective_base:
+        parsed = urlparse(effective_base)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"base_url must include an http(s) scheme and host, got {effective_base!r}",
+            )
     if req.api_key and not (req.base_url.strip() or (existing and existing.base_url)):
         raise HTTPException(
             status_code=400,

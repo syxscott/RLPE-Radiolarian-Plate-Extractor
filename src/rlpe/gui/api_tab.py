@@ -121,6 +121,7 @@ class ApiTab(QWidget):
         self._provider_list = QListWidget()
         self._provider_list.setMinimumHeight(140)
         self._provider_list.itemDoubleClicked.connect(lambda _item: self._load_selected_into_form())
+        self._provider_list.itemSelectionChanged.connect(self._update_button_states)
         list_layout.addWidget(self._provider_list)
 
         btn_row = QHBoxLayout()
@@ -139,6 +140,7 @@ class ApiTab(QWidget):
         btn_row.addStretch(1)
         list_layout.addLayout(btn_row)
         outer.addWidget(list_group)
+        self._update_button_states()
 
         # ---- editor form ----
         form_group = tr_groupbox("apitab.form_group")
@@ -190,6 +192,13 @@ class ApiTab(QWidget):
     # ------------------------------------------------------------------
     # Data
     # ------------------------------------------------------------------
+    def _update_button_states(self) -> None:
+        """Row-scoped actions need a selected preset; the connection test
+        only needs a configured provider."""
+        has_selection = self._selected_provider_id() is not None
+        for btn in (self._activate_btn, self._edit_btn, self._delete_btn):
+            btn.setEnabled(has_selection)
+
     def _selected_provider_id(self) -> str | None:
         item = self._provider_list.currentItem()
         return item.data(0x0100) if item is not None else None  # Qt.UserRole
@@ -215,6 +224,7 @@ class ApiTab(QWidget):
             f"  ·  {flat.model or '—'}  ·  {flat.base_url or '—'}"
         )
         self._form_title.setToolTip(summary)
+        self._update_button_states()
         # Mirror the active preset into the shared settings cache so the
         # Run tab's summary (if it displays one) stays current. The run
         # itself resolves via the file — see pipeline_worker.
@@ -257,6 +267,14 @@ class ApiTab(QWidget):
         base_url = self._base_url_edit.text().strip()
         if not base_url:
             QMessageBox.warning(self, _tr("apitab.save"), _tr("apitab.error.base_url"))
+            return
+        # F19 review: catch a scheme-less address at save time instead of
+        # letting the run fail later with the SSRF-guard error.
+        from urllib.parse import urlparse
+
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            QMessageBox.warning(self, _tr("apitab.save"), _tr("apitab.error.scheme"))
             return
         key_val = self._key_edit.text().strip()
         stored_key = key_val

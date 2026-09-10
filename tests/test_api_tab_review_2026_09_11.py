@@ -218,3 +218,57 @@ class TestThreadedConnectionTest:
         tab._on_test_connection()
         assert tab._test_btn.isEnabled() is False
         qt_app.processEvents()
+
+
+class TestInteractionPolish:
+    """F19 review: user-interaction hardening for the API tab."""
+
+    def _tab(self, qt_app, monkeypatch, tmp_path: Path):
+        from rlpe.gui.api_tab import ApiTab
+
+        return ApiTab({})
+
+    def test_scheme_less_base_url_rejected_at_save(
+        self, qt_app, isolated_stores, monkeypatch, tmp_path
+    ):
+        """A scheme-less address is rejected at SAVE time (with a
+        warning) instead of failing at run time with the SSRF error."""
+        from PySide6.QtWidgets import QMessageBox
+
+        tab = self._tab(qt_app, monkeypatch, tmp_path)
+        shown: list[str] = []
+        monkeypatch.setattr(
+            QMessageBox,
+            "warning",
+            lambda *a, **k: shown.append(a[2]) or QMessageBox.StandardButton.Ok,
+        )
+        tab._name_edit.setText("NoScheme")
+        tab._base_url_edit.setText("api.example.com/anthropic")
+        tab._key_edit.setText("sk")
+        tab._save_btn.click()
+        assert list_providers(isolated_stores[0]) == []
+        assert shown and "http" in str(shown[0])
+
+    def test_row_buttons_disabled_without_selection(
+        self, qt_app, isolated_stores, monkeypatch, tmp_path
+    ):
+        from rlpe.gui.api_tab import ApiTab
+
+        tab = self._tab(qt_app, monkeypatch, tmp_path)
+        # Empty list → row actions disabled.
+        assert not tab._activate_btn.isEnabled()
+        assert not tab._edit_btn.isEnabled()
+        assert not tab._delete_btn.isEnabled()
+
+        from rlpe.llm_settings import ProviderConfig, upsert_provider
+
+        upsert_provider(
+            ProviderConfig(name="A", base_url="https://a", model="m"),
+            path=isolated_stores[0],
+        )
+        tab._reload()
+        assert not tab._activate_btn.isEnabled(), "reload clears selection"
+        tab._provider_list.setCurrentRow(0)
+        assert tab._activate_btn.isEnabled()
+        assert tab._edit_btn.isEnabled()
+        assert tab._delete_btn.isEnabled()

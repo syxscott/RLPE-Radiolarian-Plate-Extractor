@@ -426,6 +426,7 @@ STRINGS = {
     "apitab.active_marker": "【使用中】",
     "apitab.current": "当前使用",
     "apitab.error.base_url": "API 地址不能为空。",
+    "apitab.error.scheme": "API 地址必须以 http:// 或 https:// 开头并包含主机名。",
     "apitab.delete.confirm": "确定删除这套预设？其保存的 API Key 将一并删除。",
     "apitab.test.no_key": "未配置 API Key。请先保存预设（或设置 ANTHROPIC_API_KEY）。",
     "apitab.test.no_config": "地址/模型未配置 — 请先填写预设。",

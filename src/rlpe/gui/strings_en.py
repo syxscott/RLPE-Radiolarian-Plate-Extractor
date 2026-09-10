@@ -490,6 +490,7 @@ STRINGS = {
     "apitab.active_marker": "[ACTIVE]",
     "apitab.current": "Active",
     "apitab.error.base_url": "API base URL is required.",
+    "apitab.error.scheme": "The API address must start with http:// or https:// and include a host.",
     "apitab.delete.confirm": "Delete this preset? Its stored API key is removed too.",
     "apitab.test.no_key": "No API key configured. Save a preset (or set ANTHROPIC_API_KEY) first.",
     "apitab.test.no_config": "Endpoint/model not configured — fill in the preset first.",

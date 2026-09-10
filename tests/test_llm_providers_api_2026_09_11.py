@@ -200,3 +200,27 @@ class TestBudgetCeiling:
 
         with pytest.raises(ValidationError):
             JobOptions(llm_thinking_budget_tokens=131_073)
+
+
+class TestBaseUrlSchemeValidation:
+    def test_create_scheme_less_base_url_rejected(self, api):
+        r = _create(api, base_url="api.example.com/anthropic", api_key="sk-x")
+        assert r.status_code == 400
+        assert "http" in r.json()["detail"]
+
+    def test_update_keeping_valid_url_not_rejected(self, api):
+        entry = _create(api).json()
+        r = api.post(
+            "/system/llm-providers",
+            json={"id": entry["id"], "name": "MiniMax", "model": "m2"},
+        )
+        # base_url omitted → existing (valid) one is kept.
+        assert r.status_code == 200
+        assert r.json()["base_url"].startswith("https://")
+
+    def test_llm_config_scheme_validation(self, api):
+        r = api.post(
+            "/system/llm-config",
+            json={"base_url": "no-scheme-host", "api_key": "sk-x"},
+        )
+        assert r.status_code == 400
