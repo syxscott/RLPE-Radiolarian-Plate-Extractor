@@ -905,7 +905,7 @@
     },
     "MorphologyRecord": {
       "additionalProperties": false,
-      "description": "Structured morphological description for one species.\n\nAudit 2026-08-02 — Stage 6 (M3 morphology extraction, opt-in).\nFor each unique (paper, species) pair with an anchorable\nDescription / Diagnosis section, the pipeline emits ONE\nMorphologyRecord. Fields the source text doesn't mention are\nleft ``None`` — never ``False`` / ``0`` / ``\"\"`` — so the JSONL\nexport distinguishes \"M3 said yes\" from \"M3 had nothing to\nsay\".",
+      "description": "Structured morphological description for one species.\n\nAudit 2026-08-02 — Stage 6 (LLM morphology extraction, opt-in).\nFor each unique (paper, species) pair with an anchorable\nDescription / Diagnosis section, the pipeline emits ONE\nMorphologyRecord. Fields the source text doesn't mention are\nleft ``None`` — never ``False`` / ``0`` / ``\"\"`` — so the JSONL\nexport distinguishes \"LLM said yes\" from \"LLM had nothing to\nsay\".",
       "properties": {
         "abdomen_shape": {
           "anyOf": [
@@ -1465,9 +1465,9 @@
           "default": null,
           "title": "Link Source"
         },
-        "m3_diagnostic": {
+        "llm_diagnostic": {
           "additionalProperties": true,
-          "title": "M3 Diagnostic",
+          "title": "Llm Diagnostic",
           "type": "object"
         },
         "matched_location": {

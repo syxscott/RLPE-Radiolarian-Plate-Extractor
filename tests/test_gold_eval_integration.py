@@ -5,11 +5,11 @@ in scripts/gold_eval_anchored.py.
 
 NOTE: ``scripts/gold_eval_anchored.py`` is a runnable *script* (not a
 library). At import time it kicks off a 9-paper eval loop that calls
-the real M3 API and ``time.sleep(60)`` between papers. We do NOT want
+the real LLM API and ``time.sleep(60)`` between papers. We do NOT want
 any of that for the unit test, so before importing the module we
 stub out two collaborators:
 
-* ``rlpe.llm_backends.MiniMaxM3Backend`` — replaced with a no-op class
+* ``rlpe.llm_backends.AnthropicCompatBackend`` — replaced with a no-op class
   that returns a deterministic ``{"error": "stubbed", ...}`` payload
   from ``infer_panel``, so the import-time loop short-circuits via
   the ``r.get('error') or r.get('fallback_used')`` guard in
@@ -46,11 +46,11 @@ class _StubBackend:
 
 
 def _import_gold_eval_anchored():
-    """Import ``gold_eval_anchored`` with ``MiniMaxM3Backend`` and
+    """Import ``gold_eval_anchored`` with ``AnthropicCompatBackend`` and
     ``time.sleep`` stubbed, then RESTORE both attributes.
 
     Audit 2026-09-04 (CI regression): this file used to replace
-    ``rlpe.llm_backends.MiniMaxM3Backend`` with ``_StubBackend`` and
+    ``rlpe.llm_backends.AnthropicCompatBackend`` with ``_StubBackend`` and
     no-op ``time.sleep`` at module level and never restore them.
     Every test file collected *after* this one then saw the stub
     instead of the real backend class (→ AttributeError in
@@ -64,21 +64,21 @@ def _import_gold_eval_anchored():
 
     import rlpe.llm_backends  # noqa: E402
 
-    real_backend = rlpe.llm_backends.MiniMaxM3Backend
+    real_backend = rlpe.llm_backends.AnthropicCompatBackend
     real_sleep = _time.sleep
     # Monkey-patch the symbol BEFORE gold_eval_anchored imports it. The
-    # file uses ``from rlpe.llm_backends import MiniMaxM3Backend`` at
+    # file uses ``from rlpe.llm_backends import AnthropicCompatBackend`` at
     # module load, so the binding is captured from rlpe.llm_backends at
     # the time of import — replacing the attribute on the source module
     # is sufficient.
-    rlpe.llm_backends.MiniMaxM3Backend = _StubBackend  # type: ignore[attr-defined]
+    rlpe.llm_backends.AnthropicCompatBackend = _StubBackend  # type: ignore[attr-defined]
     _time.sleep = lambda *_a, **_kw: None
     try:
         import gold_eval_anchored
 
         return gold_eval_anchored
     finally:
-        rlpe.llm_backends.MiniMaxM3Backend = real_backend  # type: ignore[attr-defined]
+        rlpe.llm_backends.AnthropicCompatBackend = real_backend  # type: ignore[attr-defined]
         _time.sleep = real_sleep
 
 

@@ -38,8 +38,8 @@ import easyocr  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 from rlpe.opendataloader_extractor import _find_plate_captions  # noqa: E402
+from rlpe.semantic_engine import _regex_parse_caption  # noqa: E402
 
 PRED_IN = ROOT / "work" / "combined_9_v17_FINAL.jsonl"
 PRED_OUT = ROOT / "work" / "combined_9_v18_FINAL.jsonl"

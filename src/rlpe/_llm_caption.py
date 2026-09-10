@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # dropped species for multi-plate captions (Bandini 2011 pl09 ≈ 3500 chars).
 DEFAULT_MAX_CHARS: int = 4000
 
-# Token cap when a tokenizer is available. Empirically a single-prompt M3
+# Token cap when a tokenizer is available. Empirically a single-prompt LLM
 # call comfortably fits 4K tokens; raising beyond that risks hitting the
 # provider's max_output_tokens budget on the response side.
 DEFAULT_MAX_TOKENS: int = 4000

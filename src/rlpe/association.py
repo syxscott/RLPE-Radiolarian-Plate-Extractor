@@ -955,7 +955,7 @@ def match_panels(
             )
         return matches
 
-    # 1b) M3 stage-1 caption pairs drive a much more accurate panel→species
+    # 1b) LLM stage-1 caption pairs drive a much more accurate panel→species
     # mapping. If we have structured (label, species) pairs from the LLM caption
     # parser, build a label→species lookup and override the order-based
     # heuristic. Falls back silently if pairs are empty or don't match.
@@ -973,14 +973,14 @@ def match_panels(
             _add_label_base_aliases(cp, pair_lookup)
         if pair_lookup:
             caption_pairs_used = True
-    # Fallback: when M3 didn't run, build the same lookup via the regex
-    # caption parser that M3 uses internally. This rescues the common case
+    # Fallback: when LLM didn't run, build the same lookup via the regex
+    # caption parser that LLM uses internally. This rescues the common case
     # of "figs 1-2. SpeciesA: ... figs 3-4. SpeciesB: ..." captions where the
     # old order-based heuristic was mapping every panel to taxa[0] (the
     # first species in the caption).
     if not caption_pairs_used and caption.caption:
         try:
-            from .m3_engine import _regex_parse_caption
+            from .semantic_engine import _regex_parse_caption
 
             regex_pairs = _regex_parse_caption(caption.caption)
             for cp in regex_pairs:
@@ -1051,14 +1051,14 @@ def match_panels(
         raw_id = assigned_labels[idx] if idx < len(assigned_labels) else panel.panel_id
         panel_id = _normalize_panel_label(raw_id)
         best_species = assigned_species[idx] if idx < len(assigned_species) else None
-        # Caption-pair override: if M3 gave us a structured (label, species) map
+        # Caption-pair override: if LLM gave us a structured (label, species) map
         # and the panel's label (or its leading-zero-stripped form) is in
         # it, prefer that species over the order-based fallback.
         # Audit 2026-09-01 (architectural P0 #7): previously the condition
-        # was only ``caption_pairs_used`` — meaning whenever M3 returned
+        # was only ``caption_pairs_used`` — meaning whenever LLM returned
         # ANY caption-pair (even one with low confidence), it would
         # overwrite the neural-matcher's result. This capped the trained
-        # matcher at the regex/M3 pair_lookup ceiling, turning the neural
+        # matcher at the regex/LLM pair_lookup ceiling, turning the neural
         # head into dead code. Now require BOTH ``caption_pairs_used`` AND
         # ``not matcher_used`` so the neural matcher is honoured when it
         # ran; the pair_lookup only fills gaps where the matcher did not.

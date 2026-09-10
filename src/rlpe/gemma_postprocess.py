@@ -23,43 +23,43 @@ from .llm_backends import (
 from .types import MatchResult
 
 # Audit 2026-08-19 Phase 4C (Bug M-10): historically Gemma hard-coded its
-# own copy of the per-panel system prompt here. When M3's prompt was
+# own copy of the per-panel system prompt here. When LLM's prompt was
 # updated upstream, this copy drifted — silently invalidating the Gemma
-# fallback path. The canonical prompts now live in ``m3_engine`` and
+# fallback path. The canonical prompts now live in ``semantic_engine`` and
 # Gemma pulls them via ``get_prompt_registry()``.
 try:
-    from .m3_engine import get_prompt_registry
-except Exception:  # pragma: no cover - tolerate missing m3_engine in envs
+    from .semantic_engine import get_prompt_registry
+except Exception:  # pragma: no cover - tolerate missing semantic_engine in envs
 
     def get_prompt_registry() -> tuple[dict[str, str], str]:  # type: ignore[no-redef]
-        """Stub fallback so this module imports without m3_engine.
+        """Stub fallback so this module imports without semantic_engine.
 
-        In normal install paths, ``rlpe.m3_engine`` is always available;
+        In normal install paths, ``rlpe.semantic_engine`` is always available;
         the stub exists only for sparse test/dev environments that
-        exclude the M3 module. Phase 4E: mirrors the real signature
+        exclude the LLM module. Phase 4E: mirrors the real signature
         ``(dict, version_str)`` so callers that unpack the tuple
         don't break in offline test environments.
         """
         return {}, "v0.0.0-stub"
 
 
-# Cache the M3 prompts at import time. Stale once per process is fine
+# Cache the LLM prompts at import time. Stale once per process is fine
 # because the prompts are constants — re-reading on every call would
 # just re-import the dict.
 _PROMPTS_CACHE: dict[str, str] | None = None
 _PROMPTS_VERSION: str | None = None
 
 
-def _get_m3_prompts() -> dict[str, str]:
-    """Lazily load (and cache) the M3 prompt registry.
+def _get_llm_prompts() -> dict[str, str]:
+    """Lazily load (and cache) the LLM prompt registry.
 
-    Returns the dict from ``m3_engine.get_prompt_registry()``. If M3
+    Returns the dict from ``semantic_engine.get_prompt_registry()``. If LLM
     is unavailable (stub used above), returns an empty dict; the
     helpers below detect that and fall back to legacy inline prompts.
 
     Phase 4E (audit 2026-08-19): ``get_prompt_registry()`` now returns
     a 2-tuple ``(dict, version)``; this helper unpacks and caches only
-    the dict side. ``_get_m3_prompt_version()`` exposes the version.
+    the dict side. ``_get_llm_prompt_version()`` exposes the version.
     """
     global _PROMPTS_CACHE, _PROMPTS_VERSION
     if _PROMPTS_CACHE is None:
@@ -82,23 +82,23 @@ def _get_m3_prompts() -> dict[str, str]:
     return _PROMPTS_CACHE
 
 
-def _get_m3_prompt_version() -> str:
+def _get_llm_prompt_version() -> str:
     """Return the cached prompt-registry version string.
 
-    Audit 2026-08-19 Phase 4E: complements ``_get_m3_prompts()`` so
+    Audit 2026-08-19 Phase 4E: complements ``_get_llm_prompts()`` so
     callers can stamp a result with the prompt revision used to
     produce it. Returns ``"v0.0.0-unknown"`` if the registry was
-    never loaded (e.g. m3_engine unavailable).
+    never loaded (e.g. semantic_engine unavailable).
     """
     if _PROMPTS_VERSION is None:
         # Trigger the lazy load (may set _PROMPTS_VERSION or leave it
         # as a stub string).
-        _get_m3_prompts()
+        _get_llm_prompts()
     return _PROMPTS_VERSION or "v0.0.0-unknown"
 
 
 # Convenience accessors. Each ``_get_system_prompt(stage)`` returns the
-# canonical M3 prompt for ``stage`` so the API surface matches what
+# canonical LLM prompt for ``stage`` so the API surface matches what
 # the tests expect (``gemma._get_system_prompt(stage)``).
 _STAGE_ALIASES = {
     "match_panel": "match_panel",
@@ -110,27 +110,27 @@ _STAGE_ALIASES = {
 
 
 def _get_system_prompt(stage: str = "match_panel") -> str | None:
-    """Return the M3 system prompt for ``stage``, or None if missing.
+    """Return the LLM system prompt for ``stage``, or None if missing.
 
-    ``stage`` is one of the keys in ``m3_engine.get_prompt_registry()``
+    ``stage`` is one of the keys in ``semantic_engine.get_prompt_registry()``
     (``match_panel``, ``match_panel_visual_only``,
     ``classify_plate``, etc.). Aliases ``zh`` / ``en`` / ``match``
     resolve to ``match_panel`` / ``match_panel_visual_only`` /
     ``match_panel`` respectively for legacy call sites.
     """
-    prompts = _get_m3_prompts()
+    prompts = _get_llm_prompts()
     if not prompts:
         return None
     resolved = _STAGE_ALIASES.get(stage, stage)
     return prompts.get(resolved)
 
 
-# Audit 2026-08-19 Phase 4C (Bug M-12): M3 emits different field-name
+# Audit 2026-08-19 Phase 4C (Bug M-12): LLM emits different field-name
 # variants across stages and migration cycles. ``confidence`` was
 # renamed to ``conf_score`` in some prompts and to ``c_score`` in
 # downstream layout/YOLO paths; ``verbatim_name`` is a recent
 # schema (2026-08-19) that replaced ``raw_name`` / ``name`` / ``taxon``
-# in earlier prompts. Gemma post-processing used to assume the M3
+# in earlier prompts. Gemma post-processing used to assume the LLM
 # names directly, leading to silent zero-confidence fallbacks when
 # the names drifted.
 _CONFIDENCE_FIELD_FALLBACK = (
@@ -150,9 +150,9 @@ _NAME_FIELD_FALLBACK = (
 def _pick_field(payload: dict[str, Any], candidates: tuple[str, ...]) -> Any:
     """Return the first present key from ``candidates`` in ``payload``.
 
-    Used for forward-compatibility when M3 renames a field across
+    Used for forward-compatibility when LLM renames a field across
     prompt updates: ``_pick_field(out, _CONFIDENCE_FIELD_FALLBACK)``
-    returns ``payload.get("conf_score")`` if the M3 prompt emits
+    returns ``payload.get("conf_score")`` if the LLM prompt emits
     ``conf_score`` and only that name.
 
     Audit 2026-09-01 CR-19: previously a ``payload[key]`` whose value
@@ -298,11 +298,11 @@ def load_gemma4_llamacpp(
 
 def build_gemma_backend_from_config(extra: dict[str, Any]) -> GemmaRuntime:
     backend = str(extra.get("llm_backend", "transformers")).lower()
-    if backend in {"minimax", "minimax-m3", "minimax_api"}:
-        from .llm_backends import build_MiniMax_backend_from_env_or_config
+    if backend in {"anthropic", "minimax", "minimax-m3", "minimax_api"}:
+        from .llm_backends import build_anthropic_compat_backend
 
-        runtime_backend = build_MiniMax_backend_from_env_or_config(extra)
-        return GemmaRuntime(backend=runtime_backend, backend_name="MiniMax")
+        runtime_backend = build_anthropic_compat_backend(extra)
+        return GemmaRuntime(backend=runtime_backend, backend_name="anthropic")
     if backend in {"llama.cpp", "llamacpp", "llama_cpp"}:
         host = str(extra.get("llama_host", "http://127.0.0.1:8080"))
         model_name = (
@@ -337,31 +337,31 @@ def gemma_match_panel(
     temperature: float = 0.10,
     top_p: float = 0.90,
 ) -> dict[str, Any]:
-    # Audit 2026-08-19 Phase 4C (Bug M-10): prefer the M3 ``match_panel``
+    # Audit 2026-08-19 Phase 4C (Bug M-10): prefer the LLM ``match_panel``
     # prompt over the legacy ``GEMMA_SYSTEM_PROMPT_ZH`` so the Gemma
-    # fallback after an M3 failure uses the SAME JSON contract M3 was
+    # fallback after an LLM failure uses the SAME JSON contract LLM was
     # emitting. We still honour an explicit ``system_prompt`` arg so
     # callers that need a custom instruction (e.g. tests, ablations)
-    # retain the override. Audit guard: when M3 is unavailable we fall
+    # retain the override. Audit guard: when LLM is unavailable we fall
     # back to the legacy hard-coded ZH prompt so existing single-env
-    # installs without ``m3_engine`` keep working.
+    # installs without ``semantic_engine`` keep working.
     if system_prompt is None:
-        m3_prompt = _get_system_prompt("match_panel")
-        if not m3_prompt:
+        llm_prompt = _get_system_prompt("match_panel")
+        if not llm_prompt:
             # Audit 2026-08-19 Phase 4C (Bug M-10) used to fall back to
             # a hardcoded ``GEMMA_SYSTEM_PROMPT_ZH`` constant here, but
             # that constant was intentionally removed when the prompt
-            # registry moved to ``m3_engine`` (single source of truth).
-            # A missing match_panel prompt means M3 is not installed /
+            # registry moved to ``semantic_engine`` (single source of truth).
+            # A missing match_panel prompt means LLM is not installed /
             # the registry is empty; surface that as a configuration
             # error instead of running Gemma with an empty system
             # prompt and silently producing garbage.
             raise RuntimeError(
-                "match_panel prompt not available from m3_engine "
+                "match_panel prompt not available from semantic_engine "
                 "registry — cannot run Gemma fallback. Install rlpe "
-                "with the M3 extras or pass an explicit system_prompt."
+                "with the LLM extras or pass an explicit system_prompt."
             )
-        prompt = m3_prompt
+        prompt = llm_prompt
     else:
         prompt = system_prompt
     user_prompt = (
@@ -395,37 +395,37 @@ def apply_gemma_to_matches(
     conf_threshold: float = 0.70,
     prompt_lang: str = "zh",
 ) -> list[MatchResult]:
-    # Audit 2026-08-19 Phase 4C (Bug M-10): prefer M3's ``match_panel``
-    # prompt so the fallback path uses the SAME JSON contract M3 was
+    # Audit 2026-08-19 Phase 4C (Bug M-10): prefer LLM's ``match_panel``
+    # prompt so the fallback path uses the SAME JSON contract LLM was
     # emitting (single source of truth for prompts). The two legacy
     # ZH / EN inline prompts remain as a last-resort fallback only
-    # when M3 is unavailable.
+    # when LLM is unavailable.
     is_zh = prompt_lang.lower().startswith("zh")
     if is_zh:
-        m3_prompt = _get_system_prompt("match_panel")
-        if not m3_prompt:
+        llm_prompt = _get_system_prompt("match_panel")
+        if not llm_prompt:
             # Same rationale as ``gemma_match_panel`` above: the
             # legacy GEMMA_SYSTEM_PROMPT_* constants were removed in
-            # Phase 4C; if the M3 registry is empty we MUST surface a
+            # Phase 4C; if the LLM registry is empty we MUST surface a
             # configuration error rather than silently running Gemma
             # with an empty system prompt.
             raise RuntimeError(
-                "match_panel prompt not available from m3_engine "
+                "match_panel prompt not available from semantic_engine "
                 "registry — cannot run Gemma fallback for "
                 f"prompt_lang={prompt_lang!r}."
             )
-        prompt: str = m3_prompt
+        prompt: str = llm_prompt
     else:
-        # English pipeline: M3 doesn't ship a dedicated EN match_panel
+        # English pipeline: LLM doesn't ship a dedicated EN match_panel
         # prompt, so fall back to the visual-only match_panel prompt.
-        m3_prompt = _get_system_prompt("match_panel_visual_only")
-        if not m3_prompt:
+        llm_prompt = _get_system_prompt("match_panel_visual_only")
+        if not llm_prompt:
             raise RuntimeError(
                 "match_panel_visual_only prompt not available from "
-                "m3_engine registry — cannot run Gemma fallback for "
+                "semantic_engine registry — cannot run Gemma fallback for "
                 f"prompt_lang={prompt_lang!r}."
             )
-        prompt = m3_prompt
+        prompt = llm_prompt
     for match in matches:
         if not match.panel_path:
             continue
@@ -451,11 +451,11 @@ def apply_gemma_to_matches(
             continue
 
         # Audit 2026-08-19 Phase 4C (Bug M-11): field-name fallback for
-        # confidence / species. M3 emits ``confidence`` today but
+        # confidence / species. LLM emits ``confidence`` today but
         # earlier prompts shipped ``conf_score`` / ``c_score``; the
         # verbatim/raw-name field was renamed ``verbatim_name`` (2026-
         # 08-19 schema) but older payloads carried ``raw_name`` /
-        # ``name`` / ``taxon``. Without the fallback a successful M3
+        # ``name`` / ``taxon``. Without the fallback a successful LLM
         # call that emitted ``conf_score`` would have been silently
         # mapped to ``gemma_conf = 0.0`` and the row marked fallback.
         conf_raw = _pick_field(out, _CONFIDENCE_FIELD_FALLBACK)
@@ -481,18 +481,18 @@ def apply_gemma_to_matches(
         # Telemetry (cost / request id / model version / token usage) MUST be
         # propagated on every call that returns them, success or failure.
         # The previous version only stamped them inside the failure branch,
-        # which silently hid MiniMax usage in successful runs and made
-        # /system/llm-status report zero cost on the default MiniMax path.
+        # which silently hid LLM usage in successful runs and made
+        # /system/llm-status report zero cost on the default LLM path.
         # error / error_type remain gated by ``actually_failed`` (Bug #3
         # regression guard).
         if out.get("request_id"):
-            match.metadata["MiniMax_request_id"] = str(out.get("request_id"))
+            match.metadata["llm_request_id"] = str(out.get("request_id"))
         if out.get("cost_cny") is not None:
-            match.metadata["MiniMax_cost_cny"] = float(out.get("cost_cny"))
+            match.metadata["@@COST_DELETE@@"] = float(out.get("cost_cny"))
         if out.get("model_version"):
-            match.metadata["MiniMax_model_version"] = str(out.get("model_version"))
+            match.metadata["llm_model_version"] = str(out.get("model_version"))
         if isinstance(out.get("usage"), dict):
-            match.metadata["MiniMax_usage"] = dict(out.get("usage"))
+            match.metadata["llm_usage"] = dict(out.get("usage"))
         if actually_failed:
             if out.get("error"):
                 match.metadata["gemma_error"] = str(out.get("error"))
@@ -510,14 +510,14 @@ def apply_gemma_to_matches(
             match.metadata["gemma_used"] = True
         else:
             match.metadata["gemma_used"] = False
-            # Distinguish "M3 said this is not a radiolarian specimen" from a
+            # Distinguish "LLM said this is not a radiolarian specimen" from a
             # real low-confidence verdict.  A "not a specimen" answer is a
             # normal pipeline outcome (the panel was just a page header /
             # placeholder), not a fallback error to surface to the user.
             if out.get("is_radiolarian") is False:
-                match.metadata["m3_rejected_non_radiolarian"] = True
+                match.metadata["llm_rejected_non_radiolarian"] = True
                 match.metadata["gemma_reasoning"] = (
-                    out.get("reasoning") or "M3: not a radiolarian specimen"
+                    out.get("reasoning") or "LLM: not a radiolarian specimen"
                 )
             else:
                 match.metadata["gemma_fallback"] = True
@@ -534,28 +534,28 @@ def batch_gemma_postprocess_rows(
 
     Returns a new list of dicts; the input *rows* are not modified.
     """
-    # Audit 2026-08-19 Phase 4C (Bug M-10): prefer M3 ``match_panel``
-    # prompt so the batch fallback uses the same JSON contract M3 was
+    # Audit 2026-08-19 Phase 4C (Bug M-10): prefer LLM ``match_panel``
+    # prompt so the batch fallback uses the same JSON contract LLM was
     # emitting.
     is_zh = prompt_lang.lower().startswith("zh")
     if is_zh:
-        m3_prompt = _get_system_prompt("match_panel")
-        if not m3_prompt:
+        llm_prompt = _get_system_prompt("match_panel")
+        if not llm_prompt:
             raise RuntimeError(
-                "match_panel prompt not available from m3_engine "
+                "match_panel prompt not available from semantic_engine "
                 "registry — cannot run batch Gemma fallback for "
                 f"prompt_lang={prompt_lang!r}."
             )
-        prompt: str = m3_prompt
+        prompt: str = llm_prompt
     else:
-        m3_prompt = _get_system_prompt("match_panel_visual_only")
-        if not m3_prompt:
+        llm_prompt = _get_system_prompt("match_panel_visual_only")
+        if not llm_prompt:
             raise RuntimeError(
                 "match_panel_visual_only prompt not available from "
-                "m3_engine registry — cannot run batch Gemma fallback "
+                "semantic_engine registry — cannot run batch Gemma fallback "
                 f"for prompt_lang={prompt_lang!r}."
             )
-        prompt = m3_prompt
+        prompt = llm_prompt
     out_rows: list[dict[str, Any]] = []
     for row in tqdm(rows, desc="Gemma postprocess"):
         new_row = dict(row)
@@ -592,25 +592,25 @@ def batch_gemma_postprocess_rows(
             new_row["gemma_confidence"] = 0.0
         species_raw = _pick_field(result, _NAME_FIELD_FALLBACK)
         new_row["gemma_reasoning"] = result.get("reasoning", "")
-        # Propagate error info from MiniMax / Ollama / Transformers backends
+        # Propagate error info from LLM / Ollama / Transformers backends
         # so downstream tools (e.g. FallbackHandler) can see the real reason.
         if result.get("error"):
             new_row["gemma_error"] = str(result.get("error"))
         if result.get("error_type"):
             new_row["gemma_error_type"] = str(result.get("error_type"))
         if result.get("request_id"):
-            new_row["MiniMax_request_id"] = str(result.get("request_id"))
+            new_row["llm_request_id"] = str(result.get("request_id"))
         if result.get("cost_cny") is not None:
-            new_row["MiniMax_cost_cny"] = float(result.get("cost_cny"))
+            new_row["@@COST_DELETE@@"] = float(result.get("cost_cny"))
         if result.get("model_version"):
-            new_row["MiniMax_model_version"] = str(result.get("model_version"))
+            new_row["llm_model_version"] = str(result.get("model_version"))
         # M22: propagate per-call ``usage`` token accounting into the
         # row. The non-batch path already pipes it through via
         # ``_telemetry_subset``; the batch path below was silently
         # dropping it, so /system/llm-status under-counted tokens
         # for any row processed by ``gemma_batch_enrich``.
         if isinstance(result.get("usage"), dict):
-            new_row["MiniMax_usage"] = dict(result["usage"])
+            new_row["llm_usage"] = dict(result["usage"])
         if new_row["gemma_confidence"] >= conf_threshold:
             new_row["panel_id"] = result.get("label") or new_row.get("panel_id")
             # Audit 2026-08-19 Phase 4C (Bug M-11): prefer the

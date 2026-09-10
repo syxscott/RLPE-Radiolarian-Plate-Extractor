@@ -38,7 +38,7 @@ JSON / CSV / Excel / Darwin Core Archive。
 | panel 召回 | 文本层良好的论文 ~81%；全页扫描版图版 **0**（不支持） | 3 篇深度对照 + 25 篇测试 |
 | 地质年代 | ICS 2023 数值区间映射（如 Early Jurassic → 174.7–201.4 Ma） | `stratigraphy.py` 内嵌年代表 |
 | 比例尺 | 三源合并（caption/OCR/视觉线段）+ 2x–10x 分歧检测 | v18 产物 641/913 行有值 |
-| 成本 | ~¥0.16/篇（MiniMax M3，仅对可提取内容计费） | 25 篇实测 688 调用 ¥4.09 |
+| 成本 | 取决于所选服务商（F17 起不再内置价格表，仅统计调用次数与 token） | — |
 | 物种幻觉率 | ~2%（1/51） | 同上 |
 
 **明确不支持/已知短板**（详见[已知限制](#已知限制)）：
@@ -46,7 +46,7 @@ JSON / CSV / Excel / Darwin Core Archive。
 - 全页扫描版图版（日刊老文献常见，如 Motoyama 1998）——OD 提取不到
   文本层图注，当前整篇为 0；
 - 分子系统/综述类论文的图（进化树、地图）会被正确地不产出 panel；
-- M3 Stage 2 偶发把真图版误判为 diagram（Munasri 案例待修）。
+- LLM Stage 2 偶发把真图版误判为 diagram（Munasri 案例待修）。
 
 ---
 
@@ -57,7 +57,7 @@ JSON / CSV / Excel / Darwin Core Archive。
 ```bash
 pip install -e .
 # 可选依赖（按需）：
-pip install 'anthropic>=0.40,<0.50' python-dotenv   # MiniMax M3 云端
+pip install 'anthropic>=0.40,<0.50' python-dotenv   # Anthropic 兼容云端 API
 pip install paddleocr==2.7.3 paddlepaddle==2.6.2    # OCR（或 easyocr）
 pip install opendataloader-pdf                       # OD 前端（需 Java 11+）
 ```
@@ -74,24 +74,26 @@ LLM API 失败时会弹出四选一回退菜单（gemma4 / rules / stop / retry�
 ### 方式二：CLI
 
 ```bash
-# 推荐：OpenDataLoader 前端 + MiniMax M3（云端多模态）
+# 推荐：OpenDataLoader 前端 + Anthropic 兼容云端 API（多模态）
 python -m rlpe \
   --pdf-dir data/pdfs --work-dir work/run \
   --use-opendataloader \
-  --use-gemma4 --llm-backend MiniMax \
-  --MiniMax-endpoint https://api.minimaxi.com/anthropic --MiniMax-model MiniMax-M3 \
+  --use-gemma4 --llm-backend anthropic \
+  --llm-base-url https://api.minimaxi.com/anthropic --llm-model MiniMax-M3 \
   --i-understand-data-leaves-my-machine --data-outbound-policy api_full \
-  --m3-enhanced-mode --use-geo-vision \
+  --llm-enhanced-mode --use-geo-vision \
   --export-jsonl work/run/matches.jsonl
 ```
 
 关键行为说明：
 
-- `--use-gemma4 --llm-backend MiniMax` + `.env` 中的
-  `ANTHROPIC_API_KEY`（MiniMax 兼容 Anthropic 协议）即启用云端 LLM；
-  无 key 时自动退化为正则抽取（质量大幅下降，不再有 LLM 调用）。
-- `--m3-enhanced-mode` 启用 M3 五阶段引擎；`--use-geo-vision`
-  /`--m3-stage-6` 会隐式启用引擎，无需再传。
+- `--use-gemma4 --llm-backend anthropic` + `.env` 中的
+  `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` / `ANTHROPIC_MODEL`
+  （或在 Web/GUI 设置页保存 API 配置，写入 `~/.rlpe/llm_api.json`）
+  即启用云端 LLM——任意 Anthropic 兼容服务商均可（MiniMax、DeepSeek、
+  Kimi、OpenRouter 等）；无 key 时自动退化为正则抽取（质量大幅下降）。
+- `--llm-enhanced-mode` 启用 LLM 五阶段引擎；`--use-geo-vision`
+  /`--llm-stage-6` 会隐式启用引擎，无需再传。
 - `--data-outbound-policy` 默认 `api_redacted`（缩略图+脱敏 caption）；
   `api_full` 需要环境变量 `RLPE_DATA_OUTBOUND_OPT_IN=1` 显式同意。
 - 断点续跑：每篇论文写 `_checkpoints/<paper_id>.done`；零行论文会
@@ -131,7 +133,7 @@ docker run --rm -p 8000:8000 rlpe:dev
 | **Scale bars** | 数值+单位+um_per_px，三源合并 + 分歧警告 | 高 |
 | **Samples** | 样品号（caption 正则，含 `B_DP2` 类带下划线码） | 高 |
 | **Range charts** | 逐物种延限（FAD/LAD、Ma 轴）+ biozone（需 API key） | 中（有真实论文验证） |
-| **Morphology**（opt-in `--m3-stage-6`） | 壳形/尺寸/孔/刺/口围结构化描述 | 中（null ≠ false 契约） |
+| **Morphology**（opt-in `--llm-stage-6`） | 壳形/尺寸/孔/刺/口围结构化描述 | 中（null ≠ false 契约） |
 | **Knowledge graphs** | 物种–样品–地质–产地关系图 | 规则构建 |
 | **Provenance** | pipeline 版本、git commit、config 快照、输入 SHA256、UTC 时间戳 | 每次 run 强制 |
 
@@ -149,13 +151,13 @@ PDF ──┬─ OpenDataLoader（默认推荐，进程内，含文本层图注�
             （两者互为回退，深度守卫防循环，cap=4）
   ↓
 逐 figure 处理（_process_region，三引擎并行）：
-  1. LLM-first（默认）：一次 M3 视觉调用直出全部 panel + 物种
-  2. M3 五阶段：caption 结构化 → 图版分类 → 视觉 bbox → 逐panel匹配 → 自批判
+  1. LLM-first（默认）：一次 LLM 视觉调用直出全部 panel + 物种
+  2. LLM 五阶段：caption 结构化 → 图版分类 → 视觉 bbox → 逐panel匹配 → 自批判
   3. 经典 CV：SAM2（若可用）/ OpenCV 分割 → OCR → 规则匹配
   ↓
 富化链：cross-figure 链接 → 分布表地质回链 → 地图桥接 → geo vision
         → Stage3 bbox crops → Stage4.5 逐panel物种 → 多图版富集
-        → Stage6 形态学 → 跨图链接器（sample/locality/M3 四策略）
+        → Stage6 形态学 → 跨图链接器（sample/locality/LLM 四策略）
   ↓
 _finalize_rows：去重 → stub/非法行过滤 → canonical/sample 盖章
         → paleo 富化 → 人工修正回放
@@ -172,9 +174,9 @@ matches.jsonl + run_output.json（schema v1.3.0）→ 导出器族
 | 类别 | 旗标 | 说明 |
 |---|---|---|
 | 前端 | `--use-opendataloader` | OD 进程内前端（推荐）；不开则走 GROBID |
-| LLM | `--use-gemma4 --llm-backend MiniMax\|llamacpp\|ollama\|transformers` | 后端选择；`--MiniMax-*` 族配置云端 |
-| LLM | `--MiniMax-max-concurrent / --MiniMax-max-retries / --MiniMax-thinking-budget` | 并发/重试/思考预算 |
-| M3 | `--m3-enhanced-mode`；`--use-m3-stage3`；`--m3-per-panel`；`--m3-multi-plate-enrich`；`--m3-stage-6`；`--m3-disable-stage N` | 五阶段与扩展阶段开关（前三者隐式启用引擎） |
+| LLM | `--use-gemma4 --llm-backend anthropic\|llamacpp\|ollama\|transformers` | 后端选择；`--llm-*` 族配置云端（旧 `--MiniMax-*` 拼写仍作为隐藏别名可用） |
+| LLM | `--llm-max-concurrent / --llm-max-retries / --llm-thinking-budget` | 并发/重试/思考预算 |
+| LLM | `--llm-enhanced-mode`；`--use-llm-stage3`；`--llm-per-panel`；`--llm-multi-plate-enrich`；`--llm-stage-6`；`--llm-disable-stage N` | 五阶段与扩展阶段开关（前三者隐式启用引擎） |
 | 地质 | `--use-geo-vision`（隐式启用引擎）；`--use-geology-llm`；`--use-paleodb --paleodb-offline` | 地质视觉/关系抽取/PaleoDB 分类补全 |
 | OCR | `--ocr-backend paddleocr\|easyocr --ocr-lang` | 主 OCR；OD 路径另有 config-only 键 `od_use_ocr` |
 | 可复现 | `--deterministic --deterministic-seed N` | temperature=0 + RNG 播种（2026-09-06 接线修复） |
@@ -204,7 +206,7 @@ FastAPI 服务（`run_web_server.py`）端点清单见
 - `POST /jobs/upload` → `GET /jobs/{id}/status`（轮询）→ `GET /jobs/{id}/result`
 - `GET /jobs/{id}/stream`（SSE）/ `WS /ws/jobs/{id}`（服务端健全，前端暂用轮询）
 - `GET /jobs/{id}/export.xlsx`（5-sheet，panels/geology 过滤真实生效）
-- `GET/POST /jobs/{id}/MiniMax-fallback`（API 失败人工决策弹窗）
+- `GET/POST /jobs/{id}/llm-fallback`（API 失败人工决策弹窗）
 - `POST /review/correction`（人工核验回流：翻转 `image_verified` 位 +
   corrections.jsonl 持久化，GUI 与 Web 共用）
 - `GET /system/llm-status`、`POST /system/test-llm`
@@ -238,7 +240,7 @@ FastAPI 服务（`run_web_server.py`）端点清单见
 | 问题 | 影响 | 状态 |
 |---|---|---|
 | 全页扫描图版 | 整页 OCR 抢救已实现（2026-09-07），图注可恢复；panel 仍依赖版面质量 | 已修复（F1） |
-| M3 Stage 2 误判图版为 diagram | caption 证据 ≥2 信号时自动覆盖；弱图注仍拒绝 | 已修复（F4） |
+| LLM Stage 2 误判图版为 diagram | caption 证据 ≥2 信号时自动覆盖；弱图注仍拒绝 | 已修复（F4） |
 | caption 配对缺口 | Xiao 类论文部分图版无图注 | 部分由 rescue 覆盖 |
 | SAM2 本环境初始化失败 | 分割退化为 OpenCV（panel 召回降） | 环境问题；YOLO 替代已验证 24/24（`work/yolo_compare/`） |
 | `ocr_corrections` 纠错词典未接入生产 | OCR 物种名纠错仅测试可用 | 已审计标记 |
@@ -250,7 +252,7 @@ FastAPI 服务（`run_web_server.py`）端点清单见
 | **无人工 image-verified gold 集** | 0.075 事件证明 string F1 ≠ 真实准确率；无法给出可发表的准确率声明 | **最大阻塞项**；标定模板已生成（`data/gold_calibration/`） |
 | **eval-smoke CI 门红** | 冻结快照（2026-06-27）对收紧后的评估器得 0.87 < 0.92 | 需 GPU + API 重新生成或调阈值 |
 | **JGSJ/BSJ 出版商集群** | ~10/40 篇失败；文本层编码或无图注配对 | F1/F2 部分缓解；panel 切分仍受限于扫描质量 |
-| **MiniMax API 依赖** | 物种提取质量完全依赖云端 API；500 风暴时降级 | 5xx 韧性已加强；本地后端质量未对标 |
+| **LLM API 依赖** | 物种提取质量完全依赖云端 API；500 风暴时降级 | 5xx 韧性已加强；本地后端质量未对标 |
 | 5 个 config 键无 CLI/GUI 生产者 | `use_llm_first`/`resume`/`cross_figure_linker_enabled`/`grobid_no_probe`/`fallback_llm_backend` | 仅 JSON config 可设 |
 | `fallback_llm_backend` 不可达 | 4xx 回退推荐特性（Phase 61 Bug 4.10）从 CLI/GUI 无法配置 | 无 CLI flag |
 | `_iou` 双实现 | association.py 和 segmentation.py 各一份 | 可独立漂移 |

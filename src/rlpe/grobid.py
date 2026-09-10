@@ -111,7 +111,7 @@ class GrobidClient:
     The new client:
     * Retries up to ``max_retries`` times with exponential backoff
       capped at 30s (mirrors the pattern in
-      ``llm_backends.MiniMaxM3Backend._call_api``).
+      ``llm_backends.AnthropicCompatBackend._call_api``).
     * Distinguishes error types via ``_classify_exception``.
     * Returns ``retry_count`` and ``error_type`` in ``GrobidResult``
       so the pipeline can make an informed OD-vs-visual-stub choice.

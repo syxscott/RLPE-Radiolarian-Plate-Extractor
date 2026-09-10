@@ -207,7 +207,7 @@ def test_clean_then_parse_yields_real_species_not_placeholder():
 
 
 def test_parse_recovers_json_after_prose_with_braces():
-    """Audit 2026-08-17 BUG-C: M3 / Qwen3 sometimes emit prose with
+    """Audit 2026-08-17 BUG-C: LLM / Qwen3 sometimes emit prose with
     inline ``{key: value}`` placeholders BEFORE the real JSON.
     ``_JSON_RE = r\"{.*?}\"`` matched the FIRST prose block (which is
     not valid JSON — missing quotes around keys) and json.loads raised.
@@ -229,7 +229,7 @@ def test_parse_recovers_json_after_prose_with_braces():
 
 
 def test_parse_recovers_json_without_closing_fence():
-    """Audit 2026-08-17: M3 truncated output (max_tokens hit) often
+    """Audit 2026-08-17: LLM truncated output (max_tokens hit) often
     lacks the closing ```json``` fence. The previous fence-strip regex
     ``re.sub(r\"\\s*```\\s*$\", \"\", cleaned)`` then leaves the
     unclosed-fence marker at the start of the text, which makes
@@ -277,11 +277,11 @@ def test_parse_handles_nested_json_after_prose():
 
 
 def test_normalize_preserves_species_list():
-    """BUG-E: M3 multimodal call on Boughdiri 2007 (live probe) returned
+    """BUG-E: LLM multimodal call on Boughdiri 2007 (live probe) returned
     ``{"species_list": [...29 entries...]}`` and the caller asked for
     that key explicitly. ``_normalize_panel_dict`` returned only the
     4 canonical keys (label/species/confidence/reasoning), silently
-    dropping the species_list — the caller thought M3 returned 0
+    dropping the species_list — the caller thought LLM returned 0
     species. Live re-verify after fix shows 29/28 species preserved."""
     from rlpe.llm_backends import _normalize_panel_dict
 

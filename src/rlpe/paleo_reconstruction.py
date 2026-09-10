@@ -617,7 +617,7 @@ def infer_plate_id(
         # sites resolve to Africa rather than Eurasia.
         if -15 <= modern_lon <= 30 and 25 <= modern_lat <= 40:
             return "Africa"
-        # Phase 3D (audit 2026-08-19 Bug M3): fill the lat
+        # Phase 3D (audit 2026-08-19 Bug LLM): fill the lat
         # 25..40 / lon 30..60 gap that previously had no dedicated
         # bucket. Cyprus (35, 33), Israel (32, 35), Jordan (31, 36)
         # and parts of southern Turkey fell through to the broad

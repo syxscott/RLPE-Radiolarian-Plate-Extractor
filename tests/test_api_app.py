@@ -91,14 +91,14 @@ def test_job_options_rejects_invalid_fallback(client: TestClient) -> None:
     {gemma4, rules, stop, retry}. Anything else should fail with 422.
     """
     with pytest.raises(ValueError):
-        JobOptions(MiniMax_fallback_default="not-a-valid-fallback")
+        JobOptions(llm_fallback_default="not-a-valid-fallback")
 
 
 def test_job_options_accepts_valid_fallback() -> None:
     """All four documented values are accepted."""
     for fb in ("gemma4", "rules", "stop", "retry"):
-        opts = JobOptions(MiniMax_fallback_default=fb)
-        assert opts.MiniMax_fallback_default == fb
+        opts = JobOptions(llm_fallback_default=fb)
+        assert opts.llm_fallback_default == fb
 
 
 def test_job_options_rejects_invalid_outbound_policy() -> None:

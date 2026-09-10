@@ -1,4 +1,4 @@
-"""Post-processing for M3 panel extraction output.
+"""Post-processing for LLM panel extraction output.
 
 Four utilities:
   - parse_open_nomenclature: split 'Genus cf. species' into (sp, qualifier)
@@ -7,7 +7,7 @@ Four utilities:
   - normalize_panel_id: strip 'Fig. N' / 'Pl. N' / 'Plate N' prefix
 
 All functions are pure (no LLM call, no gold reference) — they
-operate only on the pred rows returned by M3.
+operate only on the pred rows returned by LLM.
 """
 
 from __future__ import annotations

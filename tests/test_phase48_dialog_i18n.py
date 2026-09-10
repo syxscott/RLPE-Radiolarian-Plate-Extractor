@@ -1,7 +1,7 @@
 """Phase 48 — extend friendly names + i18n to file/export dialogs.
 
 Phase 47 wired up the 4 friendly-name combos (theme / LLM / OCR
-backend / M3 prompt lang). Phase 48 finishes the surface by
+backend / LLM prompt lang). Phase 48 finishes the surface by
 i18n-wrapping the remaining user-visible strings that were still
 bare English:
 

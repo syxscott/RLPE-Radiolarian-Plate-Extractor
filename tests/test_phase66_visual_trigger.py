@@ -20,8 +20,8 @@ from typing import Any
 import pytest
 
 from rlpe.cross_figure_linker import (
+    LINK_SOURCE_LLM,
     LINK_SOURCE_LOCALITY,
-    LINK_SOURCE_M3,
     LINK_SOURCE_SAMPLE,
     LINK_SOURCE_UNLINKED,
     LinkResult,
@@ -84,8 +84,8 @@ def _paper_figure(
     }
 
 
-class _FakeM3Engine:
-    """Fake m3_engine for trigger-logic tests.
+class _FakeSemanticEngine:
+    """Fake semantic_engine for trigger-logic tests.
 
     Only implements ``cross_figure_visual_inference`` because that's
     the only method the trigger should call. Records each call so we
@@ -131,10 +131,10 @@ class _FakeM3Engine:
 @pytest.fixture(autouse=True)
 def _fake_image_loader(monkeypatch):
     """Audit 2026-09-05 (tier3-B4): ``link_visual_coordinates`` now
-    loads real images and skips the M3 call when loading fails. The
+    loads real images and skips the LLM call when loading fails. The
     trigger-logic tests pass fake paths (``"tiny.png"``) — patch the
     loader so any non-empty string path resolves to a real 48x48 PNG
-    (above the M3 32px tiny-image guard) while ``None`` still fails,
+    (above the LLM 32px tiny-image guard) while ``None`` still fails,
     preserving the "no image → skip" contract.
     """
     from PIL import Image
@@ -164,10 +164,10 @@ class TestTriggerSkipsWhenStrategy1Matched:
             _paper_figure(figure_id="fig1", figure_type="plate"),
             _paper_figure(figure_id="fig_strat_2", figure_type="strat_column"),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert out == [[]]  # no visual link
-        assert m3.calls == []  # M3 never called
+        assert llm.calls == []  # LLM never called
 
     def test_skipped_when_ambiguous_sample_match(self):
         """Even at confidence 0.9 (ambiguous sample_match), Phase C
@@ -183,10 +183,10 @@ class TestTriggerSkipsWhenStrategy1Matched:
             _paper_figure(figure_id="fig1", figure_type="plate"),
             _paper_figure(figure_id="fig_strat_2", figure_type="strat_column"),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert out == [[]]
-        assert m3.calls == []
+        assert llm.calls == []
 
 
 class TestTriggerFiresWhenStrategy1Missed:
@@ -203,22 +203,22 @@ class TestTriggerFiresWhenStrategy1Missed:
             _paper_figure(figure_id="fig1", figure_type="plate"),
             _paper_figure(figure_id="fig_strat_2", figure_type="strat_column"),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert len(out) == 1
         assert len(out[0]) == 1  # one visual link
-        assert len(m3.calls) == 1  # M3 WAS called
+        assert len(llm.calls) == 1  # LLM WAS called
         # The visual link should reference fig_strat_2
         link = out[0][0]
         assert link["target_figure_id"] == "fig_strat_2"
-        assert link["source"] == "m3_visual"
+        assert link["source"] == "llm_visual"
 
-    def test_fires_when_m3_inference_only(self):
-        """No Strategy 1 hit, M3 was used → Phase C SHOULD still fire
+    def test_fires_when_llm_inference_only(self):
+        """No Strategy 1 hit, LLM was used → Phase C SHOULD still fire
         because Strategy 1 didn't reach confidence 1.0."""
         panels = [
             _plate_panel(
-                link_source=LINK_SOURCE_M3,
+                link_source=LINK_SOURCE_LLM,
                 link_confidence=0.4,
                 link_figure_id="fig_strat_2",
             )
@@ -227,8 +227,8 @@ class TestTriggerFiresWhenStrategy1Missed:
             _paper_figure(figure_id="fig1", figure_type="plate"),
             _paper_figure(figure_id="fig_strat_2", figure_type="strat_column"),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert len(out[0]) == 1
 
     def test_fires_when_unlinked(self):
@@ -244,8 +244,8 @@ class TestTriggerFiresWhenStrategy1Missed:
             _paper_figure(figure_id="fig1", figure_type="plate"),
             _paper_figure(figure_id="fig_strat_2", figure_type="strat_column"),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert len(out[0]) == 1
 
 
@@ -261,10 +261,10 @@ class TestTriggerRequiresPlateAndStrat:
             _paper_figure(figure_id="fig1", figure_type="plate"),
             _paper_figure(figure_id="fig2", figure_type="range_chart"),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert out == [[]]
-        assert m3.calls == []
+        assert llm.calls == []
 
     def test_skipped_when_no_plate_figure(self):
         panels = [
@@ -277,10 +277,10 @@ class TestTriggerRequiresPlateAndStrat:
             _paper_figure(figure_id="fig_strat_1", figure_type="strat_column"),
             _paper_figure(figure_id="fig_map_1", figure_type="paleogeographic_map"),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert out == [[]]
-        assert m3.calls == []
+        assert llm.calls == []
 
     def test_skipped_when_no_figures(self):
         panels = [
@@ -289,10 +289,10 @@ class TestTriggerRequiresPlateAndStrat:
                 link_confidence=0.7,
             )
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, [], m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, [], llm)
         assert out == [[]]
-        assert m3.calls == []
+        assert llm.calls == []
 
     def test_fires_for_paleogeographic_map_too(self, tmp_path):
         """The trigger condition accepts ANY strat column / litholog /
@@ -321,13 +321,13 @@ class TestTriggerRequiresPlateAndStrat:
                 image_path=str(map_png),
             ),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert len(out[0]) == 1
 
     def test_skipped_when_images_unloadable(self):
         """Audit 2026-09-05 (tier3-B4): without loadable images the
-        M3 visual call is skipped entirely (previously it was called
+        LLM visual call is skipped entirely (previously it was called
         with ``None, None`` — a guaranteed-empty per-panel call)."""
         panels = [
             _plate_panel(
@@ -339,15 +339,15 @@ class TestTriggerRequiresPlateAndStrat:
             _paper_figure(figure_id="fig1", figure_type="plate", image_path=None),
             _paper_figure(figure_id="fig_strat_3", figure_type="strat_column", image_path=None),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert out == [[]]
-        assert m3.calls == []
+        assert llm.calls == []
 
 
 class TestEngineNone:
     def test_engine_none_returns_empty(self):
-        """No M3 engine available — Phase C silently skips."""
+        """No LLM engine available — Phase C silently skips."""
         panels = [
             _plate_panel(
                 link_source=LINK_SOURCE_LOCALITY,
@@ -373,8 +373,8 @@ class TestEngineNone:
             _paper_figure(figure_id="fig1", figure_type="plate"),
             _paper_figure(figure_id="fig_strat_2", figure_type="strat_column"),
         ]
-        m3 = object()  # no method
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = object()  # no method
+        out = link_visual_coordinates(panels, figures, llm)
         assert out == [[]]
 
 
@@ -390,14 +390,14 @@ class TestOutputShape:
             _paper_figure(figure_id="fig1", figure_type="plate"),
             _paper_figure(figure_id="fig_strat_2", figure_type="strat_column"),
         ]
-        m3 = _FakeM3Engine()
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine()
+        out = link_visual_coordinates(panels, figures, llm)
         assert len(out) == 2
         assert len(out[0]) == 1
         assert len(out[1]) == 1
 
     def test_empty_response_returns_empty_inner_list(self):
-        """When M3 says nothing, the panel gets [] rather than a fake link."""
+        """When LLM says nothing, the panel gets [] rather than a fake link."""
         panels = [
             _plate_panel(
                 link_source=LINK_SOURCE_LOCALITY,
@@ -408,8 +408,8 @@ class TestOutputShape:
             _paper_figure(figure_id="fig1", figure_type="plate"),
             _paper_figure(figure_id="fig_strat_2", figure_type="strat_column"),
         ]
-        m3 = _FakeM3Engine(response={"plate_panels": []})
-        out = link_visual_coordinates(panels, figures, m3)
+        llm = _FakeSemanticEngine(response={"plate_panels": []})
+        out = link_visual_coordinates(panels, figures, llm)
         assert out == [[]]
 
 

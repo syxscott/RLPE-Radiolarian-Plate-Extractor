@@ -11,7 +11,7 @@ be tightened before the audit closes:
   routing every label through ``i18n._tr(...)`` (Phase 6A added the
   keys; Phase 6E is the regression-guard test).
 
-* **NIT-2** — ``scripts/test_MiniMax_api.py`` and
+* **NIT-2** — ``scripts/test_llm_api.py`` and
   ``scripts/round10_live_pdf.py`` used a hard-coded
   ``load_dotenv(<script_dir>/".env")`` lookup. If the operator had a
   project-root ``.env`` but ran the script from a different cwd, the
@@ -181,12 +181,12 @@ def test_find_dotenv_walks_up_from_cwd(tmp_path, monkeypatch):
 
 
 def test_test_minimax_api_script_uses_find_dotenv():
-    """NIT-2: the scripts/test_MiniMax_api.py load block uses find_dotenv.
+    """NIT-2: the scripts/test_llm_api.py load block uses find_dotenv.
 
     Guards against a regression where someone removes ``find_dotenv``
     and reverts to a hard-coded path lookup.
     """
-    script = Path(__file__).resolve().parents[1] / "scripts" / "test_MiniMax_api.py"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "test_llm_api.py"
     src = script.read_text(encoding="utf-8")
     assert "find_dotenv" in src, (
         f"{script.name} must import find_dotenv so the .env is found even "

@@ -196,7 +196,7 @@ PAPER_WHITELIST: dict[str, list[tuple[str, str]]] = {
     # Trilonche pseudocimelia" forcing rule rewrote 6 valid "Trilonche
     # cimelia" determinations into a different species. Removing the
     # rule; downstream soft-norm already handles "pseudo-" prefix loss
-    # in the m3_engine golden path.
+    # in the semantic_engine golden path.
     "feng2007": [],
     # Audit 2026-09-04 taxon-5: the previous "Pseudoeucyrtis sp. ->
     # Pseudoeucyrtis sp. B" rule destroyed a real open-nomenclature

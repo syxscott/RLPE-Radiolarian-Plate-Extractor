@@ -78,7 +78,7 @@ class _CaptureBackend:
     """Records every ``infer_panel`` call so tests can assert that the
     cross-figure helpers really forwarded the secondary image.
 
-    Mirrors the contract of ``MiniMaxM3Backend.infer_panel`` for our
+    Mirrors the contract of ``AnthropicCompatBackend.infer_panel`` for our
     purposes: ``panel_image`` + ``extra_image`` are forwarded through
     verbatim, and the response is a small canned JSON so the engine
     returns cleanly without any network call.
@@ -127,10 +127,10 @@ def _make_engine(
     backend: Any | None = None,
 ) -> tuple[Any, _CaptureBackend]:
     """Return ``(engine, capture_backend)`` for cross-figure tests."""
-    from rlpe.m3_engine import M3Engine
+    from rlpe.semantic_engine import SemanticEngine
 
     capture = backend if isinstance(backend, _CaptureBackend) else _CaptureBackend()
-    engine = M3Engine(backend=capture, config={})
+    engine = SemanticEngine(backend=capture, config={})
     return engine, capture
 
 
@@ -327,30 +327,30 @@ class TestPhase4DSourceGuard:
     function signature."""
 
     def test_litholog_image_in_signature(self):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        sig = inspect.signature(M3Engine.cross_figure_visual_inference)
+        sig = inspect.signature(SemanticEngine.cross_figure_visual_inference)
         assert "litholog_image" in sig.parameters
         assert sig.parameters["litholog_image"].default is None
 
     def test_paleogeographic_image_in_signature(self):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        sig = inspect.signature(M3Engine.cross_figure_visual_inference)
+        sig = inspect.signature(SemanticEngine.cross_figure_visual_inference)
         assert "paleogeographic_image" in sig.parameters
         assert sig.parameters["paleogeographic_image"].default is None
 
     def test_litholog_caption_in_signature(self):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        sig = inspect.signature(M3Engine.cross_figure_visual_inference)
+        sig = inspect.signature(SemanticEngine.cross_figure_visual_inference)
         assert "litholog_caption" in sig.parameters
         assert sig.parameters["litholog_caption"].default == ""
 
     def test_paleogeographic_caption_in_signature(self):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        sig = inspect.signature(M3Engine.cross_figure_visual_inference)
+        sig = inspect.signature(SemanticEngine.cross_figure_visual_inference)
         assert "paleogeographic_caption" in sig.parameters
         assert sig.parameters["paleogeographic_caption"].default == ""
 
@@ -361,9 +361,9 @@ class TestPhase4DSourceGuard:
         strat)`` usage still works because ``strat`` flows into the
         second positional parameter.
         """
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        sig = inspect.signature(M3Engine.cross_figure_visual_inference)
+        sig = inspect.signature(SemanticEngine.cross_figure_visual_inference)
         # ``params`` includes ``self`` for bound methods; skip it.
         params = [p for name, p in sig.parameters.items() if name != "self"]
         # ``plate_image`` is the 1st user-facing parameter; ``strat_image``
@@ -377,9 +377,9 @@ class TestPhase4DSourceGuard:
         """The new parameters must be keyword-only so callers cannot
         accidentally bypass the priority chain via positional
         arguments."""
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        sig = inspect.signature(M3Engine.cross_figure_visual_inference)
+        sig = inspect.signature(SemanticEngine.cross_figure_visual_inference)
         for name in (
             "litholog_image",
             "paleogeographic_image",
@@ -405,7 +405,7 @@ class TestStage4CaptionImageJointInference:
 
     def test_match_panel_forwards_panel_image(self):
         engine, capture = _make_engine()
-        from rlpe.m3_engine import CaptionPair
+        from rlpe.semantic_engine import CaptionPair
 
         panel = _make_pil_image(width=64, height=64, color="red")
         pairs = [
@@ -428,7 +428,7 @@ class TestStage4CaptionImageJointInference:
         converted, or replaced by a thumbnail).
         """
         engine, capture = _make_engine()
-        from rlpe.m3_engine import CaptionPair
+        from rlpe.semantic_engine import CaptionPair
 
         panel = _make_pil_image(width=128, height=128, color="blue")
         engine.match_panel(
@@ -448,7 +448,7 @@ class TestStage4CaptionImageJointInference:
         image contract.
         """
         engine, capture = _make_engine()
-        from rlpe.m3_engine import CaptionPair
+        from rlpe.semantic_engine import CaptionPair
 
         panel = _make_pil_image(width=64, height=64)
         engine.match_panel(
@@ -460,7 +460,7 @@ class TestStage4CaptionImageJointInference:
 
     def test_match_panel_visual_only_uses_panel_image(self):
         """Visual-only mode (no caption_pairs) still forwards the
-        panel image so M3 can do morphology-based identification.
+        panel image so LLM can do morphology-based identification.
         """
         engine, capture = _make_engine()
         panel = _make_pil_image(width=64, height=64, color="green")
@@ -479,9 +479,9 @@ class TestStage4SourceGuard:
     panel image even after future refactors."""
 
     def test_match_panel_signature_unchanged(self):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        sig = inspect.signature(M3Engine.match_panel)
+        sig = inspect.signature(SemanticEngine.match_panel)
         assert "panel_image" in sig.parameters
         # panel_image is the FIRST positional user-facing parameter
         # (``self`` is excluded from the bound-method signature).
@@ -606,14 +606,14 @@ class TestPhase4DNoRegressions:
     helpers get accidentally stripped."""
 
     def test_cross_figure_visual_inference_is_callable(self):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        assert callable(M3Engine.cross_figure_visual_inference)
+        assert callable(SemanticEngine.cross_figure_visual_inference)
 
     def test_match_panel_is_callable(self):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        assert callable(M3Engine.match_panel)
+        assert callable(SemanticEngine.match_panel)
 
     def test_infer_vision_still_forwards_extra_image(self):
         """``_infer_vision`` (Phase 2c M-14 fix) must STILL forward

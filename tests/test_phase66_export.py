@@ -45,7 +45,7 @@ class TestConvertersForwardVisualLinks:
                         "target_age": "Late Triassic",
                         "target_formation": "Scaglia Fm",
                         "confidence": 0.9,
-                        "source": "m3_visual",
+                        "source": "llm_visual",
                     }
                 ]
             }
@@ -71,7 +71,7 @@ class TestConvertersForwardVisualLinks:
                         "target_age": "Late Cretaceous",
                         "target_formation": "Scaglia",
                         "confidence": 0.88,
-                        "source": "m3_visual",
+                        "source": "llm_visual",
                     },
                     {
                         "target_figure_id": "strat1",
@@ -79,7 +79,7 @@ class TestConvertersForwardVisualLinks:
                         "target_age": "Late Cretaceous",
                         "target_formation": "Scaglia",
                         "confidence": 0.81,
-                        "source": "m3_visual",
+                        "source": "llm_visual",
                     },
                 ]
             }
@@ -111,7 +111,7 @@ class TestArchiveDynamicPropertiesForVisualLinks:
                     "target_age": "Late Triassic",
                     "target_formation": "Scaglia Fm",
                     "confidence": 0.9,
-                    "source": "m3_visual",
+                    "source": "llm_visual",
                 }
             ],
         }
@@ -170,7 +170,7 @@ class TestArchiveDynamicPropertiesForVisualLinks:
                     "target_age": "Late Triassic",
                     "target_formation": "Scaglia",
                     "confidence": 0.92,
-                    "source": "m3_visual",
+                    "source": "llm_visual",
                 }
             ],
         )

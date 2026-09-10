@@ -9,7 +9,7 @@ Covers:
     set_language call.
   - M1: results_tab._render_detail reads ``metadata.page_index``
     instead of the always-None top-level ``page_index`` key.
-  - M3: strings_zh_CN.STRINGS and strings_en.STRINGS have no
+  - LLM: strings_zh_CN.STRINGS and strings_en.STRINGS have no
     duplicate keys (auto-translate guard).
   - M4: pipeline_worker treats an exception path during a cancel as
     "cancelled" rather than "failed".
@@ -51,12 +51,12 @@ def test_b1_stylesheet_matches_class_property() -> None:
 
 
 # ---------------------------------------------------------------------------
-# M3 — duplicate-key guard in strings files
+# LLM — duplicate-key guard in strings files
 # ---------------------------------------------------------------------------
 
 
-def test_m3_strings_zh_cn_no_duplicate_keys() -> None:
-    """Phase 55 audit M3 — strings_zh_CN must not silently shadow
+def test_llm_strings_zh_cn_no_duplicate_keys() -> None:
+    """Phase 55 audit LLM — strings_zh_CN must not silently shadow
     duplicate keys. The file itself raises on import if a
     duplicate is detected, so importing it twice exercises the
     guard.

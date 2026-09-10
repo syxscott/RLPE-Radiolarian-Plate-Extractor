@@ -1,7 +1,7 @@
 """Tests for Round-6 CLI flag wiring.
 
 The previous CLI surface didn't expose
-``--use-geo-vision`` or ``--use-m3-stage3`` despite pipeline
+``--use-geo-vision`` or ``--use-llm-stage3`` despite pipeline
 supporting the corresponding ``extra`` config keys. Users had to
 hand-edit config dictionaries to enable Round-5 routing. The
 new flags round-trip the config so a typical CLI invocation
@@ -37,12 +37,12 @@ class TestCliFlags:
             "restrict the geo-vision allowlist"
         )
 
-    def test_use_m3_stage3_flag_exists(self):
+    def test_use_llm_stage3_flag_exists(self):
         text = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "cli.py").read_text(
             encoding="utf-8"
         )
-        assert "--use-m3-stage3" in text, (
-            "CLI must expose --use-m3-stage3 so users can enable Stage 3 bbox/crop enrichment"
+        assert "--use-llm-stage3" in text, (
+            "CLI must expose --use-llm-stage3 so users can enable Stage 3 bbox/crop enrichment"
         )
 
     def test_use_geo_vision_flag_is_store_true(self):
@@ -76,15 +76,15 @@ class TestCliFlags:
         assert '"use_geo_vision":' in text, (
             "CLI must route use_geo_vision into the PipelineConfig extra dict"
         )
-        # Audit 2026-08-17: ``use_m3_stage3`` is now wired as a typed
-        # PipelineConfig attribute (``m3_stage3_enabled=...``) instead of
+        # Audit 2026-08-17: ``use_llm_stage3`` is now wired as a typed
+        # PipelineConfig attribute (``llm_stage3_enabled=...``) instead of
         # via ``extra``. The previous routing through extra was a silent
         # no-op because the pipeline gate read a different extra key
-        # (``m3_stage3``) that the CLI never populated. See
-        # ``test_stage4_5_m3_per_panel.py::test_pipeline_gates_use_typed_
+        # (``llm_stage3``) that the CLI never populated. See
+        # ``test_stage4_5_llm_per_panel.py::test_pipeline_gates_use_typed_
         # attrs_not_extra`` for the regression that pins the new path.
-        assert "m3_stage3_enabled=bool(args.use_m3_stage3)" in text, (
-            "CLI must route use_m3_stage3 as the typed attribute "
-            "m3_stage3_enabled -- pre-fix routing through extra was a "
+        assert "llm_stage3_enabled=bool(args.use_llm_stage3)" in text, (
+            "CLI must route use_llm_stage3 as the typed attribute "
+            "llm_stage3_enabled -- pre-fix routing through extra was a "
             "silent no-op."
         )

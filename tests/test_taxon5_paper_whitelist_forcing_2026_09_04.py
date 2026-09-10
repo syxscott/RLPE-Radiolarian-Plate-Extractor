@@ -27,7 +27,7 @@ rename valid published determinations:
 
 Fix contract: the three forcing rules are REMOVED from
 ``PAPER_WHITELIST``. A source guard fails if any of them ever
-returns. The downstream m3_engine soft-norm rules that strip
+returns. The downstream semantic_engine soft-norm rules that strip
 "sp. A" / "sp. B" letter-group markers stay intact (they are a
 gold-shape accommodation, not a name-rewriter) — but they cannot
 produce the species name "Pseudoeucyrtis sp. B" from an input

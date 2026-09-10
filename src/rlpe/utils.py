@@ -348,7 +348,7 @@ def record_warning(
     Audit 2026-09-05 (tier3-B7/D5): some conditions are worth
     surfacing in ``run_output.json`` even though the pipeline handles
     them gracefully — e.g. a range chart skipped for a missing API
-    key, or Stage 6 morphology enabled without an M3 engine. The
+    key, or Stage 6 morphology enabled without an LLM engine. The
     entry shape mirrors :func:`_safe_call`'s so ``drain_warnings``
     consumers see a uniform list.
     """

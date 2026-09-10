@@ -48,6 +48,7 @@ from ..config import PipelineConfig
 # top of test fixtures — if pydantic changes the export path, this
 # fails loudly here rather than at first request.
 from ..export import _atomic_write_text
+from ..llm_settings import settings_path as llm_settings_path
 from ..pipeline import RadiolarianPipeline
 from ..utils import ensure_dir
 
@@ -155,7 +156,7 @@ _HEARTBEAT_TICK_SEC: float = 1.0
 #
 # Audit 2026-09-01 (BL-8): the original 300_000 ms (5 min) blocked any
 # thread that hit the fallback simultaneously — 4 concurrent jobs that
-# all hit a MiniMax outage would each pin a BackgroundTasks worker for
+# all hit a LLM outage would each pin a BackgroundTasks worker for
 # 5 minutes, freezing the entire FastAPI process. The frontend typically
 # responds in <30 s (the popup is in-page). Lowering the default to 30 s
 # preserves the UX (frontend always has time to decide) while bounding
@@ -197,7 +198,7 @@ RESULT_LOCK = threading.Lock()
 # audit 2026-08-01 W1 / M14: cap concurrent pipeline runs so the
 # BackgroundTasks thread (which shares Starlette's anyio worker
 # pool with all sync endpoints) cannot exhaust the 40-token pool
-# with multi-minute CPU-bound GROBID / OD / MiniMax work. Without
+# with multi-minute CPU-bound GROBID / OD / LLM work. Without
 # this cap a user uploading 30 PDFs back-to-back can starve
 # /jobs/{id}/status, /results, etc. Default 4 (matches a typical
 # laptop core count for CPU-bound IO); override with RLPE_MAX_JOBS.
@@ -303,7 +304,7 @@ class JobOptions(BaseModel):
     """
 
     use_gemma4: bool = False
-    llm_backend: str | None = None  # "transformers" | "ollama" | "llamacpp" | "MiniMax"
+    llm_backend: str | None = None  # "transformers" | "ollama" | "llamacpp" | "anthropic"
     gemma_conf_threshold: float = 0.70
     # Local LLM backends (llamacpp / ollama). Optional host overrides
     # for when the LLM server runs on a different machine.
@@ -313,32 +314,32 @@ class JobOptions(BaseModel):
     ollama_host: str | None = None
     ollama_model: str | None = None
     gemma_timeout_sec: int | None = None
-    MiniMax_api_key: str | None = None
-    MiniMax_endpoint: str | None = None
-    MiniMax_model: str | None = None
-    MiniMax_enable_thinking: bool = False  # default OFF to avoid surprise API cost
-    MiniMax_thinking_budget_tokens: int = 1024
-    MiniMax_max_output_tokens: int | None = None
-    MiniMax_max_concurrent: int | None = None
-    MiniMax_timeout_sec: int | None = None
-    MiniMax_max_retries: int | None = None
-    MiniMax_fallback_default: str = "rules"  # gemma4 | rules | stop | retry
-    # Audit 2026-09-01 (P0 A3 / architectural P1 #21): M3 prompt
+    llm_api_key: str | None = None
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_enable_thinking: bool = False  # default OFF to avoid surprise API cost
+    llm_thinking_budget_tokens: int = 1024
+    llm_max_output_tokens: int | None = None
+    llm_max_concurrent: int | None = None
+    llm_timeout_sec: int | None = None
+    llm_max_retries: int | None = None
+    llm_fallback_default: str = "rules"  # gemma4 | rules | stop | retry
+    # Audit 2026-09-01 (P0 A3 / architectural P1 #21): LLM prompt
     # language selector. Default ``"auto"`` so the pipeline picks the
     # right prompt template based on caption-language detection
-    # (Phase 27's ``m3_engine._detect_caption_lang``). The CLI has
-    # had ``--m3-prompt-lang`` for a year (Phase 27 JA caption
+    # (Phase 27's ``semantic_engine._detect_caption_lang``). The CLI has
+    # had ``--llm-prompt-lang`` for a year (Phase 27 JA caption
     # routing) — the API field was missing, so a Japanese paper
     # uploaded via the web UI silently fell through to the
     # Chinese-prompt template and F1 dropped by 10-15 pp on
     # beccaro/takahashi. Field added to fix the silent default.
-    m3_prompt_lang: str = "auto"  # auto | en | zh | ja | fr | de | ru
+    llm_prompt_lang: str = "auto"  # auto | en | zh | ja | fr | de | ru
     data_outbound_policy: str = "api_redacted"  # api_full | api_redacted | local_only
     # Audit 2026-09-06 (B1): the web form sends this field on every LLM
     # upload; declaring it stops the "dropped unknown fields" warning
     # noise (the extra builder already setdefaults it to False for web
     # jobs — web mode never blocks on stdin).
-    MiniMax_interactive: bool | None = None
+    llm_interactive: bool | None = None
     # Audit 2026-09-06 (B11): parity with the CLI's --deterministic /
     # --deterministic-seed (previously web jobs could not opt into
     # reproducible decode; the pipeline now honours these keys).
@@ -352,23 +353,23 @@ class JobOptions(BaseModel):
     # Default to OpenDataLoader: it runs in-process and doesn't need a
     # separate GROBID server. Override to False to use GROBID explicitly.
     use_opendataloader: bool = True
-    # ---- M3 5-stage engine overrides ----
-    m3_enhanced_mode: bool | None = None
-    m3_stage_1: bool | None = None
-    m3_stage_2: bool | None = None
-    m3_stage_3: bool | None = None
-    m3_stage_4: bool | None = None
-    m3_stage_5: bool | None = None
-    m3_match_samples: int | None = None
-    # ---- Audit 2026-08-02: M3 morphology Stage-6 (opt-in) ----
-    # When True, the pipeline asks M3 for one MorphologyRecord per
+    # ---- LLM 5-stage engine overrides ----
+    llm_enhanced_mode: bool | None = None
+    llm_stage_1: bool | None = None
+    llm_stage_2: bool | None = None
+    llm_stage_3: bool | None = None
+    llm_stage_4: bool | None = None
+    llm_stage_5: bool | None = None
+    llm_match_samples: int | None = None
+    # ---- Audit 2026-08-02: LLM morphology Stage-6 (opt-in) ----
+    # When True, the pipeline asks LLM for one MorphologyRecord per
     # unique (paper, species) pair with an anchorable Description /
     # Diagnosis section. Privacy: api_redacted → caption-only;
     # local_only → skip entirely.
-    m3_stage_6: bool | None = None
-    m3_morphology_max_species_per_paper: int | None = None
-    m3_morphology_max_context_chars: int | None = None
-    m3_morphology_min_caption_chars: int | None = None
+    llm_stage_6: bool | None = None
+    llm_morphology_max_species_per_paper: int | None = None
+    llm_morphology_max_context_chars: int | None = None
+    llm_morphology_min_caption_chars: int | None = None
     # ---- Paleobiology Database (opt-in) ----
     use_paleodb: bool = False
     paleodb_max_occurrences: int = 25
@@ -376,7 +377,7 @@ class JobOptions(BaseModel):
     paleodb_cache_dir: str | None = None
     paleodb_offline: bool = False
     # ---- Round 18 multi-modal geology vision ----
-    # When True, M3Engine.extract_geology() reads each figure image +
+    # When True, SemanticEngine.extract_geology() reads each figure image +
     # caption and emits a structured GeologyLinkRecord. Default ON so
     # web-UI users get all 25 published geology fields populated
     # without having to flip an obscure flag. Operators who don't
@@ -421,6 +422,9 @@ class JobOptions(BaseModel):
             "transformers",
             "ollama",
             "llamacpp",
+            "anthropic",
+            # legacy vendor aliases (F17) — accepted and treated as
+            # "anthropic" by the pipeline heuristic.
             "MiniMax",
             "MiniMax-m3",
             "minimax",
@@ -430,14 +434,12 @@ class JobOptions(BaseModel):
             raise ValueError(f"llm_backend must be one of {sorted(allowed)}, got {v!r}")
         return v
 
-    @field_validator("MiniMax_fallback_default")
+    @field_validator("llm_fallback_default")
     @classmethod
     def _validate_fallback(cls, v: str) -> str:
         allowed = {"gemma4", "rules", "stop", "retry"}
         if v not in allowed:
-            raise ValueError(
-                f"MiniMax_fallback_default must be one of {sorted(allowed)}, got {v!r}"
-            )
+            raise ValueError(f"llm_fallback_default must be one of {sorted(allowed)}, got {v!r}")
         return v
 
     @field_validator("data_outbound_policy")
@@ -456,20 +458,20 @@ class JobOptions(BaseModel):
             raise ValueError(f"gemma_conf_threshold must be in [0.0, 1.0], got {v!r}")
         return v
 
-    @field_validator("MiniMax_thinking_budget_tokens")
+    @field_validator("llm_thinking_budget_tokens")
     @classmethod
     def _validate_thinking_budget(cls, v: int) -> int:
         if v < 0:
-            raise ValueError(f"MiniMax_thinking_budget_tokens must be >= 0, got {v!r}")
+            raise ValueError(f"llm_thinking_budget_tokens must be >= 0, got {v!r}")
         if v > 32_000:
-            raise ValueError(f"MiniMax_thinking_budget_tokens must be <= 32000, got {v!r}")
+            raise ValueError(f"llm_thinking_budget_tokens must be <= 32000, got {v!r}")
         return v
 
     @field_validator(
-        "MiniMax_max_output_tokens",
-        "MiniMax_max_concurrent",
-        "MiniMax_timeout_sec",
-        "MiniMax_max_retries",
+        "llm_max_output_tokens",
+        "llm_max_concurrent",
+        "llm_timeout_sec",
+        "llm_max_retries",
     )
     @classmethod
     def _validate_positive_int(cls, v: int | None) -> int | None:
@@ -551,8 +553,8 @@ class JobOptions(BaseModel):
     @classmethod
     def _log_unknown_fields(cls, values: Any) -> Any:
         # Pydantic v2 defaults to ``extra="ignore"`` which silently
-        # drops unknown keys — a frontend typo (e.g. ``minimax_api_key``
-        # instead of ``MiniMax_api_key``) would run the pipeline without
+        # drops unknown keys — a frontend typo (e.g. ``llm_api_kay``
+        # instead of ``llm_api_key``) would run the pipeline without
         # the API key with no visible failure. Surface the dropped
         # keys at warning level so the typo is at least visible in
         # the server logs. (We don't use ``extra="forbid"`` because
@@ -571,7 +573,7 @@ class JobOptions(BaseModel):
 
 
 class FallbackDecisionRequest(BaseModel):
-    """User response when MiniMax M3 API errors and the pipeline is paused."""
+    """User response when LLM LLM API errors and the pipeline is paused."""
 
     job_id: str
     action: str  # "gemma4" | "rules" | "stop" | "retry"
@@ -838,7 +840,7 @@ async def _validation_error_handler(request: Request, exc: RequestValidationErro
 # ------------------------------------------------------------------
 # API key auth — audit 2026-08-19 phase 5b (M-4) + 2026-09-03 (BLOCKER-#3)
 # ------------------------------------------------------------------
-# The API runs a paid MiniMax M3 / Anthropic key and can spend real
+# The API runs a paid LLM LLM / Anthropic key and can spend real
 # money in minutes if anyone on the LAN can hit ``/jobs/upload`` or
 # ``/system/test-llm``. When ``RLPE_API_KEY`` is set in the server's
 # environment, every state-changing endpoint requires the same
@@ -1211,7 +1213,7 @@ async def upload_pdf(
         raise HTTPException(status_code=400, detail="Invalid upload filename.")
     if not safe_filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-    # Optional: parse JSON options from form field (use_gemma4, llm_backend, MiniMax_*).
+    # Optional: parse JSON options from form field (use_gemma4, llm_backend, llm_*).
     # Even when no options field is supplied, instantiate JobOptions so
     # direct API/Swagger uploads get the same defaults as the web UI
     # (notably use_opendataloader=True).
@@ -1624,9 +1626,9 @@ def job_result(job_id: str):
     # of the cached job dict (e.g. a worker finalising the result list)
     # can't race with the response serialisation.
     # audit 2026-07-31: strip non-JSON-serialisable internal plumbing.
-    # ``RESULT_CACHE[job_id]["MiniMax_fallback_handler"]`` holds a
+    # ``RESULT_CACHE[job_id]["llm_fallback_handler"]`` holds a
     # FallbackHandler dataclass whose ``on_error`` field is a function;
-    # serialising it raised TypeError → 500 on every MiniMax run, so
+    # serialising it raised TypeError → 500 on every LLM run, so
     # the Web UI could never display results. UI-facing fields are
     # all in the whitelist below.
     _UI_FIELDS = (
@@ -2135,8 +2137,9 @@ def batch_delete_jobs(
     }
 
 
-@app.get("/jobs/{job_id}/MiniMax-fallback")
-def get_MiniMax_fallback(
+@app.get("/jobs/{job_id}/llm-fallback")
+@app.get("/jobs/{job_id}/MiniMax-fallback", include_in_schema=False, deprecated=True)
+def get_llm_fallback(
     job_id: str,
     # Audit 2026-09-01 (architectural P1 #22): the GET counterpart of
     # the decision endpoint must enforce the same API-key auth as the
@@ -2146,7 +2149,7 @@ def get_MiniMax_fallback(
     # ``Depends(require_api_key)``; the GET silently did not.
     _auth: None = Depends(require_api_key),
 ) -> dict[str, Any]:
-    """Frontend polls this endpoint to detect when MiniMax API needs a user decision."""
+    """Frontend polls this endpoint to detect when LLM API needs a user decision."""
     # Phase 54 audit: B5 — hold ``RESULT_LOCK`` around the read so we
     # can't race ``cancel_job`` (which pops under the same lock) or
     # ``_web_fallback_popup`` (which inserts under the same lock).
@@ -2180,8 +2183,9 @@ def get_MiniMax_fallback(
     }
 
 
-@app.post("/jobs/{job_id}/MiniMax-fallback")
-def post_MiniMax_fallback(
+@app.post("/jobs/{job_id}/llm-fallback")
+@app.post("/jobs/{job_id}/MiniMax-fallback", include_in_schema=False, deprecated=True)
+def post_llm_fallback(
     job_id: str,
     req: FallbackDecisionRequest,
     _auth: None = Depends(require_api_key),
@@ -2647,37 +2651,54 @@ def _mask_api_key(key: str | None) -> str | None:
 
 @app.get("/system/llm-status")
 def llm_status() -> dict[str, Any]:
-    """Report whether MiniMax / local LLM keys are configured.
+    """Report whether the Anthropic-compatible LLM API is configured.
 
-    The frontend's onboarding banner uses this to render either:
-        - "✅ API Key 已从 .env 读取 (sk-...abc)"  (key_configured=True)
-        - "⚠️ 未配置 API Key — [立即设置]"           (key_configured=False)
+    Resolution order (F17): saved settings (``~/.rlpe/llm_api.json``,
+    editable from the Web settings tab or the desktop GUI) first, then
+    environment variables (``ANTHROPIC_API_KEY``, legacy vendor names
+    still honoured as read-only fallbacks).
 
     Never returns the raw key. The masked preview helps operators
-    confirm WHICH key is loaded when they have multiple .env files.
-    Also returns aggregated MiniMax usage if any jobs have made calls.
+    confirm WHICH key is loaded. Returns aggregated call/token usage
+    for completed jobs (cost accounting was removed in F17).
     """
-    api_key = (
+    from ..llm_backends import resolve_llm_base_url, resolve_llm_model
+    from ..llm_settings import load_llm_settings
+
+    saved = load_llm_settings()
+    env_key = (
         os.environ.get("ANTHROPIC_API_KEY")
         or os.environ.get("MiniMax_API_KEY")
         or os.environ.get("MINIMAX_API_KEY")
         or ""
-    )
-    key_configured = bool(api_key.strip())
+    ).strip()
+    if saved.api_key:
+        api_key = saved.api_key
+        key_source = "saved:~/.rlpe/llm_api.json"
+    elif env_key:
+        api_key = env_key
+        key_source = (
+            "env:ANTHROPIC_API_KEY"
+            if os.environ.get("ANTHROPIC_API_KEY")
+            else (
+                "env:MiniMax_API_KEY"
+                if os.environ.get("MiniMax_API_KEY")
+                else "env:MINIMAX_API_KEY"
+            )
+        )
+    else:
+        api_key = ""
+        key_source = None
+    key_configured = bool(api_key)
 
-    # Aggregate MiniMax cost across all completed jobs (if any matched
-    # results carry a cost_cny in their metadata). Each LLM API call may
-    # generate multiple panel match rows (one per panel) but there is
-    # only ONE LLM invocation per call AND each row in that group
-    # carries the SAME ``MiniMax_cost_cny`` value (it's the cost of the
-    # batched call, not per-panel). We deduplicate on
-    # ``MiniMax_request_id`` so:
-    #   - call counter is exact (1 per real API invocation)
-    #   - cost counter doesn't multi-count the same batch
-    total_cost_cny = 0.0
+    # Aggregate LLM call counts across completed jobs. Each LLM API
+    # call may generate multiple panel match rows (one per panel) that
+    # share the same ``llm_request_id``; dedup on it so the call
+    # counter is exact (1 per real API invocation).
     seen_requests: set[str] = set()
     no_id_count = 0  # fallback when request_id is missing
-    no_id_cost = 0.0
+    total_input_tokens = 0
+    total_output_tokens = 0
     with RESULT_LOCK:
         for job in RESULT_CACHE.values():
             if job.get("status") != "done":
@@ -2685,82 +2706,124 @@ def llm_status() -> dict[str, Any]:
             rows = job.get("result") or []
             for r in rows:
                 md = (r or {}).get("metadata") or {}
-                c = md.get("MiniMax_cost_cny")
-                if c is None:
-                    continue
-                try:
-                    cost_f = float(c)
-                except (TypeError, ValueError):
-                    continue
-                req_id = md.get("MiniMax_request_id")
-                if req_id:
-                    if req_id in seen_requests:
-                        continue
-                    seen_requests.add(req_id)
-                    total_cost_cny += cost_f
-                else:
-                    # Best-effort fallback: no request_id, so we can't
-                    # deduplicate. Count and add separately so a future
-                    # bug-report can distinguish the two regimes.
+                req_id = md.get("llm_request_id")
+                if not req_id:
                     no_id_count += 1
-                    no_id_cost += cost_f
-    total_cost_cny += no_id_cost
+                    continue
+                if req_id in seen_requests:
+                    continue
+                seen_requests.add(req_id)
+                usage = md.get("llm_usage")
+                if isinstance(usage, dict):
+                    try:
+                        total_input_tokens += int(usage.get("input_tokens") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    try:
+                        total_output_tokens += int(usage.get("output_tokens") or 0)
+                    except (TypeError, ValueError):
+                        pass
     total_calls = len(seen_requests) + no_id_count
 
     # Resolved endpoint / model — what the pipeline will actually use
-    # given the current env. The previous field name "default_endpoint"
-    # was misleading because the value reflected the env override (e.g.
-    # an Ark / Volces URL), not the system default. The new name
-    # "active_endpoint" makes it clear this is the *resolved* value.
-    # Both names are returned for one release so frontends that read
-    # the old key continue to work.
-    active_endpoint = os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic")
-    active_model = os.environ.get(
-        "MiniMax_MODEL",
-        os.environ.get("ANTHROPIC_MODEL", "MiniMax-M3"),
-    )
+    # given saved settings + env. Empty string means "not configured"
+    # (there is deliberately no vendor default since F17).
+    probe_extra: dict[str, Any] = {}
+    active_endpoint = resolve_llm_base_url(probe_extra)
+    active_model = resolve_llm_model(probe_extra)
 
     return {
         "key_configured": key_configured,
         "key_preview": _mask_api_key(api_key) if key_configured else None,
-        "key_source": (
-            "env:ANTHROPIC_API_KEY"
-            if os.environ.get("ANTHROPIC_API_KEY")
-            else (
-                "env:MiniMax_API_KEY"
-                if os.environ.get("MiniMax_API_KEY")
-                else ("env:MINIMAX_API_KEY" if os.environ.get("MINIMAX_API_KEY") else None)
-            )
-        ),
+        "key_source": key_source,
         "active_endpoint": active_endpoint,
         "active_model": active_model,
-        # Deprecated aliases — drop in next major release.
-        "default_endpoint": active_endpoint,
-        "default_model": active_model,
-        # Approximate cost per call (MiniMax M3 prices, 2026-06):
-        # in:  ¥2.1 / M tokens   out: ¥8.4 / M tokens
-        # A typical panel call uses ~2k input + ~0.5k output ≈ ¥0.0085/call
-        "approx_cny_per_call": 0.0085,
-        "total_cost_cny": round(total_cost_cny, 4),
+        "base_url_configured": bool(active_endpoint),
+        "model_configured": bool(active_model),
         "total_calls": total_calls,
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
         # Audit 2026-09-03 (BLOCKER-#2): surface the outbound policy
         # actually used at runtime so the SPA can render a consent
-        # banner BEFORE the user uploads a PDF. The default flipped
-        # from ``api_full`` to ``api_redacted`` and operators need a
-        # visible cue to know whether full PDF payload leaves the
-        # machine. ``host_bind`` and ``api_auth_required`` mirror
-        # the fail-secure posture (BLOCKER-#3) so a 0.0.0.0 listener
-        # without an API key is impossible to miss in the UI.
+        # banner BEFORE the user uploads a PDF. ``host_bind`` and
+        # ``api_auth_required`` mirror the fail-secure posture
+        # (BLOCKER-#3) so a 0.0.0.0 listener without an API key is
+        # impossible to miss in the UI.
         "data_outbound_policy_default": "api_redacted",
         "data_outbound_opt_in_set": bool(os.environ.get("RLPE_DATA_OUTBOUND_OPT_IN", "").strip()),
         "host_bind": os.environ.get("RLPE_HOST", "127.0.0.1"),
         "api_auth_required": bool(os.environ.get("RLPE_API_KEY")),
-        "api_key_configured": bool(
-            os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("MiniMax_API_KEY")
-            or os.environ.get("MINIMAX_API_KEY")
-        ),
+        "api_key_configured": key_configured,
     }
+
+
+class LLMConfigRequest(BaseModel):
+    """Body for POST /system/llm-config (F17).
+
+    All fields optional:
+      - ``base_url`` / ``model``: ``None`` = leave unchanged; a string
+        (possibly empty) overwrites.
+      - ``api_key``: ``None`` = leave the saved key untouched (so the
+        frontend can edit the model without re-typing the key);
+        ``""`` = explicitly clear the saved key; a non-empty string
+        replaces it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+
+
+@app.get("/system/llm-config")
+def get_llm_config(
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Return the persisted API configuration for the settings UI.
+
+    The raw API key is NEVER returned — only a masked preview and a
+    boolean so the UI can show "saved" vs "not set".
+    """
+    from ..llm_settings import load_llm_settings
+
+    saved = load_llm_settings()
+    return {
+        "base_url": saved.base_url,
+        "model": saved.model,
+        "api_key_set": bool(saved.api_key),
+        "api_key_preview": _mask_api_key(saved.api_key) if saved.api_key else None,
+        "updated_at": saved.updated_at,
+        "settings_path": str(llm_settings_path()),
+    }
+
+
+@app.post("/system/llm-config")
+def post_llm_config(
+    req: LLMConfigRequest,
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Persist the API configuration (base_url / api_key / model).
+
+    Writes ``~/.rlpe/llm_api.json`` (mode 0600). Subsequent job runs
+    fall back to these values when the per-run options omit them.
+    """
+    from ..llm_settings import load_llm_settings, save_llm_settings
+
+    saved = load_llm_settings()
+    if req.base_url is not None:
+        saved.base_url = req.base_url.strip()
+    if req.model is not None:
+        saved.model = req.model.strip()
+    if req.api_key is not None:
+        saved.api_key = req.api_key.strip()  # "" clears the key
+    if req.api_key and not saved.base_url:
+        raise HTTPException(
+            status_code=400,
+            detail="base_url is required when saving an api_key "
+            "(no vendor default exists — fill in the API address first).",
+        )
+    save_llm_settings(saved)
+    return get_llm_config()
 
 
 class TestLLMRequest(BaseModel):
@@ -2786,10 +2849,10 @@ def test_llm(
     req: TestLLMRequest | None = None,
     _auth: None = Depends(require_api_key),
 ) -> dict[str, Any]:
-    """Send a minimal request to the MiniMax M3 endpoint to verify the key.
+    """Send a minimal request to the LLM LLM endpoint to verify the key.
 
     The response shape matches the frontend's expectations:
-        {"ok": true,  "latency_ms": 412, "model": "MiniMax-M3"}
+        {"ok": true,  "latency_ms": 412, "model": "<vendor model>"}
         {"ok": false, "error": "401 Unauthorized: ..."}
 
     The test payload is intentionally tiny — a single "Reply OK" prompt
@@ -2798,39 +2861,56 @@ def test_llm(
     can render a useful message ("Key invalid", "Network error", ...).
     """
     body = req or TestLLMRequest()
+    # F17 resolution chain: request body > saved settings > env
+    # (``resolve_llm_*`` covers saved settings + env including legacy
+    # vendor names).
+    body_extra: dict[str, Any] = {
+        "llm_api_key": body.api_key,
+        "llm_base_url": body.endpoint,
+        "llm_model": body.model,
+    }
+    from ..llm_backends import (
+        resolve_llm_api_key,
+        resolve_llm_base_url,
+        resolve_llm_model,
+    )
+
     api_key = (
-        body.api_key
-        or os.environ.get("ANTHROPIC_API_KEY")
-        or os.environ.get("MiniMax_API_KEY")
-        or os.environ.get("MINIMAX_API_KEY")
+        body_extra["llm_api_key"]
+        or resolve_llm_api_key({k: v for k, v in body_extra.items() if k != "llm_api_key"})
         or ""
-    ).strip()
+    )
+    api_key = str(api_key).strip()
     if not api_key:
         return {
             "ok": False,
-            "error": "no API key provided (request body empty and "
-            "ANTHROPIC_API_KEY env var not set)",
+            "error": "no API key provided (request body empty, no saved API "
+            "settings, and ANTHROPIC_API_KEY env var not set)",
             "error_type": "MissingKey",
         }
     endpoint = (
-        body.endpoint
-        or os.environ.get("ANTHROPIC_BASE_URL")
-        or "https://api.minimaxi.com/anthropic"
+        str(body_extra["llm_base_url"] or "").strip()
+        or resolve_llm_base_url({"llm_base_url": None})
     ).strip()
     model = (
-        body.model
-        or os.environ.get("MiniMax_MODEL")
-        or os.environ.get("ANTHROPIC_MODEL")
-        or "MiniMax-M3"
+        str(body_extra["llm_model"] or "").strip() or resolve_llm_model({"llm_model": None})
     ).strip()
+    if not endpoint or not model:
+        return {
+            "ok": False,
+            "error": "endpoint/model not configured (no vendor default exists "
+            "since F17): save them in the API settings or set "
+            "ANTHROPIC_BASE_URL / ANTHROPIC_MODEL",
+            "error_type": "MissingConfig",
+        }
 
     import time as _time
 
     t0 = _time.time()
     try:
-        from ..llm_backends import MiniMaxM3Backend
+        from ..llm_backends import AnthropicCompatBackend
 
-        backend = MiniMaxM3Backend(
+        backend = AnthropicCompatBackend(
             api_key=api_key,
             base_url=endpoint,
             model=model,
@@ -2851,7 +2931,7 @@ def test_llm(
     try:
         # The minimal prompt: ask the model to reply with "OK". We do NOT
         # require the response to be JSON — only that the HTTP layer
-        # succeeded (no auth/network/quota error). MiniMaxM3Backend's
+        # succeeded (no auth/network/quota error). AnthropicCompatBackend's
         # ``_make_result`` returns ``fallback_used=True`` for ANY
         # exception, including JSON-parse failures on a non-JSON reply
         # like "OK". For a connection test that's a false negative — the
@@ -2900,7 +2980,6 @@ def test_llm(
         "request_id": result.get("request_id"),
         "input_tokens": usage.get("input_tokens"),
         "output_tokens": usage.get("output_tokens"),
-        "cost_cny": result.get("cost_cny"),
         # Surface a JSON-parse note so the frontend can show a subtle
         # "API working (reply was not JSON, that's expected for /test)"
         # rather than nothing.
@@ -3143,23 +3222,23 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 RESULT_CACHE[job_id]["progress"] = 20
                 RESULT_CACHE[job_id]["stage"] = "构建配置…"
 
-        # Build extra config, allowing the web client to inject M3 options.
+        # Build extra config, allowing the web client to inject LLM options.
         extra: dict[str, Any] = {"use_gemma4": False}
         # NOTE: keep this list in sync with the CLI flags in cli.py
         for key in (
             "llm_backend",
-            "MiniMax_api_key",
-            "MiniMax_endpoint",
-            "MiniMax_model",
-            "MiniMax_enable_thinking",
-            "MiniMax_thinking_budget_tokens",
-            "MiniMax_max_output_tokens",
-            "MiniMax_max_concurrent",
-            "MiniMax_timeout_sec",
-            "MiniMax_max_retries",
-            "MiniMax_fallback_default",
+            "llm_api_key",
+            "llm_base_url",
+            "llm_model",
+            "llm_enable_thinking",
+            "llm_thinking_budget_tokens",
+            "llm_max_output_tokens",
+            "llm_max_concurrent",
+            "llm_timeout_sec",
+            "llm_max_retries",
+            "llm_fallback_default",
             "data_outbound_policy",
-            "MiniMax_interactive",
+            "llm_interactive",
             # Local LLM backends (llamacpp / ollama). The web UI exposes
             # these in the LLM config panel; if the user fills in a custom
             # host, it must reach the pipeline (previously silently dropped).
@@ -3171,17 +3250,17 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             "gemma_timeout_sec",
             # PDF figure extractor
             "use_opendataloader",
-            # M3 5-stage engine toggles
-            "m3_enhanced_mode",
-            "m3_stage_1",
-            "m3_stage_2",
-            "m3_stage_3",
-            "m3_stage_4",
-            "m3_stage_5",
-            "m3_match_samples",
-            "m3_diagnostic_dir",
+            # LLM 5-stage engine toggles
+            "llm_enhanced_mode",
+            "llm_stage_1",
+            "llm_stage_2",
+            "llm_stage_3",
+            "llm_stage_4",
+            "llm_stage_5",
+            "llm_match_samples",
+            "llm_diagnostic_dir",
             # Audit 2026-08-02: Stage-6 morphology knobs.
-            "m3_stage_6",
+            "llm_stage_6",
             # Paleobiology Database (opt-in)
             "use_paleodb",
             "paleodb_max_occurrences",
@@ -3196,10 +3275,10 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             # by the pipeline from ``config.extra`` — but were missing
             # from this forwarding list, so the web path silently
             # dropped them (the CLI forwards both). gemma_conf_threshold
-            # is read at pipeline.py:6949; m3_prompt_lang at
+            # is read at pipeline.py:6949; llm_prompt_lang at
             # pipeline.py:5708/6106.
             "gemma_conf_threshold",
-            "m3_prompt_lang",
+            "llm_prompt_lang",
             # Audit 2026-09-06 (B11): deterministic decode parity.
             "deterministic",
             "deterministic_seed",
@@ -3209,18 +3288,18 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         if options.get("use_gemma4"):
             extra["use_gemma4"] = True
         # Audit 2026-09-05 (tier3-D2): mirror the CLI's implicit
-        # m3_enhanced_mode opt-in (cli.py). ``use_geo_vision`` defaults
-        # to True in JobOptions while ``m3_enhanced_mode`` defaults to
+        # llm_enhanced_mode opt-in (cli.py). ``use_geo_vision`` defaults
+        # to True in JobOptions while ``llm_enhanced_mode`` defaults to
         # None — which ``model_dump(exclude_none=True)`` drops before
         # it reaches this dict — so the pipeline never received
-        # m3_enhanced_mode and never built the M3 engine: geo vision
+        # llm_enhanced_mode and never built the LLM engine: geo vision
         # and Stage-6 morphology silently no-op'd on every default web
         # job despite the "Default ON" field default. An explicit
-        # ``m3_enhanced_mode=False`` from the client still wins.
-        if options.get("use_geo_vision") or options.get("m3_stage_6"):
-            extra.setdefault("m3_enhanced_mode", True)
+        # ``llm_enhanced_mode=False`` from the client still wins.
+        if options.get("use_geo_vision") or options.get("llm_stage_6"):
+            extra.setdefault("llm_enhanced_mode", True)
         # For web mode, we never block on stdin; default to non-interactive.
-        extra.setdefault("MiniMax_interactive", False)
+        extra.setdefault("llm_interactive", False)
 
         # Auto-detect GPU; user can override via options.use_gpu
         try:
@@ -3286,32 +3365,37 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         # first-class PipelineConfig fields (not extras) — set them
         # before constructing PipelineConfig so ``__post_init__``
         # validation runs against the user-supplied values.
-        if options.get("m3_morphology_max_species_per_paper") is not None:
-            pipeline_kwargs["m3_morphology_max_species_per_paper"] = int(
-                options["m3_morphology_max_species_per_paper"]
+        if options.get("llm_morphology_max_species_per_paper") is not None:
+            pipeline_kwargs["llm_morphology_max_species_per_paper"] = int(
+                options["llm_morphology_max_species_per_paper"]
             )
-        if options.get("m3_morphology_max_context_chars") is not None:
-            pipeline_kwargs["m3_morphology_max_context_chars"] = int(
-                options["m3_morphology_max_context_chars"]
+        if options.get("llm_morphology_max_context_chars") is not None:
+            pipeline_kwargs["llm_morphology_max_context_chars"] = int(
+                options["llm_morphology_max_context_chars"]
             )
-        if options.get("m3_morphology_min_caption_chars") is not None:
-            pipeline_kwargs["m3_morphology_min_caption_chars"] = int(
-                options["m3_morphology_min_caption_chars"]
+        if options.get("llm_morphology_min_caption_chars") is not None:
+            pipeline_kwargs["llm_morphology_min_caption_chars"] = int(
+                options["llm_morphology_min_caption_chars"]
             )
         cfg = PipelineConfig(**pipeline_kwargs)
 
-        # If using MiniMax, register a web-popup fallback handler.
-        if str(extra.get("llm_backend", "")).lower() in {"minimax", "minimax-m3", "minimax_api"}:
+        # If using LLM, register a web-popup fallback handler.
+        if str(extra.get("llm_backend", "")).lower() in {
+            "anthropic",
+            "minimax",
+            "minimax-m3",
+            "minimax_api",
+        }:
             from ..llm_backends import FallbackHandler
 
-            handler = FallbackHandler(default_action=extra.get("MiniMax_fallback_default", "rules"))
+            handler = FallbackHandler(default_action=extra.get("llm_fallback_default", "rules"))
 
             def _web_fallback_popup(error_info: dict[str, Any]) -> str:
                 import threading
 
                 event = threading.Event()
                 # Register the pending decision under the same lock
-                # that cancel_job and post_MiniMax_fallback hold, so
+                # that cancel_job and post_llm_fallback hold, so
                 # the user can't race a cancel against the popup
                 # registering.
                 with RESULT_LOCK:
@@ -3327,7 +3411,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                     }
                     RESULT_CACHE[job_id]["status"] = "awaiting_user_decision"
                     RESULT_CACHE[job_id]["detail"] = (
-                        f"MiniMax API error: {error_info.get('error_type', '?')} - "
+                        f"LLM API error: {error_info.get('error_type', '?')} - "
                         f"{error_info.get('error', '?')[:200]}"
                     )
                 # Poll for cancellation during the wait. A single
@@ -3357,9 +3441,9 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                     if job_id not in FALLBACK_PENDING:
                         return handler.default_action
                 # Race fix: ``FALLBACK_PENDING.pop(job_id, {})`` was
-                # dropping the user's decision when ``post_MiniMax_fallback``
+                # dropping the user's decision when ``post_llm_fallback``
                 # had already popped the entry on another thread (the
-                # ``/MiniMax-fallback`` handler pops, then this block also
+                # ``/llm-fallback`` handler pops, then this block also
                 # pops, and the second pop returns ``{}`` which silently
                 # overrides the real decision with ``default_action``).
                 # Read the decision WITHOUT popping; the cleanup is
@@ -3380,10 +3464,10 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 return decision
 
             handler.on_error = _web_fallback_popup
-            cfg.extra["_MiniMax_external_handler"] = handler
+            cfg.extra["_llm_external_handler"] = handler
             with RESULT_LOCK:
                 if job_id in RESULT_CACHE:
-                    RESULT_CACHE[job_id]["MiniMax_fallback_handler"] = handler
+                    RESULT_CACHE[job_id]["llm_fallback_handler"] = handler
         with RESULT_LOCK:
             if job_id in RESULT_CACHE:
                 RESULT_CACHE[job_id]["progress"] = 30
@@ -3511,7 +3595,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                     # actually used at runtime (the default flipped
                     # from ``api_full`` to ``api_redacted`` so
                     # external reviewers can confirm what data left
-                    # the machine for THIS job — a paid MiniMax API
+                    # the machine for THIS job — a paid LLM API
                     # receipt is the kind of thing you need on hand
                     # when an editor asks "did this paper's panel
                     # image leave the lab?").
@@ -3592,12 +3676,12 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
                 _pipeline_for_cleanup.segmenter.unload_sam2()
             except Exception:
                 logger.exception("SAM2 unload failed for job %s", job_id)
-        # Sweep 7 (audit 2026-08-02 N2): drop the MiniMax-fallback
+        # Sweep 7 (audit 2026-08-02 N2): drop the llm-fallback
         # handler closure so the cancelled job's ``_web_fallback_popup``
         # (which captures ``error_info``, the threading.Event, and a
         # back-reference to ``_run_job``'s frame) doesn't pin the entry
         # in ``FALLBACK_PENDING`` for up to 5 minutes after the worker
-        # exits. ``MiniMax_fallback_handler`` lives on
+        # exits. ``llm_fallback_handler`` lives on
         # ``RESULT_CACHE[job_id]``; clearing it here releases the
         # closure as soon as the worker finishes, regardless of which
         # exit path got us here (success / cancel / failure). Also
@@ -3607,7 +3691,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
         with RESULT_LOCK:
             entry = RESULT_CACHE.get(job_id)
             if entry is not None:
-                entry.pop("MiniMax_fallback_handler", None)
+                entry.pop("llm_fallback_handler", None)
         FALLBACK_PENDING.pop(job_id, None)
         # Stop the heartbeat thread so it doesn't keep a reference to the
         # job entry in RESULT_CACHE forever.

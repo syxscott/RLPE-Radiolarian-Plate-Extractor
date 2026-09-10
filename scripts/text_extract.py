@@ -2,7 +2,7 @@
 
 Scans the full PDF text for binomial 'Genus species' patterns. No
 LLM call, no gold reference — generic heuristic only. Used as a
-fallback / supplement to M3 plate-mode extraction.
+fallback / supplement to LLM plate-mode extraction.
 """
 
 from __future__ import annotations

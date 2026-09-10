@@ -141,7 +141,7 @@ class TestAddFilesSizeLimit:
 
 
 # -----------------------------------------------------------------------
-# M3: alert() replaced with showToast
+# LLM: alert() replaced with showToast
 # -----------------------------------------------------------------------
 class TestToastReplacesAlert:
     def test_no_alert_in_app_js(self):

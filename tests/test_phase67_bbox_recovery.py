@@ -331,7 +331,7 @@ class TestPhase67SourceGuard:
 # Phase 67's historical pairing was a simple ``for idx in range(n_paired):
 # sorted_results[idx] ↔ segmented[idx]``. That index pairing is
 # optimal ONLY when LLM panel_ids and OpenCV CC reading-order both go
-# top-to-bottom left-to-right. When M3 returns panels in reverse scan
+# top-to-bottom left-to-right. When LLM returns panels in reverse scan
 # order, or the panel layout is multi-column with non-monotonic
 # numbering, the index pairing mis-assigns. Hungarian with reading-
 # order rank distance (the only signal available when all bboxes are
@@ -347,7 +347,7 @@ class TestRecoverBboxesIoUPairing:
         """Source guard: the helper MUST use scipy.optimize
         ``linear_sum_assignment`` (Hungarian) — not raw index pairing.
         Refactor that swaps it back to ``for idx in range(...)`` would
-        silently regress the M3 reverse-scan + multi-column cases.
+        silently regress the LLM reverse-scan + multi-column cases.
         The two-pass design (hinted panels first, then Hungarian on
         the rest) is the BLOCKER-#4 fix.
         """
@@ -364,7 +364,7 @@ class TestRecoverBboxesIoUPairing:
         assert "linear_sum_assignment" in body, (
             "Hungarian (linear_sum_assignment) not used in "
             "_recover_bboxes_via_segmentation — BLOCKER-#4 regression. "
-            "The previous index pairing mis-assigned panels when M3 "
+            "The previous index pairing mis-assigned panels when LLM "
             "returned them in reverse scan order."
         )
         assert "expected_centroid_x" in body and "expected_centroid_y" in body, (

@@ -4,9 +4,9 @@
 
 **Goal:** Add radiolarian species extraction from non-plate content (range charts, body text) and occurrence-grouping for same-species across multiple figures in the same paper.
 
-**Architecture:** Two new pure-Python modules (`scripts/text_extract.py`, `scripts/occurrence.py`) plus a new `TEXT_MODE_PROMPT` and minor wiring in `run_research_eval.py`. Zero new API cost for the regex path; M3 text-mode fires only when `caption_fixer` returns None.
+**Architecture:** Two new pure-Python modules (`scripts/text_extract.py`, `scripts/occurrence.py`) plus a new `TEXT_MODE_PROMPT` and minor wiring in `run_research_eval.py`. Zero new API cost for the regex path; LLM text-mode fires only when `caption_fixer` returns None.
 
-**Tech Stack:** Python 3.11, pymupdf, hashlib, existing `rlpe.llm_backends.MiniMaxM3Backend`, existing `caption_fixer` / `prompts` / `post_process` / `gold_eval_anchored` modules.
+**Tech Stack:** Python 3.11, pymupdf, hashlib, existing `rlpe.llm_backends.AnthropicCompatBackend`, existing `caption_fixer` / `prompts` / `post_process` / `gold_eval_anchored` modules.
 
 **Spec:** `docs/superpowers/specs/2026-09-02-text-extraction-and-occurrence-grouping-design.md`
 
@@ -22,7 +22,7 @@
 
 ### Modified files
 - `scripts/prompts.py` — add `TEXT_MODE_PROMPT` + `select_text_mode_prompt(text)`
-- `scripts/run_research_eval.py` — wire text extract + occurrence group + (optional) M3 text-mode fallback
+- `scripts/run_research_eval.py` — wire text extract + occurrence group + (optional) LLM text-mode fallback
 
 ---
 
@@ -113,7 +113,7 @@ Create `scripts/text_extract.py`:
 
 Scans the full PDF text for binomial 'Genus species' patterns. No
 LLM call, no gold reference — generic heuristic only. Used as a
-fallback / supplement to M3 plate-mode extraction.
+fallback / supplement to LLM plate-mode extraction.
 """
 from __future__ import annotations
 
@@ -500,7 +500,7 @@ REPO = Path('/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor')
 sys.path.insert(0, str(REPO / 'src'))
 sys.path.insert(0, str(REPO / 'scripts'))
 
-# Stub MiniMaxM3Backend so import of run_research_eval doesn't try a real call
+# Stub AnthropicCompatBackend so import of run_research_eval doesn't try a real call
 os.environ.setdefault('ANTHROPIC_API_KEY', 'dummy')
 os.environ.setdefault('ANTHROPIC_BASE_URL', 'https://test.invalid')
 os.environ.setdefault('ANTHROPIC_MODEL', 'dummy')
@@ -509,7 +509,7 @@ import rlpe.llm_backends
 class _StubBackend:
     def __init__(self, *a, **kw): pass
     def infer_panel(self, *a, **kw): return {'error': 'stubbed'}
-rlpe.llm_backends.MiniMaxM3Backend = _StubBackend
+rlpe.llm_backends.AnthropicCompatBackend = _StubBackend
 
 from run_research_eval import _enrich_preds_with_text_and_group
 
@@ -557,15 +557,15 @@ def _enrich_preds_with_text_and_group(preds: list[dict]) -> list[dict]:
 
 - [ ] **Step 4: Modify extract_panels_for_paper to ALSO return text-extract rows when no plate was found**
 
-In `scripts/run_research_eval.py`, locate the `extract_panels_for_paper` function. After the existing M3 call (which returns rows for plate-mode), add a fallback to text-mode. Replace the function body with this:
+In `scripts/run_research_eval.py`, locate the `extract_panels_for_paper` function. After the existing LLM call (which returns rows for plate-mode), add a fallback to text-mode. Replace the function body with this:
 
 ```python
 def extract_panels_for_paper(backend, slug: str, gold: list[dict]) -> list[dict]:
-    """Run caption_fixer + prompts + M3 + post_process on one paper.
+    """Run caption_fixer + prompts + LLM + post_process on one paper.
 
     Three modes:
-    - plate_M3 : M3 with SEM_PLATE/RANGE_CHART/MAP prompt when caption_fixer finds a plate caption
-    - text_M3  : M3 with TEXT_MODE_PROMPT when no plate caption is found AND the paper is radiolarian-related
+    - plate_M3 : LLM with SEM_PLATE/RANGE_CHART/MAP prompt when caption_fixer finds a plate caption
+    - text_M3  : LLM with TEXT_MODE_PROMPT when no plate caption is found AND the paper is radiolarian-related
     - regex_list: (always run as supplement) — extract_species_from_text() for ALL papers
     """
     from text_extract import extract_species_from_text
@@ -604,14 +604,14 @@ def extract_panels_for_paper(backend, slug: str, gold: list[dict]) -> list[dict]
     caption = select_caption(full_text, target_plate=int(plate_anchor))
     use_text_mode = caption is None
     if not use_text_mode and not _is_radiolarian_paper(full_text):
-        # Not a radiolarian paper, skip M3 call but keep regex rows
+        # Not a radiolarian paper, skip LLM call but keep regex rows
         doc.close()
         return _to_rows(regex_rows, pid) if regex_rows else []
     if not use_text_mode and len(caption) < 100:
         use_text_mode = True
 
     if use_text_mode:
-        # M3 text-mode fallback
+        # LLM text-mode fallback
         sys_prompt = select_text_mode_prompt(caption or full_text)
         img = None  # text-mode doesn't need an image
     else:

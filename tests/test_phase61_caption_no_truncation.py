@@ -24,7 +24,7 @@ import pytest
 class _FakeBackend:
     """Records the most recent user_prompt it was asked to infer on.
 
-    Used in place of a real MiniMax / Transformers backend so the test
+    Used in place of a real LLM / Transformers backend so the test
     verifies the truncation happens *before* the LLM call.
     """
 

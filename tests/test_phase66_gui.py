@@ -65,7 +65,7 @@ class TestVisualLinksGuiRender:
                     "target_age": "Late Triassic",
                     "target_formation": "Scaglia Fm",
                     "confidence": 0.9,
-                    "source": "m3_visual",
+                    "source": "llm_visual",
                 }
             ],
         }

@@ -45,12 +45,12 @@ class TestLinkSourceBadge:
         _emit_link_source_badge(html, "cross_figure_linker:locality_match")
         assert any("Locality match" in s or "产地匹配" in s for s in html)
 
-    def test_m3_emits_amber_chip(self):
+    def test_llm_emits_amber_chip(self):
         from rlpe.gui.results_tab import _emit_link_source_badge
 
         html: list[str] = []
-        _emit_link_source_badge(html, "cross_figure_linker:m3_inference")
-        assert any("M3 inference" in s or "M3 推理" in s for s in html)
+        _emit_link_source_badge(html, "cross_figure_linker:llm_inference")
+        assert any("LLM inference" in s or "LLM 推理" in s for s in html)
         # Amber chip class
         assert any("badge-warn" in s for s in html)
 
@@ -182,7 +182,7 @@ class TestSourceGuard:
         for key in (
             "restab.detail.link_source.sample_match",
             "restab.detail.link_source.locality_match",
-            "restab.detail.link_source.m3_inference",
+            "restab.detail.link_source.llm_inference",
             "restab.detail.link_source.unlinked",
         ):
             assert key in src, f"missing i18n key: {key}"
@@ -192,7 +192,7 @@ class TestSourceGuard:
         for key in (
             "restab.detail.link_source.sample_match",
             "restab.detail.link_source.locality_match",
-            "restab.detail.link_source.m3_inference",
+            "restab.detail.link_source.llm_inference",
             "restab.detail.link_source.unlinked",
         ):
             assert key in src, f"missing zh-CN i18n key: {key}"

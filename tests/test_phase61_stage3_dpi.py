@@ -1,6 +1,6 @@
 """Phase 61 Plan 4 (Bug 4.5): Stage 3 bbox DPI bookkeeping.
 
-Previously M3 Stage 3 returned ``bbox`` in pixels at the extraction DPI
+Previously LLM Stage 3 returned ``bbox`` in pixels at the extraction DPI
 (the DPI used to render the plate for the model). The crop helper
 re-rendered / re-saved the crop at a different DPI (the visual storage
 DPI, often the same but not guaranteed — operators sometimes override

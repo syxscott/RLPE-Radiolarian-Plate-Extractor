@@ -5,8 +5,8 @@ Regression tests for the engineering-truthfulness sweep:
 * FAKE A1/A2 — ``--deterministic`` / ``--deterministic-seed`` were fully
   implemented in ``llm_backends.resolve_deterministic_kwargs`` but had
   ZERO callers; the pipeline now applies them at init (RNG seeding +
-  ``m3_temperature=0``).
-* Web drop A2/A3 — ``gemma_conf_threshold`` / ``m3_prompt_lang`` are now
+  ``llm_temperature=0``).
+* Web drop A2/A3 — ``gemma_conf_threshold`` / ``llm_prompt_lang`` are now
   forwarded by the web extra builder (source-guarded).
 * Web drop B11 — ``deterministic`` / ``deterministic_seed`` now exist on
   JobOptions and are forwarded.
@@ -45,7 +45,7 @@ class TestDeterministicWiring:
         cfg.extra["deterministic_seed"] = 1234
         # __init__ applies the wiring (no LLM backend needed for this).
         RadiolarianPipeline(cfg)
-        assert cfg.extra["m3_temperature"] == 0.0
+        assert cfg.extra["llm_temperature"] == 0.0
         assert cfg.extra["deterministic_seed"] == 1234
         # RNGs were seeded: two fresh constructions produce identical draws.
         a = random.random()
@@ -61,7 +61,7 @@ class TestDeterministicWiring:
 
         cfg = PipelineConfig(pdf_dir=tmp_path, work_dir=tmp_path / "w")
         RadiolarianPipeline(cfg)
-        assert "m3_temperature" not in cfg.extra or cfg.extra["m3_temperature"] != 0.0
+        assert "llm_temperature" not in cfg.extra or cfg.extra["llm_temperature"] != 0.0
 
 
 class TestWebForwardingGuards:
@@ -69,15 +69,15 @@ class TestWebForwardingGuards:
         src = (_ROOT / "src" / "rlpe" / "api" / "app.py").read_text(encoding="utf-8")
         for key in (
             "gemma_conf_threshold",
-            "m3_prompt_lang",
+            "llm_prompt_lang",
             "deterministic",
             "deterministic_seed",
         ):
             assert f'"{key}",' in src, (
                 f"web extra builder must forward {key} (audit 2026-09-06 A2/A3/B11)"
             )
-        assert "MiniMax_interactive: bool | None = None" in src, (
-            "JobOptions must declare MiniMax_interactive to stop the "
+        assert "llm_interactive: bool | None = None" in src, (
+            "JobOptions must declare llm_interactive to stop the "
             "dropped-unknown-field warning on every LLM upload"
         )
 

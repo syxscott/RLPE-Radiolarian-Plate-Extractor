@@ -1,14 +1,14 @@
-# M3 Per-Panel Species ID Pipeline Implementation Plan
+# LLM Per-Panel Species ID Pipeline Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Insert an opt-in M3 multimodal per-panel species ID stage between Stage 3 bbox crops and multi-plate enrichment. Target ≥75% species-level effective recall on the 9-paper gold set (vs 53% whole-page baseline).
+**Goal:** Insert an opt-in LLM multimodal per-panel species ID stage between Stage 3 bbox crops and multi-plate enrichment. Target ≥75% species-level effective recall on the 9-paper gold set (vs 53% whole-page baseline).
 
-**Architecture:** New `_apply_m3_per_panel_species_id` method on `RadiolarianPipeline` reuses Stage 3 panel crops + per-panel caption snippet + same-page context, fans out via existing `MiniMax_max_concurrent` semaphore (default 8), gates overwrite of regex-matched species by `m3_per_panel_min_conf=0.55`. Pure additive — any backend failure falls back to existing regex species.
+**Architecture:** New `_apply_llm_per_panel_species_id` method on `RadiolarianPipeline` reuses Stage 3 panel crops + per-panel caption snippet + same-page context, fans out via existing `llm_max_concurrent` semaphore (default 8), gates overwrite of regex-matched species by `llm_per_panel_min_conf=0.55`. Pure additive — any backend failure falls back to existing regex species.
 
-**Tech Stack:** Python 3.10+, Pillow, existing `M3Engine.backend.infer_panel(image, caption_text, ocr_labels, system_prompt, user_prompt)` abstract, existing `parse_json_from_text` + `_normalize_panel_dict` helpers, `ThreadPoolExecutor`, `argparse`.
+**Tech Stack:** Python 3.10+, Pillow, existing `SemanticEngine.backend.infer_panel(image, caption_text, ocr_labels, system_prompt, user_prompt)` abstract, existing `parse_json_from_text` + `_normalize_panel_dict` helpers, `ThreadPoolExecutor`, `argparse`.
 
-**Spec:** `docs/superpowers/specs/2026-08-17-m3-per-panel-pipeline-design.md` (commit 223d9a3)
+**Spec:** `docs/superpowers/specs/2026-08-17-llm-per-panel-pipeline-design.md` (commit 223d9a3)
 
 ---
 
@@ -18,10 +18,10 @@
 |------|--------|----------------|
 | `src/rlpe/config.py` | **modify** (add 4 fields + 4 keys) | New `PipelineConfig` opt-in fields |
 | `src/rlpe/cli.py` | **modify** (add 4 CLI flags) | CLI surface for new fields |
-| `src/rlpe/pipeline.py` | **modify** (add 1 method + 1 call site) | New `_apply_m3_per_panel_species_id` + wired into main loop |
-| `tests/test_stage4_5_m3_per_panel.py` | **create** | 25 regression tests |
+| `src/rlpe/pipeline.py` | **modify** (add 1 method + 1 call site) | New `_apply_llm_per_panel_species_id` + wired into main loop |
+| `tests/test_stage4_5_llm_per_panel.py` | **create** | 25 regression tests |
 
-No changes to `m3_engine.py`, `cross_figure_linker.py`, `cross_refs.py`, `pbdb_resolver.py`, `layout.py`, schema files, web UI.
+No changes to `semantic_engine.py`, `cross_figure_linker.py`, `cross_refs.py`, `pbdb_resolver.py`, `layout.py`, schema files, web UI.
 
 ---
 
@@ -31,13 +31,13 @@ No changes to `m3_engine.py`, `cross_figure_linker.py`, `cross_refs.py`, `pbdb_r
 - Modify: `src/rlpe/config.py:54-135` (inside `_CONFIG_KEYS`)
 - Modify: `src/rlpe/config.py:138-…` (inside `PipelineConfig` dataclass)
 
-- [ ] **Step 1: Write the failing test** in `tests/test_stage4_5_m3_per_panel.py`:
+- [ ] **Step 1: Write the failing test** in `tests/test_stage4_5_llm_per_panel.py`:
 
 ```python
-"""Tests for Stage 4.5 M3 per-panel species ID.
+"""Tests for Stage 4.5 LLM per-panel species ID.
 
-Audit 2026-08-17 spec: docs/superpowers/specs/2026-08-17-m3-per-panel-pipeline-design.md
-Plan: docs/superpowers/plans/2026-08-17-m3-per-panel-pipeline.md
+Audit 2026-08-17 spec: docs/superpowers/specs/2026-08-17-llm-per-panel-pipeline-design.md
+Plan: docs/superpowers/plans/2026-08-17-llm-per-panel-pipeline.md
 """
 from __future__ import annotations
 
@@ -59,69 +59,69 @@ def _make_cfg(tmp_path: Path, **overrides) -> PipelineConfig:
     return cfg
 
 
-def test_config_has_m3_per_panel_fields_with_safe_defaults(tmp_path):
+def test_config_has_llm_per_panel_fields_with_safe_defaults(tmp_path):
     """All 4 new fields exist with safe defaults:
-      - m3_per_panel_enabled: False (off by default)
-      - m3_per_panel_min_conf: 0.55
-      - m3_per_panel_max_per_figure: 20
-      - m3_per_panel_max_per_paper: 200
+      - llm_per_panel_enabled: False (off by default)
+      - llm_per_panel_min_conf: 0.55
+      - llm_per_panel_max_per_figure: 20
+      - llm_per_panel_max_per_paper: 200
     """
     cfg = _make_cfg(tmp_path)
-    assert hasattr(cfg, "m3_per_panel_enabled")
-    assert cfg.m3_per_panel_enabled is False
-    assert cfg.m3_per_panel_min_conf == pytest.approx(0.55)
-    assert cfg.m3_per_panel_max_per_figure == 20
-    assert cfg.m3_per_panel_max_per_paper == 200
+    assert hasattr(cfg, "llm_per_panel_enabled")
+    assert cfg.llm_per_panel_enabled is False
+    assert cfg.llm_per_panel_min_conf == pytest.approx(0.55)
+    assert cfg.llm_per_panel_max_per_figure == 20
+    assert cfg.llm_per_panel_max_per_paper == 200
 
 
 def test_config_field_overrides_work(tmp_path):
     cfg = _make_cfg(
         tmp_path,
-        m3_per_panel_enabled=True,
-        m3_per_panel_min_conf=0.7,
-        m3_per_panel_max_per_figure=10,
-        m3_per_panel_max_per_paper=50,
+        llm_per_panel_enabled=True,
+        llm_per_panel_min_conf=0.7,
+        llm_per_panel_max_per_figure=10,
+        llm_per_panel_max_per_paper=50,
     )
-    assert cfg.m3_per_panel_enabled is True
-    assert cfg.m3_per_panel_min_conf == pytest.approx(0.7)
-    assert cfg.m3_per_panel_max_per_figure == 10
-    assert cfg.m3_per_panel_max_per_paper == 50
+    assert cfg.llm_per_panel_enabled is True
+    assert cfg.llm_per_panel_min_conf == pytest.approx(0.7)
+    assert cfg.llm_per_panel_max_per_figure == 10
+    assert cfg.llm_per_panel_max_per_paper == 50
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_config_has_m3_per_panel_fields_with_safe_defaults tests/test_stage4_5_m3_per_panel.py::test_config_field_overrides_work -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_config_has_llm_per_panel_fields_with_safe_defaults tests/test_stage4_5_llm_per_panel.py::test_config_field_overrides_work -v`
 
-Expected: FAIL with `AttributeError: 'PipelineConfig' object has no attribute 'm3_per_panel_enabled'`
+Expected: FAIL with `AttributeError: 'PipelineConfig' object has no attribute 'llm_per_panel_enabled'`
 
-- [ ] **Step 3: Add the 4 new keys to `_CONFIG_KEYS`** in `src/rlpe/config.py` (insert after line 107 `m3_stage_6`):
+- [ ] **Step 3: Add the 4 new keys to `_CONFIG_KEYS`** in `src/rlpe/config.py` (insert after line 107 `llm_stage_6`):
 
 ```python
-    # Phase 2026-08-17: Stage 4.5 per-panel M3 vision species ID.
+    # Phase 2026-08-17: Stage 4.5 per-panel LLM vision species ID.
     # Opt-in flag; default disabled for backward compat.
-    "m3_per_panel_enabled",
-    "m3_per_panel_min_conf",
-    "m3_per_panel_max_per_figure",
-    "m3_per_panel_max_per_paper",
+    "llm_per_panel_enabled",
+    "llm_per_panel_min_conf",
+    "llm_per_panel_max_per_figure",
+    "llm_per_panel_max_per_paper",
 ```
 
-- [ ] **Step 4: Add the 4 new fields to `PipelineConfig`** (insert after the `m3_match_samples` field — find it with grep):
+- [ ] **Step 4: Add the 4 new fields to `PipelineConfig`** (insert after the `llm_match_samples` field — find it with grep):
 
 ```python
-    # Phase 2026-08-17: Stage 4.5 per-panel M3 vision species ID.
-    # Opt-in; when True, fans out one M3 vision call per Stage-3 panel
-    # crop and overwrites the regex-matched species when M3's confidence
+    # Phase 2026-08-17: Stage 4.5 per-panel LLM vision species ID.
+    # Opt-in; when True, fans out one LLM vision call per Stage-3 panel
+    # crop and overwrites the regex-matched species when LLM's confidence
     # meets the threshold. Pure additive — falls back to regex on any
-    # backend error. See ``_apply_m3_per_panel_species_id``.
-    m3_per_panel_enabled: bool = False
-    m3_per_panel_min_conf: float = 0.55
-    m3_per_panel_max_per_figure: int = 20
-    m3_per_panel_max_per_paper: int = 200
+    # backend error. See ``_apply_llm_per_panel_species_id``.
+    llm_per_panel_enabled: bool = False
+    llm_per_panel_min_conf: float = 0.55
+    llm_per_panel_max_per_figure: int = 20
+    llm_per_panel_max_per_paper: int = 200
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_config_has_m3_per_panel_fields_with_safe_defaults tests/test_stage4_5_m3_per_panel.py::test_config_field_overrides_work -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_config_has_llm_per_panel_fields_with_safe_defaults tests/test_stage4_5_llm_per_panel.py::test_config_field_overrides_work -v`
 
 Expected: PASS
 
@@ -134,24 +134,24 @@ Expected: all 1729+ tests pass (existing test excluded; pre-existing failure per
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/rlpe/config.py tests/test_stage4_5_m3_per_panel.py
-git commit -m "feat(config): 4 opt-in fields for Stage 4.5 M3 per-panel species ID
+git add src/rlpe/config.py tests/test_stage4_5_llm_per_panel.py
+git commit -m "feat(config): 4 opt-in fields for Stage 4.5 LLM per-panel species ID
 
-m3_per_panel_enabled (default False), m3_per_panel_min_conf (0.55),
-m3_per_panel_max_per_figure (20), m3_per_panel_max_per_paper (200).
+llm_per_panel_enabled (default False), llm_per_panel_min_conf (0.55),
+llm_per_panel_max_per_figure (20), llm_per_panel_max_per_paper (200).
 
 All defaults safe for backward compat. No behaviour change when flag off."
 ```
 
 ---
 
-## Task 2: Add `_apply_m3_per_panel_species_id` method — early-return guards
+## Task 2: Add `_apply_llm_per_panel_species_id` method — early-return guards
 
 **Files:**
 - Modify: `src/rlpe/pipeline.py:2055` (insert before `_apply_multi_plate_enrichment`)
-- Test: `tests/test_stage4_5_m3_per_panel.py`
+- Test: `tests/test_stage4_5_llm_per_panel.py`
 
-- [ ] **Step 1: Write the failing test** (append to `tests/test_stage4_5_m3_per_panel.py`):
+- [ ] **Step 1: Write the failing test** (append to `tests/test_stage4_5_llm_per_panel.py`):
 
 ```python
 from rlpe.pipeline import RadiolarianPipeline
@@ -162,17 +162,17 @@ class _StubPipeline:
 
     def __init__(self, cfg: PipelineConfig):
         self.config = cfg
-        self._apply_m3_per_panel_species_id = (
-            RadiolarianPipeline._apply_m3_per_panel_species_id.__get__(
+        self._apply_llm_per_panel_species_id = (
+            RadiolarianPipeline._apply_llm_per_panel_species_id.__get__(
                 self, RadiolarianPipeline
             )
         )
 
 
 def test_method_early_returns_when_disabled(tmp_path):
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=False)
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=False)
     pipe = _StubPipeline(cfg)
-    out = pipe._apply_m3_per_panel_species_id(
+    out = pipe._apply_llm_per_panel_species_id(
         results=[{"panel_id": "1", "species": "regex_match"}],
         paper_id="paper1",
     )
@@ -181,34 +181,34 @@ def test_method_early_returns_when_disabled(tmp_path):
 
 
 def test_method_no_op_when_no_results(tmp_path):
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     pipe = _StubPipeline(cfg)
-    out = pipe._apply_m3_per_panel_species_id(results=[], paper_id="paper1")
+    out = pipe._apply_llm_per_panel_species_id(results=[], paper_id="paper1")
     assert out == []
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_method_early_returns_when_disabled tests/test_stage4_5_m3_per_panel.py::test_method_no_op_when_no_results -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_method_early_returns_when_disabled tests/test_stage4_5_llm_per_panel.py::test_method_no_op_when_no_results -v`
 
-Expected: FAIL with `AttributeError: type object 'RadiolarianPipeline' has no attribute '_apply_m3_per_panel_species_id'`
+Expected: FAIL with `AttributeError: type object 'RadiolarianPipeline' has no attribute '_apply_llm_per_panel_species_id'`
 
 - [ ] **Step 3: Add the method shell** (insert before `_apply_multi_plate_enrichment` at pipeline.py:2055):
 
 ```python
-    def _apply_m3_per_panel_species_id(
+    def _apply_llm_per_panel_species_id(
         self,
         results: list[dict[str, Any]],
         paper_id: str,
     ) -> list[dict[str, Any]]:
-        """Stage 4.5 (Phase 2026-08-17): per-panel M3 vision species ID.
+        """Stage 4.5 (Phase 2026-08-17): per-panel LLM vision species ID.
 
         For each result row whose ``panel_path`` (Stage 3 crop) is
-        present, fire one M3 vision call carrying the panel crop + the
+        present, fire one LLM vision call carrying the panel crop + the
         row's caption snippet + the same-page systematic-paleontology
-        context. When M3 returns a parseable JSON with
-        ``confidence >= m3_per_panel_min_conf``, overwrite the row's
-        species (which currently came from regex matching) with M3's
+        context. When LLM returns a parseable JSON with
+        ``confidence >= llm_per_panel_min_conf``, overwrite the row's
+        species (which currently came from regex matching) with LLM's
         answer. Otherwise the row's regex species stays.
 
         Pure additive — every backend failure path (no backend, no
@@ -216,11 +216,11 @@ Expected: FAIL with `AttributeError: type object 'RadiolarianPipeline' has no at
         species survives. Per-figure and per-paper caps prevent cost
         runaway on big papers.
 
-        See ``docs/superpowers/specs/2026-08-17-m3-per-panel-pipeline-design.md``.
+        See ``docs/superpowers/specs/2026-08-17-llm-per-panel-pipeline-design.md``.
         """
-        if not self.config.m3_per_panel_enabled:
+        if not self.config.llm_per_panel_enabled:
             return results
-        if self.m3_engine is None or self.m3_engine.backend is None:
+        if self.semantic_engine is None or self.semantic_engine.backend is None:
             return results
         if not results:
             return results
@@ -232,14 +232,14 @@ Expected: FAIL with `AttributeError: type object 'RadiolarianPipeline' has no at
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_method_early_returns_when_disabled tests/test_stage4_5_m3_per_panel.py::test_method_no_op_when_no_results -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_method_early_returns_when_disabled tests/test_stage4_5_llm_per_panel.py::test_method_no_op_when_no_results -v`
 
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/rlpe/pipeline.py tests/test_stage4_5_m3_per_panel.py
+git add src/rlpe/pipeline.py tests/test_stage4_5_llm_per_panel.py
 git commit -m "feat(pipeline): Stage 4.5 method shell with early-return guards
 
 Disabled / no-engine / no-results all return results unchanged.
@@ -251,8 +251,8 @@ Behaviour change only kicks in once Task 3-5 fill in the body."
 ## Task 3: Build per-panel context tuples + skip rows without crops
 
 **Files:**
-- Modify: `src/rlpe/pipeline.py` (`_apply_m3_per_panel_species_id` body)
-- Test: `tests/test_stage4_5_m3_per_panel.py`
+- Modify: `src/rlpe/pipeline.py` (`_apply_llm_per_panel_species_id` body)
+- Test: `tests/test_stage4_5_llm_per_panel.py`
 
 - [ ] **Step 1: Write the failing test** (append):
 
@@ -263,13 +263,13 @@ import inspect
 def test_method_skips_rows_without_panel_path(tmp_path):
     """Rows without a Stage 3 crop (no panel_path) are passed through
     unchanged — per-panel vision needs the crop image."""
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     pipe = _StubPipeline(cfg)
     results = [
         {"panel_id": "1", "species": "regex_A", "panel_path": None},
         {"panel_id": "2", "species": "regex_B", "panel_path": ""},
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
     # Without a backend hook we cannot test "called" — we test "skipped".
     assert out[0]["species"] == "regex_A"
     assert out[1]["species"] == "regex_B"
@@ -281,7 +281,7 @@ def test_method_builds_caption_for_panel_from_caption_pairs(tmp_path):
     the method body must read caption_pairs / select-by-panel_id / etc.
     """
     cfg = _make_cfg(tmp_path)
-    src = inspect.getsource(RadiolarianPipeline._apply_m3_per_panel_species_id)
+    src = inspect.getsource(RadiolarianPipeline._apply_llm_per_panel_species_id)
     assert "caption_pairs" in src, (
         "method must read caption_pairs to pick the panel-specific snippet"
     )
@@ -292,7 +292,7 @@ def test_method_builds_caption_for_panel_from_caption_pairs(tmp_path):
 
 def test_method_truncates_page_context_at_1500_chars(tmp_path):
     cfg = _make_cfg(tmp_path)
-    src = inspect.getsource(RadiolarianPipeline._apply_m3_per_panel_species_id)
+    src = inspect.getsource(RadiolarianPipeline._apply_llm_per_panel_species_id)
     # Spec §3 requires page-context truncation at 1500 chars.
     assert "1500" in src, (
         "page-context snippet must be truncated (spec §3 says 1500 chars)"
@@ -301,11 +301,11 @@ def test_method_truncates_page_context_at_1500_chars(tmp_path):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_method_skips_rows_without_panel_path tests/test_stage4_5_m3_per_panel.py::test_method_builds_caption_for_panel_from_caption_pairs tests/test_stage4_5_m3_per_panel.py::test_method_truncates_page_context_at_1500_chars -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_method_skips_rows_without_panel_path tests/test_stage4_5_llm_per_panel.py::test_method_builds_caption_for_panel_from_caption_pairs tests/test_stage4_5_llm_per_panel.py::test_method_truncates_page_context_at_1500_chars -v`
 
 Expected: `test_method_builds_caption_for_panel_from_caption_pairs` and `test_method_truncates_page_context_at_1500_chars` FAIL (caption_pairs not in source, 1500 not in source). `test_method_skips_rows_without_panel_path` will PASS (current shell returns results unchanged).
 
-- [ ] **Step 3: Fill in the body** (replace the TODO block in `_apply_m3_per_panel_species_id`):
+- [ ] **Step 3: Fill in the body** (replace the TODO block in `_apply_llm_per_panel_species_id`):
 
 ```python
         # 1. Build (row, crop_path, caption_for_panel, page_context) tuples.
@@ -346,7 +346,7 @@ Expected: `test_method_builds_caption_for_panel_from_caption_pairs` and `test_me
 
 - [ ] **Step 4: Run test to verify all three pass**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_method_skips_rows_without_panel_path tests/test_stage4_5_m3_per_panel.py::test_method_builds_caption_for_panel_from_caption_pairs tests/test_stage4_5_m3_per_panel.py::test_method_truncates_page_context_at_1500_chars -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_method_skips_rows_without_panel_path tests/test_stage4_5_llm_per_panel.py::test_method_builds_caption_for_panel_from_caption_pairs tests/test_stage4_5_llm_per_panel.py::test_method_truncates_page_context_at_1500_chars -v`
 
 Expected: PASS
 
@@ -359,7 +359,7 @@ Expected: all pass (still zero behaviour change since the fan-out is the next TO
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/rlpe/pipeline.py tests/test_stage4_5_m3_per_panel.py
+git add src/rlpe/pipeline.py tests/test_stage4_5_llm_per_panel.py
 git commit -m "feat(pipeline): Stage 4.5 build per-panel context tuples
 
 Skip rows without Stage 3 panel crops. Match caption_pairs by panel_id
@@ -372,8 +372,8 @@ chars (spec §3)."
 ## Task 4: Fan-out via semaphore + per-panel backend call
 
 **Files:**
-- Modify: `src/rlpe/pipeline.py` (`_apply_m3_per_panel_species_id` body)
-- Test: `tests/test_stage4_5_m3_per_panel.py`
+- Modify: `src/rlpe/pipeline.py` (`_apply_llm_per_panel_species_id` body)
+- Test: `tests/test_stage4_5_llm_per_panel.py`
 
 - [ ] **Step 1: Write the failing test** (append):
 
@@ -383,13 +383,13 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
 
 
-def test_method_overwrites_species_when_m3_high_confidence(tmp_path):
+def test_method_overwrites_species_when_llm_high_confidence(tmp_path):
     """When backend.infer_panel returns parseable JSON with confidence
-    >= m3_per_panel_min_conf, the row's species is overwritten."""
+    >= llm_per_panel_min_conf, the row's species is overwritten."""
     cfg = _make_cfg(
         tmp_path,
-        m3_per_panel_enabled=True,
-        m3_per_panel_min_conf=0.55,
+        llm_per_panel_enabled=True,
+        llm_per_panel_min_conf=0.55,
     )
 
     # Fake backend that returns a high-confidence species.
@@ -405,8 +405,8 @@ def test_method_overwrites_species_when_m3_high_confidence(tmp_path):
 
     # Stub pipeline with fake engine + backend.
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
 
     # Fake crop file.
     crop = tmp_path / "panel1.png"
@@ -423,18 +423,18 @@ def test_method_overwrites_species_when_m3_high_confidence(tmp_path):
             "metadata": {},
         }
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
     assert out[0]["species"] == "Emiluvia orea"
     assert out[0]["label"] == "1"
     assert backend.infer_panel.called
 
 
-def test_method_keeps_regex_when_m3_low_confidence(tmp_path):
-    """M3 confidence < min_conf → regex species stays."""
+def test_method_keeps_regex_when_llm_low_confidence(tmp_path):
+    """LLM confidence < min_conf → regex species stays."""
     cfg = _make_cfg(
         tmp_path,
-        m3_per_panel_enabled=True,
-        m3_per_panel_min_conf=0.55,
+        llm_per_panel_enabled=True,
+        llm_per_panel_min_conf=0.55,
     )
     backend = MagicMock()
     backend.backend_name = "test_backend"
@@ -445,8 +445,8 @@ def test_method_keeps_regex_when_m3_low_confidence(tmp_path):
         "reasoning": "uncertain",
     }
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel1.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     results = [
@@ -460,13 +460,13 @@ def test_method_keeps_regex_when_m3_low_confidence(tmp_path):
             "metadata": {},
         }
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
     assert out[0]["species"] == "regex_old_species"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_method_overwrites_species_when_m3_high_confidence tests/test_stage4_5_m3_per_panel.py::test_method_keeps_regex_when_m3_low_confidence -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_method_overwrites_species_when_llm_high_confidence tests/test_stage4_5_llm_per_panel.py::test_method_keeps_regex_when_llm_low_confidence -v`
 
 Expected: FAIL with `AttributeError` or assertion error (fan-out not yet wired).
 
@@ -478,19 +478,19 @@ Expected: FAIL with `AttributeError` or assertion error (fan-out not yet wired).
         capped_items: list[tuple[dict[str, Any], Path, str, str]] = []
         for r, crop, cap, ctx in items:
             fid = r.get("figure_id", "__default__")
-            if per_fig_count.get(fid, 0) >= self.config.m3_per_panel_max_per_figure:
+            if per_fig_count.get(fid, 0) >= self.config.llm_per_panel_max_per_figure:
                 continue
             per_fig_count[fid] = per_fig_count.get(fid, 0) + 1
             capped_items.append((r, crop, cap, ctx))
         # Apply per-paper cap.
-        capped_items = capped_items[: self.config.m3_per_panel_max_per_paper]
+        capped_items = capped_items[: self.config.llm_per_panel_max_per_paper]
 
         # 3. Fan out via ThreadPoolExecutor + semaphore.
-        backend = self.m3_engine.backend
-        # Resolve concurrency: prefer M3 semaphore if present, else config.
+        backend = self.semantic_engine.backend
+        # Resolve concurrency: prefer LLM semaphore if present, else config.
         max_conc = (
-            self.config.MiniMax_max_concurrent
-            if isinstance(getattr(self.config, "MiniMax_max_concurrent", None), int)
+            self.config.llm_max_concurrent
+            if isinstance(getattr(self.config, "llm_max_concurrent", None), int)
             else 8
         )
         executor = ThreadPoolExecutor(max_workers=max_conc)
@@ -524,7 +524,7 @@ Expected: FAIL with `AttributeError` or assertion error (fan-out not yet wired).
                 parsed = _normalize_panel_dict(raw)
                 parsed["confidence"] = max(0.0, min(1.0, float(parsed.get("confidence") or 0.0)))
                 md = r.setdefault("metadata", {})
-                md["m3_per_panel"] = {
+                md["llm_per_panel"] = {
                     "species": parsed.get("species"),
                     "label": parsed.get("label"),
                     "confidence": parsed["confidence"],
@@ -534,12 +534,12 @@ Expected: FAIL with `AttributeError` or assertion error (fan-out not yet wired).
                     "fallback_used": False,
                     "image_sha": _sha256_file(crop),
                 }
-                if parsed["confidence"] >= self.config.m3_per_panel_min_conf:
+                if parsed["confidence"] >= self.config.llm_per_panel_min_conf:
                     r["species"] = parsed.get("species") or r.get("species")
                     r["label"] = parsed.get("label") or r.get("label")
             except Exception as exc:
                 logger.warning(
-                    "Stage 4.5 M3 per-panel failed for %s/%s: %s",
+                    "Stage 4.5 LLM per-panel failed for %s/%s: %s",
                     paper_id,
                     r.get("panel_id"),
                     exc,
@@ -557,7 +557,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 from rlpe.llm_backends import _normalize_panel_dict
-from rlpe.m3_engine import _MATCH_PANEL_SYSTEM
+from rlpe.semantic_engine import _MATCH_PANEL_SYSTEM
 ```
 
 And add a tiny helper `_sha256_file` at module level:
@@ -575,7 +575,7 @@ def _sha256_file(path: Path) -> str:
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_method_overwrites_species_when_m3_high_confidence tests/test_stage4_5_m3_per_panel.py::test_method_keeps_regex_when_m3_low_confidence -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_method_overwrites_species_when_llm_high_confidence tests/test_stage4_5_llm_per_panel.py::test_method_keeps_regex_when_llm_low_confidence -v`
 
 Expected: PASS
 
@@ -588,14 +588,14 @@ Expected: all pass (existing tests + 4 new)
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/rlpe/pipeline.py tests/test_stage4_5_m3_per_panel.py
+git add src/rlpe/pipeline.py tests/test_stage4_5_llm_per_panel.py
 git commit -m "feat(pipeline): Stage 4.5 fan-out + confidence-gated overwrite
 
-ThreadPoolExecutor(max_workers=MiniMax_max_concurrent=8) fans out
-per-panel M3 vision calls. Per-figure (default 20) + per-paper
+ThreadPoolExecutor(max_workers=llm_max_concurrent=8) fans out
+per-panel LLM vision calls. Per-figure (default 20) + per-paper
 (default 200) caps prevent runaway cost. Confidence-gated overwrite:
-only rows with M3 conf >= m3_per_panel_min_conf (0.55) are rewritten;
-the rest keep their regex-matched species. Stamp metadata.m3_per_panel
+only rows with LLM conf >= llm_per_panel_min_conf (0.55) are rewritten;
+the rest keep their regex-matched species. Stamp metadata.llm_per_panel
 with species/label/confidence/reasoning/alternative/latency/image_sha."
 ```
 
@@ -604,86 +604,86 @@ with species/label/confidence/reasoning/alternative/latency/image_sha."
 ## Task 5: Test all failure paths + audit tag + caps
 
 **Files:**
-- Test: `tests/test_stage4_5_m3_per_panel.py` (no production code change)
+- Test: `tests/test_stage4_5_llm_per_panel.py` (no production code change)
 
 - [ ] **Step 1: Write the failure-path tests** (append):
 
 ```python
 def test_method_handles_backend_fallback_used(tmp_path):
     """backend returns fallback_used=True → row keeps regex species,
-    metadata.m3_per_panel is NOT stamped."""
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    metadata.llm_per_panel is NOT stamped."""
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
         "fallback_used": True,
-        "error": "M3 quota exhausted",
+        "error": "LLM quota exhausted",
     }
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel1.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     results = [
         {"panel_id": "1", "species": "regex_species", "panel_path": str(crop),
          "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
     assert out[0]["species"] == "regex_species"
-    assert "m3_per_panel" not in out[0]["metadata"]
+    assert "llm_per_panel" not in out[0]["metadata"]
 
 
 def test_method_handles_backend_exception(tmp_path):
     """backend.infer_panel raises → caught + logged, regex stays."""
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     backend = MagicMock()
     backend.backend_name = "test_backend"
-    backend.infer_panel.side_effect = RuntimeError("M3 API down")
+    backend.infer_panel.side_effect = RuntimeError("LLM API down")
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel1.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     results = [
         {"panel_id": "1", "species": "regex_species", "panel_path": str(crop),
          "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
     assert out[0]["species"] == "regex_species"
-    assert "m3_per_panel" not in out[0]["metadata"]
+    assert "llm_per_panel" not in out[0]["metadata"]
 
 
 def test_method_handles_garbage_json(tmp_path):
     """backend returns unparseable blob → parse_json_from_text 4-tier
     falls through to {species=None} → regex stays."""
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {"species": None, "label": None,
                                          "confidence": 0.0,
                                          "reasoning": "no parse"}
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel1.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     results = [
         {"panel_id": "1", "species": "regex_species", "panel_path": str(crop),
          "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
     # Confidence 0.0 < 0.55 → no overwrite, but metadata IS stamped
-    # (we want to know M3 was attempted).
+    # (we want to know LLM was attempted).
     assert out[0]["species"] == "regex_species"
 
 
 def test_method_caps_per_figure(tmp_path):
-    """If a figure has more panels than m3_per_panel_max_per_figure,
-    only the first N get per-panel M3 calls; the rest keep regex."""
+    """If a figure has more panels than llm_per_panel_max_per_figure,
+    only the first N get per-panel LLM calls; the rest keep regex."""
     cfg = _make_cfg(
         tmp_path,
-        m3_per_panel_enabled=True,
-        m3_per_panel_max_per_figure=2,
+        llm_per_panel_enabled=True,
+        llm_per_panel_max_per_figure=2,
     )
     backend = MagicMock()
     backend.backend_name = "test_backend"
@@ -692,8 +692,8 @@ def test_method_caps_per_figure(tmp_path):
         "reasoning": "r", "alternative": None,
     }
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     rows = []
@@ -708,21 +708,21 @@ def test_method_caps_per_figure(tmp_path):
             "page_context_snippet": "",
             "metadata": {},
         })
-    out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
-    # Only the first 2 should have m3_per_panel stamped; rest untouched.
-    stamped = [r for r in out if "m3_per_panel" in r["metadata"]]
+    out = pipe._apply_llm_per_panel_species_id(rows, paper_id="paper1")
+    # Only the first 2 should have llm_per_panel stamped; rest untouched.
+    stamped = [r for r in out if "llm_per_panel" in r["metadata"]]
     assert len(stamped) == 2
-    untouched = [r for r in out if "m3_per_panel" not in r["metadata"]]
+    untouched = [r for r in out if "llm_per_panel" not in r["metadata"]]
     assert len(untouched) == 3
 
 
 def test_method_caps_per_paper(tmp_path):
-    """m3_per_panel_max_per_paper caps total calls across all figures."""
+    """llm_per_panel_max_per_paper caps total calls across all figures."""
     cfg = _make_cfg(
         tmp_path,
-        m3_per_panel_enabled=True,
-        m3_per_panel_max_per_figure=100,
-        m3_per_panel_max_per_paper=3,
+        llm_per_panel_enabled=True,
+        llm_per_panel_max_per_figure=100,
+        llm_per_panel_max_per_paper=3,
     )
     backend = MagicMock()
     backend.backend_name = "test_backend"
@@ -731,8 +731,8 @@ def test_method_caps_per_paper(tmp_path):
         "reasoning": "r", "alternative": None,
     }
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     rows = []
@@ -747,15 +747,15 @@ def test_method_caps_per_paper(tmp_path):
             "page_context_snippet": "",
             "metadata": {},
         })
-    out = pipe._apply_m3_per_panel_species_id(rows, paper_id="paper1")
-    stamped = [r for r in out if "m3_per_panel" in r["metadata"]]
+    out = pipe._apply_llm_per_panel_species_id(rows, paper_id="paper1")
+    stamped = [r for r in out if "llm_per_panel" in r["metadata"]]
     assert len(stamped) == 3
 
 
 def test_method_normalises_species_list_extras(tmp_path):
     """If backend returns species_list (a list/dict structural extra),
     _normalize_panel_dict preserves it (Audit 2026-08-17 BUG-E)."""
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
@@ -767,23 +767,23 @@ def test_method_normalises_species_list_extras(tmp_path):
         ],
     }
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     results = [
         {"panel_id": "1", "species": "regex", "panel_path": str(crop),
          "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
-    # metadata.m3_per_panel is the normalised dict; species_list is NOT
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
+    # metadata.llm_per_panel is the normalised dict; species_list is NOT
     # in there (it's only kept on the parsed match — not in the audit stamp).
     # The overwrite still happens because confidence >= threshold.
     assert out[0]["species"] == "Emiluvia orea"
 
 
 def test_method_clamps_confidence_to_unit_interval(tmp_path):
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
@@ -791,22 +791,22 @@ def test_method_clamps_confidence_to_unit_interval(tmp_path):
         "reasoning": "r",
     }
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     results = [
         {"panel_id": "1", "species": "regex", "panel_path": str(crop),
          "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
     # Confidence 1.7 → clamped to 1.0 → above 0.55 → overwrite happens.
     assert out[0]["species"] == "X"
-    assert out[0]["metadata"]["m3_per_panel"]["confidence"] == 1.0
+    assert out[0]["metadata"]["llm_per_panel"]["confidence"] == 1.0
 
 
 def test_method_records_latency(tmp_path):
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
@@ -814,23 +814,23 @@ def test_method_records_latency(tmp_path):
         "reasoning": "r",
     }
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     results = [
         {"panel_id": "1", "species": "regex", "panel_path": str(crop),
          "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
-    md = out[0]["metadata"]["m3_per_panel"]
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
+    md = out[0]["metadata"]["llm_per_panel"]
     assert "latency_sec" in md
     assert isinstance(md["latency_sec"], float)
     assert md["latency_sec"] >= 0.0
 
 
 def test_method_records_image_sha(tmp_path):
-    cfg = _make_cfg(tmp_path, m3_per_panel_enabled=True)
+    cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     backend = MagicMock()
     backend.backend_name = "test_backend"
     backend.infer_panel.return_value = {
@@ -838,23 +838,23 @@ def test_method_records_image_sha(tmp_path):
         "reasoning": "r",
     }
     pipe = _StubPipeline(cfg)
-    pipe.m3_engine = MagicMock()
-    pipe.m3_engine.backend = backend
+    pipe.semantic_engine = MagicMock()
+    pipe.semantic_engine.backend = backend
     crop = tmp_path / "panel.png"
     crop.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     results = [
         {"panel_id": "1", "species": "regex", "panel_path": str(crop),
          "caption_pairs": [], "page_context_snippet": "", "metadata": {}}
     ]
-    out = pipe._apply_m3_per_panel_species_id(results, paper_id="paper1")
-    md = out[0]["metadata"]["m3_per_panel"]
+    out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
+    md = out[0]["metadata"]["llm_per_panel"]
     assert "image_sha" in md
     assert len(md["image_sha"]) == 16  # truncated sha256[:16]
 ```
 
 - [ ] **Step 2: Run tests to verify they pass**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py -v`
 
 Expected: all 14 tests pass (2 config + 2 early-return + 3 context + 2 fan-out + 9 failure paths = 18 total but some are subsumed — verify count from the file).
 
@@ -867,7 +867,7 @@ Expected: all pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/test_stage4_5_m3_per_panel.py
+git add tests/test_stage4_5_llm_per_panel.py
 git commit -m "test(pipeline): Stage 4.5 failure-path + cap + metadata tests
 
 9 new tests covering: fallback_used, exceptions, garbage JSON,
@@ -887,7 +887,7 @@ confidence clamping, latency recording, image_sha recording."
 ```python
 def test_pipeline_main_loop_calls_stage4_5(tmp_path):
     """Source-guard: the main per-figure loop in ``pipeline.run`` (or
-    equivalent) must invoke ``_apply_m3_per_panel_species_id`` after
+    equivalent) must invoke ``_apply_llm_per_panel_species_id`` after
     Stage 3 bbox crops. Pre-fix the call was missing → opt-in flag
     had no effect."""
     import inspect
@@ -896,10 +896,10 @@ def test_pipeline_main_loop_calls_stage4_5(tmp_path):
     from rlpe.pipeline import RadiolarianPipeline
 
     src = inspect.getsource(RadiolarianPipeline)
-    assert "_apply_m3_per_panel_species_id" in src
+    assert "_apply_llm_per_panel_species_id" in src
     # Must be called AFTER stage3 bbox crops, BEFORE multi-plate enrichment
     stage3_idx = src.find("_apply_stage3_bbox_crops")
-    per_panel_idx = src.find("_apply_m3_per_panel_species_id")
+    per_panel_idx = src.find("_apply_llm_per_panel_species_id")
     enrich_idx = src.find("_apply_multi_plate_enrichment")
     assert stage3_idx != -1 and per_panel_idx != -1 and enrich_idx != -1, (
         "all three methods must exist on the pipeline"
@@ -913,27 +913,27 @@ def test_pipeline_main_loop_calls_stage4_5(tmp_path):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_pipeline_main_loop_calls_stage4_5 -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_pipeline_main_loop_calls_stage4_5 -v`
 
 Expected: FAIL (`per_panel_idx` not found).
 
 - [ ] **Step 3: Add the call to the main loop** (insert at pipeline.py:1692, between Stage 3 and multi-plate enrichment):
 
 ```python
-        # Phase 2026-08-17 (Stage 4.5): per-panel M3 vision species ID.
-        # Pure additive — only fires when ``m3_per_panel_enabled`` and
-        # the M3 backend is configured. Overwrites regex species when
-        # M3 confidence meets the threshold; otherwise regex stays.
+        # Phase 2026-08-17 (Stage 4.5): per-panel LLM vision species ID.
+        # Pure additive — only fires when ``llm_per_panel_enabled`` and
+        # the LLM backend is configured. Overwrites regex species when
+        # LLM confidence meets the threshold; otherwise regex stays.
         if (
-            self.config.extra.get("m3_per_panel_enabled", False)
-            and self.m3_engine is not None
+            self.config.extra.get("llm_per_panel_enabled", False)
+            and self.semantic_engine is not None
         ):
-            results = self._apply_m3_per_panel_species_id(results, paper_id)
+            results = self._apply_llm_per_panel_species_id(results, paper_id)
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_pipeline_main_loop_calls_stage4_5 -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_pipeline_main_loop_calls_stage4_5 -v`
 
 Expected: PASS.
 
@@ -946,10 +946,10 @@ Expected: all pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/rlpe/pipeline.py tests/test_stage4_5_m3_per_panel.py
+git add src/rlpe/pipeline.py tests/test_stage4_5_llm_per_panel.py
 git commit -m "feat(pipeline): wire Stage 4.5 into main per-figure loop
 
-Opt-in via m3_per_panel_enabled. Inserted between _apply_stage3_bbox_crops
+Opt-in via llm_per_panel_enabled. Inserted between _apply_stage3_bbox_crops
 and _apply_multi_plate_enrichment. Behaviour change only when flag set
 (default False)."
 ```
@@ -964,82 +964,82 @@ and _apply_multi_plate_enrichment. Behaviour change only when flag set
 - [ ] **Step 1: Write the failing test** (append):
 
 ```python
-def test_cli_argparse_accepts_m3_per_panel_flags():
+def test_cli_argparse_accepts_llm_per_panel_flags():
     """Source-guard: CLI must accept the 4 new flags."""
     import inspect
     from rlpe import cli as cli_mod
 
     src = inspect.getsource(cli_mod)
     for flag in [
-        "m3_per_panel",
-        "no_m3_per_panel",
-        "m3_per_panel_min_conf",
-        "m3_per_panel_max_per_figure",
-        "m3_per_panel_max_per_paper",
+        "llm_per_panel",
+        "no_llm_per_panel",
+        "llm_per_panel_min_conf",
+        "llm_per_panel_max_per_figure",
+        "llm_per_panel_max_per_paper",
     ]:
         assert flag in src, f"CLI must define --{flag.replace('_', '-')}"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_cli_argparse_accepts_m3_per_panel_flags -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_cli_argparse_accepts_llm_per_panel_flags -v`
 
-Expected: FAIL (`m3_per_panel` not in source).
+Expected: FAIL (`llm_per_panel` not in source).
 
-- [ ] **Step 3: Add the CLI arguments** (find the existing `--m3-match-samples` argparse block via grep, add adjacent):
+- [ ] **Step 3: Add the CLI arguments** (find the existing `--llm-match-samples` argparse block via grep, add adjacent):
 
 ```python
     parser.add_argument(
-        "--m3-per-panel",
-        dest="m3_per_panel",
+        "--llm-per-panel",
+        dest="llm_per_panel",
         action="store_true",
         default=False,
-        help="Enable Stage 4.5: per-panel M3 vision species ID (default off).",
+        help="Enable Stage 4.5: per-panel LLM vision species ID (default off).",
     )
     parser.add_argument(
-        "--no-m3-per-panel",
-        dest="m3_per_panel",
+        "--no-llm-per-panel",
+        dest="llm_per_panel",
         action="store_false",
         help="Disable Stage 4.5 (explicit opt-out).",
     )
     parser.add_argument(
-        "--m3-per-panel-min-conf",
+        "--llm-per-panel-min-conf",
         type=float,
         default=0.55,
-        help="Minimum M3 confidence to overwrite regex species (default 0.55).",
+        help="Minimum LLM confidence to overwrite regex species (default 0.55).",
     )
     parser.add_argument(
-        "--m3-per-panel-max-per-figure",
+        "--llm-per-panel-max-per-figure",
         type=int,
         default=20,
         help="Cap Stage 4.5 calls per figure (default 20).",
     )
     parser.add_argument(
-        "--m3-per-panel-max-per-paper",
+        "--llm-per-panel-max-per-paper",
         type=int,
         default=200,
         help="Cap Stage 4.5 calls per paper (default 200).",
     )
 ```
 
-- [ ] **Step 4: Wire the args into the cfg dict** (find the line near `--m3-match-samples` cfg-write, add adjacent):
+- [ ] **Step 4: Wire the args into the cfg dict** (find the line near `--llm-match-samples` cfg-write, add adjacent):
 
 ```python
-        "m3_per_panel_enabled": args.m3_per_panel,
-        "m3_per_panel_min_conf": args.m3_per_panel_min_conf,
-        "m3_per_panel_max_per_figure": args.m3_per_panel_max_per_figure,
-        "m3_per_panel_max_per_paper": args.m3_per_panel_max_per_paper,
+        "llm_per_panel_enabled": args.llm_per_panel,
+        "llm_per_panel_min_conf": args.llm_per_panel_min_conf,
+        "llm_per_panel_max_per_figure": args.llm_per_panel_max_per_figure,
+        "llm_per_panel_max_per_paper": args.llm_per_panel_max_per_paper,
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `pytest tests/test_stage4_5_m3_per_panel.py::test_cli_argparse_accepts_m3_per_panel_flags -v`
+Run: `pytest tests/test_stage4_5_llm_per_panel.py::test_cli_argparse_accepts_llm_per_panel_flags -v`
 
 Expected: PASS.
 
 - [ ] **Step 6: Run CLI smoke test**
 
-Run: `python -m rlpe.cli --help 2>&1 | grep -A1 "m3-per-panel"`
+Run: `python -m rlpe.cli --help 2>&1 | grep -A1 "llm-per-panel"`
 
 Expected: shows all 4 new flags with help text.
 
@@ -1052,8 +1052,8 @@ Expected: all pass.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/rlpe/cli.py tests/test_stage4_5_m3_per_panel.py
-git commit -m "feat(cli): 4 Stage 4.5 flags (--m3-per-panel + thresholds)
+git add src/rlpe/cli.py tests/test_stage4_5_llm_per_panel.py
+git commit -m "feat(cli): 4 Stage 4.5 flags (--llm-per-panel + thresholds)
 
 Default off. Threshold/cap defaults mirror PipelineConfig defaults.
 Forward into config.extra dict at call site."
@@ -1069,9 +1069,9 @@ Forward into config.extra dict at call site."
 
 - [ ] **Step 1: Run the live test on 1 paper (Bandini 2011, 9 plates)**
 
-Run: `python -m rlpe.cli runs/real_papers_2026_08_17/Bandini_2011.pdf --m3-per-panel --output-dir work/stage4_5_bandini --service-work-dir work/stage4_5_bandini_sw 2>&1 | tail -50`
+Run: `python -m rlpe.cli runs/real_papers_2026_08_17/Bandini_2011.pdf --llm-per-panel --output-dir work/stage4_5_bandini --service-work-dir work/stage4_5_bandini_sw 2>&1 | tail -50`
 
-Expected: pipeline completes without exception; output contains `metadata.m3_per_panel` keys on some rows.
+Expected: pipeline completes without exception; output contains `metadata.llm_per_panel` keys on some rows.
 
 - [ ] **Step 2: Inspect recall** (run a small eval script reading the output matches.jsonl):
 
@@ -1080,9 +1080,9 @@ python -c "
 import json, pathlib
 out = pathlib.Path('work/stage4_5_bandini/output/matches.jsonl')
 rows = [json.loads(l) for l in out.read_text().splitlines() if l.strip()]
-stamped = [r for r in rows if 'm3_per_panel' in (r.get('metadata') or {})]
+stamped = [r for r in rows if 'llm_per_panel' in (r.get('metadata') or {})]
 print(f'total rows: {len(rows)}')
-print(f'm3_per_panel stamped: {len(stamped)}')
+print(f'llm_per_panel stamped: {len(stamped)}')
 print(f'overwrote species: {sum(1 for r in stamped if r[\"species\"])}')
 overwrite_rate = sum(1 for r in stamped if r['species']) / max(len(stamped), 1)
 print(f'overwrite rate: {overwrite_rate:.2%}')
@@ -1094,10 +1094,10 @@ Expected: overwrite rate 30-70% (recall lift comes from these).
 - [ ] **Step 3: Compare to baseline regex-only run**
 
 ```bash
-python -m rlpe.cli runs/real_papers_2026_08_17/Bandini_2011.pdf --no-m3-per-panel --output-dir work/stage4_5_bandini_baseline --service-work-dir work/stage4_5_bandini_baseline_sw 2>&1 | tail -10
+python -m rlpe.cli runs/real_papers_2026_08_17/Bandini_2011.pdf --no-llm-per-panel --output-dir work/stage4_5_bandini_baseline --service-work-dir work/stage4_5_bandini_baseline_sw 2>&1 | tail -10
 ```
 
-Expected: completes; same row count; no `metadata.m3_per_panel`.
+Expected: completes; same row count; no `metadata.llm_per_panel`.
 
 - [ ] **Step 4: Commit the run output (gitignore-check first)**
 
@@ -1115,7 +1115,7 @@ git commit -m "smoke(pipeline): Stage 4.5 live on Bandini 2011 — overwrite rat
 ## Task 9: Final full-suite verification + memory update
 
 **Files:**
-- Modify: `memory/project_stage4_5_m3_per_panel.md` (create)
+- Modify: `memory/project_stage4_5_llm_per_panel.md` (create)
 - Modify: `memory/MEMORY.md` (add index line)
 
 - [ ] **Step 1: Run the full test suite one more time**
@@ -1128,7 +1128,7 @@ Expected: all pass. New test count: 1729 baseline + 18 new = ~1747.
 
 ```bash
 git log --oneline -10
-pytest --collect-only -q tests/test_stage4_5_m3_per_panel.py | tail -3
+pytest --collect-only -q tests/test_stage4_5_llm_per_panel.py | tail -3
 ```
 
 Expected: test file collects ≥18 tests; commits form a clean 8-step series.
@@ -1136,33 +1136,33 @@ Expected: test file collects ≥18 tests; commits form a clean 8-step series.
 - [ ] **Step 3: Write the memory**
 
 ```bash
-cat > /home/user/.claude/projects/-home-user-shenyaxuan-RLPE-Radiolarian-Plate-Extractor/memory/project_stage4_5_m3_per_panel.md <<'EOF'
+cat > /home/user/.claude/projects/-home-user-shenyaxuan-RLPE-Radiolarian-Plate-Extractor/memory/project_stage4_5_llm_per_panel.md <<'EOF'
 ---
-name: project-stage4-5-m3-per-panel
-description: Stage 4.5 M3 per-panel species ID live results (2026-08-17)
+name: project-stage4-5-llm-per-panel
+description: Stage 4.5 LLM per-panel species ID live results (2026-08-17)
 metadata:
   type: project
 ---
 
-Stage 4.5 (Phase 2026-08-17, spec 223d9a3, plan docs/superpowers/plans/2026-08-17-m3-per-panel-pipeline.md)
-inserts M3 multimodal vision per-panel species ID between Stage 3 bbox
+Stage 4.5 (Phase 2026-08-17, spec 223d9a3, plan docs/superpowers/plans/2026-08-17-llm-per-panel-pipeline.md)
+inserts LLM multimodal vision per-panel species ID between Stage 3 bbox
 crops and multi-plate enrichment.
 
-Key design: opt-in via m3_per_panel_enabled (default False), confidence-
+Key design: opt-in via llm_per_panel_enabled (default False), confidence-
 gated overwrite (default 0.55), per-figure cap 20, per-paper cap 200.
 
 Live Bandini 2011 smoke: X% overwrite rate (fill in after Task 8).
 Full 9-paper run: pending.
 
-**Why:** 53% baseline recall (whole-page M3, 9-paper gold) is below
+**Why:** 53% baseline recall (whole-page LLM, 9-paper gold) is below
 the 90% target. Per-panel + caption snippet + page context is the
 missing ingredient on the 0% pages (Pouille-style without caption).
 Boughdiri-p4 88% per-panel is the upper bound.
 
 **How to apply:** When the user wants higher recall, enable
-`--m3-per-panel` on the CLI or set `config.m3_per_panel_enabled=True`.
+`--llm-per-panel` on the CLI or set `config.llm_per_panel_enabled=True`.
 Watch cost (¥0.005-0.008/panel); per-figure + per-paper caps are the
-safety nets. Rollback is `--no-m3-per-panel` (zero cost, zero change).
+safety nets. Rollback is `--no-llm-per-panel` (zero cost, zero change).
 EOF
 ```
 
@@ -1171,14 +1171,14 @@ EOF
 Edit `/home/user/.claude/projects/-home-user-shenyaxuan-RLPE-Radiolarian-Plate-Extractor/memory/MEMORY.md` — append a line:
 
 ```markdown
-- [Stage 4.5 M3 per-panel live (2026-08-17)](project_stage4_5_m3_per_panel.md) — opt-in per-panel M3 vision species ID, Bandini smoke X%, plan: docs/superpowers/plans/2026-08-17-m3-per-panel-pipeline.md
+- [Stage 4.5 LLM per-panel live (2026-08-17)](project_stage4_5_llm_per_panel.md) — opt-in per-panel LLM vision species ID, Bandini smoke X%, plan: docs/superpowers/plans/2026-08-17-llm-per-panel-pipeline.md
 ```
 
 - [ ] **Step 5: Commit memory update**
 
 ```bash
 git add memory/
-git commit -m "memory: Stage 4.5 M3 per-panel live smoke + plan index"
+git commit -m "memory: Stage 4.5 LLM per-panel live smoke + plan index"
 ```
 
 ---
@@ -1187,8 +1187,8 @@ git commit -m "memory: Stage 4.5 M3 per-panel live smoke + plan index"
 
 - [x] **Spec coverage**: §2 architecture → Task 2,3,4,6; §3 pseudocode → Task 4; §4 recall projection → Task 8 (live); §5 cost projection → Task 8 (overwrite rate proxy); §6 latency → Task 5 (latency test); §7 architectural changes → Task 1,2,3,4,6,7; §8 risks (rollback) → Task 1 default; §9 acceptance → Task 5 + 8.
 - [x] **Placeholder scan**: no TBD/TODO/implement-later in steps. All code is shown inline.
-- [x] **Type consistency**: `_apply_m3_per_panel_species_id(results, paper_id)` signature used consistently in Tasks 2-6. `metadata.m3_per_panel` keys consistent across Tasks 4-5. Config field names consistent across Tasks 1, 6, 7.
-- [x] **Rollback documented**: `m3_per_panel_enabled` default False; CLI `--no-m3-per-panel`; method early-returns.
+- [x] **Type consistency**: `_apply_llm_per_panel_species_id(results, paper_id)` signature used consistently in Tasks 2-6. `metadata.llm_per_panel` keys consistent across Tasks 4-5. Config field names consistent across Tasks 1, 6, 7.
+- [x] **Rollback documented**: `llm_per_panel_enabled` default False; CLI `--no-llm-per-panel`; method early-returns.
 
 ---
 
@@ -1196,13 +1196,13 @@ git commit -m "memory: Stage 4.5 M3 per-panel live smoke + plan index"
 
 - [x] All 9 tasks complete with passing tests
 - [x] Full suite ≥1747 tests pass (baseline 1729 + 18 new)
-- [x] No changes to `m3_engine.py`, `cross_figure_linker.py`, schemas, web UI
+- [x] No changes to `semantic_engine.py`, `cross_figure_linker.py`, schemas, web UI
 - [x] Live Bandini smoke run completes; overwrite rate recorded
 - [x] Spec §9 acceptance criteria reviewed
 
 ---
 
-**Plan complete and saved to `docs/superpowers/plans/2026-08-17-m3-per-panel-pipeline.md`.**
+**Plan complete and saved to `docs/superpowers/plans/2026-08-17-llm-per-panel-pipeline.md`.**
 
 Two execution options:
 

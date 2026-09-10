@@ -1,4 +1,4 @@
-"""Tests for scripts/prompts.py — 4 M3 prompt templates selected by paper type."""
+"""Tests for scripts/prompts.py — 4 LLM prompt templates selected by paper type."""
 
 import sys
 

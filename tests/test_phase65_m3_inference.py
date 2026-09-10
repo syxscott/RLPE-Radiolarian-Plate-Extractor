@@ -1,4 +1,4 @@
-"""Phase 65 Plan A.3 — M3 cross-figure inference tests."""
+"""Phase 65 Plan A.3 — LLM cross-figure inference tests."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-from rlpe.m3_engine import PROMPT_REGISTRY, M3Engine
-from tests.fakes.fake_m3_backend import FakeM3Backend
+from rlpe.semantic_engine import PROMPT_REGISTRY, SemanticEngine
+from tests.fakes.fake_llm_backend import FakeM3Backend
 
 
-def _make_engine(canned: list[dict[str, Any]]) -> M3Engine:
+def _make_engine(canned: list[dict[str, Any]]) -> SemanticEngine:
     backend = FakeM3Backend(canned_responses=canned)
-    return M3Engine(backend=backend, config={})
+    return SemanticEngine(backend=backend, config={})
 
 
 class TestPromptRegistered:
@@ -89,26 +89,26 @@ class TestInferenceHappyPath:
 
 class TestInferenceFallback:
     def test_backend_none(self):
-        engine = M3Engine(backend=None, config={})
+        engine = SemanticEngine(backend=None, config={})
         result = engine.infer_species_age_formation("Plate 1", {})
         assert result["confidence"] == 0.0
         assert result["species"] is None
 
     def test_backend_fallback(self):
         backend = FakeM3Backend(canned_responses=[{"fallback_used": True, "raw_text": ""}])
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         result = engine.infer_species_age_formation("Plate 1", {})
         assert result["confidence"] == 0.0
 
     def test_malformed_json(self):
         backend = FakeM3Backend(canned_responses=[{"raw_text": "not json at all"}])
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         result = engine.infer_species_age_formation("Plate 1", {})
         assert result["confidence"] == 0.0
 
     def test_non_dict_json(self):
         backend = FakeM3Backend(canned_responses=[{"raw_text": "[1, 2, 3]"}])
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         result = engine.infer_species_age_formation("Plate 1", {})
         assert result["confidence"] == 0.0
 

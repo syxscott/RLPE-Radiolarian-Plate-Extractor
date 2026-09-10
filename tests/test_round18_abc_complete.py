@@ -4,7 +4,7 @@ Locks in the four-part Round 18 user-requested enrichment:
 
   A — Regex extraction fills member / group / lithology / country /
       biozone / paleo vs modern coordinate split.
-  B — M3Engine.extract_geology vision path is enabled by default and
+  B — SemanticEngine.extract_geology vision path is enabled by default and
       the plate figure_type is in the allowlist.
   C — PBDB / GPlates-style paleo reconstruction fills paleo_lat /
       paleo_lon / plate_id / reconstruction_model / reconstruction_age_ma.

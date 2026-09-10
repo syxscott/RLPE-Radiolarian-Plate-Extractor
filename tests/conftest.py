@@ -137,7 +137,7 @@ def _skip_qt_runtime_under_pyside6_311(request):
     pytest.skip(_SKIP_REASON)
 
 
-# Add the ``tests/`` directory itself so ``import tests.fakes.fake_m3_backend``
+# Add the ``tests/`` directory itself so ``import tests.fakes.fake_llm_backend``
 # works in tests that need the FakeM3Backend stub. The ``tests`` package
 # itself has an ``__init__.py`` so this is a regular import path.
 _TESTS = Path(__file__).resolve().parent
@@ -145,7 +145,7 @@ if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
 
-# Audit 2026-08-19 Phase 4E: ``gemma_postprocess`` caches the M3 prompt
+# Audit 2026-08-19 Phase 4E: ``gemma_postprocess`` caches the LLM prompt
 # registry in module-level globals (``_PROMPTS_CACHE`` /
 # ``_PROMPTS_VERSION``). The Phase4c ``test_gemma_handles_tuple_and_
 # legacy_dict_registries`` test stubs ``get_prompt_registry`` with a

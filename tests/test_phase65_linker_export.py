@@ -195,7 +195,7 @@ class TestArchiveExporter:
     def test_merged_both_present(self):
         sch = {"figure_type": "schematic", "text_elements": [], "confidence": 0.9}
         md = _make_panel_metadata(
-            link_source="m3_inference",
+            link_source="llm_inference",
             link_confidence=0.5,
             link_figure_id="strat2",
             schematic_data=sch,
@@ -204,7 +204,7 @@ class TestArchiveExporter:
         assert merged
         data = json.loads(merged)
         assert data["figure_type"] == "schematic"
-        assert data["cross_figure_link"]["source"] == "m3_inference"
+        assert data["cross_figure_link"]["source"] == "llm_inference"
         assert data["cross_figure_link"]["confidence"] == 0.5
         assert data["cross_figure_link"]["figure_id"] == "strat2"
 

@@ -1,11 +1,11 @@
 """Round 7 multi-plate enrichment tests.
 
 Verify that:
-  - m3_engine.enrich_plate_panels calls backend and parses JSON
+  - semantic_engine.enrich_plate_panels calls backend and parses JSON
   - Returns [] on tiny image / fallback / parse failure
   - pipeline._apply_multi_plate_enrichment triggers only for under-populated figures
-  - New rows carry panel_id_source="m3_vision" for audit
-  - CLI flag --m3-multi-plate-enrich routes to extra dict
+  - New rows carry panel_id_source="llm_vision" for audit
+  - CLI flag --llm-multi-plate-enrich routes to extra dict
 """
 
 from __future__ import annotations
@@ -17,43 +17,43 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 class TestCliFlag:
-    """Source guard: --m3-multi-plate-enrich must exist and route to extra."""
+    """Source guard: --llm-multi-plate-enrich must exist and route to extra."""
 
     def test_flag_exists(self):
         text = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "cli.py").read_text(
             encoding="utf-8"
         )
-        assert "--m3-multi-plate-enrich" in text, (
-            "CLI must expose --m3-multi-plate-enrich so users can enable "
-            "the Round 7 second-pass M3 plate enrichment from the command line"
+        assert "--llm-multi-plate-enrich" in text, (
+            "CLI must expose --llm-multi-plate-enrich so users can enable "
+            "the Round 7 second-pass LLM plate enrichment from the command line"
         )
 
     def test_flag_routes_into_extra(self):
-        """--m3-multi-plate-enrich must be wired into the PipelineConfig.
+        """--llm-multi-plate-enrich must be wired into the PipelineConfig.
 
         Audit 2026-08-17: the previous code routed the flag through
-        ``config.extra["m3_multi_plate_enrich"]`` (a free-form dict), but
+        ``config.extra["llm_multi_plate_enrich"]`` (a free-form dict), but
         the CLI never populated that key — the second-pass enrichment
         was silently disabled. The fix promotes it to a typed
-        ``PipelineConfig.m3_multi_plate_enrich_enabled`` attribute; the
+        ``PipelineConfig.llm_multi_plate_enrich_enabled`` attribute; the
         test accepts either the old extra-dict form OR the new typed
         attribute form so a future audit that renames the attribute
         again doesn't break this guard."""
         text = (Path(__file__).resolve().parents[1] / "src" / "rlpe" / "cli.py").read_text(
             encoding="utf-8"
         )
-        assert '"m3_multi_plate_enrich":' in text or "m3_multi_plate_enrich_enabled" in text, (
-            "CLI must route m3_multi_plate_enrich into the "
+        assert '"llm_multi_plate_enrich":' in text or "llm_multi_plate_enrich_enabled" in text, (
+            "CLI must route llm_multi_plate_enrich into the "
             "PipelineConfig (either via extra dict or via the "
-            "m3_multi_plate_enrich_enabled typed attribute)"
+            "llm_multi_plate_enrich_enabled typed attribute)"
         )
 
 
 class TestEnrichPlatePanels:
-    """Unit tests for M3Engine.enrich_plate_panels()."""
+    """Unit tests for SemanticEngine.enrich_plate_panels()."""
 
     def test_prompt_registered(self):
-        from rlpe.m3_engine import PROMPT_REGISTRY
+        from rlpe.semantic_engine import PROMPT_REGISTRY
 
         assert "multi_plate_enrich" in PROMPT_REGISTRY, (
             "PROMPT_REGISTRY must contain multi_plate_enrich system prompt"
@@ -68,12 +68,12 @@ class TestEnrichPlatePanels:
         """Tiny images (<32px) should short-circuit to [] without calling backend."""
         from unittest.mock import MagicMock
 
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         # Construct engine with a stub backend
         backend = MagicMock()
         backend.infer_panel = MagicMock(return_value={"raw_text": "{}"})
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         from PIL import Image
 
         tiny = Image.new("RGB", (16, 16))
@@ -92,11 +92,11 @@ class TestEnrichPlatePanels:
         """Backend returning fallback_used=True should yield []."""
         from unittest.mock import MagicMock
 
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         backend = MagicMock()
         backend.infer_panel = MagicMock(return_value={"fallback_used": True, "raw_text": ""})
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         from PIL import Image
 
         img = Image.new("RGB", (256, 256))
@@ -112,7 +112,7 @@ class TestEnrichPlatePanels:
         """Backend returning valid JSON should yield normalized panel list."""
         from unittest.mock import MagicMock
 
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         backend = MagicMock()
         backend.infer_panel = MagicMock(
@@ -122,7 +122,7 @@ class TestEnrichPlatePanels:
                 '"confidence": 0.5}]}',
             }
         )
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         from PIL import Image
 
         img = Image.new("RGB", (256, 256))
@@ -143,7 +143,7 @@ class TestEnrichPlatePanels:
         """JSON wrapped in ```json fences should still parse."""
         from unittest.mock import MagicMock
 
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         backend = MagicMock()
         backend.infer_panel = MagicMock(
@@ -152,7 +152,7 @@ class TestEnrichPlatePanels:
                 '"species": "Bar foo", "confidence": 0.85}]}\n```',
             }
         )
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         from PIL import Image
 
         img = Image.new("RGB", (256, 256))

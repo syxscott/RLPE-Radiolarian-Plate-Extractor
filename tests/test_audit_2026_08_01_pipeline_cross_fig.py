@@ -62,8 +62,8 @@ class TestRangeChartFigureType:
             patch("rlpe.pipeline.PanelSegmenter"),
         ):
             pipe = RadiolarianPipeline(cfg)
-        # M3 is not required for this test path.
-        pipe.m3_engine = None
+        # LLM is not required for this test path.
+        pipe.semantic_engine = None
         return pipe
 
     def test_range_chart_stub_has_figure_type(self, tmp_path, monkeypatch):
@@ -173,7 +173,7 @@ class TestRangeChartFigureType:
         # observe whether the linker sees paper_figures=1 or paper_figures=0.
         # Use a MagicMock so the linker's full kwarg signature is satisfied
         # automatically (the real function has a required
-        # ``m3_inference_callable`` kwarg).
+        # ``llm_inference_callable`` kwarg).
         from unittest.mock import MagicMock
 
         seen: dict[str, int] = {}

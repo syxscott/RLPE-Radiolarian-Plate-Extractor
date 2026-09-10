@@ -1,4 +1,4 @@
-"""Tests for M3Engine.extract_geology() — multi-modal geology vision.
+"""Tests for SemanticEngine.extract_geology() — multi-modal geology vision.
 
 extract_geology() is the sibling of match_panel(): it sends a figure
 image + caption to the MiniMax-M3 backend and asks for structured
@@ -8,7 +8,7 @@ GeologyLinkRecord so callers can append straight into
 ``panel.metadata.geology_links``.
 
 These tests use ``FakeM3Backend`` from tests.fakes to avoid any real
-MiniMax API call.
+LLM API call.
 """
 
 from __future__ import annotations
@@ -20,15 +20,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
-# rlpe.m3_engine pulls in cv2 transitively when M3Engine() is *instantiated*
+# rlpe.semantic_engine pulls in cv2 transitively when SemanticEngine() is *instantiated*
 # (not when the module is imported). The PROMPT_REGISTRY constant is
 # importable in any env because it's a plain module-level dict. We guard
-# only the M3Engine-backed tests with cv2 skip.
-import rlpe.m3_engine as _m3_mod
+# only the SemanticEngine-backed tests with cv2 skip.
+import rlpe.semantic_engine as _llm_mod
 
 try:
-    PROMPT_REGISTRY = _m3_mod.PROMPT_REGISTRY
-    SECTION_TYPE_BY_FIGURE = _m3_mod.SECTION_TYPE_BY_FIGURE
+    PROMPT_REGISTRY = _llm_mod.PROMPT_REGISTRY
+    SECTION_TYPE_BY_FIGURE = _llm_mod.SECTION_TYPE_BY_FIGURE
 except AttributeError:
     # Tests run before the implementation lands; the constants exist
     # once extract_geology() is implemented in Commit 2.
@@ -48,10 +48,10 @@ def _has_cv2() -> bool:
 _HAS_CV2 = _has_cv2()
 
 
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
+from tests.fakes.fake_llm_backend import FakeM3Backend  # noqa: E402
 
-# M3Engine-backed tests need cv2; PROMPT_REGISTRY tests above don't.
-requires_cv2 = pytest.mark.skipif(not _HAS_CV2, reason="M3Engine requires cv2")
+# SemanticEngine-backed tests need cv2; PROMPT_REGISTRY tests above don't.
+requires_cv2 = pytest.mark.skipif(not _HAS_CV2, reason="SemanticEngine requires cv2")
 
 
 # --------------------------------------------------------------------------- fixtures
@@ -131,16 +131,16 @@ def fake_backend():
 
 
 def _engine_with(backend):
-    """Build a M3Engine backed by ``backend`` and minimal config.
+    """Build a SemanticEngine backed by ``backend`` and minimal config.
 
-    Lazy-imports ``M3Engine`` so a missing cv2 only fails when this is
+    Lazy-imports ``SemanticEngine`` so a missing cv2 only fails when this is
     actually called (each test that needs it is decorated with
     ``@requires_cv2``). Constant-only tests in TestPromptRegistry don't
     go through here.
     """
-    from rlpe.m3_engine import M3Engine
+    from rlpe.semantic_engine import SemanticEngine
 
-    return M3Engine(config={"m3_match_samples": 1}, backend=backend)
+    return SemanticEngine(config={"llm_match_samples": 1}, backend=backend)
 
 
 # --------------------------------------------------------------------------- tests
@@ -189,9 +189,9 @@ class TestPromptRegistry:
 
 
 class TestExtractGeology:
-    """Lock the M3Engine.extract_geology() method's contract.
+    """Lock the SemanticEngine.extract_geology() method's contract.
 
-    Each test that actually instantiates ``M3Engine`` is marked
+    Each test that actually instantiates ``SemanticEngine`` is marked
     ``@pytest.mark.skipif(not _HAS_CV2, ...)`` because the constructor
     transitively imports cv2. PROMPT_REGISTRY / SECTION_TYPE_BY_FIGURE
     are module-level constants that don't need cv2.
@@ -657,7 +657,7 @@ def test_litholog_column_layers_creates_per_layer_records():
 
 @requires_cv2
 def test_paleogeographic_map_without_localities_still_works():
-    """Old M3 responses (no ``localities`` key) must still produce exactly
+    """Old LLM responses (no ``localities`` key) must still produce exactly
     one geo entry and not crash.
     """
     from PIL import Image
@@ -694,7 +694,7 @@ def test_paleogeographic_map_without_localities_still_works():
 
 @requires_cv2
 def test_strat_column_without_layers_still_works():
-    """Old M3 responses (no ``layers`` key) must still produce exactly
+    """Old LLM responses (no ``layers`` key) must still produce exactly
     one geo entry and not crash.
     """
     from PIL import Image

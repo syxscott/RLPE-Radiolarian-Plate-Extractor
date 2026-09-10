@@ -86,10 +86,7 @@ class TestSpeciesSanitisation:
         assert self._sanitise(pipe, "Dictyomitra formosa") == "Dictyomitra_formosa"
 
     def test_subgenus_dropped(self, pipe: RadiolarianPipeline):
-        assert (
-            self._sanitise(pipe, "Cryptamphora (Cryptamphora) strebli")
-            == "Cryptamphora_strebli"
-        )
+        assert self._sanitise(pipe, "Cryptamphora (Cryptamphora) strebli") == "Cryptamphora_strebli"
 
     def test_uncertainty_markers_stripped(self, pipe: RadiolarianPipeline):
         assert self._sanitise(pipe, "H. echinatus?") == "H._echinatus"

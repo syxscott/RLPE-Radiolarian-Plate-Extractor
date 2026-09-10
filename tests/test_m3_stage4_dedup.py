@@ -1,15 +1,15 @@
-"""Tests for _apply_m3_stage4 panel dedup (Round 6 fix).
+"""Tests for _apply_llm_stage4 panel dedup (Round 6 fix).
 
 A real-world test on the Beccaro_2006 PDF (35 panels across one
 plate) showed panel_id="1" repeated 4 times with different
 confidence values. Root cause: the classical CV detector produced
 N physical panel detections per logical panel (over-segmentation),
 all with the same panel_id="1" and similar bboxes. The previous
-``_apply_m3_stage4`` called M3 once per row, so the same physical
+``_apply_llm_stage4`` called LLM once per row, so the same physical
 panel was sent to the API N times — wasting cost and producing
 duplicate rows in the output.
 
-The fix: dedup by (panel_id, bbox-tuple) before calling M3.
+The fix: dedup by (panel_id, bbox-tuple) before calling LLM.
 """
 
 from __future__ import annotations
@@ -31,15 +31,15 @@ requires_cv2 = pytest.mark.skipif(not HAS_CV2, reason="pipeline import requires 
 
 
 class TestApplyM3Stage4Dedup:
-    """Static source guard — _apply_m3_stage4 must dedup by (panel_id, bbox)."""
+    """Static source guard — _apply_llm_stage4 must dedup by (panel_id, bbox)."""
 
     def test_source_has_dedup_loop(self):
         from pathlib import Path as _Path
 
         path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
         text = path.read_text(encoding="utf-8")
-        # Locate _apply_m3_stage4 function body.
-        marker = "def _apply_m3_stage4("
+        # Locate _apply_llm_stage4 function body.
+        marker = "def _apply_llm_stage4("
         i = text.find(marker)
         assert i > 0
         # Use the next top-level ``def `` as the end-marker.
@@ -50,7 +50,7 @@ class TestApplyM3Stage4Dedup:
         # must be built BEFORE the ``for m in matches`` loop so the
         # iteration consumes the deduped list.
         assert "seen_panel_keys" in body, (
-            "_apply_m3_stage4 must dedup panels by (panel_id, bbox) "
+            "_apply_llm_stage4 must dedup panels by (panel_id, bbox) "
             "to avoid wasted API calls on over-segmented figures"
         )
         assert "deduped_matches" in body

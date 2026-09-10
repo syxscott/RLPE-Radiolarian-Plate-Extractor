@@ -392,7 +392,7 @@ def _norm_species(s: str | None) -> str:
         # binomial. DIFFERENT subspecies ("Eucyrtidiellum unumaense
         # pustulatum" vs "…dentatum") are distinct taxa; the blanket
         # fold made them compare equal, inflating F1 and
-        # contradicting m3_engine._normalize_species, which preserves
+        # contradicting semantic_engine._normalize_species, which preserves
         # subspecies.
         if parts[1].rstrip(".,;").lower() == parts[2].rstrip(".,;").lower():
             s = " ".join(parts[:2])

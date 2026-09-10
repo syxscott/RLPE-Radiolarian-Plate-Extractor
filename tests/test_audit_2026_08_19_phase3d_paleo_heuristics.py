@@ -9,7 +9,7 @@ unrelated paths) behaviour.
 
 Bugs covered:
 
-  * M3 — plate-id coord bucket had a hole at lat 25..40 / lon
+  * LLM — plate-id coord bucket had a hole at lat 25..40 / lon
     30..60. Cyprus (35, 33), Israel (32, 35), Jordan (31, 36) and
     southern Turkey fell through to the broad ``lat -40..40,
     lon -25..55`` Africa bucket and were mis-classified as
@@ -67,7 +67,7 @@ from rlpe.paleo_reconstruction import (  # noqa: E402
 )
 
 # ===========================================================================
-# Task 1 / M3 — plate coord bucket (Eastern Mediterranean gap)
+# Task 1 / LLM — plate coord bucket (Eastern Mediterranean gap)
 # ===========================================================================
 
 
@@ -523,7 +523,7 @@ class TestSourceGuard:
     def test_anatolia_bucket_present(self):
         src = (_SRC / "rlpe" / "paleo_reconstruction.py").read_text()
         assert "Anatolia" in src, (
-            "paleo_reconstruction.py must contain 'Anatolia' (the new bucket added by Phase 3D M3)"
+            "paleo_reconstruction.py must contain 'Anatolia' (the new bucket added by Phase 3D LLM)"
         )
         # Also pin the bucket range literally so a future
         # maintainer can't accidentally widen/shrink it.

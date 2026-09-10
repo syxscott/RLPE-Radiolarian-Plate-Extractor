@@ -1,11 +1,11 @@
-"""Tests for tests/fakes/fake_m3_backend.py.
+"""Tests for tests/fakes/fake_llm_backend.py.
 
-Lock down the fake's public contract so M3-stage tests + smoke runs
+Lock down the fake's public contract so LLM-stage tests + smoke runs
 have a stable target. The fake must:
 
 * implement ``infer_text`` + ``infer_panel`` with the production shape
 * track calls in ``self.calls`` for assertion
-* aggregate ``cost_summary()`` the same way MiniMaxM3Backend does
+* aggregate ``cost_summary()`` the same way AnthropicCompatBackend does
 * never make a network call
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
+from tests.fakes.fake_llm_backend import FakeM3Backend  # noqa: E402
 
 
 class TestInferText:
@@ -135,8 +135,8 @@ class TestNoNetwork:
         try:
             from importlib import reload
 
-            if "tests.fakes.fake_m3_backend" in _sys.modules:
-                reload(_sys.modules["tests.fakes.fake_m3_backend"])
+            if "tests.fakes.fake_llm_backend" in _sys.modules:
+                reload(_sys.modules["tests.fakes.fake_llm_backend"])
             assert "requests" not in _sys.modules
         finally:
             if saved is not None:

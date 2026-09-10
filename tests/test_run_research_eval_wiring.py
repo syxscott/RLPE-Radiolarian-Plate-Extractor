@@ -9,7 +9,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
-# Stub MiniMaxM3Backend so import of run_research_eval doesn't try a real call
+# Stub AnthropicCompatBackend so import of run_research_eval doesn't try a real call
 os.environ.setdefault("ANTHROPIC_API_KEY", "dummy")
 os.environ.setdefault("ANTHROPIC_BASE_URL", "https://test.invalid")
 os.environ.setdefault("ANTHROPIC_MODEL", "dummy")
@@ -19,14 +19,14 @@ import rlpe.llm_backends
 
 class _StubBackend:
     def __init__(self, *a, **kw):
-        # Audit 2026-09-03 (CI regression): MiniMaxM3Backend.__post_init__
+        # Audit 2026-09-03 (CI regression): AnthropicCompatBackend.__post_init__
         # now reads ``self.data_outbound_policy`` and checks the env var
         # for ``api_full`` opt-in. The stub must expose the field
         # (with a default that doesn't trigger the opt-in requirement)
         # so downstream construction doesn't AttributeError.
         self.data_outbound_policy = kw.get("data_outbound_policy", "api_redacted")
         # The user-reported BLOCKER fix also assumes ``__post_init__``
-        # exists; some tests do ``mock.patch.object(MiniMaxM3Backend,
+        # exists; some tests do ``mock.patch.object(AnthropicCompatBackend,
         # "__post_init__", lambda self: None)`` which requires the
         # attribute to exist. Add a no-op stub for that case.
         self.__post_init__ = lambda: None
@@ -36,13 +36,13 @@ class _StubBackend:
 
 
 def _import_run_research_eval():
-    """Import ``run_research_eval`` with ``MiniMaxM3Backend`` and
+    """Import ``run_research_eval`` with ``AnthropicCompatBackend`` and
     ``time.sleep`` stubbed, then RESTORE both attributes.
 
     Audit 2026-09-04 (CI regression): this file used to patch both
     attributes at module level and never restore them. Every test
     file collected *after* this one then saw the stub instead of the
-    real ``MiniMaxM3Backend`` (→ AttributeError in
+    real ``AnthropicCompatBackend`` (→ AttributeError in
     test_audit_2026_08_01_llm_backends / phase2c / phase4b) and a
     no-op ``time.sleep`` (→ M9 backoff-jitter assertions failing).
     The stubs are only needed WHILE ``gold_eval_anchored`` executes
@@ -50,9 +50,9 @@ def _import_run_research_eval():
     loop, so keep them scoped to the import and put the originals
     back in a ``finally``.
     """
-    real_backend = rlpe.llm_backends.MiniMaxM3Backend
+    real_backend = rlpe.llm_backends.AnthropicCompatBackend
     real_sleep = _time.sleep
-    rlpe.llm_backends.MiniMaxM3Backend = _StubBackend
+    rlpe.llm_backends.AnthropicCompatBackend = _StubBackend
     _time.sleep = lambda *_a, **_kw: None
     try:
         # gold_eval_anchored.py is a script-style module: its top-level
@@ -63,7 +63,7 @@ def _import_run_research_eval():
 
         return run_research_eval._enrich_preds_with_text_and_group
     finally:
-        rlpe.llm_backends.MiniMaxM3Backend = real_backend
+        rlpe.llm_backends.AnthropicCompatBackend = real_backend
         _time.sleep = real_sleep
 
 

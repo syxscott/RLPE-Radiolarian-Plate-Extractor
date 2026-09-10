@@ -225,16 +225,16 @@ class TestF3WebSpaMagicNums:
         assert m2 is None, "revokeObjectURL timeout must use _BLOB_REVOKE_DELAY_MS, not literal"
 
     def test_no_console_info_in_production(self):
-        # Phase F-3 NIT: two console.info calls inside showMiniMaxFallbackModal
+        # Phase F-3 NIT: two console.info calls inside showLlmFallbackModal
         # were removed; a stray debug leak should fail this test.
         js = _read("web/js/app.js")
-        # The showMiniMaxFallbackModal function must not invoke
+        # The showLlmFallbackModal function must not invoke
         # console.info(...). Comments referencing it are fine.
-        m = re.search(r"function\s+showMiniMaxFallbackModal[\s\S]*?\n\}", js)
+        m = re.search(r"function\s+showLlmFallbackModal[\s\S]*?\n\}", js)
         assert m is not None
         body = m.group(0)
         assert "console.info(" not in body, (
-            "showMiniMaxFallbackModal should not call console.info(...) in production"
+            "showLlmFallbackModal should not call console.info(...) in production"
         )
 
     def test_no_inline_onclick_in_template_literal(self):

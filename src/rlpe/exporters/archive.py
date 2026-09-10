@@ -176,7 +176,7 @@ def _occurrence_row(panel: PanelRecord) -> dict[str, str]:
         # reconstruction / phylogenetic extractions ride on
         # DwC's ``dynamicProperties`` extension term as a
         # JSON-encoded blob. We serialise the same prompt-
-        # contract shape M3 produced so GBIF / DwC consumers
+        # contract shape LLM produced so GBIF / DwC consumers
         # can re-parse the JSON without needing our schema.
         # Phase 65 Plan A.5: cross-figure linker metadata is
         # merged into the same dynamicProperties blob so the
@@ -196,7 +196,7 @@ def _schematic_dynamic_properties(schematic_data: Any) -> str:
     ``dynamicProperties`` column.
 
     Returns an empty string when no schematic data is present
-    (regular plate row). The JSON shape mirrors the M3 prompt
+    (regular plate row). The JSON shape mirrors the LLM prompt
     contract (figure_type / text_elements / relationships /
     extracted_facts / confidence) so a downstream consumer can
     re-parse it identically.
@@ -225,7 +225,7 @@ def _linker_dynamic_properties(metadata: Any) -> str:
     is intentionally flat:
         ``{
             "source": "sample_match" | "locality_match" |
-                      "m3_inference" | "unlinked",
+                      "llm_inference" | "unlinked",
             "confidence": float,
             "figure_id": str | null,
         }``

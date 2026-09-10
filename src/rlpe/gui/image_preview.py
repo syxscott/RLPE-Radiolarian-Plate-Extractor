@@ -284,7 +284,7 @@ class ImagePreviewWidget(QWidget):
         # preview — clear() looked like it freed memory but did not.
         self._pixmap = None
         self._current_path = None
-        # Phase 54 audit m3: also drop the tracked QGraphicsRectItem
+        # Phase 54 audit llm: also drop the tracked QGraphicsRectItem
         # and QGraphicsTextItem references. The old code only called
         # ``self._scene.clear()`` (which detaches them from the scene
         # but keeps the Python refs), so the next ``_overlay_bboxes``

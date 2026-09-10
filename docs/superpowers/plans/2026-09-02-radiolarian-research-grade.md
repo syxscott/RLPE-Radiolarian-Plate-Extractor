@@ -16,7 +16,7 @@
 
 ### 新建文件
 - `scripts/caption_fixer.py` — 通用 caption 选取（不引用 gold）
-- `scripts/prompts.py` — 4 个 M3 prompt 模板（按 paper type）
+- `scripts/prompts.py` — 4 个 LLM prompt 模板（按 paper type）
 - `scripts/post_process.py` — panel + species 后处理（4 函数）
 - `data/gold_v19_extended/` — 扩到 20+ 论文的黄金集
 - `data/splits/research_v1.json` — train/test split 写死
@@ -284,7 +284,7 @@ git commit -m "feat(scripts): add general caption_fixer (no gold reference)"
 
 ---
 
-### Task 3: prompts.py — 4 M3 prompt 模板
+### Task 3: prompts.py — 4 LLM prompt 模板
 
 **Files:**
 - Create: `scripts/prompts.py`
@@ -342,7 +342,7 @@ Expected: ImportError for `prompts` module (doesn't exist yet)
 
 Create `scripts/prompts.py`:
 ```python
-"""M3 prompt library — 4 templates selected by paper type.
+"""LLM prompt library — 4 templates selected by paper type.
 
 These prompts describe general rules only (no specific taxa, no
 gold references). They instruct the LLM to:
@@ -430,7 +430,7 @@ def select_prompt(caption: str) -> str:
 
 
 def build_user_prompt(caption: str) -> str:
-    """Wrap the caption into the user message sent to M3."""
+    """Wrap the caption into the user message sent to LLM."""
     return f"Caption:\n{caption[:3000]}\n\nExtract every panel and species as JSON."
 ```
 
@@ -443,7 +443,7 @@ Expected: All 5 tests PASS
 
 ```bash
 git add scripts/prompts.py tests/test_prompts.py
-git commit -m "feat(scripts): add 4 M3 prompt templates by paper type"
+git commit -m "feat(scripts): add 4 LLM prompt templates by paper type"
 ```
 
 ---
@@ -516,7 +516,7 @@ Expected: ImportError for `post_process` module (doesn't exist yet)
 
 Create `scripts/post_process.py`:
 ```python
-"""Post-processing for M3 panel extraction output.
+"""Post-processing for LLM panel extraction output.
 
 Four utilities:
   - parse_open_nomenclature: split 'Genus cf. species' into (sp, qualifier)
@@ -525,7 +525,7 @@ Four utilities:
   - normalize_panel_id: strip 'Fig. N' / 'Pl. N' / 'Plate N' prefix
 
 All functions are pure (no LLM call, no gold reference) — they
-operate only on the pred rows returned by M3.
+operate only on the pred rows returned by LLM.
 """
 from __future__ import annotations
 
@@ -863,7 +863,7 @@ Create `scripts/run_research_eval.py`:
 ```python
 """Run the full research-grade F1 eval.
 
-Combines: caption_fixer + prompts + post_process + LLM-first MiniMax M3
+Combines: caption_fixer + prompts + post_process + LLM-first LLM LLM
 + 5-fold CV + bootstrap CI on the 9-paper v19 set.
 
 Reports train/test F1 separately to expose generalization gap.
@@ -886,7 +886,7 @@ sys.path.insert(0, str(REPO / 'scripts'))
 
 import pymupdf
 from PIL import Image
-from rlpe.llm_backends import MiniMaxM3Backend
+from rlpe.llm_backends import AnthropicCompatBackend
 from rlpe.utils import stable_id
 
 from caption_fixer import select_caption
@@ -935,7 +935,7 @@ def call_m3(backend, img, caption, system_prompt) -> dict | None:
 
 
 def extract_panels_for_paper(backend, slug: str, gold: list[dict]) -> list[dict]:
-    """Run caption_fixer + prompts + M3 + post_process on one paper."""
+    """Run caption_fixer + prompts + LLM + post_process on one paper."""
     pdf_path = find_pdf(slug)
     if pdf_path is None:
         print(f'  no PDF for {slug}, skip')
@@ -1013,7 +1013,7 @@ def main():
     split = load_split(args.split)
     print(f'Split: {len(split["train"])} train + {len(split["test"])} test')
 
-    backend = MiniMaxM3Backend(
+    backend = AnthropicCompatBackend(
         api_key=os.environ['ANTHROPIC_API_KEY'],
         base_url=os.environ['ANTHROPIC_BASE_URL'],
         model=os.environ.get('ANTHROPIC_MODEL', 'MiniMax-M3'),

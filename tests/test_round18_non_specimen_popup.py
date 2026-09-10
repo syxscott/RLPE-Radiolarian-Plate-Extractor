@@ -1,6 +1,6 @@
 """Round 18 source-guard tests: non-specimen popup suppression.
 
-When MiniMax M3 sees a figure that isn't a radiolarian specimen
+When LLM LLM sees a figure that isn't a radiolarian specimen
 (bar chart, table, map, publication-count graph), it returns a
 deliberate refusal like:
 
@@ -18,7 +18,7 @@ The fix:
      ``is_non_specimen_figure=True``.
   2. Backend: _apply_gemma_with_fallback short-circuits to a silent
      skip when that flag is set.
-  3. Frontend: showMiniMaxFallbackModal has a defensive double-check
+  3. Frontend: showLlmFallbackModal has a defensive double-check
      that pattern-matches the same phrases in case a stale server
      doesn't send the flag.
 """
@@ -40,7 +40,7 @@ def _read(path: str) -> str:
 
 def test_non_specimen_helper_recognises_known_phrases():
     """``_looks_like_non_specimen_error`` must flag the standard
-    refusal text that M3 returns for non-specimen figures."""
+    refusal text that LLM returns for non-specimen figures."""
     from rlpe.pipeline import RadiolarianPipeline
 
     helper = RadiolarianPipeline._looks_like_non_specimen_error
@@ -122,11 +122,11 @@ def test_apply_gemma_with_fallback_silently_skips_non_specimen():
 
 def test_non_specimen_skip_records_action_metadata():
     """When skipping a non-specimen figure, the match metadata must
-    record ``MiniMax_fallback_action='skipped_non_specimen'`` so
+    record ``llm_fallback_action='skipped_non_specimen'`` so
     audit tools can see WHY a figure produced no rows."""
     src = _read("src/rlpe/pipeline.py")
     assert '"skipped_non_specimen"' in src or "'skipped_non_specimen'" in src, (
-        "Pipeline doesn't stamp MiniMax_fallback_action='skipped_non_specimen' "
+        "Pipeline doesn't stamp llm_fallback_action='skipped_non_specimen' "
         "on matches that were silently dropped for non-specimen content."
     )
 
@@ -150,19 +150,18 @@ def test_frontend_has_non_specimen_patterns():
 
 
 def test_frontend_popup_checks_non_specimen_first():
-    """``showMiniMaxFallbackModal`` must consult is_non_specimen_figure
+    """``showLlmFallbackModal`` must consult is_non_specimen_figure
     or the pattern helper BEFORE creating / showing the modal DOM."""
     src = _read("web/js/app.js")
     # Find the function
-    idx = src.find("function showMiniMaxFallbackModal")
+    idx = src.find("function showLlmFallbackModal")
     assert idx > 0
     window = src[idx : idx + 1500]
     assert "is_non_specimen_figure" in window, (
-        "showMiniMaxFallbackModal doesn't consult is_non_specimen_figure "
-        "from the server's error_info."
+        "showLlmFallbackModal doesn't consult is_non_specimen_figure from the server's error_info."
     )
     assert "looksLikeNonSpecimenRefusal" in window, (
-        "showMiniMaxFallbackModal doesn't run looksLikeNonSpecimenRefusal as a defensive fallback."
+        "showLlmFallbackModal doesn't run looksLikeNonSpecimenRefusal as a defensive fallback."
     )
     # Both checks must run BEFORE the modal DOM is created.
     server_flag_pos = window.find("is_non_specimen_figure")

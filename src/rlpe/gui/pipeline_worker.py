@@ -31,7 +31,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from ..config import PipelineConfig
 from ..pipeline import RadiolarianPipeline
 from ..utils import stable_id
-from .constants import DEFAULT_LLM_BACKEND, DEFAULT_MINIMAX_MODEL
+from .constants import DEFAULT_LLM_BACKEND, DEFAULT_LLM_MODEL
 from .utils import get_gui_logger
 
 
@@ -187,8 +187,8 @@ class PipelineWorker(QThread):
                 # surface an actionable hint instead of a bare "0 rows".
                 self._emit_log(
                     "WARNING: 0 rows extracted with the LLM disabled "
-                    "(data_outbound_policy=local_only). Set a MiniMax API "
-                    "key in Settings → LLM / M3 (or the MiniMax_API_KEY "
+                    "(data_outbound_policy=local_only). Set a LLM API "
+                    "key in Settings → LLM API (or the ANTHROPIC_API_KEY "
                     "environment variable) to enable LLM caption parsing, "
                     "then re-run."
                 )
@@ -297,7 +297,7 @@ class PipelineWorker(QThread):
             "od_ocr_lang": str(s.get("ocr_lang", "en")),
             "od_merge_gap_pt": float(s.get("od_merge_gap_pt", 72.0)),
             "ocr_lang": str(s.get("ocr_lang", "en")),
-            "m3_prompt_lang": str(s.get("m3_prompt_lang", "auto")),
+            "llm_prompt_lang": str(s.get("llm_prompt_lang", "auto")),
             # Phase 54 audit: M4 — forward the user's LLM backend +
             # model choice from the Run tab into the pipeline config.
             # The previous code collected these in ``RunTab.collect_settings``
@@ -308,40 +308,42 @@ class PipelineWorker(QThread):
             # path (cli.py:418) sets ``extra["llm_backend"]`` explicitly;
             # the GUI path missed it.
             "llm_backend": str(s.get("llm_backend", DEFAULT_LLM_BACKEND)),
-            "MiniMax_model": str(s.get("m3_model", DEFAULT_MINIMAX_MODEL)),
-            "MiniMax_enable_thinking": bool(s.get("MiniMax_enable_thinking", False)),
-            "MiniMax_api_key": s.get("MiniMax_api_key") or None,
-            "MiniMax_endpoint": s.get("MiniMax_endpoint") or None,
+            "llm_model": str(s.get("llm_model", DEFAULT_LLM_MODEL)),
+            "llm_enable_thinking": bool(s.get("llm_enable_thinking", False)),
+            "llm_api_key": s.get("llm_api_key") or None,
+            "llm_base_url": s.get("llm_base_url") or None,
             "grobid_max_retries": grobid_max_retries,
             "grobid_timeout": grobid_timeout,
             "disable_od_fallback": bool(s.get("disable_od_fallback", False)),
             "use_geology_llm": bool(s.get("use_geology_llm", False)),
             "use_geo_vision": bool(s.get("use_geo_vision", False)),
-            "use_m3_stage3": bool(s.get("use_m3_stage3", True)),
-            "m3_multi_plate_enrich": bool(s.get("m3_multi_plate_enrich", True)),
+            "use_llm_stage3": bool(s.get("use_llm_stage3", True)),
+            "llm_multi_plate_enrich": bool(s.get("llm_multi_plate_enrich", True)),
             "use_paleodb": bool(s.get("use_paleodb", True)),
             "paleodb_max_occurrences": paleodb_max_occ,
             # audit 2026-07-31: paleodb_endpoint was saved by the
             # Settings tab but never forwarded — a custom endpoint was
             # silently ignored.
             "paleodb_endpoint": str(s.get("paleodb_endpoint") or "https://paleobiodb.org/data1.2"),
-            "MiniMax_max_retries": int(s.get("MiniMax_max_retries", 3)),
-            "MiniMax_timeout_sec": int(s.get("MiniMax_timeout_sec", 60)),
-            "MiniMax_thinking_budget_tokens": int(s.get("MiniMax_thinking_budget", 1024)),
-            "MiniMax_max_concurrent": int(s.get("MiniMax_max_concurrent", 1)),
+            "llm_max_retries": int(s.get("llm_max_retries", 3)),
+            "llm_timeout_sec": int(s.get("llm_timeout_sec", 60)),
+            "llm_thinking_budget_tokens": int(
+                s.get("llm_thinking_budget", s.get("MiniMax_thinking_budget", 1024))
+            ),
+            "llm_max_concurrent": int(s.get("llm_max_concurrent", 1)),
             # BUG-1 (audit 2026-09-04): resolve via _resolve_outbound_policy
             # instead of defaulting to local_only — the GUI settings dict
             # historically never carried the key, so the LLM was always
             # disabled and 0-row runs were invisible to the user.
             "data_outbound_policy": _resolve_outbound_policy(
-                str(s.get("data_outbound_policy") or ""), s.get("MiniMax_api_key")
+                str(s.get("data_outbound_policy") or ""), s.get("llm_api_key")
             ),
             # SAM2 / model paths — pass through if set
             "sam2_checkpoint": s.get("sam2_checkpoint"),
             "sam2_model_cfg": s.get("sam2_model_cfg"),
             "taxon_hf_model_path": s.get("taxon_hf_model_path"),
             "taxon_lexicon_path": s.get("taxon_lexicon_path"),
-            "m3_diagnostic_dir": s.get("m3_diagnostic_dir"),
+            "llm_diagnostic_dir": s.get("llm_diagnostic_dir"),
         }
 
         cfg = PipelineConfig(
@@ -420,7 +422,7 @@ class PipelineWorker(QThread):
             v1.1.0 fields so the keys survive even when the producer
             is a hand-rolled dict that lacks ``model_dump``.
           * We also forward the metadata sub-fields the GUI's
-            detail panel reads (``scale_bar``, ``m3_diagnostic``,
+            detail panel reads (``scale_bar``, ``llm_diagnostic``,
             ``page_index``) so the detail panel doesn't have to fall
             back to ``"—"`` for them.
         """
@@ -442,12 +444,12 @@ class PipelineWorker(QThread):
         if isinstance(row, dict):
             md = _flatten_metadata(row.get("metadata") or {})
             # Forward metadata sub-fields the GUI's detail panel
-            # surfaces (scale_bar, m3_diagnostic, page_index). These
+            # surfaces (scale_bar, llm_diagnostic, page_index). These
             # are also exposed via the PanelRecord.metadata sub-object
             # so the keys appear under both paths.
             if row.get("metadata"):
                 raw_md = row.get("metadata") or {}
-                for sub_key in ("scale_bar", "m3_diagnostic", "page_index"):
+                for sub_key in ("scale_bar", "llm_diagnostic", "page_index"):
                     if sub_key not in md and sub_key in raw_md:
                         md[sub_key] = raw_md.get(sub_key)
             return {
@@ -513,7 +515,7 @@ def _detect_gpu() -> bool:
 
 
 # Valid values for the ``data_outbound_policy`` setting (mirrors the
-# gate in ``MiniMaxM3Backend.__post_init__``, llm_backends.py:1592).
+# gate in ``AnthropicCompatBackend.__post_init__``, llm_backends.py:1592).
 _VALID_OUTBOUND_POLICIES = frozenset({"auto", "api_redacted", "api_full", "local_only"})
 # Same opt-in set the backend accepts for ``RLPE_DATA_OUTBOUND_OPT_IN``
 # (llm_backends.py:1607).
@@ -525,7 +527,7 @@ def _resolve_outbound_policy(policy_setting: str, settings_key: str | None) -> s
 
     BUG-1 (audit 2026-09-04): the settings dict flowing through the GUI
     never carried ``data_outbound_policy``, so ``_build_config`` silently
-    fell back to ``local_only`` and ``MiniMaxM3Backend`` short-circuited
+    fell back to ``local_only`` and ``AnthropicCompatBackend`` short-circuited
     every ``infer_*`` call. Stage-1 caption parsing then fell back to the
     regex parser, which produces garbage pairs for the "Explanation of
     Plate N" convention — the run finished with 0 rows and no warning.
@@ -534,21 +536,21 @@ def _resolve_outbound_policy(policy_setting: str, settings_key: str | None) -> s
       * an explicit, valid user choice (``api_redacted`` / ``api_full`` /
         ``local_only``) always wins;
       * ``auto`` (or unset / garbage) picks ``api_redacted`` when a
-        MiniMax key is reachable — settings key or env via the shared
-        ``resolve_minimax_api_key`` helper (which includes the Round 18
+        LLM key is reachable — settings key or env via the shared
+        ``resolve_llm_api_key`` helper (which includes the Round 18
         ``ANTHROPIC_API_KEY`` fallback that ``RadiolarianPipeline``
         injects into the config — BUG-4, audit 2026-09-04: the resolver
         previously ignored it and disabled the LLM while the pipeline
         would have had a key) — and ``local_only`` otherwise;
       * ``api_full`` is opt-in only (``RLPE_DATA_OUTBOUND_OPT_IN``, the
-        same gate ``MiniMaxM3Backend`` enforces). Without it the backend
+        same gate ``AnthropicCompatBackend`` enforces). Without it the backend
         would raise mid-run, so we downgrade to ``api_redacted`` here.
     """
     policy = (policy_setting or "").strip()
     if policy not in _VALID_OUTBOUND_POLICIES or policy == "auto":
-        from ..llm_backends import resolve_minimax_api_key
+        from ..llm_backends import resolve_llm_api_key
 
-        has_key = resolve_minimax_api_key({"MiniMax_api_key": settings_key}) is not None
+        has_key = resolve_llm_api_key({"llm_api_key": settings_key}) is not None
         policy = "api_redacted" if has_key else "local_only"
     if (
         policy == "api_full"

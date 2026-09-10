@@ -1,4 +1,4 @@
-"""Regression tests for audit 2026-08-01 batch W5 — llm_backends.py 11 bugs (M2/M3/M4/M6/M7/M8/M9/M10/M11/M12/M14)."""
+"""Regression tests for audit 2026-08-01 batch W5 — llm_backends.py 11 bugs (M2/LLM/M4/M6/M7/M8/M9/M10/M11/M12/M14)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ if str(_SRC) not in sys.path:
 # ---------------------------------------------------------------------------
 def _make_fake_anthropic_module() -> Any:
     """Return a tiny stand-in for the ``anthropic`` module so we can
-    exercise ``MiniMaxM3Backend._call_api`` without the real SDK."""
+    exercise ``AnthropicCompatBackend._call_api`` without the real SDK."""
 
     class RateLimitError(Exception):
         pass
@@ -40,17 +40,17 @@ def _make_fake_anthropic_module() -> Any:
 
 
 def _make_MiniMax_backend(**overrides) -> Any:
-    """Return a ``MiniMaxM3Backend`` with the SDK stubbed out so
+    """Return a ``AnthropicCompatBackend`` with the SDK stubbed out so
     construction never tries to talk to the network."""
     fake_anth = _make_fake_anthropic_module()
     fake_client = mock.MagicMock()
     with mock.patch.dict(sys.modules, {"anthropic": fake_anth}):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         defaults = dict(api_key="sk-test-1234567890123456", data_outbound_policy="api_full")
         defaults.update(overrides)
-        with mock.patch.object(MiniMaxM3Backend, "__post_init__", lambda self: None):
-            backend = MiniMaxM3Backend(**defaults)
+        with mock.patch.object(AnthropicCompatBackend, "__post_init__", lambda self: None):
+            backend = AnthropicCompatBackend(**defaults)
             backend._anthropic = fake_anth
             backend._client = fake_client
             backend._lock = type("L", (), {"__enter__": lambda s: s, "__exit__": lambda *a: None})()
@@ -99,7 +99,7 @@ class TestM2ThinkingMaxTokens:
 
 
 # ---------------------------------------------------------------------------
-# Bug M3: 4xx (non-401/403) with no fallback should fail fast
+# Bug LLM: 4xx (non-401/403) with no fallback should fail fast
 # ---------------------------------------------------------------------------
 class TestM3FailFastOn4xxNoFallback:
     def test_4xx_no_fallback_raises_after_one_attempt(self, monkeypatch):
@@ -230,7 +230,7 @@ class TestM6ParseFailureCounting:
     def test_make_result_routes_through_helper(self, monkeypatch):
         """A parse failure in _make_result should bump total_errors
         via the helper, even when no thinking block is present."""
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         backend = _make_MiniMax_backend()
         fake_resp = mock.MagicMock()
@@ -337,10 +337,12 @@ class TestM8AnthropicMaxRetries:
 
         with mock.patch.dict(sys.modules, {"anthropic": fake_anth}):
             # Re-import to ensure the patched module is used
-            from rlpe.llm_backends import MiniMaxM3Backend
+            from rlpe.llm_backends import AnthropicCompatBackend
 
-            MiniMaxM3Backend(
+            AnthropicCompatBackend(
                 api_key="sk-test-1234567890123456",
+                base_url="http://localhost:0",
+                model="test-model",
                 data_outbound_policy="api_full",
             )
         # The constructor should have been called with max_retries=0
@@ -449,27 +451,27 @@ class TestM10SSRFGuard:
 # ---------------------------------------------------------------------------
 class TestM11MaxConcurrentValidation:
     def test_zero_raises_value_error(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         with pytest.raises(ValueError, match="max_concurrent"):
-            MiniMaxM3Backend(
+            AnthropicCompatBackend(
                 api_key="sk-test-1234567890123456",
                 max_concurrent=0,
             )
 
     def test_negative_raises_value_error(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         with pytest.raises(ValueError, match="max_concurrent"):
-            MiniMaxM3Backend(
+            AnthropicCompatBackend(
                 api_key="sk-test-1234567890123456",
                 max_concurrent=-1,
             )
 
     def test_positive_works(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        backend = MiniMaxM3Backend(
+        backend = AnthropicCompatBackend(
             api_key="sk-test-1234567890123456",
             max_concurrent=4,
             data_outbound_policy="local_only",  # skip SDK init
@@ -529,7 +531,7 @@ class TestM14ParseErrorRedaction:
         """When parse_json_from_text raises and the error message
         contains a fake key, the result dict's ``error`` and
         ``reasoning`` fields must not contain the raw key."""
-        from rlpe.llm_backends import MiniMaxM3Backend, _redact_api_keys
+        from rlpe.llm_backends import AnthropicCompatBackend, _redact_api_keys
 
         backend = _make_MiniMax_backend()
         fake_resp = mock.MagicMock()

@@ -31,8 +31,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 from rlpe.opendataloader_extractor import _find_plate_captions  # noqa: E402
+from rlpe.semantic_engine import _regex_parse_caption  # noqa: E402
 
 OD_JSON = (
     ROOT

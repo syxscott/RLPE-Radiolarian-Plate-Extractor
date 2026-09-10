@@ -34,7 +34,7 @@
                 任务管理
             </button>
             <button class="tab-btn" data-tab="results">
-                <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+                <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="LLM 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
                 结果查看
             </button>
             <button class="tab-btn" data-tab="settings">
@@ -53,7 +53,7 @@
                     <button class="onboarding-close" id="onboarding-close-btn" aria-label="关闭引导">&times;</button>
                     <h3>👋 欢迎使用 RLPE</h3>
                     <p class="onboarding-subtitle">
-                        系统已为您预设最佳配置（MiniMax M3 云端 API），<strong>3 步即可完成第一次提取</strong>：
+                        系统已为您预设最佳配置（Anthropic 兼容云端 API），<strong>3 步即可完成第一次提取</strong>：
                     </p>
                     <ol class="onboarding-steps">
                         <li><strong>① 检查 API Key</strong> — 下方"LLM 服务状态"会显示 Key 是否已配置</li>
@@ -61,11 +61,9 @@
                         <li><strong>③ 点击"开始处理"</strong> — 等待 30 秒到几分钟即可看到结果</li>
                     </ol>
                     <p class="onboarding-hint">
-                        💡 没有 API Key？
-                        <a href="https://platform.minimaxi.com/user-center/payment/token-plan" target="_blank" rel="noopener">
-                            点这里申请 MiniMax Token Plan
-                        </a>
-                        （申请后将 Key 写入项目根目录的 <code>.env</code> 文件，重启服务即可生效）
+                        💡 没有配置？在下方"设置"页的「LLM API 配置」中填入任意
+                        Anthropic 兼容服务的地址、Key 和模型名即可；也可以把 Key 写入项目根目录的
+                        <code>.env</code> 文件（ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / ANTHROPIC_MODEL），重启服务生效。
                     </p>
                 </div>
 
@@ -75,7 +73,7 @@
                         <h2>
                             <span class="llm-status-icon" id="llm-status-icon">⏳</span>
                             LLM 服务状态
-                            <span class="badge badge-recommended">默认 MiniMax M3</span>
+                            <span class="badge badge-recommended">Anthropic 兼容</span>
                         </h2>
                         <button id="llm-test-btn" class="btn btn-small" type="button">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
@@ -103,7 +101,7 @@
                     <div id="file-list" class="file-list"></div>
                     <div id="cost-estimate" class="cost-estimate hidden">
                         <span class="cost-estimate-icon">💰</span>
-                        <span id="cost-estimate-text">预估调用 MiniMax 约 — 次，约 ¥—</span>
+                        <span id="cost-estimate-text">预估调用 LLM 约 — 次，约 ¥—</span>
                     </div>
                 </div>
 
@@ -131,10 +129,10 @@
                         <div class="config-row">
                             <label class="config-row-label" for="llm-backend-basic">
                                 LLM 引擎
-                                <span class="tooltip-icon" data-tooltip="MiniMax M3 是云端多模态 LLM，无需本地 GPU。其他选项需要自行部署本地模型。">?</span>
+                                <span class="tooltip-icon" data-tooltip="Anthropic 兼容云端 API：任意兼容服务商（MiniMax / DeepSeek / Kimi / OpenRouter 等），无需本地 GPU。其他选项需要自行部署本地模型。">?</span>
                             </label>
                             <select id="llm-backend-basic" class="config-row-input">
-                                <option value="MiniMax" selected>🌟 MiniMax M3（云端，推荐）</option>
+                                <option value="anthropic" selected>🌟 Anthropic 兼容 API（云端，推荐）</option>
                                 <option value="llamacpp">llama.cpp（本地，需自部署）</option>
                                 <option value="ollama">Ollama（本地，需自部署）</option>
                                 <option value="transformers">Transformers（本地 GPU）</option>
@@ -193,7 +191,7 @@
                             <div class="config-group">
                                 <label for="llm-backend">LLM 后端（与基础视图同步）</label>
                                 <select id="llm-backend">
-                                    <option value="MiniMax" selected>🌟 MiniMax M3（云端 API，推荐）</option>
+                                    <option value="anthropic" selected>🌟 Anthropic 兼容 API（云端，推荐）</option>
                                     <option value="llamacpp">llama.cpp 服务</option>
                                     <option value="ollama">Ollama</option>
                                     <option value="transformers">Transformers (本地 GPU)</option>
@@ -209,48 +207,48 @@
                                 <input type="text" id="llm-host" value="http://127.0.0.1:8080" placeholder="llamacpp:8080 / ollama:11434">
                             </div>
 
-                            <!-- MiniMax M3 API fields -->
-                            <div id="MiniMax-config" class="config-section">
+                            <!-- LLM LLM API fields -->
+                            <div id="llm-config" class="config-section">
                                 <div class="config-group">
-                                    <label for="MiniMax-api-key">
+                                    <label for="llm-api-key">
                                         API Key
                                         <span class="tooltip-icon" data-tooltip="留空则自动从 .env 文件的 ANTHROPIC_API_KEY 读取（推荐）。在此处填写仅用于临时覆盖。">?</span>
                                     </label>
                                     <div class="input-with-toggle">
-                                        <input type="password" id="MiniMax-api-key" placeholder="不填则从 .env 读取 ANTHROPIC_API_KEY">
+                                        <input type="password" id="llm-api-key" placeholder="不填则从 .env 读取 ANTHROPIC_API_KEY">
                                         <button type="button" class="input-toggle-btn" id="api-key-toggle" aria-label="显示/隐藏 API Key">
                                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                         </button>
                                     </div>
                                 </div>
                                 <div class="config-group">
-                                    <label for="MiniMax-endpoint">API Endpoint</label>
-                                    <input type="text" id="MiniMax-endpoint" value="https://api.minimaxi.com/anthropic">
+                                    <label for="llm-base-url">API Endpoint</label>
+                                    <input type="text" id="llm-base-url" placeholder="留空 = 使用已保存配置 / ANTHROPIC_BASE_URL">
                                 </div>
                                 <div class="config-group">
-                                    <label for="MiniMax-model">模型名</label>
-                                    <input type="text" id="MiniMax-model" value="MiniMax-M3">
+                                    <label for="llm-model">模型名</label>
+                                    <input type="text" id="llm-model" placeholder="留空 = 使用已保存配置 / ANTHROPIC_MODEL">
                                 </div>
                                 <div class="config-group">
                                     <label class="checkbox-label">
-                                        <input type="checkbox" id="MiniMax-enable-thinking">
+                                        <input type="checkbox" id="llm-enable-thinking">
                                         启用扩展思考（extended thinking，会增加 token 消耗）
                                         <span class="tooltip-icon" data-tooltip="开启后 LLM 会在内部多走一轮推理，提高准确率但增加成本。默认关闭以减少 API 费用。">?</span>
                                     </label>
                                 </div>
                                 <div class="config-group">
-                                    <label for="MiniMax-thinking-budget">
+                                    <label for="llm-thinking-budget">
                                         思考 Token 预算
                                         <span class="tooltip-icon" data-tooltip="允许 LLM 内部思考使用的最大 token 数。0 表示关闭思考。默认 1024 平衡了精度和成本。">?</span>
                                     </label>
-                                    <input type="number" id="MiniMax-thinking-budget" value="1024" min="0" max="32000" step="64">
+                                    <input type="number" id="llm-thinking-budget" value="1024" min="0" max="32000" step="64">
                                 </div>
                                 <div class="config-group">
-                                    <label for="MiniMax-fallback-default">
+                                    <label for="llm-fallback-default">
                                         API 失败时回退动作
-                                        <span class="tooltip-icon" data-tooltip="MiniMax API 报错时（限流/网络/Key 失效）系统采取的默认动作。">?</span>
+                                        <span class="tooltip-icon" data-tooltip="LLM API 报错时（限流/网络/Key 失效）系统采取的默认动作。">?</span>
                                     </label>
-                                    <select id="MiniMax-fallback-default">
+                                    <select id="llm-fallback-default">
                                         <option value="rules" selected>使用规则流水线（推荐）</option>
                                         <option value="gemma4">切换到本地 Gemma4</option>
                                         <option value="stop">停止整个任务</option>
@@ -325,7 +323,7 @@
                             <option value="cancelled">已取消</option>
                         </select>
                         <button id="refresh-jobs-btn" class="btn btn-small" aria-label="刷新任务列表">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="LLM.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
     刷新
 </button>
                         <button id="delete-selected-btn" class="btn btn-small btn-danger" disabled aria-label="删除选中的任务">
@@ -436,13 +434,44 @@
                     </div>
 
                     <div class="settings-section">
+                        <h3>LLM API 配置</h3>
+                        <p class="config-hint" style="margin-top:0;">
+                            配置任意 Anthropic 兼容服务的地址、Key 与模型名（保存在
+                            <code>~/.rlpe/llm_api.json</code>，Web / 桌面端 / 命令行共用）。
+                            Key 留空表示不修改已保存的 Key。
+                        </p>
+                        <div class="config-group">
+                            <label for="llmcfg-base-url">API 地址</label>
+                            <input type="text" id="llmcfg-base-url" placeholder="https://&lt;provider&gt;/anthropic">
+                        </div>
+                        <div class="config-group">
+                            <label for="llmcfg-api-key">API Key</label>
+                            <div class="input-with-toggle">
+                                <input type="password" id="llmcfg-api-key" placeholder="留空 = 不修改已保存的 Key">
+                                <button type="button" class="input-toggle-btn" id="llmcfg-key-toggle" aria-label="显示/隐藏 API Key">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="config-group">
+                            <label for="llmcfg-model">模型名</label>
+                            <input type="text" id="llmcfg-model" placeholder="服务商的模型名">
+                        </div>
+                        <div id="llmcfg-status" class="llm-usage" style="margin: 8px 0;"></div>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <button id="llmcfg-save-btn" class="btn btn-primary" type="button">保存 API 配置</button>
+                            <button id="llmcfg-test-btn" class="btn btn-secondary" type="button">测试连接</button>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
                         <h3>系统信息</h3>
                         <div id="system-info" class="system-info"></div>
                     </div>
 
                     <div class="settings-section">
-                        <h3>MiniMax 累计用量</h3>
-                        <div id="minimax-usage" class="minimax-usage">
+                        <h3>LLM 累计用量</h3>
+                        <div id="llm-usage" class="llm-usage">
                             <p style="color: var(--text-muted);">加载中...</p>
                         </div>
                     </div>
@@ -531,7 +560,7 @@
         <!-- Notification Toast -->
         <div id="notification" class="notification hidden" role="status" aria-live="polite"></div>
 
-        <!-- Toast container for non-blocking feedback (B3/M3 fix) -->
+        <!-- Toast container for non-blocking feedback (B3/LLM fix) -->
         <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
     </div>
 

@@ -1,4 +1,4 @@
-"""M3 prompt library — 4 templates selected by paper type.
+"""LLM prompt library — 4 templates selected by paper type.
 
 These prompts describe general rules only (no specific taxa, no
 gold references). They instruct the LLM to:
@@ -115,5 +115,5 @@ def select_prompt(caption: str | None) -> str:
 
 
 def build_user_prompt(caption: str) -> str:
-    """Wrap the caption into the user message sent to M3."""
+    """Wrap the caption into the user message sent to LLM."""
     return f"Caption:\n{caption[:3000]}\n\nExtract every panel and species as JSON."

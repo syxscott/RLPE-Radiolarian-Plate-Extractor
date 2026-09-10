@@ -19,7 +19,7 @@ species per plate, instead of one per fig range).
 
 from __future__ import annotations
 
-from rlpe.m3_engine import _regex_parse_caption
+from rlpe.semantic_engine import _regex_parse_caption
 
 
 def test_pouille_species_before_label_pattern():

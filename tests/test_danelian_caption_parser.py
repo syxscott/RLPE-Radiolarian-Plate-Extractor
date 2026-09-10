@@ -16,7 +16,7 @@ genera (e.g. "A. patricki" for Archaeodictyomitra patricki).
 
 from __future__ import annotations
 
-from rlpe.m3_engine import _regex_parse_caption
+from rlpe.semantic_engine import _regex_parse_caption
 
 DANELIAN_PLATE_1 = (
     "Plate 1\n\n"

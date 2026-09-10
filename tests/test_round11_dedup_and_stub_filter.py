@@ -1,7 +1,7 @@
 """Round 11 source-guard tests.
 
 Locks in the four pipeline post-processing bug fixes discovered
-during the live MiniMax M3 smoke tests on real PDFs:
+during the live LLM LLM smoke tests on real PDFs:
 
   Bug 1  panel_id duplicates with different panel_path
   Bug 2  LLM-first hallucinated panel_ids not in caption set
@@ -41,7 +41,7 @@ except Exception:
 def test_hallucination_filter_present():
     """The hallucination filter must live in ``_process_region`` after
     the caption parser has built ``pair_lookup`` (round 11 placement
-    fix). Without this, M3-returned panels with labels NOT in the
+    fix). Without this, LLM-returned panels with labels NOT in the
     caption set pollute eval — e.g. Pouille 2014 returns 35 panels
     with pid=2,4,7,9,10,11,13,14b all invented (caption only lists 6).
     """

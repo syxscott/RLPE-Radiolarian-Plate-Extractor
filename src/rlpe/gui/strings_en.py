@@ -70,7 +70,7 @@ STRINGS = {
     "runtab.out.choose": "Choose…",
     "runtab.out.open": "Open",
     "runtab.basic_group": "⚙️ Basic configuration",
-    "runtab.adv_group": "🔬 Advanced (LLM / M3 / PBDB)",
+    "runtab.adv_group": "🔬 Advanced (LLM / LLM / PBDB)",
     "runtab.label.ocr_backend": "OCR backend:",
     "runtab.label.ocr_lang": "OCR language(s):",
     "runtab.label.grobid_url": "GROBID URL:",
@@ -87,17 +87,17 @@ STRINGS = {
     "runtab.ocr_lang.placeholder": "e.g. English, 中文 (简体), 日本語",
     "runtab.ocr_lang.tooltip": "OCR language (e.g. English, 中文, 日本語).\nEditable — power users can type 'en,ja' for multi-lang.",
     "runtab.label.llm_backend": "LLM backend:",
-    "runtab.label.m3_lang": "M3 prompt lang:",
-    "runtab.label.m3_model": "M3 model:",
-    "runtab.label.m3_budget": "M3 thinking budget:",
-    "runtab.label.m3_output": "M3 max output tokens:",
-    "runtab.label.m3_timeout": "M3 timeout (s):",
-    "runtab.label.m3_max_retries": "M3 max retries:",
+    "runtab.label.llm_lang": "LLM prompt lang:",
+    "runtab.label.llm_model": "LLM model:",
+    "runtab.label.llm_budget": "LLM thinking budget:",
+    "runtab.label.llm_output": "LLM max output tokens:",
+    "runtab.label.llm_timeout": "LLM timeout (s):",
+    "runtab.label.llm_max_retries": "LLM max retries:",
     "runtab.label.paleodb_occ": "PBDB max occurrences:",
     "runtab.use_pbdb": "Use Paleobiology Database for taxonomy + occurrence enrichment",
     "runtab.geo_vision": "Multi-modal geology vision (Round 6)",
-    "runtab.m3_stage3": "M3 stage 3 (panel refinement)",
-    "runtab.m3_multi_plate": "M3 multi-plate enrichment (Round 7)",
+    "runtab.llm_stage3": "LLM stage 3 (panel refinement)",
+    "runtab.llm_multi_plate": "LLM multi-plate enrichment (Round 7)",
     "runtab.od_fallback": "Allow OpenDataLoader fallback when GROBID fails (Phase 29)",
     "runtab.save_intermediate": "Save intermediate panels (large disk usage)",
     "runtab.label.dpi": "Render DPI:",
@@ -260,7 +260,7 @@ STRINGS = {
     # Phase 65 Plan A.6: cross-figure linker source chip labels.
     "restab.detail.link_source.sample_match": "Sample ID match",
     "restab.detail.link_source.locality_match": "Locality match",
-    "restab.detail.link_source.m3_inference": "M3 inference",
+    "restab.detail.link_source.llm_inference": "LLM inference",
     "restab.detail.link_source.unlinked": "Unlinked",
     # Phase 66 Plan C.6: visual-coordinate cross-reference section
     # labels (Phase C fires only when Phase A Strategy-1 didn't match).
@@ -292,16 +292,19 @@ STRINGS = {
     "settab.ocr.lang.placeholder": "English, 中文 (简体), 日本語…",
     "settab.ocr.caption_window": "Caption window (GROBID):",
     "settab.ocr.od_caption_window": "OD caption window:",
-    "settab.llm": "LLM / M3",
+    "settab.llm": "LLM API",
     "settab.llm.backend": "LLM backend:",
-    "settab.llm.api_key": "MiniMax API key:",
+    "settab.llm.base_url": "API base URL:",
+    "settab.llm.base_url_hint": "https://<provider>/anthropic  (blank = saved settings / ANTHROPIC_BASE_URL)",
+    "settab.llm.api_key": "API key:",
+    "settab.llm.api_key_hint": "(blank = saved settings / ANTHROPIC_API_KEY env)",
     "settab.llm.outbound": "Data outbound policy:",
-    "settab.m3.model": "M3 model:",
-    "settab.m3.lang": "M3 prompt lang:",
-    "settab.m3.budget": "M3 thinking budget:",
-    "settab.m3.output": "M3 max output tokens:",
-    "settab.m3.timeout": "M3 timeout (s):",
-    "settab.m3.max_retries": "M3 max retries:",
+    "settab.llm.model": "LLM model:",
+    "settab.llm.lang": "LLM prompt lang:",
+    "settab.llm.budget": "LLM thinking budget:",
+    "settab.llm.output": "LLM max output tokens:",
+    "settab.llm.timeout": "LLM timeout (s):",
+    "settab.llm.max_retries": "LLM max retries:",
     "settab.pbdb": "PBDB",
     "settab.pbdb.use": "Enable PBDB enrichment (taxonomy + occurrences)",
     "settab.pbdb.occ": "Max occurrences per species:",
@@ -452,7 +455,7 @@ STRINGS = {
 }
 
 
-# Phase 55 audit M3 — fail loudly on duplicate keys (same guard as
+# Phase 55 audit LLM — fail loudly on duplicate keys (same guard as
 # strings_zh_CN). Python silently keeps the LAST duplicate in a
 # dict literal, masking upstream bugs in the translation generator.
 import re as _re_dup_en

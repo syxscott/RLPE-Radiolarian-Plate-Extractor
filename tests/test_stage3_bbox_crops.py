@@ -1,22 +1,22 @@
 """Tests for Round-4 P2-5: Stage 3 bbox + crop enrichment.
 
-The pre-fix pipeline collected M3 Stage 3 panel bboxes into
-``m3_diag["stage3_panels"]`` (a debug-only dict) but never lifted
-them into the published MatchResult — so even when M3 correctly
+The pre-fix pipeline collected LLM Stage 3 panel bboxes into
+``llm_diag["stage3_panels"]`` (a debug-only dict) but never lifted
+them into the published MatchResult — so even when LLM correctly
 detected 4 panel bboxes for a plate, the resulting pred rows still
 showed ``panel_id_source="legacy"`` and the web UI's image-verified
 badge never fired.
 
 The fix adds ``_apply_stage3_bbox_crops`` which:
   1. Walks each result row, looks up matching Stage 3 boxes via
-     ``m3_diag["stage3_panels"]`` (panel_id or visible_label match).
+     ``llm_diag["stage3_panels"]`` (panel_id or visible_label match).
   2. Crops the plate image at the bbox and writes a PNG to
-     ``output/figures/m3_crops/{paper_id}/{figure_id}/{panel_id}.png``.
-  3. Stamps ``metadata.m3_stage3_bbox``, ``m3_stage3_visible_label``,
-     ``m3_stage3_panel_path``, ``panel_id_source="m3_vision"``,
+     ``output/figures/llm_crops/{paper_id}/{figure_id}/{panel_id}.png``.
+  3. Stamps ``metadata.llm_stage3_bbox``, ``llm_stage3_visible_label``,
+     ``llm_stage3_panel_path``, ``panel_id_source="llm_vision"``,
      ``stage3_confidence``.
 
-This test suite uses synthetic PNGs (no M3 API call, no cv2) to
+This test suite uses synthetic PNGs (no LLM API call, no cv2) to
 lock down the rewrite behavior. Live verification requires the
 CV conda env + a MiniMax-M3 API key.
 """
@@ -83,7 +83,7 @@ class TestStage3BboxCrops:
                     self.config = cfg
 
                     # Stage 3 crops live under ``self.config.figures_dir()
-                    # / "m3_crops" / paper_id``. The production code
+                    # / "llm_crops" / paper_id``. The production code
                     # uses ``self.config.figures_dir()`` directly; we
                     # point ``figures_dir`` at our tmp_path / "figs"
                     # via a tiny shim.
@@ -132,12 +132,12 @@ class TestStage3BboxCrops:
         logger = _logging.getLogger("stage3_test_inline")
 
         def _apply(results, paper_id):
-            crops_dir = figure_image_dir / "m3_crops" / paper_id
+            crops_dir = figure_image_dir / "llm_crops" / paper_id
             crops_dir.mkdir(parents=True, exist_ok=True)
             figure_to_panels = {}
             for r in results:
                 md = r.get("metadata") or {}
-                stage3 = (md.get("m3_diagnostic") or {}).get("stage3_panels") or []
+                stage3 = (md.get("llm_diagnostic") or {}).get("stage3_panels") or []
                 if stage3:
                     figure_to_panels[r.get("figure_id")] = stage3
             if not figure_to_panels:
@@ -193,13 +193,13 @@ class TestStage3BboxCrops:
                     crop_path = crops_dir / fig_id / crop_filename
                     crop_path.parent.mkdir(parents=True, exist_ok=True)
                     crop.save(crop_path, "PNG")
-                md["m3_stage3_bbox"] = list(bbox)
-                md["m3_stage3_visible_label"] = matched.get("visible_label")
-                md["m3_stage3_panel_path"] = str(crop_path)
+                md["llm_stage3_bbox"] = list(bbox)
+                md["llm_stage3_visible_label"] = matched.get("visible_label")
+                md["llm_stage3_panel_path"] = str(crop_path)
                 if not r.get("panel_path"):
                     r["panel_path"] = str(crop_path)
-                    md["panel_path_source"] = "m3_stage3_crop"
-                md["panel_id_source"] = "m3_vision"
+                    md["panel_path_source"] = "llm_stage3_crop"
+                md["panel_id_source"] = "llm_vision"
                 md["stage3_confidence"] = matched.get("confidence")
                 r["metadata"] = md
             return results
@@ -214,7 +214,7 @@ class TestStage3BboxCrops:
         return _InlineHelper()
 
     def test_no_stage3_panels_passes_through_unchanged(self, tmp_path):
-        """Rows without ``m3_diagnostic.stage3_panels`` are passed through
+        """Rows without ``llm_diagnostic.stage3_panels`` are passed through
         untouched."""
         pipeline = self._make_helper(tmp_path, figure_image_dir=tmp_path / "figs")
         rows = [
@@ -229,11 +229,11 @@ class TestStage3BboxCrops:
         ]
         out = pipeline._apply_stage3_bbox_crops(rows, "p1")
         assert out is rows
-        assert out[0]["metadata"].get("panel_id_source") != "m3_vision"
+        assert out[0]["metadata"].get("panel_id_source") != "llm_vision"
 
     def test_stage3_match_lifts_panel_id_source_and_crops(self, tmp_path):
         """When a row matches a Stage 3 box (by panel_id or visible_label),
-        ``panel_id_source`` becomes ``m3_vision`` and the bbox is
+        ``panel_id_source`` becomes ``llm_vision`` and the bbox is
         cropped to disk."""
         figure_dir = tmp_path / "figs"
         plate_path = _png(figure_dir / "plate_p1_f1.png", color=(180, 200, 220))
@@ -247,7 +247,7 @@ class TestStage3BboxCrops:
                 "panel_path": None,
                 "bbox": None,
                 "metadata": {
-                    "m3_diagnostic": {
+                    "llm_diagnostic": {
                         "stage3_panels": [
                             {
                                 "panel_id": "P1",
@@ -264,18 +264,18 @@ class TestStage3BboxCrops:
         out = pipeline._apply_stage3_bbox_crops(rows, "p1")
         row = out[0]
         md = row["metadata"]
-        # panel_id_source promoted to m3_vision.
-        assert md["panel_id_source"] == "m3_vision"
+        # panel_id_source promoted to llm_vision.
+        assert md["panel_id_source"] == "llm_vision"
         # bbox + visible_label lifted from stage3.
-        assert md["m3_stage3_bbox"] == [10, 20, 80, 60]
-        assert md["m3_stage3_visible_label"] == "3"
+        assert md["llm_stage3_bbox"] == [10, 20, 80, 60]
+        assert md["llm_stage3_visible_label"] == "3"
         assert md["stage3_confidence"] == 0.92
         # Crop path populated.
-        assert md["m3_stage3_panel_path"].endswith(".png")
+        assert md["llm_stage3_panel_path"].endswith(".png")
         # panel_path was None before; helper filled it.
         assert row["panel_path"].endswith(".png")
         # Crop file actually written.
-        crop_path = Path(md["m3_stage3_panel_path"])
+        crop_path = Path(md["llm_stage3_panel_path"])
         assert crop_path.is_file(), f"crop file not written: {crop_path}"
         assert crop_path.stat().st_size > 0
 
@@ -294,7 +294,7 @@ class TestStage3BboxCrops:
                 "panel_path": None,
                 "bbox": None,
                 "metadata": {
-                    "m3_diagnostic": {
+                    "llm_diagnostic": {
                         "stage3_panels": [
                             {
                                 "panel_id": "P1",
@@ -309,13 +309,13 @@ class TestStage3BboxCrops:
             }
         ]
         out = pipeline._apply_stage3_bbox_crops(rows, "p1")
-        assert out[0]["metadata"]["panel_id_source"] == "m3_vision"
-        assert out[0]["metadata"]["m3_stage3_visible_label"] == "3"
+        assert out[0]["metadata"]["panel_id_source"] == "llm_vision"
+        assert out[0]["metadata"]["llm_stage3_visible_label"] == "3"
 
     def test_existing_panel_path_not_overwritten(self, tmp_path):
         """If the row already has a richer ``panel_path`` (e.g. from
         classical CV stage), the helper does NOT clobber it. Only the
-        ``m3_stage3_panel_path`` diagnostic field is set."""
+        ``llm_stage3_panel_path`` diagnostic field is set."""
         figure_dir = tmp_path / "figs"
         plate_path = _png(figure_dir / "plate.png")
         existing_crop = _png(figure_dir / "existing_panel.png")
@@ -329,7 +329,7 @@ class TestStage3BboxCrops:
                 "panel_path": str(existing_crop),
                 "bbox": None,
                 "metadata": {
-                    "m3_diagnostic": {
+                    "llm_diagnostic": {
                         "stage3_panels": [
                             {
                                 "panel_id": "P1",
@@ -346,8 +346,8 @@ class TestStage3BboxCrops:
         # panel_path unchanged (still points to the existing crop).
         assert out[0]["panel_path"] == str(existing_crop)
         # Diagnostic path was still written.
-        assert "m3_stage3_panel_path" in out[0]["metadata"]
-        assert out[0]["metadata"]["m3_stage3_panel_path"] != str(existing_crop)
+        assert "llm_stage3_panel_path" in out[0]["metadata"]
+        assert out[0]["metadata"]["llm_stage3_panel_path"] != str(existing_crop)
 
     def test_no_panel_id_match_leaves_row_alone(self, tmp_path):
         """If neither ``panel_id`` nor ``visible_label`` matches any
@@ -364,7 +364,7 @@ class TestStage3BboxCrops:
                 "panel_path": None,
                 "bbox": None,
                 "metadata": {
-                    "m3_diagnostic": {
+                    "llm_diagnostic": {
                         "stage3_panels": [
                             {
                                 "panel_id": "P1",
@@ -380,8 +380,8 @@ class TestStage3BboxCrops:
         ]
         out = pipeline._apply_stage3_bbox_crops(rows, "p1")
         # Row passed through; no panel_id_source rewrite.
-        assert out[0]["metadata"].get("panel_id_source") != "m3_vision"
-        assert "m3_stage3_bbox" not in out[0]["metadata"]
+        assert out[0]["metadata"].get("panel_id_source") != "llm_vision"
+        assert "llm_stage3_bbox" not in out[0]["metadata"]
 
     def test_bbox_outside_plate_clamped(self, tmp_path):
         """A bbox that extends past the plate edges is clamped, not
@@ -400,7 +400,7 @@ class TestStage3BboxCrops:
                 "panel_path": None,
                 "bbox": None,
                 "metadata": {
-                    "m3_diagnostic": {
+                    "llm_diagnostic": {
                         "stage3_panels": [
                             {
                                 # Bbox extends 50px past right + bottom.
@@ -415,10 +415,10 @@ class TestStage3BboxCrops:
             }
         ]
         out = pipeline._apply_stage3_bbox_crops(rows, "p1")
-        assert out[0]["metadata"]["panel_id_source"] == "m3_vision"
+        assert out[0]["metadata"]["panel_id_source"] == "llm_vision"
         # Verify the crop is a valid PNG of size 20x20 (clamped from
         # 100x100 bbox to 100-80=20 px each side).
-        crop_path = Path(out[0]["metadata"]["m3_stage3_panel_path"])
+        crop_path = Path(out[0]["metadata"]["llm_stage3_panel_path"])
         with Image.open(crop_path) as im:
             assert im.size == (20, 20)
 
@@ -436,7 +436,7 @@ class TestStage3BboxCrops:
                 "panel_path": None,
                 "bbox": None,
                 "metadata": {
-                    "m3_diagnostic": {
+                    "llm_diagnostic": {
                         "stage3_panels": [
                             {
                                 "panel_id": f"P{i + 1}",
@@ -458,9 +458,9 @@ class TestStage3BboxCrops:
         ]
         out = pipeline._apply_stage3_bbox_crops(rows, "p1")
         for r in out:
-            assert r["metadata"]["panel_id_source"] == "m3_vision"
+            assert r["metadata"]["panel_id_source"] == "llm_vision"
         # All four crops written under the same figure dir.
-        crop_paths = [Path(r["metadata"]["m3_stage3_panel_path"]) for r in out]
+        crop_paths = [Path(r["metadata"]["llm_stage3_panel_path"]) for r in out]
         assert all(p.is_file() for p in crop_paths)
         # They live under the same figure_id subdir.
         figure_dirs = {p.parent for p in crop_paths}
@@ -491,7 +491,7 @@ class TestStage3BboxCrops:
                 "panel_path": None,
                 "bbox": None,
                 "metadata": {
-                    "m3_diagnostic": {
+                    "llm_diagnostic": {
                         "stage3_panels": [
                             {
                                 "panel_id": "P1",
@@ -522,9 +522,9 @@ class TestStage3BboxCrops:
         # Compare to the inline version's output structure.
         row = out_prod[0]
         md = row["metadata"]
-        assert md["panel_id_source"] == "m3_vision"
-        assert md["m3_stage3_bbox"] == [10, 20, 80, 60]
-        assert Path(md["m3_stage3_panel_path"]).is_file()
+        assert md["panel_id_source"] == "llm_vision"
+        assert md["llm_stage3_bbox"] == [10, 20, 80, 60]
+        assert Path(md["llm_stage3_panel_path"]).is_file()
 
 
 class TestStage3BboxCropsSourceGuard:
@@ -536,8 +536,8 @@ class TestStage3BboxCropsSourceGuard:
     That makes the inline-helper tests immune to source mutations
     (they exercise a local copy of the logic, not the production
     source). This guard reads the source file directly to lock the
-    critical contract strings (``panel_id_source = "m3_vision"``,
-    ``m3_stage3_panel_path``, etc.) so a silent revert of the
+    critical contract strings (``panel_id_source = "llm_vision"``,
+    ``llm_stage3_panel_path``, etc.) so a silent revert of the
     fix breaks the test.
     """
 
@@ -551,32 +551,32 @@ class TestStage3BboxCropsSourceGuard:
             "_apply_stage3_bbox_crops. The fix is missing from source."
         )
 
-    def test_source_sets_panel_id_source_m3_vision(self):
+    def test_source_sets_panel_id_source_llm_vision(self):
         from pathlib import Path as _Path
 
         path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
         text = path.read_text(encoding="utf-8")
-        assert '"m3_vision"' in text, (
+        assert '"llm_vision"' in text, (
             "Stage 3 fix: src/rlpe/pipeline.py must stamp "
-            "panel_id_source = 'm3_vision' on enriched rows. The "
+            "panel_id_source = 'llm_vision' on enriched rows. The "
             "fix is missing from source."
         )
 
-    def test_source_writes_crops_to_m3_crops_subdir(self):
+    def test_source_writes_crops_to_llm_crops_subdir(self):
         from pathlib import Path as _Path
 
         path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
         text = path.read_text(encoding="utf-8")
-        # Production crops live under output/figures/m3_crops/{paper_id}/...
-        assert '"m3_crops"' in text, (
+        # Production crops live under output/figures/llm_crops/{paper_id}/...
+        assert '"llm_crops"' in text, (
             "Stage 3 fix: crops must be written under "
-            "output/figures/m3_crops/{paper_id}/ subdir. The fix "
+            "output/figures/llm_crops/{paper_id}/ subdir. The fix "
             "is missing or has changed the directory."
         )
 
     def test_stage3_called_from_process_one_pdf_od(self):
         """The Stage 3 helper must be invoked from the per-PDF
-        loop, gated on the ``m3_stage3`` config flag. Without
+        loop, gated on the ``llm_stage3`` config flag. Without
         this hook, the helper exists but is never called, so the
         Round-3 deferred #1 fix would be silent."""
         from pathlib import Path as _Path

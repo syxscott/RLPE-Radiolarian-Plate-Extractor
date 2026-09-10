@@ -3,9 +3,9 @@
 The driver (scripts/smoke_oa_corpus.py) iterates a directory of PDF
 files, runs the RadiolarianPipeline on each, and writes a JSONL
 summary with per-PDF (ok, elapsed_s, row_count, geo_vision_calls,
-geo_vision_cost_cny, error). These tests lock down the driver
+geo_vision_calls, error). These tests lock down the driver
 contract without ever touching a real PDF or making an outbound
-MiniMax API call.
+LLM API call.
 """
 
 from __future__ import annotations
@@ -110,16 +110,16 @@ class TestSummarizeResults:
         s = summarize_results([])
         assert s["ok_count"] == 0
         assert s["fail_count"] == 0
-        assert s["total_cost_cny"] == 0.0
+        # F17: cost accounting removed from the summary contract.
+        assert "total_cost_cny" not in s
 
     def test_aggregates_ok_fail_counts(self):
         rows = [
-            {"ok": True, "elapsed_s": 1.0, "geo_vision_cost_cny": 0.1, "row_count": 5},
-            {"ok": True, "elapsed_s": 2.0, "geo_vision_cost_cny": 0.2, "row_count": 7},
+            {"ok": True, "elapsed_s": 1.0, "row_count": 5},
+            {"ok": True, "elapsed_s": 2.0, "row_count": 7},
             {
                 "ok": False,
                 "elapsed_s": 0.5,
-                "geo_vision_cost_cny": 0.0,
                 "row_count": 0,
                 "error": "boom",
             },
@@ -127,15 +127,13 @@ class TestSummarizeResults:
         s = summarize_results(rows)
         assert s["ok_count"] == 2
         assert s["fail_count"] == 1
-        assert s["total_cost_cny"] == pytest.approx(0.3)
         assert s["mean_elapsed_s"] == pytest.approx((1.0 + 2.0 + 0.5) / 3.0)
         assert s["total_rows"] == 12
 
     def test_handles_missing_optional_keys(self):
-        rows = [{"ok": True}]  # no elapsed_s / cost
+        rows = [{"ok": True}]  # no elapsed_s / row_count
         s = summarize_results(rows)
         assert s["ok_count"] == 1
-        assert s["total_cost_cny"] == 0.0
         assert s["mean_elapsed_s"] == 0.0
         assert s["total_rows"] == 0
 
@@ -155,7 +153,6 @@ class TestDriverJsonlContract:
                 "row_count": 35,
                 "range_chart_detected_count": 1,
                 "geo_vision_calls": 0,
-                "geo_vision_cost_cny": 0.0,
                 "llm_usage_path": None,
                 "run_output_path": None,
             }
@@ -172,7 +169,6 @@ class TestDriverJsonlContract:
             "row_count",
             "range_chart_detected_count",
             "geo_vision_calls",
-            "geo_vision_cost_cny",
         ):
             assert key in parsed[0]
 

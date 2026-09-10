@@ -44,11 +44,12 @@ from .constants import (
     DEFAULT_GROBID_MAX_RETRIES,
     DEFAULT_GROBID_TIMEOUT,
     DEFAULT_GROBID_URL,
-    DEFAULT_M3_BUDGET,
-    DEFAULT_M3_MAX_RETRIES,
-    DEFAULT_M3_PROMPT_LANG,
-    DEFAULT_M3_TIMEOUT,
-    DEFAULT_MINIMAX_MODEL,
+    DEFAULT_LLM_BACKEND,
+    DEFAULT_LLM_BUDGET,
+    DEFAULT_LLM_MAX_RETRIES,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_PROMPT_LANG,
+    DEFAULT_LLM_TIMEOUT,
     DEFAULT_OCR_LANG,
     DEFAULT_PALEO_MAX_OCC,
     DEFAULT_RENDER_DPI,
@@ -64,10 +65,10 @@ from .constants import (
     RANGE_DPI,
     RANGE_GROBID_MAX_RETRIES,
     RANGE_GROBID_TIMEOUT,
-    RANGE_M3_BUDGET,
-    RANGE_M3_MAX_RETRIES,
-    RANGE_M3_OUTPUT_TOKENS,
-    RANGE_M3_TIMEOUT,
+    RANGE_LLM_BUDGET,
+    RANGE_LLM_MAX_RETRIES,
+    RANGE_LLM_OUTPUT_TOKENS,
+    RANGE_LLM_TIMEOUT,
     RANGE_OD_CAPTION_WINDOW,
     RANGE_PALEO_OCC,
     RANGE_YOLO_CONF,
@@ -76,6 +77,7 @@ from .constants import (
     THEME_LIGHT,
     THEME_SYSTEM,
 )
+from .i18n import _tr as tr
 from .i18n_widgets import (
     _ensure_size_hint,
     tr_button,
@@ -429,14 +431,21 @@ class SettingsTab(QWidget):
         llayout.addRow(tr_label("settab.llm.backend"), self._llm_backend)
 
         # BUG-1 (audit 2026-09-04): the GUI had no way to enter a
-        # MiniMax API key or choose the data-outbound policy, so the
+        # LLM API key or choose the data-outbound policy, so the
         # worker always ran local_only and the LLM was silently
         # disabled. Password echo keeps the key out of shoulder-surf
         # and out of screen recordings.
-        self._minimax_api_key = QLineEdit()
-        self._minimax_api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._minimax_api_key.setPlaceholderText("(blank = use MiniMax_API_KEY env var)")
-        llayout.addRow(tr_label("settab.llm.api_key"), self._minimax_api_key)
+        # F17: the endpoint is editable too; key/endpoint/model are
+        # persisted to the shared ~/.rlpe/llm_api.json (see _save) so
+        # the Web UI and CLI resolve the same configuration.
+        self._llm_base_url = QLineEdit()
+        self._llm_base_url.setPlaceholderText(tr("settab.llm.base_url_hint"))
+        llayout.addRow(tr_label("settab.llm.base_url"), self._llm_base_url)
+
+        self._llm_api_key = QLineEdit()
+        self._llm_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._llm_api_key.setPlaceholderText(tr("settab.llm.api_key_hint"))
+        llayout.addRow(tr_label("settab.llm.api_key"), self._llm_api_key)
 
         self._data_outbound = QComboBox()
         self._data_outbound.setMinimumHeight(32)
@@ -446,37 +455,37 @@ class SettingsTab(QWidget):
         populate_friendly_combo(self._data_outbound, data_outbound_friendly_options)
         llayout.addRow(tr_label("settab.llm.outbound"), self._data_outbound)
 
-        self._m3_model = QLineEdit(DEFAULT_MINIMAX_MODEL)
-        llayout.addRow(tr_label("settab.m3.model"), self._m3_model)
+        self._llm_model = QLineEdit(DEFAULT_LLM_MODEL)
+        llayout.addRow(tr_label("settab.llm.model"), self._llm_model)
 
-        self._m3_prompt_lang = QComboBox()
-        self._m3_prompt_lang.setMinimumHeight(32)
-        self._m3_prompt_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._llm_prompt_lang = QComboBox()
+        self._llm_prompt_lang.setMinimumHeight(32)
+        self._llm_prompt_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         # Phase 55 audit M8 — i18n-aware populate helper.
-        from .constants import m3_prompt_lang_friendly_options
+        from .constants import llm_prompt_lang_friendly_options
 
-        populate_friendly_combo(self._m3_prompt_lang, m3_prompt_lang_friendly_options)
-        llayout.addRow(tr_label("settab.m3.lang"), self._m3_prompt_lang)
+        populate_friendly_combo(self._llm_prompt_lang, llm_prompt_lang_friendly_options)
+        llayout.addRow(tr_label("settab.llm.lang"), self._llm_prompt_lang)
 
-        self._m3_budget = QSpinBox()
-        self._m3_budget.setRange(*RANGE_M3_BUDGET)
-        self._m3_budget.setValue(DEFAULT_M3_BUDGET)
-        llayout.addRow(tr_label("settab.m3.budget"), self._m3_budget)
+        self._llm_budget = QSpinBox()
+        self._llm_budget.setRange(*RANGE_LLM_BUDGET)
+        self._llm_budget.setValue(DEFAULT_LLM_BUDGET)
+        llayout.addRow(tr_label("settab.llm.budget"), self._llm_budget)
 
-        self._m3_output = QSpinBox()
-        self._m3_output.setRange(*RANGE_M3_OUTPUT_TOKENS)
-        self._m3_output.setValue(2048)
-        llayout.addRow(tr_label("settab.m3.output"), self._m3_output)
+        self._llm_output = QSpinBox()
+        self._llm_output.setRange(*RANGE_LLM_OUTPUT_TOKENS)
+        self._llm_output.setValue(2048)
+        llayout.addRow(tr_label("settab.llm.output"), self._llm_output)
 
-        self._m3_timeout = QSpinBox()
-        self._m3_timeout.setRange(*RANGE_M3_TIMEOUT)
-        self._m3_timeout.setValue(DEFAULT_M3_TIMEOUT)
-        llayout.addRow(tr_label("settab.m3.timeout"), self._m3_timeout)
+        self._llm_timeout = QSpinBox()
+        self._llm_timeout.setRange(*RANGE_LLM_TIMEOUT)
+        self._llm_timeout.setValue(DEFAULT_LLM_TIMEOUT)
+        llayout.addRow(tr_label("settab.llm.timeout"), self._llm_timeout)
 
-        self._m3_max_retries = QSpinBox()
-        self._m3_max_retries.setRange(*RANGE_M3_MAX_RETRIES)
-        self._m3_max_retries.setValue(3)
-        llayout.addRow(tr_label("settab.m3.max_retries"), self._m3_max_retries)
+        self._llm_max_retries = QSpinBox()
+        self._llm_max_retries.setRange(*RANGE_LLM_MAX_RETRIES)
+        self._llm_max_retries.setValue(3)
+        llayout.addRow(tr_label("settab.llm.max_retries"), self._llm_max_retries)
 
         body_layout.addWidget(llm)
 
@@ -873,28 +882,46 @@ class SettingsTab(QWidget):
         self._od_caption_window.setValue(_qint("od_caption_window", 5, RANGE_OD_CAPTION_WINDOW))
 
         # LLM
-        llm_backend = self._qsettings.value("llm_backend", "minimax")
+        llm_backend = str(self._qsettings.value("llm_backend", DEFAULT_LLM_BACKEND) or "")
+        # F17: legacy vendor alias values map onto "anthropic".
+        if llm_backend in {
+            "minimax",
+            "minimax-m3",
+            "minimax_api",
+            "MiniMax",
+            "MiniMax-m3",
+            "MiniMax_api",
+        }:
+            llm_backend = "anthropic"
         ix = self._llm_backend.findData(llm_backend)
         if ix >= 0:
             self._llm_backend.setCurrentIndex(ix)
-        self._m3_model.setText(self._qsettings.value("m3_model", DEFAULT_MINIMAX_MODEL))
-        # BUG-1 (audit 2026-09-04): restore the MiniMax key + outbound
+        # F17 migration: pre-F17 GUI stored the model under "m3_model"
+        # and never had an endpoint field; migrate them once.
+        legacy_model = str(self._qsettings.value("m3_model", "") or "")
+        model_val = str(self._qsettings.value("llm_model", "") or "") or legacy_model
+        self._llm_model.setText(model_val or DEFAULT_LLM_MODEL)
+        # BUG-1 (audit 2026-09-04): restore the LLM key + outbound
         # policy. Missing policy → "auto" (the new worker-side resolver
         # picks api_redacted/local_only from key availability).
-        self._minimax_api_key.setText(self._qsettings.value("MiniMax_api_key", ""))
+        legacy_key = str(self._qsettings.value("MiniMax_api_key", "") or "")
+        key_val = str(self._qsettings.value("llm_api_key", "") or "") or legacy_key
+        self._llm_api_key.setText(key_val)
         outbound = self._qsettings.value("data_outbound_policy", "auto")
         outbound_ix = self._data_outbound.findData(outbound)
         if outbound_ix >= 0:
             self._data_outbound.setCurrentIndex(outbound_ix)
         # the friendly display.
-        m3_lang = self._qsettings.value("m3_prompt_lang", DEFAULT_M3_PROMPT_LANG)
-        m3_lang_ix = self._m3_prompt_lang.findData(m3_lang)
-        if m3_lang_ix >= 0:
-            self._m3_prompt_lang.setCurrentIndex(m3_lang_ix)
-        self._m3_budget.setValue(_qint("MiniMax_thinking_budget", DEFAULT_M3_BUDGET))
-        self._m3_output.setValue(_qint("MiniMax_max_output_tokens", 2048))
-        self._m3_timeout.setValue(_qint("MiniMax_timeout_sec", DEFAULT_M3_TIMEOUT))
-        self._m3_max_retries.setValue(_qint("MiniMax_max_retries", DEFAULT_M3_MAX_RETRIES))
+        llm_lang = self._qsettings.value("llm_prompt_lang", DEFAULT_LLM_PROMPT_LANG)
+        llm_lang_ix = self._llm_prompt_lang.findData(llm_lang)
+        if llm_lang_ix >= 0:
+            self._llm_prompt_lang.setCurrentIndex(llm_lang_ix)
+        self._llm_budget.setValue(
+            _qint("llm_thinking_budget", _qint("MiniMax_thinking_budget", DEFAULT_LLM_BUDGET))
+        )
+        self._llm_output.setValue(_qint("llm_max_output_tokens", 2048))
+        self._llm_timeout.setValue(_qint("llm_timeout_sec", DEFAULT_LLM_TIMEOUT))
+        self._llm_max_retries.setValue(_qint("llm_max_retries", DEFAULT_LLM_MAX_RETRIES))
 
         # PBDB
         self._use_pbdb.setChecked(self._qsettings.value("use_paleodb", True, type=bool))
@@ -1051,18 +1078,19 @@ class SettingsTab(QWidget):
         # LLM
         llm_backend_code = self._llm_backend.currentData() or self._llm_backend.currentText()
         self._qsettings.setValue("llm_backend", llm_backend_code)
-        self._qsettings.setValue("m3_model", self._m3_model.text())
-        # BUG-1 (audit 2026-09-04): persist the MiniMax key + outbound
+        self._qsettings.setValue("llm_model", self._llm_model.text())
+        # BUG-1 (audit 2026-09-04): persist the LLM key + outbound
         # policy so the worker's _resolve_outbound_policy sees them.
-        self._qsettings.setValue("MiniMax_api_key", self._minimax_api_key.text())
+        self._qsettings.setValue("llm_api_key", self._llm_api_key.text())
+        self._qsettings.setValue("llm_base_url", self._llm_base_url.text())
         outbound_code = self._data_outbound.currentData() or self._data_outbound.currentText()
         self._qsettings.setValue("data_outbound_policy", outbound_code)
-        m3_lang_code = self._m3_prompt_lang.currentData() or self._m3_prompt_lang.currentText()
-        self._qsettings.setValue("m3_prompt_lang", m3_lang_code)
-        self._qsettings.setValue("MiniMax_thinking_budget", self._m3_budget.value())
-        self._qsettings.setValue("MiniMax_max_output_tokens", self._m3_output.value())
-        self._qsettings.setValue("MiniMax_timeout_sec", self._m3_timeout.value())
-        self._qsettings.setValue("MiniMax_max_retries", self._m3_max_retries.value())
+        llm_lang_code = self._llm_prompt_lang.currentData() or self._llm_prompt_lang.currentText()
+        self._qsettings.setValue("llm_prompt_lang", llm_lang_code)
+        self._qsettings.setValue("llm_thinking_budget", self._llm_budget.value())
+        self._qsettings.setValue("llm_max_output_tokens", self._llm_output.value())
+        self._qsettings.setValue("llm_timeout_sec", self._llm_timeout.value())
+        self._qsettings.setValue("llm_max_retries", self._llm_max_retries.value())
 
         # PBDB
         self._qsettings.setValue("use_paleodb", self._use_pbdb.isChecked())
@@ -1086,6 +1114,22 @@ class SettingsTab(QWidget):
         self._qsettings.setValue("yolo_iou_threshold", self._yolo_iou.value())
 
         self._qsettings.sync()
+
+        # F17: persist key/endpoint/model to the shared settings file so
+        # the Web UI and the CLI resolve the same provider config.
+        try:
+            from ..llm_settings import LLMApiSettings, save_llm_settings
+
+            save_llm_settings(
+                LLMApiSettings(
+                    base_url=self._llm_base_url.text().strip(),
+                    api_key=self._llm_api_key.text().strip(),
+                    model=self._llm_model.text().strip(),
+                )
+            )
+        except Exception:
+            get_gui_logger().debug("llm_settings save failed", exc_info=True)
+
         # Phase 37 audit fix: refresh in-memory cache so Run tab
         # picks up the saved values immediately (was: cache stale
         # until app restart).
@@ -1246,7 +1290,7 @@ class SettingsTab(QWidget):
         into the in-memory run defaults so new jobs use them.
 
         Phase 37 audit fix: was missing ``last_pdf_dir``,
-        ``last_export_dir``, ``theme``, and ``m3_multi_plate_enrich``,
+        ``last_export_dir``, ``theme``, and ``llm_multi_plate_enrich``,
         so a fresh Run tab would still read the values the user had
         at first launch even after Settings changed them.
         """
@@ -1266,20 +1310,21 @@ class SettingsTab(QWidget):
                 "caption_window": self._caption_window.value(),
                 "od_caption_window": self._od_caption_window.value(),
                 "llm_backend": self._llm_backend.currentData() or self._llm_backend.currentText(),
-                "m3_prompt_lang": self._m3_prompt_lang.currentData()
-                or self._m3_prompt_lang.currentText(),
-                "m3_model": self._m3_model.text()
-                if self._m3_model.text()
-                else DEFAULT_MINIMAX_MODEL,
+                "llm_prompt_lang": self._llm_prompt_lang.currentData()
+                or self._llm_prompt_lang.currentText(),
+                "llm_model": self._llm_model.text()
+                if self._llm_model.text()
+                else DEFAULT_LLM_MODEL,
                 # BUG-1 (audit 2026-09-04): forward the LLM auth keys to
                 # the Run tab's collect_settings() via this shared dict.
-                "MiniMax_api_key": self._minimax_api_key.text(),
+                "llm_api_key": self._llm_api_key.text(),
+                "llm_base_url": self._llm_base_url.text(),
                 "data_outbound_policy": self._data_outbound.currentData()
                 or self._data_outbound.currentText(),
-                "MiniMax_thinking_budget": self._m3_budget.value(),
-                "MiniMax_max_output_tokens": self._m3_output.value(),
-                "MiniMax_timeout_sec": self._m3_timeout.value(),
-                "MiniMax_max_retries": self._m3_max_retries.value(),
+                "llm_thinking_budget": self._llm_budget.value(),
+                "llm_max_output_tokens": self._llm_output.value(),
+                "llm_timeout_sec": self._llm_timeout.value(),
+                "llm_max_retries": self._llm_max_retries.value(),
                 "use_paleodb": self._use_pbdb.isChecked(),
                 "paleodb_max_occurrences": self._pbdb_max_occ.value(),
                 "paleodb_endpoint": self._pbdb_endpoint.text(),

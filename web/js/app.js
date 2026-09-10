@@ -20,7 +20,7 @@ function _safeParseInt(value, fallback) {
 // indistinguishable from "key not set", so callers should treat both
 // as the default — which is what ``||`` already gives us for
 // ``apiBaseUrl``. The wrapper keeps the same shape but never throws.
-// Round 18: M3 sometimes returns deliberate refusals for
+// Round 18: LLM sometimes returns deliberate refusals for
 // non-specimen figures (bar charts, tables, maps). The pipeline
 // should silently skip those instead of asking the operator to
 // choose a fallback for a no-op decision. This helper is the
@@ -510,13 +510,13 @@ document.getElementById('process-btn').addEventListener('click', async () => {
 function _syncLLMBackendVisibility() {
     const backend = document.getElementById('llm-backend')?.value;
     const localConfig = document.getElementById('llm-local-config');
-    const MiniMaxConfig = document.getElementById('MiniMax-config');
-    if (backend === 'MiniMax') {
+    const cloudConfig = document.getElementById('llm-config');
+    if (backend === 'anthropic') {
         localConfig?.classList.add('hidden');
-        MiniMaxConfig?.classList.remove('hidden');
+        cloudConfig?.classList.remove('hidden');
     } else {
         localConfig?.classList.remove('hidden');
-        MiniMaxConfig?.classList.add('hidden');
+        cloudConfig?.classList.add('hidden');
     }
 }
 
@@ -609,7 +609,7 @@ function _buildLLMOptions() {
 
     const backend = document.getElementById('llm-backend')?.value
         || _safeStorageGet(LLM_BACKEND_KEY)
-        || 'MiniMax';
+        || 'anthropic';
 
     // Validate conf threshold up-front so the user gets immediate feedback
     // instead of a server round-trip.
@@ -625,18 +625,18 @@ function _buildLLMOptions() {
         gemma_conf_threshold: confThreshold,
     };
 
-    if (backend === 'MiniMax') {
-        // MiniMax M3 API path
-        const apiKey = document.getElementById('MiniMax-api-key')?.value?.trim() ?? '';
-        if (apiKey) options.MiniMax_api_key = apiKey;
-        const endpoint = document.getElementById('MiniMax-endpoint')?.value?.trim() ?? '';
-        if (endpoint) options.MiniMax_endpoint = endpoint;
-        const model = document.getElementById('MiniMax-model')?.value?.trim() ?? '';
-        if (model) options.MiniMax_model = model;
-        options.MiniMax_enable_thinking = document.getElementById('MiniMax-enable-thinking')?.checked ?? false;
+    if (backend === 'anthropic') {
+        // LLM LLM API path
+        const apiKey = document.getElementById('llm-api-key')?.value?.trim() ?? '';
+        if (apiKey) options.llm_api_key = apiKey;
+        const endpoint = document.getElementById('llm-base-url')?.value?.trim() ?? '';
+        if (endpoint) options.llm_base_url = endpoint;
+        const model = document.getElementById('llm-model')?.value?.trim() ?? '';
+        if (model) options.llm_model = model;
+        options.llm_enable_thinking = document.getElementById('llm-enable-thinking')?.checked ?? false;
 
         // Validate thinking budget up-front
-        const thinkingRaw = document.getElementById('MiniMax-thinking-budget')?.value?.trim() ?? '';
+        const thinkingRaw = document.getElementById('llm-thinking-budget')?.value?.trim() ?? '';
         const thinkingBudget = parseInt(thinkingRaw, 10);
         if (thinkingRaw === '' || isNaN(thinkingBudget) || thinkingBudget < 0) {
             throw new Error(`思考 Token 预算必须是非负整数，当前值: "${thinkingRaw}"`);
@@ -645,14 +645,14 @@ function _buildLLMOptions() {
             throw new Error(`思考 Token 预算不能超过 32000，当前值: ${thinkingBudget}`);
         }
         // If enable_thinking is true, budget must be > 0
-        if (options.MiniMax_enable_thinking && thinkingBudget === 0) {
+        if (options.llm_enable_thinking && thinkingBudget === 0) {
             throw new Error(`启用扩展思考时，思考 Token 预算必须 > 0`);
         }
-        options.MiniMax_thinking_budget_tokens = thinkingBudget;
+        options.llm_thinking_budget_tokens = thinkingBudget;
 
-        options.MiniMax_fallback_default = document.getElementById('MiniMax-fallback-default')?.value ?? 'rules';
+        options.llm_fallback_default = document.getElementById('llm-fallback-default')?.value ?? 'rules';
         // Web mode always uses non-interactive popup (block on event.wait)
-        options.MiniMax_interactive = false;
+        options.llm_interactive = false;
     } else {
         // Local backend path
         const host = document.getElementById('llm-host')?.value?.trim() ?? '';
@@ -748,10 +748,10 @@ async function loadJobs() {
         renderJobsList();
         maybeStopPolling();
         // After we refresh job state, check whether any of them is
-        // blocked on a MiniMax M3 user decision and pop the modal.
+        // blocked on a LLM LLM user decision and pop the modal.
         // This is the missing piece that made the backend's
         // FallbackHandler appear silently broken from the UI side.
-        checkMiniMaxFallbacks();
+        checkLlmFallbacks();
 
         // Auto-switch to results tab when a job the user was watching
         // just completed. Only switch if the user is currently on the
@@ -919,7 +919,7 @@ function renderJobsList() {
                     详情
                 </button>
                 ${job.status === 'done' ? `<button type="button" class="btn btn-small btn-primary" data-action="results" data-job-id="${escapeHtml(job.job_id)}">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="LLM 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
                     查看结果 →
                 </button>` : ''}
                 ${(job.status === 'queued' || job.status === 'running' || job.status === 'awaiting_user_decision') ? `
@@ -978,9 +978,9 @@ function getStatusLabel(status) {
     return labels[status] || status;
 }
 
-// ==================== MiniMax fallback popup ==================== //
+// ==================== LLM fallback popup ==================== //
 // The backend pauses a job in status='awaiting_user_decision' when the
-// MiniMax API errors and waits up to 5 minutes for a user decision (see
+// LLM API errors and waits up to 5 minutes for a user decision (see
 // app.py::_web_fallback_popup). The previous JS only RECOGNISED that
 // status for polling — it never actually FETCHED the pending decision
 // and never SHOWED a popup, so users always silently timed out and
@@ -989,34 +989,34 @@ function getStatusLabel(status) {
 // Polled jobs are tracked in a Set so we only render one modal per job
 // at a time (multiple polls hitting "awaiting_user_decision" for the
 // same job would otherwise stack popups).
-const _MiniMaxPopupShown = new Set();
+const _llmPopupShown = new Set();
 
-async function checkMiniMaxFallbacks() {
+async function checkLlmFallbacks() {
     const awaiting = Object.values(jobsData).filter(
         j => j.status === 'awaiting_user_decision'
     );
     for (const job of awaiting) {
-        if (_MiniMaxPopupShown.has(job.job_id)) continue;
+        if (_llmPopupShown.has(job.job_id)) continue;
         try {
-            const r = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/${job.job_id}/MiniMax-fallback`);
+            const r = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/${job.job_id}/llm-fallback`);
             if (!r.ok) continue;
             const data = await r.json();
             if (data.status !== 'awaiting_decision') continue;
-            _MiniMaxPopupShown.add(job.job_id);
-            showMiniMaxFallbackModal(job.job_id, data.error_info || {});
+            _llmPopupShown.add(job.job_id);
+            showLlmFallbackModal(job.job_id, data.error_info || {});
         } catch (_) { /* network blip; next poll will retry */ }
     }
     // Clear stale popups for jobs that are no longer awaiting
-    for (const jid of Array.from(_MiniMaxPopupShown)) {
+    for (const jid of Array.from(_llmPopupShown)) {
         const j = jobsData[jid];
         if (!j || j.status !== 'awaiting_user_decision') {
-            _MiniMaxPopupShown.delete(jid);
+            _llmPopupShown.delete(jid);
         }
     }
 }
 
-function showMiniMaxFallbackModal(jobId, errorInfo) {
-    // Round 18: M3 sometimes returns a deliberate refusal for
+function showLlmFallbackModal(jobId, errorInfo) {
+    // Round 18: LLM sometimes returns a deliberate refusal for
     // non-specimen figures (bar charts, tables, maps). The server
     // already marks these with ``is_non_specimen_figure`` and skips
     // the popup entirely; this is a defensive double-check so an
@@ -1034,27 +1034,27 @@ function showMiniMaxFallbackModal(jobId, errorInfo) {
         // Phase F-3 NIT: console.info dropped from production code.
         return;
     }
-    let modal = document.getElementById('MiniMax-fallback-modal');
+    let modal = document.getElementById('llm-fallback-modal');
     if (!modal) {
         modal = document.createElement('div');
-        modal.id = 'MiniMax-fallback-modal';
+        modal.id = 'llm-fallback-modal';
         modal.className = 'modal';
         modal.innerHTML = `
             <div class="modal-content" style="max-width: 560px;">
                 <div class="modal-header">
-                    <h3>⚠️ MiniMax M3 调用失败</h3>
+                    <h3>⚠️ LLM LLM 调用失败</h3>
                 </div>
                 <div class="modal-body">
                     <p style="color: var(--text-muted); font-size: 0.9rem;">
                         云端 LLM 后端返回错误。请选择如何继续——5 分钟内未选择将自动应用默认策略。
                     </p>
-                    <div class="MiniMax-fallback-err">
-                        <div><strong>任务:</strong> <code id="MiniMax-fb-job"></code></div>
-                        <div><strong>类型:</strong> <span id="MiniMax-fb-type"></span></div>
-                        <div><strong>错误:</strong> <span id="MiniMax-fb-msg"></span></div>
-                        <div id="MiniMax-fb-ctx-row" style="display:none"><strong>上下文:</strong> <span id="MiniMax-fb-ctx"></span></div>
+                    <div class="llm-fallback-err">
+                        <div><strong>任务:</strong> <code id="LLM-fb-job"></code></div>
+                        <div><strong>类型:</strong> <span id="LLM-fb-type"></span></div>
+                        <div><strong>错误:</strong> <span id="LLM-fb-msg"></span></div>
+                        <div id="LLM-fb-ctx-row" style="display:none"><strong>上下文:</strong> <span id="LLM-fb-ctx"></span></div>
                     </div>
-                    <div class="MiniMax-fallback-actions">
+                    <div class="llm-fallback-actions">
                         <button class="btn btn-primary" data-action="retry">重试</button>
                         <button class="btn btn-secondary" data-action="rules">回退到规则流水线</button>
                         <button class="btn btn-secondary" data-action="gemma4">切换本地 Gemma4</button>
@@ -1067,29 +1067,29 @@ function showMiniMaxFallbackModal(jobId, errorInfo) {
             if (e.target === modal) {/* don't close on overlay; force a choice */}
         });
     }
-    document.getElementById('MiniMax-fb-job').textContent = jobId.substring(0, 12) + '...';
-    document.getElementById('MiniMax-fb-type').textContent = errorInfo.error_type || 'Unknown';
-    document.getElementById('MiniMax-fb-msg').textContent = (errorInfo.error || '').substring(0, 240);
+    document.getElementById('LLM-fb-job').textContent = jobId.substring(0, 12) + '...';
+    document.getElementById('LLM-fb-type').textContent = errorInfo.error_type || 'Unknown';
+    document.getElementById('LLM-fb-msg').textContent = (errorInfo.error || '').substring(0, 240);
     if (errorInfo.context) {
-        document.getElementById('MiniMax-fb-ctx-row').style.display = '';
-        document.getElementById('MiniMax-fb-ctx').textContent = errorInfo.context;
+        document.getElementById('LLM-fb-ctx-row').style.display = '';
+        document.getElementById('LLM-fb-ctx').textContent = errorInfo.context;
     } else {
-        document.getElementById('MiniMax-fb-ctx-row').style.display = 'none';
+        document.getElementById('LLM-fb-ctx-row').style.display = 'none';
     }
     modal.classList.remove('hidden');
     // Replace action buttons each open so old listeners don't pile up
-    const newActions = modal.querySelectorAll('.MiniMax-fallback-actions [data-action]');
+    const newActions = modal.querySelectorAll('.llm-fallback-actions [data-action]');
     newActions.forEach(btn => {
         const fresh = btn.cloneNode(true);
         btn.replaceWith(fresh);
-        fresh.addEventListener('click', () => submitMiniMaxFallback(jobId, fresh.dataset.action, modal));
+        fresh.addEventListener('click', () => submitLlmFallback(jobId, fresh.dataset.action, modal));
     });
 }
 
-async function submitMiniMaxFallback(jobId, action, modal) {
+async function submitLlmFallback(jobId, action, modal) {
     modal.querySelectorAll('button').forEach(b => b.disabled = true);
     try {
-        const r = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/${jobId}/MiniMax-fallback`, {
+        const r = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/jobs/${jobId}/llm-fallback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ job_id: jobId, action }),
@@ -1100,7 +1100,7 @@ async function submitMiniMaxFallback(jobId, action, modal) {
         } else {
             showNotification(`已选择: ${action}`);
             modal.classList.add('hidden');
-            _MiniMaxPopupShown.delete(jobId);
+            _llmPopupShown.delete(jobId);
             loadJobs();
         }
     } catch (err) {
@@ -2633,12 +2633,12 @@ document.querySelectorAll('.modal-close').forEach(btn => {
 // Round 10 (FM1): Escape key closes any open modal. WCAG 2.1 SC 2.1.1
 // requires a keyboard-only way to dismiss modal dialogs; pre-fix the
 // user could only click the × button, the overlay background, or the
-// footer Cancel button. The MiniMax fallback modal deliberately does
+// footer Cancel button. The LLM fallback modal deliberately does
 // NOT close on Escape or overlay click (line ~864) — that's a "force a
 // choice" UX — so we exclude it by id check below.
 document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    const NON_DISMISSABLE = new Set(['MiniMax-fallback-modal']);
+    const NON_DISMISSABLE = new Set(['llm-fallback-modal']);
     document.querySelectorAll('.modal:not(.hidden)').forEach(modal => {
         if (NON_DISMISSABLE.has(modal.id)) return;
         modal.classList.add('hidden');
@@ -2827,7 +2827,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadJobs();
     loadResults();
 
-    // ============== UX upgrades (#PR — default-MiniMax + onboarding) ==============
+    // ============== UX upgrades (#PR — default-LLM + onboarding) ==============
     // 1) Show the first-time onboarding banner unless dismissed
     initOnboardingBanner();
     // 2) Wire up the basic/advanced view toggle
@@ -2842,8 +2842,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('llm-test-btn')?.addEventListener('click', testLLMConnection);
     // 7) Wire up the cost estimate update on file change
     initCostEstimate();
-    // 8) Show MiniMax usage in settings tab
-    refreshMiniMaxUsage();
+    initLlmConfigCard();
+    // 8) Show LLM usage in settings tab
+    refreshLlmUsage();
     // 9) Wire up the results-tab batch delete + one-click delete (Round 16)
     initResultsDeleteButtons();
 });
@@ -2991,20 +2992,26 @@ function initLLMBackendSync() {
     // audit 2026-08-17 (WEB-B6): the previous restore check
     // ``[basic.value, advanced.value].includes(saved)`` compared the
     // saved value against the <select>'s CURRENT value — but at
-    // DOMContentLoaded both selects still default to "MiniMax", so
-    // any non-MiniMax saved choice (e.g. "openai", "anthropic",
-    // "MiniMax") silently failed the check and the user's preference
+    // DOMContentLoaded both selects still default to "anthropic", so
+    // any non-LLM saved choice (e.g. "openai", "anthropic",
+    // "anthropic") silently failed the check and the user's preference
     // was discarded on every reload. Validate against the union of
     // all available <option> values across both selects instead.
     const saved = _safeStorageGet(LLM_BACKEND_KEY);
     if (saved) {
+        // F17: legacy vendor alias values map onto "anthropic".
+        const LEGACY_CLOUD_ALIASES = ['MiniMax', 'MiniMax-m3', 'MiniMax_api', 'minimax', 'minimax-m3', 'minimax_api'];
+        const effective = LEGACY_CLOUD_ALIASES.includes(saved) ? 'anthropic' : saved;
+        if (effective !== saved) {
+            _safeStorageSet(LLM_BACKEND_KEY, effective);
+        }
         const allValues = new Set([
             ...[...basic.options].map(o => o.value),
             ...[...advanced.options].map(o => o.value),
         ]);
-        if (allValues.has(saved)) {
-            basic.value = saved;
-            advanced.value = saved;
+        if (allValues.has(effective)) {
+            basic.value = effective;
+            advanced.value = effective;
         }
     }
     // basic → advanced
@@ -3035,7 +3042,7 @@ function initLLMBackendSync() {
 // ====================================================================
 function initApiKeyToggle() {
     const btn = document.getElementById('api-key-toggle');
-    const input = document.getElementById('MiniMax-api-key');
+    const input = document.getElementById('llm-api-key');
     if (!btn || !input) return;
     btn.addEventListener('click', () => {
         input.type = input.type === 'password' ? 'text' : 'password';
@@ -3079,7 +3086,7 @@ function _renderOutboundConsent(data) {
         );
         lines.push(
             `当前配置等同于对 LAN 内所有人开放上传 / 取消 / 删除等接口，任何人
-             都可触发付费 MiniMax 调用。请立即停止运行并设置 RLPE_API_KEY。`
+             都可触发付费 LLM 调用。请立即停止运行并设置 RLPE_API_KEY。`
         );
         level = 'error';
     }
@@ -3087,7 +3094,7 @@ function _renderOutboundConsent(data) {
         // BLOCKER-#2 api_full opted in via env var — make it visible.
         lines.push(
             `🚨 当前 data_outbound_policy_opt_in 已启用：完整 PDF 图像 / 全部
-             caption / OCR / GROBID 段落将被发送到 ${data.active_endpoint || 'MiniMax API'}。`
+             caption / OCR / GROBID 段落将被发送到 ${data.active_endpoint || 'LLM API'}。`
         );
         lines.push(
             `若您不希望外发整篇文献，请取消设置 RLPE_DATA_OUTBOUND_OPT_IN
@@ -3147,21 +3154,13 @@ async function refreshLLMStatus() {
         // The backend returns ``active_endpoint`` / ``active_model`` (the
         // resolved values) plus the deprecated ``default_endpoint`` /
         // ``default_model`` aliases. Prefer the new names if present.
-        const endpoint = data.active_endpoint || data.default_endpoint || '—';
-        const model = data.active_model || data.default_model || 'MiniMax-M3';
-        const totalCost = Number(data.total_cost_cny) || 0;
+        const endpoint = data.active_endpoint || '—';
+        const model = data.active_model || '（未配置）';
         const totalCalls = Number(data.total_calls) || 0;
-        const approxPerCall = Number(data.approx_cny_per_call) || 0;
         if (data.key_configured) {
             if (iconEl) iconEl.textContent = '✅';
             const keyHTML = data.key_preview
                 ? `<span class="llm-status-key-preview">${escapeHtml(data.key_preview)}</span>`
-                : '';
-            // Build the cumulative usage line conditionally so a missing
-            // total_cost_cny (server bug or older schema) doesn't crash
-            // ``.toFixed`` on undefined.
-            const usageLine = totalCalls > 0
-                ? `· 累计 ${totalCalls} 次调用，¥${totalCost.toFixed(4)}`
                 : '';
             bodyEl.innerHTML = `
                 <span class="llm-status-ok">
@@ -3173,26 +3172,21 @@ async function refreshLLMStatus() {
                     · Endpoint：${escapeHtml(endpoint)}
                 </span>
                 <span class="llm-status-detail">
-                    单次调用约 ¥${approxPerCall.toFixed(4)} ${usageLine}
+                    累计 ${totalCalls} 次调用
                 </span>
             `;
         } else {
             if (iconEl) iconEl.textContent = '⚠️';
             bodyEl.innerHTML = `
                 <span class="llm-status-warn">
-                    未检测到 MiniMax API Key
+                    未检测到 LLM API Key
                 </span>
                 <span class="llm-status-detail">
-                    项目根目录的 <code>.env</code> 文件中未发现 <code>ANTHROPIC_API_KEY</code>。
-                    您可以：
-                    （1）在「高级」视图的"API Key"输入框中临时填入；或
-                    （2）在 .env 中写入并重启服务（推荐）。
+                    前往「设置」页的「LLM API 配置」填入任意 Anthropic 兼容服务的
+                    地址 / Key / 模型名（保存到 ~/.rlpe/llm_api.json，推荐）；
+                    或在项目根目录 <code>.env</code> 中写入
+                    <code>ANTHROPIC_API_KEY</code> 后重启服务。
                 </span>
-                <a class="llm-status-action-link"
-                   href="https://platform.minimaxi.com/user-center/payment/token-plan"
-                   target="_blank" rel="noopener">
-                    🔗 申请 MiniMax Token Plan
-                </a>
             `;
         }
     } catch (err) {
@@ -3205,7 +3199,7 @@ async function refreshLLMStatus() {
 
 // ====================================================================
 // Test the configured API key by hitting /system/test-llm.
-// Runs in the foreground (button shows spinner). Cost ≈ ¥0.001 per call.
+// Runs in the foreground (button shows spinner).
 // ====================================================================
 async function testLLMConnection() {
     const btn = document.getElementById('llm-test-btn');
@@ -3217,9 +3211,9 @@ async function testLLMConnection() {
         // Pull the user-overridden values from the advanced-view inputs
         // (if visible), otherwise let the server fall back to .env.
         const body = {};
-        const apiKeyVal = document.getElementById('MiniMax-api-key')?.value.trim();
-        const endpointVal = document.getElementById('MiniMax-endpoint')?.value.trim();
-        const modelVal = document.getElementById('MiniMax-model')?.value.trim();
+        const apiKeyVal = document.getElementById('llm-api-key')?.value.trim();
+        const endpointVal = document.getElementById('llm-base-url')?.value.trim();
+        const modelVal = document.getElementById('llm-model')?.value.trim();
         if (apiKeyVal) body.api_key = apiKeyVal;
         if (endpointVal) body.endpoint = endpointVal;
         if (modelVal) body.model = modelVal;
@@ -3231,12 +3225,9 @@ async function testLLMConnection() {
         const data = await resp.json();
         if (data.ok) {
             // Build the success message piece by piece so missing
-            // optional fields (cost_cny, note) don't produce dangling
-            // delimiters or unbalanced brackets.
-            const parts = [`${data.latency_ms}ms`, data.model || 'MiniMax-M3'];
-            if (data.cost_cny != null) {
-                parts.push(`¥${data.cost_cny}`);
-            }
+            // optional fields (token counts, note) don't produce
+            // dangling delimiters or unbalanced brackets.
+            const parts = [`${data.latency_ms}ms`, data.model || ''];
             let msg = `✅ 连接成功（${parts.join(' · ')}）`;
             if (data.note) {
                 msg += ` ${data.note}`;
@@ -3259,10 +3250,11 @@ async function testLLMConnection() {
 }
 
 // ====================================================================
-// Cost estimate — when files are added/removed, estimate the MiniMax
-// cost. Heuristic: ~3 figures per PDF page × ~10 panels per figure ×
-// ¥0.0085 per call. We use file size as a proxy for page count
-// (~80 KB / page is typical for OA radiolarian PDFs).
+// LLM call estimate — when files are added/removed, estimate how
+// many LLM calls the run will make. Heuristic: ~3 figures per PDF
+// page × ~8 panels per figure. File size is a proxy for page count
+// (~80 KB / page is typical for OA radiolarian PDFs). F17: no cost
+// estimate — pricing is vendor-specific and not tracked.
 // ====================================================================
 function initCostEstimate() {
     const updateEstimate = () => {
@@ -3273,11 +3265,11 @@ function initCostEstimate() {
             stripEl.classList.add('hidden');
             return;
         }
-        // Only show the estimate when the user has LLM enabled with MiniMax
+        // Only show the estimate when the user has LLM enabled with LLM
         const useLLM = document.getElementById('use-gemma4')?.checked;
         const backend = document.getElementById('llm-backend-basic')?.value
             || document.getElementById('llm-backend')?.value;
-        if (!useLLM || backend !== 'MiniMax') {
+        if (!useLLM || backend !== 'anthropic') {
             stripEl.classList.add('hidden');
             return;
         }
@@ -3288,8 +3280,7 @@ function initCostEstimate() {
         const totalBytes = uploadedFiles.reduce((s, f) => s + (f.size || 0), 0);
         const estPages = Math.max(1, totalBytes / 1024 / 80);
         const estCalls = Math.round(estPages * 3 * 8);
-        const estCost = (estCalls * 0.0085).toFixed(2);
-        textEl.textContent = `预估调用 MiniMax ≈ ${estCalls} 次，约 ¥${estCost}（基于 ${uploadedFiles.length} 个文件，${Math.round(estPages)} 页）`;
+        textEl.textContent = `预估调用 LLM ≈ ${estCalls} 次（基于 ${uploadedFiles.length} 个文件，约 ${Math.round(estPages)} 页）`;
         stripEl.classList.remove('hidden');
     };
     // Hook into add/remove events. addFiles / removeFile / clear-btn
@@ -3320,11 +3311,12 @@ window.addEventListener('beforeunload', () => {
 });
 
 // ====================================================================
-// MiniMax usage panel (settings tab) — renders cumulative call counts
-// and total cost from the same /system/llm-status endpoint.
+// LLM usage panel (settings tab) — renders cumulative call and token
+// counts from the same /system/llm-status endpoint (cost accounting
+// was removed in F17).
 // ====================================================================
-async function refreshMiniMaxUsage() {
-    const panel = document.getElementById('minimax-usage');
+async function refreshLlmUsage() {
+    const panel = document.getElementById('llm-usage');
     if (!panel) return;
     try {
         const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-status`);
@@ -3333,31 +3325,143 @@ async function refreshMiniMaxUsage() {
             return;
         }
         const data = await resp.json();
-        const totalCost = Number(data.total_cost_cny) || 0;
         const totalCalls = Number(data.total_calls) || 0;
-        const approxPerCall = Number(data.approx_cny_per_call) || 0;
-        const model = data.active_model || data.default_model || 'MiniMax-M3';
+        const totalIn = Number(data.total_input_tokens) || 0;
+        const totalOut = Number(data.total_output_tokens) || 0;
+        const model = data.active_model || '（未配置）';
         panel.innerHTML = `
-            <div class="minimax-usage-item">
-                <span class="minimax-usage-label">累计调用次数</span>
-                <span class="minimax-usage-value">${totalCalls}</span>
+            <div class="llm-usage-item">
+                <span class="llm-usage-label">累计调用次数</span>
+                <span class="llm-usage-value">${totalCalls}</span>
             </div>
-            <div class="minimax-usage-item">
-                <span class="minimax-usage-label">累计费用（CNY）</span>
-                <span class="minimax-usage-value">¥${totalCost.toFixed(4)}</span>
+            <div class="llm-usage-item">
+                <span class="llm-usage-label">输入 tokens</span>
+                <span class="llm-usage-value">${totalIn.toLocaleString()}</span>
             </div>
-            <div class="minimax-usage-item">
-                <span class="minimax-usage-label">单次调用估价</span>
-                <span class="minimax-usage-value">¥${approxPerCall.toFixed(4)}</span>
+            <div class="llm-usage-item">
+                <span class="llm-usage-label">输出 tokens</span>
+                <span class="llm-usage-value">${totalOut.toLocaleString()}</span>
             </div>
-            <div class="minimax-usage-item">
-                <span class="minimax-usage-label">当前模型</span>
-                <span class="minimax-usage-value" style="font-size: 0.95rem;">${escapeHtml(model)}</span>
+            <div class="llm-usage-item">
+                <span class="llm-usage-label">当前模型</span>
+                <span class="llm-usage-value" style="font-size: 0.95rem;">${escapeHtml(model)}</span>
             </div>
         `;
     } catch (err) {
         panel.innerHTML = `<p style="color: var(--danger-color);">读取失败：${escapeHtml(err.message || String(err))}</p>`;
     }
+}
+
+// ====================================================================
+// LLM API settings card (settings tab, F17). Loads the persisted
+// configuration (GET /system/llm-config), saves edits
+// (POST /system/llm-config) and runs the connection test against the
+// SAVED config. The raw key is never round-tripped: the server only
+// returns a masked preview, and an empty key field means "keep the
+// saved key".
+// ====================================================================
+async function refreshLlmConfigCard() {
+    const statusEl = document.getElementById('llmcfg-status');
+    if (!statusEl) return;
+    try {
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-config`);
+        if (!resp.ok) {
+            statusEl.innerHTML = `<span style="color: var(--text-muted);">未加载（HTTP ${resp.status}）</span>`;
+            return;
+        }
+        const data = await resp.json();
+        document.getElementById('llmcfg-base-url').value = data.base_url || '';
+        document.getElementById('llmcfg-model').value = data.model || '';
+        document.getElementById('llmcfg-api-key').value = '';
+        document.getElementById('llmcfg-api-key').placeholder = data.api_key_set
+            ? `已保存（${data.api_key_preview}）— 留空不修改`
+            : '留空 = 不修改已保存的 Key';
+        const bits = [];
+        bits.push(data.api_key_set ? 'Key 已保存' : 'Key 未保存');
+        bits.push(data.base_url ? `地址 ${data.base_url}` : '地址未配置');
+        bits.push(data.model ? `模型 ${data.model}` : '模型未配置');
+        if (data.updated_at) bits.push(`更新于 ${data.updated_at}`);
+        statusEl.innerHTML = `<span style="color: var(--text-muted);">${bits.join(' · ')}</span>`;
+    } catch (err) {
+        statusEl.innerHTML = `<span style="color: var(--danger-color);">读取失败：${escapeHtml(err.message || String(err))}</span>`;
+    }
+}
+
+async function saveLlmConfig() {
+    const btn = document.getElementById('llmcfg-save-btn');
+    const statusEl = document.getElementById('llmcfg-status');
+    if (!btn || !statusEl) return;
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '保存中…';
+    try {
+        const body = {
+            base_url: document.getElementById('llmcfg-base-url')?.value?.trim() ?? '',
+            model: document.getElementById('llmcfg-model')?.value?.trim() ?? '',
+        };
+        const keyVal = document.getElementById('llmcfg-api-key')?.value?.trim() ?? '';
+        // Empty key field = keep the saved key (server semantics: absent
+        // = unchanged). Only send a non-empty key.
+        if (keyVal) body.api_key = keyVal;
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-config`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            showNotification(`保存失败：${data.detail || `HTTP ${resp.status}`}`, 'error');
+        } else {
+            showNotification('✅ API 配置已保存（~/.rlpe/llm_api.json）', 'success');
+            refreshLlmConfigCard();
+            refreshLLMStatus();
+        }
+    } catch (err) {
+        showNotification(`保存失败：${err.message || String(err)}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
+}
+
+async function testSavedLlmConfig() {
+    const btn = document.getElementById('llmcfg-test-btn');
+    if (!btn) return;
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '测试中…';
+    try {
+        // Empty body: the server resolves key/endpoint/model from the
+        // saved settings + env chain — exactly what a normal run uses.
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/test-llm`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({}),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            showNotification(`✅ 连接成功（${data.latency_ms}ms · ${data.model || ''}）`, 'success');
+        } else {
+            showNotification(`❌ 连接失败：${data.error || '未知错误'}`, 'error');
+        }
+    } catch (err) {
+        showNotification(`❌ 连接失败：${err.message || String(err)}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
+}
+
+function initLlmConfigCard() {
+    document.getElementById('llmcfg-save-btn')?.addEventListener('click', saveLlmConfig);
+    document.getElementById('llmcfg-test-btn')?.addEventListener('click', testSavedLlmConfig);
+    // Password visibility toggle (mirrors the upload-tab key toggle).
+    const keyInput = document.getElementById('llmcfg-api-key');
+    const toggleBtn = document.getElementById('llmcfg-key-toggle');
+    toggleBtn?.addEventListener('click', () => {
+        if (!keyInput) return;
+        keyInput.type = keyInput.type === 'password' ? 'text' : 'password';
+    });
 }
 
 // Hook the existing tab-switch handler (defined earlier in this file
@@ -3371,7 +3475,8 @@ async function refreshMiniMaxUsage() {
 // child elements that don't actually trigger a tab change.
 document.querySelectorAll('.tab-btn[data-tab="settings"]').forEach(btn => {
     btn.addEventListener('click', () => {
+        refreshLlmConfigCard();
         refreshLLMStatus();
-        refreshMiniMaxUsage();
+        refreshLlmUsage();
     });
 });

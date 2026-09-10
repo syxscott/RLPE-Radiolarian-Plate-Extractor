@@ -7,7 +7,7 @@ Covers:
   - JobOptions: logs unknown fields instead of silently dropping
   - ReviewCorrection / ResultRecord: ``extra="forbid"``
   - SSRF guard: blocks link-local / unspecified / non-http hosts
-  - MiniMaxM3Backend: retries 401/403 in addition to 5xx/429
+  - AnthropicCompatBackend: retries 401/403 in addition to 5xx/429
   - paper_metadata_from_internal: defensive on None confidence
   - stable_id: streaming (large file) + path fallback
   - image_label_check: caching
@@ -95,7 +95,7 @@ def test_joboptions_logs_unknown_fields(caplog):
     with caplog.at_level("WARNING", logger="rlpe.api"):
         opts = JobOptions(
             use_gemma4=True,
-            minimax_api_key="sk-typo-no-match",  # typo of MiniMax_api_key
+            minimax_api_key="sk-typo-no-match",  # typo of llm_api_key
         )
     # Job was created; typo'd field was silently dropped
     assert opts.use_gemma4 is True
@@ -112,11 +112,11 @@ def test_joboptions_accepts_known_fields():
     opts = JobOptions(
         use_gemma4=True,
         llm_backend="ollama",
-        MiniMax_api_key="sk-real",
+        llm_api_key="sk-real",
     )
     assert opts.use_gemma4 is True
     assert opts.llm_backend == "ollama"
-    assert opts.MiniMax_api_key == "sk-real"
+    assert opts.llm_api_key == "sk-real"
 
 
 def test_review_correction_rejects_unknown_fields():
@@ -318,9 +318,9 @@ def test_llamacpp_backend_construct_validates_host():
         LlamaCppGemmaBackend(host="http://0.0.0.0:8080")
 
 
-def test_minimax_m3_backend_name_is_recognized_in_pipeline():
+def test_minimax_llm_backend_name_is_recognized_in_pipeline(monkeypatch):
     # This test exercises the real builder path, which needs the
-    # ``anthropic`` SDK (the only outbound backend MiniMax M3 uses).
+    # ``anthropic`` SDK (the only outbound backend LLM LLM uses).
     # When the SDK is missing the builder legitimately raises and the
     # fallback handler is never wired up; that is an environment limit
     # rather than a code defect, so skip gracefully.
@@ -328,25 +328,34 @@ def test_minimax_m3_backend_name_is_recognized_in_pipeline():
     from rlpe.config import PipelineConfig
     from rlpe.pipeline import RadiolarianPipeline
 
+    # F17 removed the hard-coded vendor defaults, so the real builder
+    # needs an endpoint/model from the env chain; the settings file is
+    # neutralised so the test stays hermetic on any machine.
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:0")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "test-model")
+    monkeypatch.setattr(
+        "rlpe.llm_settings.load_llm_settings",
+        lambda: __import__("rlpe.llm_settings", fromlist=["LLMApiSettings"]).LLMApiSettings(),
+    )
     cfg = PipelineConfig(
         pdf_dir=Path("/tmp/no-pdfs"),
         work_dir=Path("/tmp/no-work"),
         extra={
             "use_gemma4": True,
             "llm_backend": "MiniMax-m3",
-            "MiniMax_api_key": "sk-test",
+            "llm_api_key": "sk-test",
         },
     )
     pipe = RadiolarianPipeline.__new__(RadiolarianPipeline)
     pipe.config = cfg
     pipe.gemma_runtime = None
-    pipe.m3_engine = None
+    pipe.semantic_engine = None
     pipe.gemma_fallback_handler = None
     pipe._try_init_gemma()
     assert pipe.gemma_fallback_handler is not None
 
 
-def test_minimax_m3_backend_name_is_recognized_in_gemma_postprocess(monkeypatch):
+def test_anthropic_llm_backend_name_is_recognized_in_gemma_postprocess(monkeypatch):
     import rlpe.gemma_postprocess as gp
 
     called = {"n": 0}
@@ -359,17 +368,18 @@ def test_minimax_m3_backend_name_is_recognized_in_gemma_postprocess(monkeypatch)
         return FakeBackend()
 
     monkeypatch.setattr(
-        "rlpe.llm_backends.build_MiniMax_backend_from_env_or_config",
+        "rlpe.llm_backends.build_anthropic_compat_backend",
         fake_builder,
     )
     runtime = gp.build_gemma_backend_from_config(
         {
             "llm_backend": "MiniMax-m3",
-            "MiniMax_api_key": "sk-test",
+            "llm_api_key": "sk-test",
         }
     )
     assert called["n"] == 1
-    assert runtime.backend_name == "MiniMax"
+    # F17: the runtime is branded vendor-neutral even for legacy aliases.
+    assert runtime.backend_name == "anthropic"
 
 
 # ---------------------------------------------------------------- paper_metadata
@@ -558,12 +568,17 @@ def test_image_label_check_uses_cache(tmp_path, monkeypatch):
 
 
 def test_llm_status_reports_no_key_when_env_unset(monkeypatch):
-    """When neither ANTHROPIC_API_KEY nor MiniMax_API_KEY is set, the
+    """When no key is resolvable (env unset AND no saved settings), the
     endpoint must return key_configured=False so the frontend can
-    render the "missing key" warning state.
+    render the "missing key" warning state. F17: the response carries
+    call/token counters instead of cost fields.
     """
+    from rlpe.llm_settings import LLMApiSettings
+
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    monkeypatch.setattr("rlpe.llm_settings.load_llm_settings", lambda: LLMApiSettings())
     TestClient = _testclient_or_skip()
 
     app = _api_app_or_skip().app
@@ -575,8 +590,11 @@ def test_llm_status_reports_no_key_when_env_unset(monkeypatch):
     assert data["key_configured"] is False
     assert data["key_preview"] is None
     assert data["key_source"] is None
-    assert "approx_cny_per_call" in data
-    assert "total_cost_cny" in data
+    # F17: cost fields removed, call/token counters kept.
+    assert "approx_cny_per_call" not in data
+    assert "total_cost_cny" not in data
+    assert "total_calls" in data
+    assert "total_input_tokens" in data
 
 
 def test_llm_status_masks_key_preview_correctly(monkeypatch):
@@ -643,7 +661,7 @@ def test_test_llm_endpoint_handles_invalid_body_gracefully(monkeypatch):
 
 def test_test_llm_treats_non_json_reply_as_success(monkeypatch):
     """A connection test asks the LLM to reply with the literal "OK".
-    That reply is NOT valid JSON, so MiniMaxM3Backend._make_result
+    That reply is NOT valid JSON, so AnthropicCompatBackend._make_result
     sets ``fallback_used=True`` and ``error_type=JSONParseError``.
     For a connection test that's a false negative — the API actually
     worked. The endpoint must therefore special-case JSONParseError /
@@ -653,7 +671,7 @@ def test_test_llm_treats_non_json_reply_as_success(monkeypatch):
 
     api_app = _api_app_or_skip()
 
-    # Patch MiniMaxM3Backend.infer_text to simulate the "OK reply +
+    # Patch AnthropicCompatBackend.infer_text to simulate the "OK reply +
     # JSONParseError" shape that triggered the bug in the field.
     class _FakeBackend:
         def __init__(self, *a, **kw):
@@ -671,13 +689,16 @@ def test_test_llm_treats_non_json_reply_as_success(monkeypatch):
                 "raw_text": "OK",
             }
 
-    monkeypatch.setattr(api_app, "MiniMaxM3Backend", _FakeBackend, raising=False)
+    monkeypatch.setattr(api_app, "AnthropicCompatBackend", _FakeBackend, raising=False)
     # Inject the fake into the lazy import path used inside test_llm()
     import rlpe.llm_backends as _lb
 
-    monkeypatch.setattr(_lb, "MiniMaxM3Backend", _FakeBackend, raising=True)
+    monkeypatch.setattr(_lb, "AnthropicCompatBackend", _FakeBackend, raising=True)
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key-for-test")
+    # F17: the endpoint/model must resolve as well (no vendor default).
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:0")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "test-model")
     c = TestClient(api_app.app)
     r = c.post("/system/test-llm", json={})
     assert r.status_code == 200
@@ -686,11 +707,12 @@ def test_test_llm_treats_non_json_reply_as_success(monkeypatch):
     assert data.get("note"), "note should explain the non-JSON reply"
 
 
-def test_llm_status_deduplicates_request_id_in_cost_aggregation(monkeypatch):
-    """When N panel rows share the same MiniMax_request_id (because
-    they came from the SAME batch LLM call), the cost must be counted
-    ONCE and the call counter incremented ONCE. The previous code
-    multiplied both by N, producing inflated 累计 数字.
+def test_llm_status_deduplicates_request_id_in_usage_aggregation(monkeypatch):
+    """When N panel rows share the same llm_request_id (because
+    they came from the SAME batch LLM call), the call counter must
+    increment ONCE. The previous code multiplied the count by N,
+    producing inflated 累计 数字. F17: token usage is aggregated
+    per unique request; cost fields no longer exist.
     """
     TestClient = _testclient_or_skip()
 
@@ -699,7 +721,7 @@ def test_llm_status_deduplicates_request_id_in_cost_aggregation(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
 
-    job_id = "test-dedupe-cost"
+    job_id = "test-dedupe-usage"
     with api_app.RESULT_LOCK:
         api_app.RESULT_CACHE[job_id] = {
             "status": "done",
@@ -709,8 +731,8 @@ def test_llm_status_deduplicates_request_id_in_cost_aggregation(monkeypatch):
                     "figure_id": "f",
                     "panel_id": "1",
                     "metadata": {
-                        "MiniMax_cost_cny": 0.05,
-                        "MiniMax_request_id": "req-abc",
+                        "llm_request_id": "req-abc",
+                        "llm_usage": {"input_tokens": 100, "output_tokens": 10},
                     },
                 },
                 {  # batch call 1, panel 2 (same request)
@@ -718,26 +740,17 @@ def test_llm_status_deduplicates_request_id_in_cost_aggregation(monkeypatch):
                     "figure_id": "f",
                     "panel_id": "2",
                     "metadata": {
-                        "MiniMax_cost_cny": 0.05,
-                        "MiniMax_request_id": "req-abc",
-                    },
-                },
-                {  # batch call 1, panel 3 (same request)
-                    "paper_id": "p",
-                    "figure_id": "f",
-                    "panel_id": "3",
-                    "metadata": {
-                        "MiniMax_cost_cny": 0.05,
-                        "MiniMax_request_id": "req-abc",
+                        "llm_request_id": "req-abc",
+                        "llm_usage": {"input_tokens": 100, "output_tokens": 10},
                     },
                 },
                 {  # batch call 2 (different request)
                     "paper_id": "p",
                     "figure_id": "f",
-                    "panel_id": "4",
+                    "panel_id": "3",
                     "metadata": {
-                        "MiniMax_cost_cny": 0.07,
-                        "MiniMax_request_id": "req-xyz",
+                        "llm_request_id": "req-xyz",
+                        "llm_usage": {"input_tokens": 50, "output_tokens": 5},
                     },
                 },
             ],
@@ -746,12 +759,11 @@ def test_llm_status_deduplicates_request_id_in_cost_aggregation(monkeypatch):
         c = TestClient(api_app.app)
         r = c.get("/system/llm-status")
         data = r.json()
-        # 2 unique requests → 2 calls (NOT 4, despite 4 rows)
+        # 2 unique requests → 2 calls (NOT 3, despite 3 rows)
         assert data["total_calls"] == 2, f"expected 2 calls, got {data['total_calls']}"
-        # Cost: 0.05 (req-abc, counted once) + 0.07 (req-xyz) = 0.12
-        assert abs(data["total_cost_cny"] - 0.12) < 1e-6, (
-            f"expected 0.12, got {data['total_cost_cny']}"
-        )
+        # Token usage summed once per unique request.
+        assert data["total_input_tokens"] == 150
+        assert data["total_output_tokens"] == 15
     finally:
         with api_app.RESULT_LOCK:
             api_app.RESULT_CACHE.pop(job_id, None)
@@ -759,7 +771,7 @@ def test_llm_status_deduplicates_request_id_in_cost_aggregation(monkeypatch):
 
 def test_dotenv_loader_overrides_project_keys_even_when_os_env_set(monkeypatch, tmp_path):
     """The .env loader must override pre-existing OS env vars for the
-    project's reserved MiniMax-related keys (ANTHROPIC_API_KEY,
+    project's reserved LLM-related keys (ANTHROPIC_API_KEY,
     ANTHROPIC_BASE_URL, ANTHROPIC_MODEL).
 
     Background: tools like Claude Code set ``ANTHROPIC_BASE_URL``

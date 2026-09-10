@@ -70,7 +70,7 @@ class TestRowToDictV110Fields:
             "metadata": {
                 "page_index": 5,
                 "scale_bar": {"value": 50.0, "unit": "μm", "pixel_length": 12.0},
-                "m3_diagnostic": {"stage3_panels": ["pl1"]},
+                "llm_diagnostic": {"stage3_panels": ["pl1"]},
             },
         }
         # The worker is a QThread; construct with placeholder args
@@ -83,7 +83,7 @@ class TestRowToDictV110Fields:
         assert out["review_priority"] == 2
         assert out["metadata"].get("scale_bar", {}).get("value") == 50.0
         assert out["metadata"].get("page_index") == 5
-        assert out["metadata"].get("m3_diagnostic", {}).get("stage3_panels") == ["pl1"]
+        assert out["metadata"].get("llm_diagnostic", {}).get("stage3_panels") == ["pl1"]
 
     def test_row_to_dict_handles_pydantic_panel_record(self):
         """If the pipeline emits a Pydantic PanelRecord, model_dump

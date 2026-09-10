@@ -1,7 +1,7 @@
-"""Phase 4A M3 few-shot prompt audit.
+"""Phase 4A LLM few-shot prompt audit.
 
 Adds regression coverage on top of Phase 2b (test_audit_2026_08_19_
-phase2b_m3_prompts.py). Phase 2b verified that the 5 stage prompts
+phase2b_llm_prompts.py). Phase 2b verified that the 5 stage prompts
 had *some* few-shot example. Phase 4A requires that every stage
 prompt be **complete** — at least 3 examples per stage, covering
 English + Chinese + rare formats — and that each example be a full
@@ -129,9 +129,9 @@ class TestStagePromptFewShotCount:
 
     @pytest.mark.parametrize("prompt_name", STAGE_PROMPTS)
     def test_at_least_3_examples(self, prompt_name: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = getattr(m3_engine, prompt_name)
+        prompt = getattr(semantic_engine, prompt_name)
         n = _example_count(prompt)
         assert n >= 3, (
             f"{prompt_name} has only {n} few-shot examples; "
@@ -147,9 +147,9 @@ class TestGeologyPromptFewShotCount:
 
     @pytest.mark.parametrize("prompt_key", GEOLOGY_PROMPTS)
     def test_at_least_1_example(self, prompt_key: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine.PROMPT_REGISTRY[prompt_key]
+        prompt = semantic_engine.PROMPT_REGISTRY[prompt_key]
         n = _example_count(prompt)
         assert n >= 1, (
             f"PROMPT_REGISTRY[{prompt_key!r}] has only {n} examples; "
@@ -158,9 +158,9 @@ class TestGeologyPromptFewShotCount:
 
     @pytest.mark.parametrize("prompt_key", GEOLOGY_PROMPTS)
     def test_input_output_pair_present(self, prompt_key: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine.PROMPT_REGISTRY[prompt_key]
+        prompt = semantic_engine.PROMPT_REGISTRY[prompt_key]
         assert _has_input_output_pair(prompt), (
             f"PROMPT_REGISTRY[{prompt_key!r}] missing a full (input, "
             f"JSON output) pair in its few-shot example."
@@ -179,9 +179,9 @@ class TestFewShotInputOutputPairs:
 
     @pytest.mark.parametrize("prompt_name", STAGE_PROMPTS)
     def test_complete_input_output_pair(self, prompt_name: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = getattr(m3_engine, prompt_name)
+        prompt = getattr(semantic_engine, prompt_name)
         assert _has_input_output_pair(prompt), (
             f"{prompt_name} few-shot examples lack a full (input, JSON output) pair."
         )
@@ -193,9 +193,9 @@ class TestFewShotOutputIsJson:
 
     @pytest.mark.parametrize("prompt_name", STAGE_PROMPTS)
     def test_output_block_is_json(self, prompt_name: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = getattr(m3_engine, prompt_name)
+        prompt = getattr(semantic_engine, prompt_name)
         # Match a JSON object/array with at least 2 quoted keys.  We
         # accept either: an array ``[...]`` (segment_panels) or an
         # object ``{...}`` (most others).
@@ -218,25 +218,25 @@ class TestParseCaptionCoverage:
     Phase 4A added a third English example covering all three."""
 
     def test_cf_marker_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        assert "cf." in m3_engine._PARSE_CAPTION_SYSTEM
+        assert "cf." in semantic_engine._PARSE_CAPTION_SYSTEM
 
     def test_aff_marker_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        assert "aff." in m3_engine._PARSE_CAPTION_SYSTEM
+        assert "aff." in semantic_engine._PARSE_CAPTION_SYSTEM
 
     def test_ex_gr_marker_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        assert "ex gr." in m3_engine._PARSE_CAPTION_SYSTEM
+        assert "ex gr." in semantic_engine._PARSE_CAPTION_SYSTEM
 
     def test_english_caption_example(self):
         """At least one example uses English-language caption text."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._PARSE_CAPTION_SYSTEM
+        prompt = semantic_engine._PARSE_CAPTION_SYSTEM
         # Look for English caption conventions: "Figure N." / "Plate N." / "Figs. N."
         assert re.search(r"(Figure \d+|Plate \d+|Figs?\.?\s*\d+)", prompt), (
             "_PARSE_CAPTION_SYSTEM missing English caption example"
@@ -244,9 +244,9 @@ class TestParseCaptionCoverage:
 
     def test_chinese_caption_example(self):
         """At least one example uses Chinese-language caption text."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._PARSE_CAPTION_SYSTEM
+        prompt = semantic_engine._PARSE_CAPTION_SYSTEM
         # Look for Chinese caption conventions: 图版 / 图 / 比例尺
         assert re.search(r"(图版|比例尺|扫描电镜)", prompt), (
             "_PARSE_CAPTION_SYSTEM missing Chinese caption example"
@@ -258,9 +258,9 @@ class TestClassifyPlateCoverage:
     variant example covering Asian-paper format conventions."""
 
     def test_chinese_caption_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._CLASSIFY_PLATE_SYSTEM
+        prompt = semantic_engine._CLASSIFY_PLATE_SYSTEM
         # Chinese paper conventions: 中文图说 / 中文图版 / 横版
         # OR Chinese scale-bar text "比例尺" or "图版"
         assert re.search(r"(中文|比例尺|图版)", prompt), (
@@ -269,9 +269,9 @@ class TestClassifyPlateCoverage:
 
     def test_outdoor_photo_example_present(self):
         """Phase 4A adds an outdoor-photo negative example."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._CLASSIFY_PLATE_SYSTEM
+        prompt = semantic_engine._CLASSIFY_PLATE_SYSTEM
         assert re.search(r"(野外|露头|照片)", prompt), (
             "_CLASSIFY_PLATE_SYSTEM missing outdoor/field photo example"
         )
@@ -279,9 +279,9 @@ class TestClassifyPlateCoverage:
     def test_strat_column_negative_example_present(self):
         """A stratigraphic column negative example must exist so the
         LLM doesn't mis-classify column figures as plates."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._CLASSIFY_PLATE_SYSTEM
+        prompt = semantic_engine._CLASSIFY_PLATE_SYSTEM
         assert "stratigraphic" in prompt.lower() or "柱状" in prompt, (
             "_CLASSIFY_PLATE_SYSTEM missing strat-column negative example"
         )
@@ -292,25 +292,25 @@ class TestSegmentPanelsCoverage:
     panel + irregular layouts."""
 
     def test_multi_panel_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._SEGMENT_PANELS_SYSTEM
+        prompt = semantic_engine._SEGMENT_PANELS_SYSTEM
         assert "2x2" in prompt or "2x3" in prompt, (
             "_SEGMENT_PANELS_SYSTEM missing multi-panel grid example"
         )
 
     def test_single_panel_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._SEGMENT_PANELS_SYSTEM
+        prompt = semantic_engine._SEGMENT_PANELS_SYSTEM
         assert "single" in prompt.lower() or "P1" in prompt, (
             "_SEGMENT_PANELS_SYSTEM missing single-panel example"
         )
 
     def test_irregular_layout_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._SEGMENT_PANELS_SYSTEM
+        prompt = semantic_engine._SEGMENT_PANELS_SYSTEM
         assert "不规则" in prompt or "irregular" in prompt.lower(), (
             "_SEGMENT_PANELS_SYSTEM missing irregular-layout example"
         )
@@ -321,32 +321,32 @@ class TestMatchPanelCoverage:
     confident caption match / open-nomen match / no candidate."""
 
     def test_caption_match_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._MATCH_PANEL_SYSTEM
+        prompt = semantic_engine._MATCH_PANEL_SYSTEM
         assert "Tetraspongodiscus" in prompt, (
             "_MATCH_PANEL_SYSTEM missing confident caption match example"
         )
 
     def test_open_nomen_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._MATCH_PANEL_SYSTEM
+        prompt = semantic_engine._MATCH_PANEL_SYSTEM
         assert "cf." in prompt, "_MATCH_PANEL_SYSTEM missing open-nomen example"
 
     def test_no_candidate_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._MATCH_PANEL_SYSTEM
+        prompt = semantic_engine._MATCH_PANEL_SYSTEM
         assert "Candidate pairs (from caption): []" in prompt, (
             "_MATCH_PANEL_SYSTEM missing empty-candidate example"
         )
 
     def test_english_caption_example_present(self):
         """Phase 4A adds an English caption example for international papers."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._MATCH_PANEL_SYSTEM
+        prompt = semantic_engine._MATCH_PANEL_SYSTEM
         assert "Hsuum" in prompt, (
             "_MATCH_PANEL_SYSTEM missing English caption example "
             "(Hsuum is a well-known Late Jurassic nassellarian)"
@@ -357,28 +357,28 @@ class TestCritiqueCoverage:
     """``_CRITIQUE_SYSTEM`` must cover all 3 verdict paths."""
 
     def test_agree_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._CRITIQUE_SYSTEM
+        prompt = semantic_engine._CRITIQUE_SYSTEM
         assert '"agree"' in prompt or "agree" in prompt, "_CRITIQUE_SYSTEM missing agree example"
 
     def test_disagree_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._CRITIQUE_SYSTEM
+        prompt = semantic_engine._CRITIQUE_SYSTEM
         assert "disagree" in prompt, "_CRITIQUE_SYSTEM missing disagree example"
 
     def test_uncertain_example_present(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._CRITIQUE_SYSTEM
+        prompt = semantic_engine._CRITIQUE_SYSTEM
         assert "uncertain" in prompt, "_CRITIQUE_SYSTEM missing uncertain example"
 
     def test_low_confidence_batch_example_present(self):
         """Phase 4A adds a 3-panel low-confidence batch example."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._CRITIQUE_SYSTEM
+        prompt = semantic_engine._CRITIQUE_SYSTEM
         # The Phase 4A example has 3 panels with confidence 0.4 each.
         assert "0.4" in prompt, "_CRITIQUE_SYSTEM missing low-confidence batch example"
 
@@ -419,9 +419,9 @@ class TestParseCaptionSchemaConsistency:
         """The example output uses keys that the converter maps to
         TaxonRecord fields. ``species`` -> verbatim_name,
         ``modifier`` -> qualifier, ``confidence`` -> confidence."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine._PARSE_CAPTION_SYSTEM
+        prompt = semantic_engine._PARSE_CAPTION_SYSTEM
         # At least one example output object must include "species".
         assert '"species"' in prompt
         # ... and a "modifier" or "qualifier" equivalent.
@@ -439,10 +439,10 @@ class TestExtractGeologySchemaConsistency:
     schemas."""
 
     def test_strat_column_example_uses_geology_context_keys(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
         from rlpe.schema_models import GeologyContextRecord
 
-        prompt = m3_engine.PROMPT_REGISTRY["strat_column_geo"]
+        prompt = semantic_engine.PROMPT_REGISTRY["strat_column_geo"]
         # The ``geo`` wrapper must include ``age``, ``formation``,
         # ``lithology``, ``ma_top``, ``ma_base``, ``confidence``.
         fields = GeologyContextRecord.model_fields.keys()
@@ -453,10 +453,10 @@ class TestExtractGeologySchemaConsistency:
             assert f'"{key}"' in prompt, f"strat_column_geo example missing field {key!r}"
 
     def test_litholog_column_example_uses_geology_context_keys(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
         from rlpe.schema_models import GeologyContextRecord
 
-        prompt = m3_engine.PROMPT_REGISTRY["litholog_column_geo"]
+        prompt = semantic_engine.PROMPT_REGISTRY["litholog_column_geo"]
         fields = GeologyContextRecord.model_fields.keys()
         for key in ("age", "lithology", "ma_top", "ma_base", "confidence"):
             assert key in fields, f"GeologyContextRecord missing field {key!r}"
@@ -464,10 +464,10 @@ class TestExtractGeologySchemaConsistency:
             assert f'"{key}"' in prompt, f"litholog_column_geo example missing field {key!r}"
 
     def test_paleogeographic_example_uses_locality_keys(self):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
         from rlpe.schema_models import LocalityRecord
 
-        prompt = m3_engine.PROMPT_REGISTRY["paleogeographic_map_geo"]
+        prompt = semantic_engine.PROMPT_REGISTRY["paleogeographic_map_geo"]
         fields = LocalityRecord.model_fields.keys()
         # LocalityRecord uses modern_latitude / modern_longitude
         # (Darwin Core convention); verify those exist.
@@ -492,18 +492,18 @@ class TestRequiredFooter:
 
     @pytest.mark.parametrize("prompt_name", STAGE_PROMPTS)
     def test_stage_prompt_has_footer(self, prompt_name: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = getattr(m3_engine, prompt_name)
+        prompt = getattr(semantic_engine, prompt_name)
         assert REQUIRED_FOOTER in prompt, (
             f"{prompt_name} missing required footer {REQUIRED_FOOTER!r} (Phase 4A addition)"
         )
 
     @pytest.mark.parametrize("prompt_key", GEOLOGY_PROMPTS)
     def test_geology_prompt_has_footer(self, prompt_key: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine.PROMPT_REGISTRY[prompt_key]
+        prompt = semantic_engine.PROMPT_REGISTRY[prompt_key]
         assert REQUIRED_FOOTER in prompt, (
             f"PROMPT_REGISTRY[{prompt_key!r}] missing required footer {REQUIRED_FOOTER!r}"
         )
@@ -520,9 +520,9 @@ class TestPromptTokenBudget:
 
     @pytest.mark.parametrize("prompt_name", STAGE_PROMPTS)
     def test_stage_prompt_under_budget(self, prompt_name: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = getattr(m3_engine, prompt_name)
+        prompt = getattr(semantic_engine, prompt_name)
         cjk = sum(1 for c in prompt if ord(c) > 0x3000)
         ascii_ = len(prompt) - cjk
         approx_tokens = cjk + ascii_ // 4
@@ -530,9 +530,9 @@ class TestPromptTokenBudget:
 
     @pytest.mark.parametrize("prompt_key", GEOLOGY_PROMPTS)
     def test_geology_prompt_under_budget(self, prompt_key: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine.PROMPT_REGISTRY[prompt_key]
+        prompt = semantic_engine.PROMPT_REGISTRY[prompt_key]
         cjk = sum(1 for c in prompt if ord(c) > 0x3000)
         ascii_ = len(prompt) - cjk
         approx_tokens = cjk + ascii_ // 4
@@ -553,16 +553,16 @@ class TestSourceGuards:
 
     @pytest.mark.parametrize("prompt_name", STAGE_PROMPTS)
     def test_prompt_is_string(self, prompt_name: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = getattr(m3_engine, prompt_name)
+        prompt = getattr(semantic_engine, prompt_name)
         assert isinstance(prompt, str) and len(prompt) > 500
 
     @pytest.mark.parametrize("prompt_key", GEOLOGY_PROMPTS)
     def test_geology_prompt_is_string(self, prompt_key: str):
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        prompt = m3_engine.PROMPT_REGISTRY[prompt_key]
+        prompt = semantic_engine.PROMPT_REGISTRY[prompt_key]
         assert isinstance(prompt, str) and len(prompt) > 500
 
     def test_module_compiles(self):
@@ -571,8 +571,8 @@ class TestSourceGuards:
 
         Note: do NOT ``importlib.reload()`` here — reloading creates fresh
         class objects (e.g. ``LLMSchemaError``), so any test that
-        captured the old class via ``from rlpe.m3_engine import ...``
+        captured the old class via ``from rlpe.semantic_engine import ...``
         will silently break ``isinstance`` checks downstream. The
         import alone is sufficient to surface syntax / NameErrors.
         """
-        from rlpe import m3_engine  # noqa: F401  (import-side-effect check)
+        from rlpe import semantic_engine  # noqa: F401  (import-side-effect check)

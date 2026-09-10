@@ -170,7 +170,7 @@ class TestGlobal422HandlerScoped(unittest.TestCase):
 
 
 class TestFallbackGETRequiresAPIKey(unittest.TestCase):
-    """Architectural P1 #22: ``GET /jobs/{id}/MiniMax-fallback``
+    """Architectural P1 #22: ``GET /jobs/{id}/llm-fallback``
     must enforce the same ``require_api_key`` auth as the POST
     counterpart — the GET reveals the same error_info payload and
     previously let any LAN caller probe job job state."""
@@ -182,8 +182,11 @@ class TestFallbackGETRequiresAPIKey(unittest.TestCase):
         # parameters (``job_id: str``) that contain ``:`` so anchor on
         # the closing ``) -> ...`` form instead.
         match = re.search(
-            r'@app\.get\("/jobs/\{job_id\}/MiniMax-fallback"\)\s*\n'
-            r"def get_MiniMax_fallback\((.+?)\)\s*->",
+            r'@app\.get\("/jobs/\{job_id\}/llm-fallback"\)\s*\n'
+            # F17: a deprecated legacy alias route may be stacked between
+            # the canonical decorator and the function definition.
+            r"(?:@app\.[a-z]+\([^\n]*\)\s*\n)*"
+            r"def get_llm_fallback\((.+?)\)\s*->",
             src,
             re.DOTALL,
         )
@@ -192,7 +195,7 @@ class TestFallbackGETRequiresAPIKey(unittest.TestCase):
         self.assertIn(
             "require_api_key",
             sig,
-            "GET /jobs/{id}/MiniMax-fallback must require API-key auth (architectural P1 #22)",
+            "GET /jobs/{id}/llm-fallback must require API-key auth (architectural P1 #22)",
         )
 
 
@@ -297,8 +300,8 @@ class TestSafeValueHasRecursionGuard(unittest.TestCase):
 
 class TestFallbackPopupTimeoutBounded(unittest.TestCase):
     """BL-8: ``_web_fallback_popup`` blocked each worker for up to 5
-    minutes when the MiniMax API failed — 4 concurrent jobs that all
-    hit a MiniMax outage would each pin a BackgroundTasks worker for
+    minutes when the LLM API failed — 4 concurrent jobs that all
+    hit a LLM outage would each pin a BackgroundTasks worker for
     5 minutes, freezing the whole FastAPI process. Lower to 30 s."""
 
     def test_fallback_timeout_ms_bounded(self) -> None:
@@ -317,7 +320,7 @@ class TestFallbackPopupTimeoutBounded(unittest.TestCase):
 
 
 class TestNoneCrashGuards(unittest.TestCase):
-    """BL-2 / BL-3 / BL-10 / BL-11 / BL-12: a handful of LLM/M3 /
+    """BL-2 / BL-3 / BL-10 / BL-11 / BL-12: a handful of LLM/LLM /
     panel-label helpers returned None on transport hiccups and then
     crashed on the next attribute access. Each call site must guard
     the None return explicitly."""
@@ -332,18 +335,18 @@ class TestNoneCrashGuards(unittest.TestCase):
             "_llm_first_extract must guard None result from infer_panel (BL-2)",
         )
 
-    def test_m3_stage4_guards_none_match(self) -> None:
+    def test_llm_stage4_guards_none_match(self) -> None:
         src = _read("pipeline.py")
         self.assertIn(
-            "m3_stage4_error",
+            "llm_stage4_error",
             src,
-            "_apply_m3_stage4 must record m3_stage4_error metadata on None match (BL-3)",
+            "_apply_llm_stage4 must record llm_stage4_error metadata on None match (BL-3)",
         )
-        # The guard must come AFTER `panel_match = self.m3_engine.match_panel(...)`.
+        # The guard must come AFTER `panel_match = self.semantic_engine.match_panel(...)`.
         self.assertRegex(
             src,
-            r"if panel_match is None:\s*\n\s*md\[\"m3_stage4_error\"\]\s*=\s*\"engine_returned_none\"",
-            "_apply_m3_stage4 must skip-and-continue on None match_panel (BL-3)",
+            r"if panel_match is None:\s*\n\s*md\[\"llm_stage4_error\"\]\s*=\s*\"engine_returned_none\"",
+            "_apply_llm_stage4 must skip-and-continue on None match_panel (BL-3)",
         )
 
     def test_normalize_panel_label_none_guard(self) -> None:
@@ -417,7 +420,7 @@ class TestLabelRangeExpansionHandlesReverse(unittest.TestCase):
     iterating."""
 
     def test_label_range_sorts_bounds(self) -> None:
-        src = _read("m3_engine.py")
+        src = _read("semantic_engine.py")
         self.assertRegex(
             src,
             r"sorted\(\[ord\(a\),\s*ord\(b\)\]\)",
@@ -455,7 +458,7 @@ class TestArrayLabelsSplitBeforeExpand(unittest.TestCase):
     matched every panel. Split on commas first."""
 
     def test_string_labels_split_on_comma(self) -> None:
-        src = _read("m3_engine.py")
+        src = _read("semantic_engine.py")
         self.assertRegex(
             src,
             r"labels\.split\(\",\"\)\s*\n\s*for\s+lab\s+in\s+_expand_label_range\(seg\)",
@@ -594,7 +597,7 @@ class TestAtomicWritesUseTempfileRename(unittest.TestCase):
 
 class TestBatchRunSingleUsesDataclassesReplace(unittest.TestCase):
     """BL-35 / CR-4: ``batch._run_single`` manually listed every
-    PipelineConfig field — new fields (m3_per_panel, m3_stage_6, ...)
+    PipelineConfig field — new fields (llm_per_panel, llm_stage_6, ...)
     silently fell back to defaults when invoked through the batch
     path. ``dataclasses.replace`` keeps the manual list in sync."""
 
@@ -682,7 +685,7 @@ class TestRedactAPIKeysCoversCloudProviders(unittest.TestCase):
     """CR-17: ``_API_KEY_PATTERNS`` previously only covered OpenAI /
     Anthropic / Pro / CP key prefixes. AWS Bedrock (AKIA / ASIA),
     Vertex / GCP (ya29.<base64>), Azure (32 hex chars), and Stripe
-    live keys are all routed through MiniMax-style proxy configs and
+    live keys are all routed through LLM-style proxy configs and
     would be persisted verbatim to ``matches.jsonl`` without these
     patterns."""
 
@@ -851,7 +854,7 @@ class TestExpandLabelRangeHandlesReverse(unittest.TestCase):
     iterating."""
 
     def test_expand_label_range_sorts_bounds(self) -> None:
-        src = _read("m3_engine.py")
+        src = _read("semantic_engine.py")
         # Look for sorted([ia, ib]) and sorted([ord(a), ord(b)]).
         self.assertRegex(
             src,
@@ -918,28 +921,28 @@ class TestCLIAPIParameterConsistency(unittest.TestCase):
             "CLI default for data_outbound_policy must be api_redacted (P1 #21)",
         )
 
-    def test_api_joboptions_has_m3_prompt_lang_field(self) -> None:
-        """JobOptions must expose ``m3_prompt_lang`` so the web UI can
-        route JA / ZH / EN captions through the correct M3 prompt
+    def test_api_joboptions_has_llm_prompt_lang_field(self) -> None:
+        """JobOptions must expose ``llm_prompt_lang`` so the web UI can
+        route JA / ZH / EN captions through the correct LLM prompt
         template (Phase 27 JA caption routing fix)."""
         api_src = _read("api/app.py")
         self.assertRegex(
             api_src,
-            r"m3_prompt_lang:\s*str\s*=\s*\"auto\"",
-            "JobOptions must declare m3_prompt_lang field (P1 #21)",
+            r"llm_prompt_lang:\s*str\s*=\s*\"auto\"",
+            "JobOptions must declare llm_prompt_lang field (P1 #21)",
         )
 
-    def test_cli_pipeline_config_extra_has_m3_prompt_lang_field(self) -> None:
-        """PipelineConfig.extra must surface ``m3_prompt_lang`` so a
-        web-uploaded JobOptions.m3_prompt_lang actually reaches the
+    def test_cli_pipeline_config_extra_has_llm_prompt_lang_field(self) -> None:
+        """PipelineConfig.extra must surface ``llm_prompt_lang`` so a
+        web-uploaded JobOptions.llm_prompt_lang actually reaches the
         prompt builder. Without this, the API field is a no-op."""
         # The string appears in either cli.py (the JobOptions-to-extra
         # conversion) or pipeline.py (the actual default lookup).
         joined = _read("cli.py") + "\n" + _read("pipeline.py")
         self.assertRegex(
             joined,
-            r"m3_prompt_lang",
-            "PipelineConfig must surface m3_prompt_lang (P1 #21)",
+            r"llm_prompt_lang",
+            "PipelineConfig must surface llm_prompt_lang (P1 #21)",
         )
 
 
@@ -1007,16 +1010,16 @@ class TestStreamingSSEHasDisconnectGuard(unittest.TestCase):
 
 
 class TestM3SamplingLockPresent(unittest.TestCase):
-    """CR-21: M3Engine must wrap read-modify-write of backend sampling
+    """CR-21: SemanticEngine must wrap read-modify-write of backend sampling
     attributes in a lock so concurrent workers don't stomp on each
     other."""
 
-    def test_m3_engine_has_sampling_lock(self) -> None:
-        src = _read("m3_engine.py")
+    def test_semantic_engine_has_sampling_lock(self) -> None:
+        src = _read("semantic_engine.py")
         self.assertIn(
             "_sampling_lock",
             src,
-            "m3_engine.py must define _sampling_lock (CR-21)",
+            "semantic_engine.py must define _sampling_lock (CR-21)",
         )
         # The setter calls must run inside the lock.
         self.assertRegex(
@@ -1148,12 +1151,12 @@ class TestSSRFRejectsIPv6ZoneId(unittest.TestCase):
 
 
 class TestM3SafeJSONBalancedObjects(unittest.TestCase):
-    """CR-35: ``m3_engine._safe_json_loads`` must fall back to
+    """CR-35: ``semantic_engine._safe_json_loads`` must fall back to
     balanced-object recovery when the LLM emits a malformed JSON
     array with missing commas."""
 
     def test_safe_json_extracts_balanced_objects(self) -> None:
-        src = _read("m3_engine.py")
+        src = _read("semantic_engine.py")
         self.assertIn(
             "_extract_balanced_objects",
             src,

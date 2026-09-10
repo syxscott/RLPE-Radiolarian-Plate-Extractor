@@ -53,13 +53,13 @@ def _make_strat_row(
 
 @pytest.fixture
 def pipe(tmp_path):
-    """Build a RadiolarianPipeline with no backend so M3 path is exercised as no-op."""
+    """Build a RadiolarianPipeline with no backend so LLM path is exercised as no-op."""
     from rlpe.pipeline import RadiolarianPipeline
 
     cfg = PipelineConfig(pdf_dir=tmp_path, work_dir=tmp_path / "work")
     p = RadiolarianPipeline(cfg)
-    # No m3_engine by default — exercises Strategy 1/2 + unlinked fallback.
-    p.m3_engine = None
+    # No semantic_engine by default — exercises Strategy 1/2 + unlinked fallback.
+    p.semantic_engine = None
     return p
 
 
@@ -108,13 +108,13 @@ class TestLocalityLinkThroughPipeline:
 
 
 class TestM3LinkThroughPipeline:
-    def test_m3_fallback_when_strategies_fail(self, tmp_path):
+    def test_llm_fallback_when_strategies_fail(self, tmp_path):
         from rlpe.pipeline import RadiolarianPipeline
-        from tests.fakes.fake_m3_backend import FakeM3Backend
+        from tests.fakes.fake_llm_backend import FakeM3Backend
 
         cfg = PipelineConfig(pdf_dir=tmp_path, work_dir=tmp_path / "work")
         p = RadiolarianPipeline(cfg)
-        # Fake M3 engine with canned response. Use a low confidence
+        # Fake LLM engine with canned response. Use a low confidence
         # (0.3) so the pipeline's low-confidence review flag fires.
         backend = FakeM3Backend(
             canned_responses=[
@@ -125,19 +125,19 @@ class TestM3LinkThroughPipeline:
                 }
             ]
         )
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        p.m3_engine = M3Engine(backend=backend, config={})
+        p.semantic_engine = SemanticEngine(backend=backend, config={})
 
         plate = _make_plate_row(panel_id="p1", caption="Generic plate caption")
         strat = _make_strat_row(figure_id="strat1", caption="Generic")
         rows = [plate, strat]
         out = p._apply_cross_figure_linker(rows, paper_id="p1")
         plate_out = out[0]
-        # No Sample ID match, no Locality match → falls through to M3
-        assert plate_out["metadata"]["link_source"] == "m3_inference"
+        # No Sample ID match, no Locality match → falls through to LLM
+        assert plate_out["metadata"]["link_source"] == "llm_inference"
         assert 0.3 <= plate_out["metadata"]["link_confidence"] <= 0.6
-        # Low-confidence M3 links get needs_review flag
+        # Low-confidence LLM links get needs_review flag
         assert plate_out["metadata"].get("needs_review") is True
         assert "cross_figure_linker_low_confidence" in (
             plate_out["metadata"].get("review_reasons") or []

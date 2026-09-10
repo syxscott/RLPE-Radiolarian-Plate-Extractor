@@ -174,7 +174,7 @@ _PANEL_HEADERS = [
     "示意图摘要",
     # Phase 65 Plan A.5: cross-figure linker provenance. Carries
     # the winning strategy ("sample_match" / "locality_match" /
-    # "m3_inference" / "unlinked") and the linker confidence.
+    # "llm_inference" / "unlinked") and the linker confidence.
     # Operator can filter "unlinked" rows to find panels that
     # still need manual linking. Empty when the linker didn't
     # run (legacy rows).

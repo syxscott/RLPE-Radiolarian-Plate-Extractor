@@ -17,8 +17,13 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .llm_backends import _normalize_panel_dict
-from .m3_engine import _MATCH_PANEL_SYSTEM
+from .llm_backends import (
+    _normalize_panel_dict,
+    resolve_llm_api_key,
+    resolve_llm_base_url,
+    resolve_llm_model,
+)
+from .semantic_engine import _MATCH_PANEL_SYSTEM
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +31,7 @@ logger = logging.getLogger(__name__)
 # audit 2026-08-01 (D2): module-level lock serialising the
 # "switch to local fallback backend" path. ``_switch_to_fallback_backend``
 # builds a new local model runtime and reassigns it onto
-# ``self.gemma_runtime`` + ``self.m3_engine.backend``. Without a lock
+# ``self.gemma_runtime`` + ``self.semantic_engine.backend``. Without a lock
 # N worker threads can each catch a ``FallbackRecommendedError`` at
 # once and each spin up their own copy of the model — a fast path
 # to OOM on a single-GPU box. A plain ``threading.Lock`` is enough
@@ -61,7 +66,6 @@ from .layout import (
     find_plate_pages,
     render_pdf_pages,
 )
-from .m3_engine import CaptionPair, M3Engine, PanelBox, PanelMatch
 from .ocr import OCRBackend, normalize_ocr_tokens
 from .provenance.stamp import build_provenance
 from .range_chart_extractor import (
@@ -77,6 +81,7 @@ from .scale_bar import (
 )
 from .schema_models import ProvenanceRecord
 from .segmentation import PanelSegmenter, SegmentationConfig
+from .semantic_engine import CaptionPair, PanelBox, PanelMatch, SemanticEngine
 from .taxon import TaxonRecognizer
 from .text_filters import (
     looks_like_placeholder_caption as _looks_like_placeholder_caption,
@@ -237,11 +242,11 @@ class RadiolarianPipeline:
         self._od_extractor = None
         self._od_lock = threading.Lock()
         self.gemma_runtime = None
-        # M3Engine: 5-stage semantic engine. Initialized only when M3 backend
+        # SemanticEngine: 5-stage semantic engine. Initialized only when LLM backend
         # is available AND the user explicitly opts in via
-        # ``m3_enhanced_mode = True`` (Round 16 audit: was asymmetric — ON
-        # by default for MiniMax, opt-in for others; now opt-in for all).
-        self.m3_engine: M3Engine | None = None
+        # ``llm_enhanced_mode = True`` (Round 16 audit: was asymmetric — ON
+        # by default for LLM, opt-in for others; now opt-in for all).
+        self.semantic_engine: SemanticEngine | None = None
         # BLOCKER BL-1 (audit 2026-09-01): must be RLock, not Lock.
         # The Gemma4 fallback path acquires _gemma_lock inside
         # ``_apply_gemma_with_fallback`` *while already holding* the same
@@ -264,7 +269,7 @@ class RadiolarianPipeline:
         # can merge them into the canonical ``run_output.json`` after
         # all per-paper processing completes. The accumulator is
         # populated by ``_apply_morphology_enrichment`` (only fires
-        # when ``m3_stage_6=True`` and a M3 backend is available) and
+        # when ``llm_stage_6=True`` and a LLM backend is available) and
         # drained by ``run()`` when assembling ``run_output_dict``.
         # Plain dict — single-threaded accumulation (per-paper work
         # is serialised by the executor), drained in ``run()`` once
@@ -283,7 +288,7 @@ class RadiolarianPipeline:
         self._paper_range_charts: dict[str, list[dict[str, Any]]] = {}
         # F6 (audit 2026-09-07): captions already processed through the
         # range-chart path — dedups OD's duplicate range-chart figures
-        # (Munasri p007_09/p007_10 burned one M3 call each).
+        # (Munasri p007_09/p007_10 burned one LLM call each).
         # IMPORTANT: this set is per-PAPER, not per-run. It must be
         # cleared at each paper boundary (see _process_one_pdf) to
         # avoid incorrectly skipping duplicate captions from DIFFERENT
@@ -294,25 +299,23 @@ class RadiolarianPipeline:
         # invoke ``_progress_cb`` simultaneously; without this lock,
         # Qt signal dispatch in the GUI can interleave updates.
         self._progress_lock = threading.Lock()
-        # Fallback handler for MiniMax API errors (None when not using MiniMax)
+        # Fallback handler for LLM API errors (None when not using LLM)
         self.gemma_fallback_handler = None
         # Secondary Gemma runtime used as fallback target (lazy-init on first error)
         self._fallback_gemma_runtime = None
         # Round 18 audit: ANTHROPIC_API_KEY is the project's documented
         # .env key (Claude-Code-compatible name). If the user has
-        # ANTHROPIC_API_KEY but no MiniMax_api_key / MINIMAX_API_KEY,
-        # inject the Anthropic env var into the pipeline config so
-        # downstream LLM backend builders can see it. Done here so
-        # _try_init_gemma (which builds the MiniMaxM3Backend) picks
-        # it up automatically.
-        if (
-            not self.config.extra.get("MiniMax_api_key")
-            and not os.environ.get("MINIMAX_API_KEY")
-            and os.environ.get("ANTHROPIC_API_KEY")
-        ):
-            self.config.extra["MiniMax_api_key"] = os.environ.get("ANTHROPIC_API_KEY")
+        # ANTHROPIC_API_KEY but no explicit llm_api_key, inject the
+        # env var into the pipeline config so downstream LLM backend
+        # builders can see it. Done here so _try_init_gemma (which
+        # builds the AnthropicCompatBackend) picks it up automatically.
+        # (F17: resolve_llm_api_key also checks the saved settings file
+        # and the legacy MiniMax_* env names, so this injection is only
+        # a convenience for code that reads extra directly.)
+        if not self.config.extra.get("llm_api_key") and os.environ.get("ANTHROPIC_API_KEY"):
+            self.config.extra["llm_api_key"] = os.environ.get("ANTHROPIC_API_KEY")
             logger.info(
-                "Pipeline: using ANTHROPIC_API_KEY as MiniMax_api_key (Anthropic env-var fallback)"
+                "Pipeline: using ANTHROPIC_API_KEY as llm_api_key (Anthropic env-var fallback)"
             )
         # Audit 2026-09-06 (truthfulness audit, fake-flag A1/A2): wire
         # ``--deterministic`` / ``--deterministic-seed``. The helper
@@ -320,9 +323,9 @@ class RadiolarianPipeline:
         # implemented (temperature=0, greedy decode, RNG seeding) but
         # had ZERO callers — both CLI flags were silent no-ops. Apply
         # it here, before any LLM runtime is constructed: seed the
-        # python/numpy/torch RNGs and force the M3 sampling params to
-        # temperature 0 (M3Engine._apply_config_sampling_params reads
-        # ``m3_temperature`` from this extra dict at construction).
+        # python/numpy/torch RNGs and force the LLM sampling params to
+        # temperature 0 (SemanticEngine._apply_config_sampling_params reads
+        # ``llm_temperature`` from this extra dict at construction).
         if self.config.extra.get("deterministic"):
             from .llm_backends import (
                 DEFAULT_DETERMINISTIC_SEED,
@@ -336,9 +339,9 @@ class RadiolarianPipeline:
                 seed = DEFAULT_DETERMINISTIC_SEED
             resolve_deterministic_kwargs(deterministic=True, seed=seed)
             self.config.extra.setdefault("deterministic_seed", seed)
-            self.config.extra["m3_temperature"] = 0.0
+            self.config.extra["llm_temperature"] = 0.0
             logger.info(
-                "Deterministic mode enabled: RNGs seeded with %d, m3_temperature forced to 0.0",
+                "Deterministic mode enabled: RNGs seeded with %d, llm_temperature forced to 0.0",
                 seed,
             )
         self._try_init_gemma()
@@ -366,60 +369,51 @@ class RadiolarianPipeline:
         # Two distinct initialization paths:
         #   1. Local Gemma4 / llama.cpp / Ollama — requires use_gemma4=True
         #      or an explicit model_path (legacy behavior).
-        #   2. MiniMax cloud backend — requires ONLY a MiniMax API key;
+        #   2. LLM cloud backend — requires ONLY a LLM API key;
         #      does NOT need use_gemma4=True.  The previous version
         #      incorrectly required use_gemma4=True for ALL backends,
-        #      which meant MiniMax (the default cloud path) silently
+        #      which meant LLM (the default cloud path) silently
         #      produced zero LLM calls unless the user also passed
         #      --use-gemma4.
-        minimax_backends = {"minimax", "minimax-m3", "minimax_api"}
+        anthropic_backends = {"anthropic", "minimax", "minimax-m3", "minimax_api"}
         backend_name = str(self.config.extra.get("llm_backend") or "").lower() or "transformers"
-        has_minimax_key = bool(
-            self.config.extra.get("MiniMax_api_key") or os.environ.get("MINIMAX_API_KEY")
-        )
-        # Round 16 audit: ANTHROPIC_API_KEY used to be a fallback
-        # source. That silently routed Claude Code users to MiniMax
-        # with no warning. Removed from the chain — a user who only
-        # has ANTHROPIC_API_KEY must set MINIMAX_API_KEY or
-        # MiniMax_api_key explicitly. If they do, log a notice so
-        # the source is observable.
-        if (
-            not has_minimax_key
-            and os.environ.get("ANTHROPIC_API_KEY")
-            and not self.config.extra.get("MiniMax_api_key")
-            and not os.environ.get("MINIMAX_API_KEY")
-        ):
+        # F17: "anthropic" is the canonical cloud-backend name; the
+        # pre-F17 vendor aliases still select it (with a notice).
+        if backend_name in {"minimax", "minimax-m3", "minimax_api"}:
             logger.info(
-                "ANTHROPIC_API_KEY is set but not consumed by MiniMax "
-                "path (vendor-specific key required); set MiniMax_api_key "
-                "or MINIMAX_API_KEY explicitly to enable MiniMax."
+                "llm_backend=%r is a legacy alias (F17 rename); treating it as 'anthropic'",
+                backend_name,
             )
-        # MiniMax path: either explicit backend name, OR no local model
-        # path but a MiniMax API key present (the common "just give me
-        # a key and hit the cloud" flow).
+            backend_name = "anthropic"
+            self.config.extra["llm_backend"] = "anthropic"
+        has_llm_key = resolve_llm_api_key(self.config.extra) is not None
+        # LLM path: either explicit backend name, OR no local model
+        # path but a LLM API key present (the common "just give me
+        # a key and hit the cloud" flow). ``resolve_llm_api_key``
+        # covers extra, the saved settings file and the env chain.
         has_local_model = bool(
             self.config.extra.get("gemma_model_path")
             or self.config.extra.get("ollama_model")
             or self.config.extra.get("llama_model")
         )
-        use_minimax = backend_name in minimax_backends or (has_minimax_key and not has_local_model)
-        if not use_minimax and not self.config.extra.get("use_gemma4", False):
+        use_cloud_llm = backend_name in anthropic_backends or (has_llm_key and not has_local_model)
+        if not use_cloud_llm and not self.config.extra.get("use_gemma4", False):
             return
         model_path = self.config.extra.get("gemma_model_path") or self.config.extra.get(
             "ollama_model"
         )
-        if not use_minimax and not model_path and backend_name not in {"ollama"}:
+        if not use_cloud_llm and not model_path and backend_name not in {"ollama"}:
             return
         try:
-            # If we detected MiniMax heuristically (API key present, no
-            # local model), make sure the builder sees backend=minimax.
+            # If we detected LLM heuristically (API key present, no
+            # local model), make sure the builder sees backend=llm.
             # Otherwise build_gemma_backend_from_config defaults to
             # "transformers", which triggers load_gemma4_model →
             # BitsAndBytes import → crash in envs without the
             # transformers stack.
-            if use_minimax and backend_name not in minimax_backends:
-                self.config.extra["llm_backend"] = "minimax"
-                backend_name = "minimax"  # sync local for FallbackHandler gate below
+            if use_cloud_llm and backend_name not in anthropic_backends:
+                self.config.extra["llm_backend"] = "anthropic"
+                backend_name = "anthropic"  # sync local for FallbackHandler gate below
             self.gemma_runtime = build_gemma_backend_from_config(self.config.extra)
             # audit 2026-07-31: wire the configured fallback backend
             # name into the backend so a 4xx error can raise
@@ -434,28 +428,28 @@ class RadiolarianPipeline:
                         setter(fb_name)
                     except Exception:
                         logger.debug("set_fallback_backend unavailable", exc_info=True)
-            # If MiniMax backend, attach a FallbackHandler. The handler is
+            # If LLM backend, attach a FallbackHandler. The handler is
             # invoked ONLY from ``_apply_gemma_with_fallback``; we intentionally
             # do NOT also wire it into ``backend.on_error`` to avoid the
             # handler being called twice for the same error.
-            if backend_name in minimax_backends:
-                external = self.config.extra.get("_MiniMax_external_handler")
+            if backend_name in anthropic_backends:
+                external = self.config.extra.get("_llm_external_handler")
                 if external is not None:
                     handler = external
                 else:
                     from .llm_backends import FallbackHandler
 
-                    default_action = str(self.config.extra.get("MiniMax_fallback_default", "rules"))
+                    default_action = str(self.config.extra.get("llm_fallback_default", "rules"))
                     handler = FallbackHandler(default_action=default_action)
-                    if bool(self.config.extra.get("MiniMax_interactive", False)):
+                    if bool(self.config.extra.get("llm_interactive", False)):
                         from .llm_backends import cli_fallback_prompt
 
                         handler.on_error = cli_fallback_prompt
                 self.gemma_fallback_handler = handler
                 logger.info(
-                    "MiniMax M3 backend ready (default_fallback=%s interactive=%s)",
+                    "Anthropic-compatible LLM backend ready (default_fallback=%s interactive=%s)",
                     handler.default_action,
-                    bool(self.config.extra.get("MiniMax_interactive", False)),
+                    bool(self.config.extra.get("llm_interactive", False)),
                 )
         except Exception as exc:
             self.gemma_runtime = None
@@ -471,31 +465,31 @@ class RadiolarianPipeline:
             )
             return
 
-        # Build the M3 semantic engine (5-stage). Round 16 audit: was
-        # asymmetric — auto-enabled for MiniMax backend, opt-in for
+        # Build the LLM semantic engine (5-stage). Round 16 audit: was
+        # asymmetric — auto-enabled for LLM backend, opt-in for
         # others. Made symmetric: opt-in for ALL backends via
-        # ``m3_enhanced_mode = True`` so no vendor gets a privileged
-        # default. Users who previously relied on the MiniMax auto-
-        # enable must set m3_enhanced_mode=True in their config.
+        # ``llm_enhanced_mode = True`` so no vendor gets a privileged
+        # default. Users who previously relied on the LLM auto-
+        # enable must set llm_enhanced_mode=True in their config.
         if self.gemma_runtime is not None:
-            want_m3 = self.config.extra.get("m3_enhanced_mode", False)
+            want_m3 = self.config.extra.get("llm_enhanced_mode", False)
             if want_m3:
-                m3_cfg = {k: v for k, v in self.config.extra.items() if k.startswith("m3_")}
+                llm_cfg = {k: v for k, v in self.config.extra.items() if k.startswith("llm_")}
                 # If user didn't set stage toggles, enable all 5 by default.
-                m3_cfg.setdefault("m3_stage_1", True)
-                m3_cfg.setdefault("m3_stage_2", True)
-                m3_cfg.setdefault("m3_stage_3", True)
-                m3_cfg.setdefault("m3_stage_4", True)
-                m3_cfg.setdefault("m3_stage_5", True)
+                llm_cfg.setdefault("llm_stage_1", True)
+                llm_cfg.setdefault("llm_stage_2", True)
+                llm_cfg.setdefault("llm_stage_3", True)
+                llm_cfg.setdefault("llm_stage_4", True)
+                llm_cfg.setdefault("llm_stage_5", True)
                 # Diagnostic dump directory (overridable from env)
                 import os as _os
 
                 diag = _os.environ.get("RLPE_M3_DIAG_DIR")
                 if diag:
-                    m3_cfg.setdefault("m3_diagnostic_dir", diag)
-                self.m3_engine = M3Engine(
+                    llm_cfg.setdefault("llm_diagnostic_dir", diag)
+                self.semantic_engine = SemanticEngine(
                     backend=self.gemma_runtime.backend,
-                    config=m3_cfg,
+                    config=llm_cfg,
                     # audit 2026-08-01 (M16): forward the pipeline's
                     # cancel_event so the engine's retry-loop back-off
                     # honours user cancellation. Without this, the
@@ -507,13 +501,13 @@ class RadiolarianPipeline:
                     cancel_event=self._cancel_event,
                 )
                 logger.info(
-                    "M3Engine initialized (stages 1-5: %s/%s/%s/%s/%s, diag=%s)",
-                    m3_cfg.get("m3_stage_1"),
-                    m3_cfg.get("m3_stage_2"),
-                    m3_cfg.get("m3_stage_3"),
-                    m3_cfg.get("m3_stage_4"),
-                    m3_cfg.get("m3_stage_5"),
-                    m3_cfg.get("m3_diagnostic_dir"),
+                    "SemanticEngine initialized (stages 1-5: %s/%s/%s/%s/%s, diag=%s)",
+                    llm_cfg.get("llm_stage_1"),
+                    llm_cfg.get("llm_stage_2"),
+                    llm_cfg.get("llm_stage_3"),
+                    llm_cfg.get("llm_stage_4"),
+                    llm_cfg.get("llm_stage_5"),
+                    llm_cfg.get("llm_diagnostic_dir"),
                 )
 
     def prepare_dirs(self) -> None:
@@ -723,7 +717,7 @@ class RadiolarianPipeline:
                 logger.exception("Failed to write run_output.json; matches.jsonl is unaffected")
             # Run-level LLM usage sidecar. Independent of RunOutput schema
             # so /system/llm-status and the audit trail can see the actual
-            # MiniMax call / token / cost totals even before the per-row
+            # LLM call / token / cost totals even before the per-row
             # propagation lands. Failures here must NEVER invalidate
             # matches.jsonl / run_output.json.
             try:
@@ -826,7 +820,7 @@ class RadiolarianPipeline:
         but only the web/API ``_run_job`` finally block called it. CLI /
         GUI / batch paths ran the pipeline and then went out of scope,
         leaving SAM2 (~900 MB VRAM), PaddleOCR engine, the local
-        Gemma runtime, and the M3 engine's MiniMax-side buffer on the
+        Gemma runtime, and the LLM engine's LLM-side buffer on the
         GPU. With 24 GB VRAM, sequential jobs OOM'd on the 4th-5th
         invocation.
 
@@ -869,16 +863,16 @@ class RadiolarianPipeline:
                     except Exception:
                         pass
                 setattr(self, attr, None)
-            # M3 engine + backend state.
-            m3 = getattr(self, "m3_engine", None)
-            if m3 is not None:
-                backend = getattr(m3, "backend", None)
+            # LLM engine + backend state.
+            llm = getattr(self, "semantic_engine", None)
+            if llm is not None:
+                backend = getattr(llm, "backend", None)
                 if backend is not None and hasattr(backend, "unload"):
                     try:
                         backend.unload()
                     except Exception:
-                        logger.debug("M3 backend unload raised", exc_info=True)
-                self.m3_engine = None
+                        logger.debug("LLM backend unload raised", exc_info=True)
+                self.semantic_engine = None
             # YOLO model cache (module-level function attribute).
             try:
                 from .layout import detect_figure_regions_yolo as _yolo_fn
@@ -1243,19 +1237,13 @@ class RadiolarianPipeline:
         not represent a real specimen panel, only a geological context
         anchor.
         """
-        # Source API config: read directly from the environment so this
-        # works even when ``self.gemma_runtime`` is not initialised
-        # (the MiniMax-M3 vision path is independent of the local
-        # Gemma4 loader).
-        # Phase 55 audit: config takes priority over env vars so users can
-        # override ANTHROPIC_API_KEY (project-wide) with a per-run MiniMax_api_key.
-        api_key = self.config.extra.get("MiniMax_api_key") or os.environ.get("ANTHROPIC_API_KEY")
-        base_url = os.environ.get("ANTHROPIC_BASE_URL") or self.config.extra.get(
-            "MiniMax_endpoint", "https://api.minimaxi.com/anthropic"
-        )
-        model = os.environ.get("ANTHROPIC_MODEL") or self.config.extra.get(
-            "MiniMax_model", "MiniMax-M3"
-        )
+        # Source API config: the F17 resolution chain (extra > saved
+        # settings file > env), so this works even when
+        # ``self.gemma_runtime`` is not initialised (the cloud vision
+        # path is independent of the local Gemma4 loader).
+        api_key = resolve_llm_api_key(self.config.extra)
+        base_url = resolve_llm_base_url(self.config.extra)
+        model = resolve_llm_model(self.config.extra)
         if not api_key:
             logger.warning(
                 "range_chart: no ANTHROPIC_API_KEY set; skipping %s/%s",
@@ -1613,7 +1601,7 @@ class RadiolarianPipeline:
     def _process_one_pdf_od_inner(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         # Audit 2026-09-01 (architectural P1 #9): cancel_event was only
         # checked at the TOP-LEVEL pool loop, so a Cancel arriving
-        # mid-worker (after the OD call started but before the M3 stage)
+        # mid-worker (after the OD call started but before the LLM stage)
         # could still keep the worker pinned for 30-60 s while an LLM
         # API call returned. Check at every inner-function entry too
         # — short-circuits the worker immediately when the user clicks
@@ -1802,7 +1790,7 @@ class RadiolarianPipeline:
         if self.config.extra.get("use_geology_llm", False) and self.gemma_runtime is None:
             logger.warning(
                 "use_geology_llm=True but no LLM runtime is configured "
-                "(--use-gemma4 / --llm-backend MiniMax with a key, or a "
+                "(--use-gemma4 / --llm-backend LLM with a key, or a "
                 "local backend); falling back to regex-only geology "
                 "extraction for %s",
                 paper_id,
@@ -1958,7 +1946,7 @@ class RadiolarianPipeline:
                 # range-chart figure twice under different figure_ids
                 # (Munasri p007_09/p007_10 both captioned "Figure 5:
                 # Paleolatitudinal model…") — each duplicate burned an
-                # M3 vision call. Skip when an identical caption already
+                # LLM vision call. Skip when an identical caption already
                 # went through the range-chart path in this paper.
                 _rc_cap_key = (pair.caption_text or "").strip().lower()
                 if _rc_cap_key and _rc_cap_key in self._seen_range_chart_captions:
@@ -2009,7 +1997,7 @@ class RadiolarianPipeline:
             # segmentation path. Round 5 added the first three; Round 20
             # sampling showed that "Geological Map of...", "Location
             # map of studied sections", and other map captions (which
-            # classify as plain ``map``) also need M3 vision extraction
+            # classify as plain ``map``) also need LLM vision extraction
             # to surface formation/lithology/locality. Without "map"
             # here, those figures fall through to plate segmentation
             # and produce zero usable records.
@@ -2022,20 +2010,20 @@ class RadiolarianPipeline:
                 geo_links: list[dict[str, Any]] = []  # Audit Bug 1:
                 # initialize so _emit_progress below never hits
                 # UnboundLocalError when the image is missing or
-                # m3_engine is None.
+                # semantic_engine is None.
                 geo_image_path = primary_path
                 if geo_image_path is None:
                     geo_image_path = self._find_orphan_image_for_range_chart(
                         figures, pair, od_result.json_data
                     )
-                if geo_image_path is not None and self.m3_engine is not None:
+                if geo_image_path is not None and self.semantic_engine is not None:
                     try:
                         from PIL import Image as _PILImage
 
                         with _PILImage.open(geo_image_path) as im:
                             geo_image = im.convert("RGB")
-                        geo_links = self._m3_call_with_fallback(
-                            self.m3_engine.extract_geology,
+                        geo_links = self._llm_call_with_fallback(
+                            self.semantic_engine.extract_geology,
                             image=geo_image,
                             caption=pair.caption_text or "",
                             figure_type=fig_type,
@@ -2054,7 +2042,7 @@ class RadiolarianPipeline:
                     # Round 23 audit: emit a stub record EVEN when
                     # ``geo_links`` is empty. Previously the ``if
                     # geo_links:`` guard at line 1151 silently dropped
-                    # the figure when M3 vision returned an empty
+                    # the figure when LLM vision returned an empty
                     # list — the figure vanished from ``results`` with
                     # only a debug-level log line. Operators had no
                     # way to know the figure had been processed but
@@ -2093,13 +2081,13 @@ class RadiolarianPipeline:
                         )
                     else:
                         # Round 23 audit: emit a warning so operators
-                        # see when M3 vision returned empty for a
+                        # see when LLM vision returned empty for a
                         # strat/litholog/paleogeo figure. The stub
                         # record above is now emitted regardless, but
-                        # the warning makes the "M3 found nothing"
+                        # the warning makes the "LLM found nothing"
                         # signal visible in server logs.
                         logger.warning(
-                            "%s %s: M3 vision returned 0 geo links; "
+                            "%s %s: LLM vision returned 0 geo links; "
                             "stub record still emitted so the figure "
                             "is not silently lost",
                             fig_type,
@@ -2114,7 +2102,7 @@ class RadiolarianPipeline:
 
             # Phase 64 Plan B (Task B.4): route schematic / diagram /
             # reconstruction / phylogenetic figures to
-            # ``M3Engine.extract_schematic`` instead of falling
+            # ``SemanticEngine.extract_schematic`` instead of falling
             # through to the plate-segmentation path. These figures
             # don't contain radiolarian specimen panels — they show
             # boxes / arrows / cladograms — so the classical
@@ -2127,7 +2115,7 @@ class RadiolarianPipeline:
             # The flow mirrors the geo_vision block above: open the
             # image, call ``extract_schematic``, and emit a stub
             # record carrying the extracted ``figure_schematic_data``
-            # on ``metadata``. We emit the stub even when the M3 call
+            # on ``metadata``. We emit the stub even when the LLM call
             # returns ``None`` so the operator can see the figure was
             # processed but produced no extraction — same Round 23
             # audit fix used for geo_vision.
@@ -2135,21 +2123,21 @@ class RadiolarianPipeline:
                 schematic_data: dict[str, Any] | None = None  # Audit Bug 1
                 # analogue: initialize so the stub below never sees
                 # UnboundLocalError when the image is missing or
-                # m3_engine is None.
+                # semantic_engine is None.
                 schematic_image_path = primary_path
                 if schematic_image_path is None:
                     schematic_image_path = self._find_orphan_image_for_range_chart(
                         figures, pair, od_result.json_data
                     )
-                if schematic_image_path is not None and self.m3_engine is not None:
-                    # F9 (audit 2026-09-06): during a MiniMax 5xx storm,
+                if schematic_image_path is not None and self.semantic_engine is not None:
+                    # F9 (audit 2026-09-06): during a LLM 5xx storm,
                     # skip schematic calls — they burn retries on calls
                     # that will fail anyway. The stub below still fires
                     # so the figure stays visible.
-                    _backend = getattr(self.m3_engine, "backend", None)
+                    _backend = getattr(self.semantic_engine, "backend", None)
                     if getattr(_backend, "in_5xx_storm", lambda: False)():
                         logger.warning(
-                            "schematic %s skipped: MiniMax 5xx storm active",
+                            "schematic %s skipped: LLM 5xx storm active",
                             pair.figure_id,
                         )
                         schematic_data = None
@@ -2159,8 +2147,8 @@ class RadiolarianPipeline:
 
                             with _PILImage.open(schematic_image_path) as im:
                                 schematic_image = im.convert("RGB")
-                            schematic_data = self._m3_call_with_fallback(
-                                self.m3_engine.extract_schematic,
+                            schematic_data = self._llm_call_with_fallback(
+                                self.semantic_engine.extract_schematic,
                                 image=schematic_image,
                                 caption=pair.caption_text or "",
                                 figure_type=fig_type,
@@ -2361,52 +2349,52 @@ class RadiolarianPipeline:
         # connects the visual stratigraphy data to the panel records
         # that drive the DwC export.
         results = self._link_range_chart_geology(results)
-        # Round-3 multi-modal geology vision: ask MiniMax-M3 to read
+        # Round-3 multi-modal geology vision: ask the cloud LLM to read
         # the figure image + caption and emit structured geology fields
         # (lithology, formation, member, group, country, biozone, Ma
         # range, coordinates). Opt-in via ``use_geo_vision=True`` to
         # avoid silent cost on existing users. We append to existing
         # geology_links — no dedup (deferred to a future cleanup).
-        if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
+        if self.config.extra.get("use_geo_vision", False) and self.semantic_engine is not None:
             results = self._apply_geo_vision(results, paper_id)
         # Audit 2026-09-05 (tier3-B5): the map→range-chart bridge now
         # runs AFTER geo vision so the map rows' vision-derived
         # geology_links (the revived location-name source) already
         # exist when the bridge collects them.
         results = self._cross_link_map_and_range_chart(results)
-        # Round-4 P2-5: Stage 3 bbox + crop enrichment. When M3 Stage 3
-        # produced ``m3_panels`` with bbox+visible_label for this figure
-        # (gated on ``m3_stage3_enabled`` opt-in + Stage 3 enabled), crop
+        # Round-4 P2-5: Stage 3 bbox + crop enrichment. When LLM Stage 3
+        # produced ``llm_panels`` with bbox+visible_label for this figure
+        # (gated on ``llm_stage3_enabled`` opt-in + Stage 3 enabled), crop
         # each panel's image region to disk and stamp the resulting crop
-        # path + ``panel_id_source="m3_vision"`` on each result row.
+        # path + ``panel_id_source="llm_vision"`` on each result row.
         # This is the round-3 deferred #1 fix: previously the figure had
-        # real M3 panel bboxes in ``m3_diag["stage3_panels"]`` but the
+        # real LLM panel bboxes in ``llm_diag["stage3_panels"]`` but the
         # pred rows still showed ``panel_id_source="legacy"`` because the
         # crop / source rewrite was never persisted. The fix lifts
         # the diag stage3 info into the published panel_id_source.
         #
-        # Audit 2026-08-17: read the typed ``m3_stage3_enabled`` attribute
-        # directly (not ``config.extra.get("m3_stage3", ...)``). The CLI
+        # Audit 2026-08-17: read the typed ``llm_stage3_enabled`` attribute
+        # directly (not ``config.extra.get("llm_stage3", ...)``). The CLI
         # wires the value into the constructor as a typed kwarg, but the
         # gate used to read from ``config.extra`` and never received the
         # value -- so the Stage 3 enrichment path was silently disabled.
-        if self.config.m3_stage3_enabled and self.m3_engine is not None:
+        if self.config.llm_stage3_enabled and self.semantic_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
-        # Phase 2026-08-17 (Stage 4.5): per-panel M3 vision species ID.
-        # Pure additive — only fires when ``m3_per_panel_enabled`` and
-        # the M3 backend is configured. Overwrites regex species when
-        # M3 confidence meets the threshold; otherwise regex stays.
+        # Phase 2026-08-17 (Stage 4.5): per-panel LLM vision species ID.
+        # Pure additive — only fires when ``llm_per_panel_enabled`` and
+        # the LLM backend is configured. Overwrites regex species when
+        # LLM confidence meets the threshold; otherwise regex stays.
         #
-        # Audit 2026-08-17: read the typed ``m3_per_panel_enabled``
+        # Audit 2026-08-17: read the typed ``llm_per_panel_enabled``
         # attribute directly. Pre-fix, this gate read from
         # ``config.extra.get(...)`` and the CLI only set the typed
         # attribute -- so 0/N rows ever reached Stage 4.5 even with
-        # ``--m3-per-panel``.
-        if self.config.m3_per_panel_enabled and self.m3_engine is not None:
-            results = self._apply_m3_per_panel_species_id(results, paper_id)
+        # ``--llm-per-panel``.
+        if self.config.llm_per_panel_enabled and self.semantic_engine is not None:
+            results = self._apply_llm_per_panel_species_id(results, paper_id)
         # Round 7 multi-plate enrichment: when the OpenDataLoader
         # caption-image pairing missed a plate (e.g. Bandini 2011 Plate
-        # 7-9 were dropped), fire a second-pass M3 vision call on each
+        # 7-9 were dropped), fire a second-pass LLM vision call on each
         # figure with ``expected_plate_label`` derived from the figure_id
         # so the model knows which plate to emit panels for. The result
         # rows are merged into ``results`` ONLY if they fill a real gap
@@ -2414,9 +2402,9 @@ class RadiolarianPipeline:
         # fewer than N panel_ids for this figure).
         #
         # Audit 2026-08-17: read the typed attribute directly. Pre-fix
-        # the gate read from ``config.extra.get("m3_multi_plate_enrich",
+        # the gate read from ``config.extra.get("llm_multi_plate_enrich",
         # ...)`` which the CLI never populated.
-        if self.config.m3_multi_plate_enrich_enabled and self.m3_engine is not None:
+        if self.config.llm_multi_plate_enrich_enabled and self.semantic_engine is not None:
             results = self._apply_multi_plate_enrichment(
                 results,
                 paper_id,
@@ -2424,12 +2412,12 @@ class RadiolarianPipeline:
                 od_figures=figures,
             )
         # Audit 2026-08-02: Stage 6 morphology enrichment. Opt-in via
-        # ``m3_stage_6=True``; populates
+        # ``llm_stage_6=True``; populates
         # ``self._paper_morphologies[paper_id]`` and stamps
         # ``metadata.morphology_ids`` on rows so existing exporters
         # that read per-row metadata keep working. The MorphologyRecord
         # list is then merged into ``run_output.json`` by ``run()``.
-        if self.config.m3_stage_6:
+        if self.config.llm_stage_6:
             results = self._apply_morphology_enrichment(
                 results, paper_id, od_result.fulltext_sections
             )
@@ -2460,21 +2448,21 @@ class RadiolarianPipeline:
         results: list[dict[str, Any]],
         paper_id: str,
     ) -> list[dict[str, Any]]:
-        """Round-4 P2-5: enrich each result row with M3 Stage 3 bbox + crop.
+        """Round-4 P2-5: enrich each result row with LLM Stage 3 bbox + crop.
 
         For each result row whose ``figure_id`` matches a figure whose
-        ``m3_diag["stage3_panels"]`` is non-empty, crop each panel's
+        ``llm_diag["stage3_panels"]`` is non-empty, crop each panel's
         image region to ``output/panels/{paper_id}/{figure_id}/``,
         stamp the resulting crop path on the row's
-        ``metadata.m3_stage3_panel_path`` and ``panel_path`` (only
+        ``metadata.llm_stage3_panel_path`` and ``panel_path`` (only
         when the existing ``panel_path`` is None — we never overwrite
         a richer classical CV path), and bump the ``panel_id_source``
-        tag to ``"m3_vision"`` so the web UI can show a "vision
+        tag to ``"llm_vision"`` so the web UI can show a "vision
         verified" badge.
 
         This is purely additive: rows that don't match a Stage 3
         figure are passed through unchanged. Bbox / panel_id
-        rewrites only happen for rows where M3 already pinned a
+        rewrites only happen for rows where LLM already pinned a
         ``visible_label`` that matches the row's panel_id; otherwise
         we leave the row alone (the panel_id came from a different
         source we trust more).
@@ -2486,7 +2474,7 @@ class RadiolarianPipeline:
         paper_id : str
             Stable paper id; used to namespace the crop directory.
         """
-        crops_dir = self.config.figures_dir() / "m3_crops" / paper_id
+        crops_dir = self.config.figures_dir() / "llm_crops" / paper_id
         crops_dir.mkdir(parents=True, exist_ok=True)
 
         # Index figures that have stage3 panels by figure_id.
@@ -2495,7 +2483,7 @@ class RadiolarianPipeline:
         figure_id_to_rows: dict[str, list[dict[str, Any]]] = {}
         for r in results:
             md = r.get("metadata") or {}
-            stage3 = (md.get("m3_diagnostic") or {}).get("stage3_panels") or []
+            stage3 = (md.get("llm_diagnostic") or {}).get("stage3_panels") or []
             if stage3:
                 figure_to_panels[r.get("figure_id")] = stage3
             # Track the first plate image we find for each figure so
@@ -2521,12 +2509,12 @@ class RadiolarianPipeline:
             if fid:
                 figure_id_to_rows.setdefault(fid, []).append(r)
 
-        # Audit 2026-08-16 (Plan C): YOLO fallback. When M3 stage 3
+        # Audit 2026-08-16 (Plan C): YOLO fallback. When LLM stage 3
         # returned zero panels for a figure but YOLO is enabled, run
         # YOLO on the plate image and synthesise stage3 panel records
         # so the rest of this method (panel-id matching, crop write,
         # panel_path stamp) still produces useful output. Without
-        # this fallback a paper that exhausts the M3 quota, or whose
+        # this fallback a paper that exhausts the LLM quota, or whose
         # plates the vision model declines to segment, would silently
         # lose the bbox crop pass — the existing rows keep their
         # (possibly stale) panel_path and ``panel_id_source`` stays
@@ -2626,13 +2614,13 @@ class RadiolarianPipeline:
                 continue
 
             # Persist the bbox + crop path + source tag.
-            md["m3_stage3_bbox"] = list(bbox)
-            md["m3_stage3_visible_label"] = matched.get("visible_label")
-            md["m3_stage3_panel_path"] = str(crop_path)
+            md["llm_stage3_bbox"] = list(bbox)
+            md["llm_stage3_visible_label"] = matched.get("visible_label")
+            md["llm_stage3_panel_path"] = str(crop_path)
             # Only override panel_path when nothing better exists.
             if not r.get("panel_path"):
                 r["panel_path"] = str(crop_path)
-                md["panel_path_source"] = "m3_stage3_crop"
+                md["panel_path_source"] = "llm_stage3_crop"
             # Bump panel_id_source so the downstream consumer can tell
             # this row was verified by Stage 3 vision (vs caption or
             # image OCR). The previous round left every row at
@@ -2641,8 +2629,8 @@ class RadiolarianPipeline:
             # Audit 2026-08-16 (Plan C): honour the synthesised
             # ``source`` field so YOLO-fallback detections are
             # tagged "yolo_fallback" instead of being mis-attributed
-            # to M3 vision.
-            stage3_source = matched.get("source") or "m3_vision"
+            # to LLM vision.
+            stage3_source = matched.get("source") or "llm_vision"
             md["panel_id_source"] = stage3_source
             md["stage3_confidence"] = matched.get("confidence")
             r["metadata"] = md
@@ -2655,9 +2643,9 @@ class RadiolarianPipeline:
         crops_dir: Path,
         figure_id_to_rows: dict[str, list[dict[str, Any]]] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Synthesise Stage 3 panel records from YOLO when M3 vision returns [].
+        """Synthesise Stage 3 panel records from YOLO when LLM vision returns [].
 
-        Audit 2026-08-16 (Plan C): previously, when M3 vision stage 3
+        Audit 2026-08-16 (Plan C): previously, when LLM vision stage 3
         returned zero panels for a figure (quota exhausted, model
         refused, network failure, …), the bbox crop pass in
         ``_apply_stage3_bbox_crops`` short-circuited and the rows
@@ -2677,7 +2665,7 @@ class RadiolarianPipeline:
             detections, so the caller can fall through to its
             existing early-return path.
 
-        Each synthesised stage3_panel dict matches the M3 shape:
+        Each synthesised stage3_panel dict matches the LLM shape:
             ``panel_id``      — synthetic id "P1", "P2", …
             ``bbox``          — [x, y, w, h] in plate-image pixels
             ``visible_label`` — None (YOLO doesn't emit labels)
@@ -2784,19 +2772,19 @@ class RadiolarianPipeline:
             )
         return out
 
-    def _apply_m3_per_panel_species_id(
+    def _apply_llm_per_panel_species_id(
         self,
         results: list[dict[str, Any]],
         paper_id: str,
     ) -> list[dict[str, Any]]:
-        """Stage 4.5 (Phase 2026-08-17): per-panel M3 vision species ID.
+        """Stage 4.5 (Phase 2026-08-17): per-panel LLM vision species ID.
 
         For each result row whose ``panel_path`` (Stage 3 crop) is
-        present, fire one M3 vision call carrying the panel crop + the
+        present, fire one LLM vision call carrying the panel crop + the
         row's caption snippet + the same-page systematic-paleontology
-        context. When M3 returns a parseable JSON with
-        ``confidence >= m3_per_panel_min_conf``, overwrite the row's
-        species (which currently came from regex matching) with M3's
+        context. When LLM returns a parseable JSON with
+        ``confidence >= llm_per_panel_min_conf``, overwrite the row's
+        species (which currently came from regex matching) with LLM's
         answer. Otherwise the row's regex species stays.
 
         Pure additive - every backend failure path (no backend, no
@@ -2804,13 +2792,13 @@ class RadiolarianPipeline:
         species survives. Per-figure and per-paper caps prevent cost
         runaway on big papers.
 
-        See docs/superpowers/specs/2026-08-17-m3-per-panel-pipeline-design.md.
+        See docs/superpowers/specs/2026-08-17-llm-per-panel-pipeline-design.md.
 
         Audit 2026-09-01 (architectural P1 #9 - full sweep): this
-        function fires ONE M3 call per panel (typically 200 calls per
+        function fires ONE LLM call per panel (typically 200 calls per
         paper). Pre-fix, cancel was only at the top-of-pool loop, so a
         Cancel during this function kept the per-panel pool alive
-        until each in-flight M3 call returned - up to 30 s *
+        until each in-flight LLM call returned - up to 30 s *
         max_concurrent after the user clicked. Cancel check below
         short-circuits the function entry so the pool exits within
         ~100 ms of the click.
@@ -2819,16 +2807,16 @@ class RadiolarianPipeline:
         # would be skipped because Cancel arrived before we started).
         if self._cancel_event is not None and self._cancel_event.is_set():
             logger.info(
-                "_apply_m3_per_panel_species_id: cancel_event already set on entry "
+                "_apply_llm_per_panel_species_id: cancel_event already set on entry "
                 "to %s; skipping %d panel calls",
                 paper_id,
                 len(results),
             )
             return results
 
-        if not self.config.m3_per_panel_enabled:
+        if not self.config.llm_per_panel_enabled:
             return results
-        if self.m3_engine is None or self.m3_engine.backend is None:
+        if self.semantic_engine is None or self.semantic_engine.backend is None:
             return results
         if not results:
             return results
@@ -2963,27 +2951,27 @@ class RadiolarianPipeline:
         capped_items: list[tuple[dict[str, Any], Path, str, str]] = []
         for r, crop, cap, ctx in items:
             fid = r.get("figure_id", "__default__")
-            if per_fig_count.get(fid, 0) >= self.config.m3_per_panel_max_per_figure:
+            if per_fig_count.get(fid, 0) >= self.config.llm_per_panel_max_per_figure:
                 continue
             per_fig_count[fid] = per_fig_count.get(fid, 0) + 1
             capped_items.append((r, crop, cap, ctx))
         # Apply per-paper cap.
-        capped_items = capped_items[: self.config.m3_per_panel_max_per_paper]
+        capped_items = capped_items[: self.config.llm_per_panel_max_per_paper]
 
         # 3. Fan out via ThreadPoolExecutor + bounded concurrency.
-        backend = self.m3_engine.backend
+        backend = self.semantic_engine.backend
         max_conc = 8
         try:
-            # Prefer MiniMax_max_concurrent if it's a positive int
-            raw = self.config.extra.get("MiniMax_max_concurrent", 8)
+            # Prefer llm_max_concurrent if it's a positive int
+            raw = self.config.extra.get("llm_max_concurrent", 8)
             if isinstance(raw, int) and raw > 0:
                 max_conc = raw
         except Exception as exc:
             # Audit 2026-08-19 (M-1): config access used to swallow
             # every error. Log at debug so a misconfigured
-            # ``MiniMax_max_concurrent`` is at least visible in the
+            # ``llm_max_concurrent`` is at least visible in the
             # troubleshooting log.
-            logger.debug("MiniMax_max_concurrent read failed: %s", exc)
+            logger.debug("llm_max_concurrent read failed: %s", exc)
         executor = ThreadPoolExecutor(max_workers=max_conc)
 
         def _one(
@@ -2992,9 +2980,9 @@ class RadiolarianPipeline:
             caption_for_panel: str,
             page_context: str,
         ) -> None:
-            """Single-panel worker: call M3, parse, gate-overwrite species.
+            """Single-panel worker: call LLM, parse, gate-overwrite species.
 
-            Stamps ``metadata.m3_per_panel`` with provenance on success.
+            Stamps ``metadata.llm_per_panel`` with provenance on success.
             On any backend error / parse failure / exception, returns
             silently so the regex-matched species survives.
             """
@@ -3040,7 +3028,7 @@ class RadiolarianPipeline:
                     conf_val = 0.0
                 parsed["confidence"] = max(0.0, min(1.0, conf_val))
                 md = r.setdefault("metadata", {})
-                md["m3_per_panel"] = {
+                md["llm_per_panel"] = {
                     "species": parsed.get("species"),
                     "label": parsed.get("label"),
                     "confidence": parsed["confidence"],
@@ -3050,12 +3038,12 @@ class RadiolarianPipeline:
                     "fallback_used": False,
                     "image_sha": _sha256_file(crop),
                 }
-                if parsed["confidence"] >= self.config.m3_per_panel_min_conf:
+                if parsed["confidence"] >= self.config.llm_per_panel_min_conf:
                     r["species"] = parsed.get("species") or r.get("species")
                     r["label"] = parsed.get("label") or r.get("label")
             except Exception as exc:
                 logger.warning(
-                    "Stage 4.5 M3 per-panel failed for %s/%s: %s",
+                    "Stage 4.5 LLM per-panel failed for %s/%s: %s",
                     paper_id,
                     r.get("panel_id"),
                     exc,
@@ -3077,8 +3065,8 @@ class RadiolarianPipeline:
     ) -> None:
         """Stage 4.5 plumbing (2026-08-17 follow-on).
 
-        The per-panel M3 species-ID method
-        (``_apply_m3_per_panel_species_id``) reads two pieces of context
+        The per-panel LLM species-ID method
+        (``_apply_llm_per_panel_species_id``) reads two pieces of context
         directly off each row dict:
 
           * ``r["caption_pairs"]``        -- a list of dicts (serialised
@@ -3094,18 +3082,18 @@ class RadiolarianPipeline:
             The Stage 4.5 worker already truncates to 1500 chars in the
             prompt builder, so we just need to attach SOMETHING anchored
             to the figure's page. Pre-fix this key was never set so
-            every M3 call arrived with an empty context block and the
+            every LLM call arrived with an empty context block and the
             model returned uniformly low confidence (0/67 high-conf
             overwrites in the Task 8 smoke).
 
         The helper MUTATES ``rows`` in place (Stage 4.5 already expects
         the dict shape) and is a no-op when either:
           * ``rows`` is empty (the figure produced no panels), or
-          * both inputs are empty (M3 disabled, no body text, etc.).
+          * both inputs are empty (LLM disabled, no body text, etc.).
 
         We do NOT filter the caption pairs by panel_id at this layer --
         the Stage 4.5 worker does the per-row label match in
-        ``_apply_m3_per_panel_species_id``, and pushing the filter
+        ``_apply_llm_per_panel_species_id``, and pushing the filter
         upstream would force every call site to know about the
         panel-id labelling rules.
         """
@@ -3480,7 +3468,7 @@ class RadiolarianPipeline:
         For each OD figure that is either (a) MISSING from ``results``
         entirely (the loop crashed or skipped it before any row was
         emitted) or (b) present but under-populated (zero rows with
-        both species and panel_id), fire a second-pass M3 vision call
+        both species and panel_id), fire a second-pass LLM vision call
         asking for the full panel list. The new panels are appended to
         ``results`` so downstream eval can score them.
 
@@ -3491,10 +3479,10 @@ class RadiolarianPipeline:
           * Figure has rows but every row has ``panel_id=None`` AND
             ``species=None``.
 
-        Cost: 1 M3 vision call per qualifying figure (~¥0.01-0.02).
-        Gated on ``m3_multi_plate_enrich=True`` to avoid silent spend.
+        Cost: 1 LLM vision call per qualifying figure (~¥0.01-0.02).
+        Gated on ``llm_multi_plate_enrich=True`` to avoid silent spend.
         """
-        if self.m3_engine is None:
+        if self.semantic_engine is None:
             return results
         from PIL import Image as _PILImage
 
@@ -3511,7 +3499,7 @@ class RadiolarianPipeline:
             by_fig.setdefault(fid, []).append(r)
 
         # Build per-figure page caption text from OD fulltext_sections so
-        # M3 sees the surrounding caption context for the plate.
+        # LLM sees the surrounding caption context for the plate.
         page_text: dict[int, str] = {}
         for sec in od_fulltext_sections or []:
             page_idx = sec.get("page_index")
@@ -3656,8 +3644,8 @@ class RadiolarianPipeline:
                 continue
 
             try:
-                panels = self._m3_call_with_fallback(
-                    self.m3_engine.enrich_plate_panels,
+                panels = self._llm_call_with_fallback(
+                    self.semantic_engine.enrich_plate_panels,
                     image=plate_image,
                     page_caption=page_caption[:3000],  # cap to avoid token bloat
                     paper_id=paper_id,
@@ -3707,7 +3695,7 @@ class RadiolarianPipeline:
                         "metadata": {
                             "extraction_method": "multi_plate_enrich",
                             "extraction_source": "multi_plate_enrich",
-                            "panel_id_source": "m3_vision",
+                            "panel_id_source": "llm_vision",
                             "expected_plate_label": plate_label,
                             "figure_number": ((plate_label or "").replace("Plate ", "") or None),
                         },
@@ -3717,7 +3705,7 @@ class RadiolarianPipeline:
 
         if appended:
             logger.info(
-                "multi_plate_enrich: paper=%s appended %d panels from second-pass M3",
+                "multi_plate_enrich: paper=%s appended %d panels from second-pass LLM",
                 paper_id,
                 appended,
             )
@@ -3834,9 +3822,9 @@ class RadiolarianPipeline:
         results: list[dict[str, Any]],
         paper_id: str,
     ) -> list[dict[str, Any]]:
-        """Run MiniMax-M3 vision extraction on each result row.
+        """Run cloud-LLM vision extraction on each result row.
 
-        ``M3Engine.extract_geology()`` reads a figure image + caption
+        ``SemanticEngine.extract_geology()`` reads a figure image + caption
         and emits structured geology fields (lithology, formation,
         member, group, country, biozone, Ma range, coordinates). We
         append the returned records to ``metadata.geology_links`` so
@@ -3855,7 +3843,7 @@ class RadiolarianPipeline:
         ``geo_vision_figure_types`` allowlist excludes the figure type
         are also skipped.
 
-        Cost is aggregated by the existing ``MiniMaxM3Backend.cost_summary()``
+        Cost is aggregated by the existing ``AnthropicCompatBackend.cost_summary()``
         path, so the run-level ``llm_usage.json`` sidecar will reflect
         the additional spend automatically.
         """
@@ -3919,8 +3907,8 @@ class RadiolarianPipeline:
 
                 with _PILImage.open(image_path) as im:
                     panel_image = im.convert("RGB")
-                geo_links = self._m3_call_with_fallback(
-                    self.m3_engine.extract_geology,
+                geo_links = self._llm_call_with_fallback(
+                    self.semantic_engine.extract_geology,
                     image=panel_image,
                     caption=caption_text,
                     figure_type=figure_type,
@@ -3955,10 +3943,10 @@ class RadiolarianPipeline:
         paper_id: str,
         fulltext_sections: list[dict[str, Any]] | None,
     ) -> list[dict[str, Any]]:
-        """Apply M3 morphology extraction to rows.
+        """Apply LLM morphology extraction to rows.
 
         For each unique (paper_id, normalised_species) pair, picks a
-        source-text excerpt and asks ``M3Engine.infer_morphology`` to
+        source-text excerpt and asks ``SemanticEngine.infer_morphology`` to
         produce a MorphologyRecord. The records are written to
         ``self._paper_morphologies[paper_id]`` (NOT into ``rows``) so
         downstream exporters can pull them via
@@ -3990,38 +3978,38 @@ class RadiolarianPipeline:
           species / panel fields.
         * Per-paper dedup: each unique (paper_id, normalised_species)
           called at most once. The cap is
-          ``config.m3_morphology_max_species_per_paper`` (default 100).
+          ``config.llm_morphology_max_species_per_paper`` (default 100).
         * Privacy: if ``data_outbound_policy == "api_redacted"`` we
           skip body morphology (only caption morphology fires). If
-          ``"local_only"`` we skip M3 morphology entirely (no API
+          ``"local_only"`` we skip LLM morphology entirely (no API
           calls reach the cloud).
         """
         # Gate: opt-in + backend present.
-        if not self.config.m3_stage_6:
+        if not self.config.llm_stage_6:
             return rows
-        if self.m3_engine is None:
+        if self.semantic_engine is None:
             # Audit 2026-09-05 (tier3-D5): surface the misconfig as a
             # run-level warning. Previously a bare debug log — an
-            # operator passing ``--m3-stage-6`` without an M3 engine
-            # (e.g. without ``m3_enhanced_mode``) saw zero output with
+            # operator passing ``--llm-stage-6`` without an LLM engine
+            # (e.g. without ``llm_enhanced_mode``) saw zero output with
             # no trace anywhere.
             from .utils import record_warning
 
             record_warning(
-                "m3_stage6_no_engine",
-                "m3_stage_6 is enabled but no M3 engine was built "
-                "(requires m3_enhanced_mode=True and a usable LLM "
+                "llm_stage6_no_engine",
+                "llm_stage_6 is enabled but no LLM engine was built "
+                "(requires llm_enhanced_mode=True and a usable LLM "
                 "backend); morphology extraction produced nothing this "
                 "run",
                 paper_id=paper_id,
             )
             logger.debug(
-                "_apply_morphology_enrichment: no M3 engine; skipping paper=%s",
+                "_apply_morphology_enrichment: no LLM engine; skipping paper=%s",
                 paper_id,
             )
             return rows
         # Audit 2026-09-04 (BLOCKER-#2 consistency fix): default aligned
-        # with MiniMaxM3Backend's ``api_redacted`` dataclass default —
+        # with AnthropicCompatBackend's ``api_redacted`` dataclass default —
         # this read used the stale ``api_full`` default, silently
         # sending body morphology to the cloud when the operator never
         # chose a policy.
@@ -4029,7 +4017,7 @@ class RadiolarianPipeline:
         if policy == "local_only":
             logger.info(
                 "_apply_morphology_enrichment: data_outbound_policy=local_only; "
-                "skipping M3 morphology for paper=%s",
+                "skipping LLM morphology for paper=%s",
                 paper_id,
             )
             return rows
@@ -4065,8 +4053,8 @@ class RadiolarianPipeline:
                 if cap:
                     species_caption[norm] = cap
 
-        # 2. Cap at m3_morphology_max_species_per_paper.
-        cap = int(self.config.m3_morphology_max_species_per_paper)
+        # 2. Cap at llm_morphology_max_species_per_paper.
+        cap = int(self.config.llm_morphology_max_species_per_paper)
         ordered_species = sorted(
             species_counts.keys(),
             key=lambda s: (-species_counts[s], s),
@@ -4077,8 +4065,8 @@ class RadiolarianPipeline:
         from .morphology_locator import locate_morphology_context
         from .schema_models import MorphologyRecord
 
-        max_ctx = int(self.config.m3_morphology_max_context_chars)
-        min_caption = int(self.config.m3_morphology_min_caption_chars)
+        max_ctx = int(self.config.llm_morphology_max_context_chars)
+        min_caption = int(self.config.llm_morphology_min_caption_chars)
 
         for species in ordered_species:
             taxon_id = _stable_id("taxon", species)
@@ -4117,12 +4105,12 @@ class RadiolarianPipeline:
                     ctx_text = cap_text[:max_ctx]
                     used_source = "caption"
             if not ctx_text:
-                # Nothing to send to M3 — skip silently. The pipeline
+                # Nothing to send to LLM — skip silently. The pipeline
                 # would otherwise be paying for an empty prompt.
                 continue
-            # 3. Call M3 (fail-open: any backend error → skip).
+            # 3. Call LLM (fail-open: any backend error → skip).
             try:
-                parsed = self.m3_engine.infer_morphology(
+                parsed = self.semantic_engine.infer_morphology(
                     species_name=species,
                     source_text=ctx_text,
                     source=used_source,
@@ -4131,7 +4119,7 @@ class RadiolarianPipeline:
                 )
             except Exception as exc:
                 logger.warning(
-                    "_apply_morphology_enrichment: M3 call failed for paper=%s species=%s: %s",
+                    "_apply_morphology_enrichment: LLM call failed for paper=%s species=%s: %s",
                     paper_id,
                     species,
                     exc,
@@ -4142,7 +4130,7 @@ class RadiolarianPipeline:
             # 4. Build the MorphologyRecord. Use the schema so an
             #    unknown field is rejected (extra="forbid"); this
             #    protects downstream consumers from typos in the
-            #    M3 output.
+            #    LLM output.
             record_payload: dict[str, Any] = {
                 "morphology_id": morphology_id,
                 "taxon_id": taxon_id,
@@ -4221,9 +4209,9 @@ class RadiolarianPipeline:
 
         Phase 65 Plan A.4. Strategy 1 (sample-ID direct match) and
         Strategy 2 (locality share) are pure-Python and always run.
-        Strategy 3 (M3 inference) only runs when ``self.m3_engine`` is
+        Strategy 3 (LLM inference) only runs when ``self.semantic_engine`` is
         present — typical smoke / unit tests use ``FakeM3Backend`` so
-        the M3 path is exercised without HTTP traffic.
+        the LLM path is exercised without HTTP traffic.
 
         For each panel row we:
           1. Build the panel-facing view (MatchResult-like dict).
@@ -4236,7 +4224,7 @@ class RadiolarianPipeline:
           4. Append the new link as a ``geology_links`` entry tagged
              with ``coord_source = "cross_figure_linker:<source>"``
              (the four-valued tag ``sample_match`` / ``locality_match`` /
-             ``m3_inference`` / ``unlinked`` lets the export layer and
+             ``llm_inference`` / ``unlinked`` lets the export layer and
              the GUI Results tab distinguish the four cases without
              adding a new schema field).
 
@@ -4305,7 +4293,7 @@ class RadiolarianPipeline:
                     # Audit 2026-09-05 (tier3-B4): row-level image path so
                     # ``link_visual_coordinates`` can load the real anchor
                     # figure image (previously it received None and the
-                    # M3 visual channel could never fire).
+                    # LLM visual channel could never fire).
                     "image_path": row.get("panel_path") or md.get("figure_image_path"),
                     # Audit 2026-08-16 (A3): stamp figure_number so
                     # ``_extract_figure_number`` in cross_figure_linker
@@ -4345,7 +4333,7 @@ class RadiolarianPipeline:
         results = link_species_to_geology(
             panels=panel_views,
             paper_figures=figure_views,
-            m3_engine=getattr(self, "m3_engine", None),
+            semantic_engine=getattr(self, "semantic_engine", None),
         )
 
         # Map (figure_id, panel_id) -> LinkResult for quick lookup.
@@ -4418,10 +4406,10 @@ class RadiolarianPipeline:
             md["link_source"] = lr.source
             md["link_confidence"] = float(lr.confidence)
             md["link_figure_id"] = lr.figure_id
-            # Also flag for review when M3 was the source and the
+            # Also flag for review when LLM was the source and the
             # confidence is at the low end of the band — operators
             # typically want to spot-check these.
-            if lr.source == "m3_inference" and lr.confidence < 0.4:
+            if lr.source == "llm_inference" and lr.confidence < 0.4:
                 md.setdefault("needs_review", True)
                 reasons = list(md.get("review_reasons") or [])
                 if "cross_figure_linker_low_confidence" not in reasons:
@@ -4462,7 +4450,7 @@ class RadiolarianPipeline:
             visual_per_panel = link_visual_coordinates(
                 panels=panel_views,
                 paper_figures=all_figure_views,
-                m3_engine=getattr(self, "m3_engine", None),
+                semantic_engine=getattr(self, "semantic_engine", None),
             )
             # P2-8 fix: guard against link_visual_coordinates returning fewer
             # results than panel_views (zip would silently drop trailing panels).
@@ -4880,16 +4868,16 @@ class RadiolarianPipeline:
         # Audit 2026-09-05 (tier3-B5): mirror the OD-path order — geo
         # vision BEFORE the map→range-chart bridge, so the bridge sees
         # the vision-derived map location names.
-        if self.config.extra.get("use_geo_vision", False) and self.m3_engine is not None:
+        if self.config.extra.get("use_geo_vision", False) and self.semantic_engine is not None:
             results = self._apply_geo_vision(results, paper_id)
         results = self._cross_link_map_and_range_chart(results)
-        # Audit 2026-08-17: read the typed ``m3_stage3_enabled``
+        # Audit 2026-08-17: read the typed ``llm_stage3_enabled``
         # attribute directly (not ``config.extra.get(...)``). The CLI
         # wires the value into the constructor as a typed kwarg, but
         # the gate used to read from ``config.extra`` and never received
         # the value -- so the GROBID path's Stage 3 enrichment was
         # silently disabled.
-        if self.config.m3_stage3_enabled and self.m3_engine is not None:
+        if self.config.llm_stage3_enabled and self.semantic_engine is not None:
             results = self._apply_stage3_bbox_crops(results, paper_id)
         # cross_figure_linker reads geology_links / range_chart_data populated
         # by the enrichment steps above; runs after them so the linker sees
@@ -4936,7 +4924,7 @@ class RadiolarianPipeline:
         # Audit 2026-08-02: Stage 6 morphology enrichment (GROBID
         # path). Same opt-in + dedup + privacy rules as the OD path
         # — see ``_apply_morphology_enrichment`` for the full logic.
-        if self.config.m3_stage_6:
+        if self.config.llm_stage_6:
             results = self._apply_morphology_enrichment(
                 results, paper_id, grobid_result.fulltext_sections
             )
@@ -4983,8 +4971,8 @@ class RadiolarianPipeline:
         ``_label_in_caption`` predicate. Tolerant of OCR variants
         (1 vs 1a vs 01) so legitimate sub-ids (5b, 6b, 10a) survive.
 
-        Edge case: the classical branch is taken when M3 stage 1
-        failed (so ``m3_caption_pairs`` is empty). In that case we
+        Edge case: the classical branch is taken when LLM stage 1
+        failed (so ``llm_caption_pairs`` is empty). In that case we
         call ``_regex_parse_caption`` directly on the caption text to
         recover the caption-derived labels. If both sources are empty
         (no caption text at all), we skip the filter — without a
@@ -4992,12 +4980,12 @@ class RadiolarianPipeline:
         """
         import re as _re_hallu2
 
-        # Build caption-derived label set. Try M3 stage 1 first
+        # Build caption-derived label set. Try LLM stage 1 first
         # (already computed in this call), fall back to regex.
         pair_lookup: dict[str, str] = {}
-        # Caller passes m3_caption_pairs via closure; if empty, regex
+        # Caller passes llm_caption_pairs via closure; if empty, regex
         # parser is the second source.
-        from .m3_engine import _regex_parse_caption as _regex2
+        from .semantic_engine import _regex_parse_caption as _regex2
 
         try:
             for cp in _regex2(caption.caption or ""):
@@ -5166,7 +5154,7 @@ class RadiolarianPipeline:
 
         # Phase 1.5: drop heuristic-fallback rows with very low
         # confidence. These are rule-pipeline emissions when the LLM
-        # refuses (MiniMax API error). They pollute F1 denominators
+        # refuses (LLM API error). They pollute F1 denominators
         # with no signal.
         # 9/70 rows in Bandini 2011 E2E test had conf<0.30 +
         # heuristic matcher; dropping them cleaned F1 by ~5 pp
@@ -5218,7 +5206,7 @@ class RadiolarianPipeline:
                 continue
             # Skip rows with no signal: no species AND no panel_path.
             # (Stub rows already filtered in Phase 1; this catches
-            # LLM-first rows where M3 said "not a radiolarian" and
+            # LLM-first rows where LLM said "not a radiolarian" and
             # the caption-parser couldn't fill in a species either.)
             if not r.get("species") and not r.get("panel_path"):
                 # P2-7 fix: preserve ingestion-failed stubs (they have
@@ -5750,7 +5738,7 @@ Rules:
             if not raw:
                 return None
             try:
-                from .m3_engine import _safe_json_loads
+                from .semantic_engine import _safe_json_loads
 
                 parsed = _safe_json_loads(raw)
                 if isinstance(parsed, dict):
@@ -5837,7 +5825,7 @@ Rules:
                     "page_index": caption.page_index,
                     # Label provenance: the LLM inferred this label from
                     # the caption + image jointly. The honest source is
-                    # "llm_first" (not "m3_vision" or "image_ocr") —
+                    # "llm_first" (not "llm_vision" or "image_ocr") —
                     # the visual-evidence path remains reserved for
                     # true image-OCR / Stage-3 bbox+crop work. We do
                     # NOT set printed_panel_id here; that field is a
@@ -5887,12 +5875,12 @@ Rules:
         matcher entirely. On LLM failure, the classical CV+rules pipeline
         runs as fallback.
 
-        When M3Engine is available, the M3 5-stage pipeline runs alongside
+        When SemanticEngine is available, the LLM 5-stage pipeline runs alongside
         the classical CV + rule-based path in fallback mode:
           - Stage 1 parses caption into structured (label->species) pairs.
           - Stage 2 filters non-radiolarian plates; on rejection, returns early.
-          - Stage 3 augments SAM2 panels with M3-suggested bboxes / visible labels.
-          - Stage 4 replaces the per-panel M3 call with a richer context-aware match.
+          - Stage 3 augments SAM2 panels with LLM-suggested bboxes / visible labels.
+          - Stage 4 replaces the per-panel LLM call with a richer context-aware match.
           - Stage 5 critiques all matches and may override low-confidence ones.
         """
         # ---- LLM-first path (try before anything else) -------------------------
@@ -5912,7 +5900,7 @@ Rules:
                 # panel_match) but may have left some species=None when
                 # the caption was incomplete or the LLM couldn't
                 # determine the species from the image alone. Run the
-                # caption parser (M3 Stage 1 or regex) to fill in the
+                # caption parser (LLM Stage 1 or regex) to fill in the
                 # gaps — this is cheap (text-only, no image) and gives
                 # the best of both worlds: LLM-first's panel detection
                 # + classical path's species assignment.
@@ -5921,7 +5909,7 @@ Rules:
                 #   (a) the LLM left any species blank, OR
                 #   (b) the LLM returned fewer than 2 panels, OR
                 #   (c) the caption parser finds MORE panels than the LLM did.
-                # (c) is critical: Gemma-3/M3 frequently caps its output
+                # (c) is critical: Gemma-3/LLM frequently caps its output
                 # at ~19 panels (it's a soft training-data ceiling) while
                 # real plates can have 21-27 panels (baumgartner2008 pl02=21,
                 # pl03=27, beccaro2006=35). Without (c), the truncated
@@ -5934,13 +5922,13 @@ Rules:
                 pair_lookup: dict[str, str] = {}
                 # The regex parser is faster + more reliable for
                 # caption species extraction on standard layouts
-                # (Pouille, Danelian, Beccaro). M3 stage 1 adds API
+                # (Pouille, Danelian, Beccaro). LLM stage 1 adds API
                 # calls and tends to TRUNCATE long captions
-                # (beccaro has 35 species — M3 returned only 33).
+                # (beccaro has 35 species — LLM returned only 33).
                 # Use regex as the primary source; only fall back
-                # to M3 if regex returns nothing.
+                # to LLM if regex returns nothing.
                 try:
-                    from .m3_engine import _regex_parse_caption as _regex
+                    from .semantic_engine import _regex_parse_caption as _regex
 
                     regex_pairs = _regex(caption.caption or "")
                     for cp in regex_pairs:
@@ -5948,18 +5936,18 @@ Rules:
                             pair_lookup.setdefault(lbl.strip(), cp.species)
                 except Exception as exc:
                     logger.debug("Regex caption parser failed: %s", exc)
-                if not pair_lookup and self.m3_engine is not None:
+                if not pair_lookup and self.semantic_engine is not None:
                     try:
-                        caption_pairs = self._m3_call_with_fallback(
-                            self.m3_engine.parse_caption,
+                        caption_pairs = self._llm_call_with_fallback(
+                            self.semantic_engine.parse_caption,
                             caption.caption or "",
-                            lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
+                            lang=_resolve_llm_prompt_lang(self.config.extra.get("llm_prompt_lang")),
                         )
                         for cp in caption_pairs:
                             for lbl in cp.labels or []:
                                 pair_lookup.setdefault(lbl.strip(), cp.species)
                     except Exception as exc:
-                        logger.debug("M3 caption parser failed: %s", exc)
+                        logger.debug("LLM caption parser failed: %s", exc)
                 # Gate: fire hybrid when LLM truncated its output.
                 # Bound (pair_lookup <= 100) guards against runaway
                 # regex over-matching on degenerate captions (rare
@@ -5989,7 +5977,7 @@ Rules:
                         # "00" → "0" and keeps "1a" / "1A" as-is (no
                         # case folding), so we also lowercase.
                         #
-                        # Audit 2026-09-01 BL-10: M3 may emit "2-3" /
+                        # Audit 2026-09-01 BL-10: LLM may emit "2-3" /
                         # "sp." / "fig." as panel_id values that
                         # ``_normalize_panel_label`` returns ``None`` for.
                         # The previous set comprehension then crashed on
@@ -6045,7 +6033,7 @@ Rules:
                                 r["species"] = candidate_species
                                 r.setdefault("metadata", {})["species_source"] = (
                                     "caption_parser_hybrid"
-                                    if self.m3_engine is not None
+                                    if self.semantic_engine is not None
                                     else "regex_caption_hybrid"
                                 )
                                 filled += 1
@@ -6157,7 +6145,7 @@ Rules:
                                         "page_index": caption.page_index,
                                         "species_source": (
                                             "caption_parser_hybrid"
-                                            if self.m3_engine is not None
+                                            if self.semantic_engine is not None
                                             else "regex_caption_hybrid_added"
                                         ),
                                         # This row was added because the
@@ -6239,16 +6227,16 @@ Rules:
                             len(llm_results) - len(deduped_llm),
                         )
                         llm_results = deduped_llm
-                # Round 11 (Bug 2 fix): filter M3-returned panels whose
+                # Round 11 (Bug 2 fix): filter LLM-returned panels whose
                 # label doesn't appear in the caption-derived pair set.
-                # M3 frequently invents panel_ids for plates whose
+                # LLM frequently invents panel_ids for plates whose
                 # caption enumerates fewer panels than the segmenter
                 # finds — e.g. Pouille 2014 has 19 visible panel
-                # regions but the caption only lists 6 species, so M3
+                # regions but the caption only lists 6 species, so LLM
                 # invents pid=2,4,7,9,10,11,13,14b out of thin air.
                 # The hybrid path above fills species from the caption
                 # but the panel_id itself stays hallucinated; this filter
-                # drops M3 rows whose labels are NOT mentioned in
+                # drops LLM rows whose labels are NOT mentioned in
                 # the caption. Tolerant of OCR variants (1 vs 1a vs 01)
                 # via numeric/letter prefix match.
                 if llm_results and pair_lookup:
@@ -6300,7 +6288,7 @@ Rules:
                     grobid_sections=grobid_sections,
                 )
                 # Stage 4.5 plumbing (2026-08-17 follow-on): the LLM-first
-                # path built ``pair_lookup`` from the same regex/M3 caption
+                # path built ``pair_lookup`` from the same regex/LLM caption
                 # parser the classical path uses, so we plumb the same
                 # caption pairs + page context here. The local var
                 # ``pair_lookup`` is keyed on label, so we still have the
@@ -6308,9 +6296,9 @@ Rules:
                 # See the classical-path call above for the rationale.
                 if llm_results:
                     # ``caption_pairs`` is only assigned when the regex
-                    # parser returned nothing AND M3 is configured; use
+                    # parser returned nothing AND LLM is configured; use
                     # ``locals().get`` so the unbound-name case doesn't
-                    # blow up at import / no-M3 sites.
+                    # blow up at import / no-LLM sites.
                     llm_caption_pairs = locals().get("caption_pairs") or regex_pairs
                     self._attach_stage4_5_context(
                         llm_results,
@@ -6339,12 +6327,12 @@ Rules:
             )
 
         # ---- Classical path (segmentation + OCR + matching) --------------------
-        # ---- M3 Stage 1 + 2 (text + vision, run once per region) ---------------
-        m3_caption_pairs: list[CaptionPair] = []
-        m3_plate_cls = None
-        m3_panels: list[PanelBox] = []
-        m3_diag: dict[str, Any] = {}
-        if self.m3_engine is not None:
+        # ---- LLM Stage 1 + 2 (text + vision, run once per region) ---------------
+        llm_caption_pairs: list[CaptionPair] = []
+        llm_plate_cls = None
+        llm_panels: list[PanelBox] = []
+        llm_diag: dict[str, Any] = {}
+        if self.semantic_engine is not None:
             try:
                 from PIL import Image as _PILImage
 
@@ -6356,20 +6344,20 @@ Rules:
                     with _PILImage.open(str(region_img)) as _im:
                         plate_pil = _im.convert("RGB")
                 # Stage 1: caption parser
-                if self.m3_engine._stage_enabled(1):
-                    m3_caption_pairs = self._m3_call_with_fallback(
-                        self.m3_engine.parse_caption,
+                if self.semantic_engine._stage_enabled(1):
+                    llm_caption_pairs = self._llm_call_with_fallback(
+                        self.semantic_engine.parse_caption,
                         caption.caption or "",
-                        lang=_resolve_m3_prompt_lang(self.config.extra.get("m3_prompt_lang")),
+                        lang=_resolve_llm_prompt_lang(self.config.extra.get("llm_prompt_lang")),
                     )
-                    m3_diag["stage1_pairs"] = len(m3_caption_pairs)
+                    llm_diag["stage1_pairs"] = len(llm_caption_pairs)
                 # Stage 2: plate classifier — early exit on non-radiolarian
-                if self.m3_engine._stage_enabled(2):
-                    m3_plate_cls = self._m3_call_with_fallback(
-                        self.m3_engine.classify_plate, plate_pil
+                if self.semantic_engine._stage_enabled(2):
+                    llm_plate_cls = self._llm_call_with_fallback(
+                        self.semantic_engine.classify_plate, plate_pil
                     )
-                    m3_diag["stage2_class"] = m3_plate_cls.to_dict()
-                    if not m3_plate_cls.is_radiolarian_plate:
+                    llm_diag["stage2_class"] = llm_plate_cls.to_dict()
+                    if not llm_plate_cls.is_radiolarian_plate:
                         # F4 (audit 2026-09-07): caption-evidence override.
                         # A caption carrying >=2 taxon entities or >=3
                         # numbered species clauses is strong a-priori
@@ -6392,9 +6380,9 @@ Rules:
                             ),
                         )
                         if _cap_evidence >= 2:
-                            m3_diag["stage2_overridden"] = True
+                            llm_diag["stage2_overridden"] = True
                             logger.info(
-                                "M3 Stage 2 rejected %s/%s but the caption "
+                                "LLM Stage 2 rejected %s/%s but the caption "
                                 "carries strong plate evidence (%d signals); "
                                 "overriding and continuing",
                                 paper_id,
@@ -6403,10 +6391,10 @@ Rules:
                             )
                         else:
                             logger.info(
-                                "M3 Stage 2: %s/%s rejected (not a radiolarian plate): %s",
+                                "LLM Stage 2: %s/%s rejected (not a radiolarian plate): %s",
                                 paper_id,
                                 figure_id,
-                                m3_plate_cls.reasoning[:120],
+                                llm_plate_cls.reasoning[:120],
                             )
                             # Annotate each potential panel as "rejected by classifier"
                             # and return an empty match list with the diagnostic saved.
@@ -6422,28 +6410,30 @@ Rules:
                                         "figure_number": caption.figure_number,
                                         "page_index": best_page_index,
                                         "region": asdict(region),
-                                        "m3_diagnostic": m3_diag,
-                                        "m3_rejected": True,
-                                        "m3_rejection_reason": m3_plate_cls.reasoning,
+                                        "llm_diagnostic": llm_diag,
+                                        "llm_rejected": True,
+                                        "llm_rejection_reason": llm_plate_cls.reasoning,
                                         "panels": [],
                                         "matches": [],
                                     },
                                 )
                             return []
                 # Stage 3: panel segmentation hint
-                if self.m3_engine._stage_enabled(3):
+                if self.semantic_engine._stage_enabled(3):
                     hint = (
-                        m3_plate_cls.panel_count_estimate
-                        if m3_plate_cls and m3_plate_cls.panel_count_estimate
+                        llm_plate_cls.panel_count_estimate
+                        if llm_plate_cls and llm_plate_cls.panel_count_estimate
                         else None
                     )
-                    m3_panels = self.m3_engine.segment_panels(plate_pil, hint_count=hint)
-                    m3_diag["stage3_panels"] = [p.to_dict() for p in m3_panels]
+                    llm_panels = self.semantic_engine.segment_panels(plate_pil, hint_count=hint)
+                    llm_diag["stage3_panels"] = [p.to_dict() for p in llm_panels]
             except Exception as exc:
-                logger.exception("M3 stage 1-3 failed; falling back to classical pipeline: %s", exc)
-                m3_caption_pairs = []
-                m3_panels = []
-                m3_plate_cls = None
+                logger.exception(
+                    "LLM stage 1-3 failed; falling back to classical pipeline: %s", exc
+                )
+                llm_caption_pairs = []
+                llm_panels = []
+                llm_plate_cls = None
 
         # ---- Classical CV: panel segmentation + OCR + rule-based match ----------
         # F7 (audit 2026-09-07): YOLO panel detector — when
@@ -6514,7 +6504,7 @@ Rules:
                 panels = self.segmenter.segment_image(region_img)
         # OCR is intentionally not locked at this layer — see __init__ for
         # the rationale. Engine init is protected inside OCRBackend itself.
-        if (not panels or len(panels) == 0) and m3_panels:
+        if (not panels or len(panels) == 0) and llm_panels:
             h_img, w_img = region_img.shape[:2]
             panels = [
                 PanelCandidate(
@@ -6527,31 +6517,31 @@ Rules:
                     ),
                     score=mp.confidence,
                     metadata={
-                        "method": "m3_stage3",
+                        "method": "llm_stage3",
                         "morphology": mp.morphology,
                         "visible_label": mp.visible_label,
                     },
                 )
-                for mp in m3_panels
+                for mp in llm_panels
             ]
-            logger.info("M3 Stage 3: substituted %d panels for empty SAM2 result", len(panels))
-        # Augment classical panels with M3's visible_label / morphology hints
-        elif m3_panels and panels:
+            logger.info("LLM Stage 3: substituted %d panels for empty SAM2 result", len(panels))
+        # Augment classical panels with LLM's visible_label / morphology hints
+        elif llm_panels and panels:
             try:
-                panels = _merge_panel_hints(panels, m3_panels)
+                panels = _merge_panel_hints(panels, llm_panels)
             except Exception:
-                logger.exception("Failed to merge M3 panel hints")
-            # If M3 found substantially more panels than the classical path
+                logger.exception("Failed to merge LLM panel hints")
+            # If LLM found substantially more panels than the classical path
             # (e.g. classical CV merged nearby specimens into a single blob
-            # while M3 separates them visually), add the unmatched M3 panels
+            # while LLM separates them visually), add the unmatched LLM panels
             # so we don't silently lose specimens. This is critical for plates
             # where the radiolarian specimens are touching or weakly separated.
             try:
-                added = _add_unmatched_m3_panels(panels, m3_panels, iou_match=0.10)
+                added = _add_unmatched_llm_panels(panels, llm_panels, iou_match=0.10)
                 if added:
-                    logger.info("M3 Stage 3: added %d unmatched M3 panels", added)
+                    logger.info("LLM Stage 3: added %d unmatched LLM panels", added)
             except Exception:
-                logger.exception("Failed to add unmatched M3 panels")
+                logger.exception("Failed to add unmatched LLM panels")
         if not panels:
             h_img, w_img = region_img.shape[:2]
             panels = [
@@ -6599,7 +6589,7 @@ Rules:
             x1 = max(x0, min(int(x + w), w_img))
             y1 = max(y0, min(int(y + h), h_img))
             if x1 <= x0 or y1 <= y0:
-                # Fully out-of-bounds panel (e.g. from a misaligned M3 hint);
+                # Fully out-of-bounds panel (e.g. from a misaligned LLM hint);
                 # skip rather than save an empty image.
                 continue
             panel.bbox = (x0, y0, x1 - x0, y1 - y0)
@@ -6716,7 +6706,7 @@ Rules:
             matcher_checkpoint_path=self.config.extra.get("matcher_checkpoint_path"),
             image_shape=region_img.shape[:2],
             paper_metadata=paper_metadata,
-            caption_pairs=m3_caption_pairs,
+            caption_pairs=llm_caption_pairs,
         )
 
         # Round 12 (Bug 7 fix): classical-path over-emission filter.
@@ -6726,7 +6716,7 @@ Rules:
         # pl02 found 4 phantom rows (pid=10a/10b/11b/11c) that the
         # caption-derived pair_lookup rejects. Apply the same
         # hallucination filter used for the LLM-first branch (above).
-        if matches and (m3_caption_pairs or caption.caption):
+        if matches and (llm_caption_pairs or caption.caption):
             pre = len(matches)
             matches = self._filter_classical_hallucinations(
                 matches,
@@ -6745,8 +6735,8 @@ Rules:
                     pre,
                 )
 
-        # ---- M3 Stage 4 (per-panel matching) with stage 1 caption context ----
-        if self.m3_engine is not None and self.m3_engine._stage_enabled(4):
+        # ---- LLM Stage 4 (per-panel matching) with stage 1 caption context ----
+        if self.semantic_engine is not None and self.semantic_engine._stage_enabled(4):
             # Skip visual-only stage 4 for non-specimen content. Three cases:
             # 1. Stage 2 already classified the figure as non-radiolarian.
             # 2. Image type is diagram/photo/other with no caption (no signal).
@@ -6754,12 +6744,12 @@ Rules:
             #    "page header", "placeholder", ...).
             skip_stage4 = False
             skip_reason = ""
-            if m3_plate_cls is not None and not m3_plate_cls.is_radiolarian_plate:
+            if llm_plate_cls is not None and not llm_plate_cls.is_radiolarian_plate:
                 skip_stage4 = True
-                skip_reason = f"stage2 rejected (is_radiolarian_plate=False, reasoning={m3_plate_cls.reasoning[:60]!r})"
-            elif m3_plate_cls is not None:
-                it = (m3_plate_cls.image_type or "").lower()
-                if it in {"diagram", "photo", "other"} and not m3_caption_pairs:
+                skip_reason = f"stage2 rejected (is_radiolarian_plate=False, reasoning={llm_plate_cls.reasoning[:60]!r})"
+            elif llm_plate_cls is not None:
+                it = (llm_plate_cls.image_type or "").lower()
+                if it in {"diagram", "photo", "other"} and not llm_caption_pairs:
                     skip_stage4 = True
                     skip_reason = f"type={it} with no caption"
             if _looks_like_placeholder_caption(caption.caption or ""):
@@ -6769,22 +6759,22 @@ Rules:
                 skip_reason = f"placeholder caption: {caption.caption[:60]!r}"
             if skip_stage4:
                 logger.info(
-                    "M3 Stage 4: skipping %s/%s (%s)",
+                    "LLM Stage 4: skipping %s/%s (%s)",
                     paper_id,
                     figure_id,
                     skip_reason,
                 )
-                m3_diag["stage4_skipped"] = skip_reason
+                llm_diag["stage4_skipped"] = skip_reason
             if not skip_stage4:
                 with self._gemma_lock_if_needed():
-                    matches = self._apply_m3_stage4(
+                    matches = self._apply_llm_stage4(
                         matches=matches,
-                        caption_pairs=m3_caption_pairs,
+                        caption_pairs=llm_caption_pairs,
                         caption_text=caption.caption or "",
                         region_img=region_img,
                     )
         elif self.gemma_runtime is not None:
-            # Backward-compatible single-stage M3 fallback
+            # Backward-compatible single-stage LLM fallback
             with self._gemma_lock:
                 matches = self._apply_gemma_with_fallback(
                     matches=matches,
@@ -6794,12 +6784,12 @@ Rules:
                     figure_id=str(figure_id or f"fig_{figure_index}"),
                 )
 
-        # ---- M3 Stage 5 (cross-panel self-critique) ----------------------------
-        if self.m3_engine is not None and self.m3_engine._stage_enabled(5) and matches:
+        # ---- LLM Stage 5 (cross-panel self-critique) ----------------------------
+        if self.semantic_engine is not None and self.semantic_engine._stage_enabled(5) and matches:
             with self._gemma_lock_if_needed():
-                matches = self._apply_m3_stage5(
+                matches = self._apply_llm_stage5(
                     matches=matches,
-                    caption_pairs=m3_caption_pairs,
+                    caption_pairs=llm_caption_pairs,
                     caption_text=caption.caption or "",
                     region_img=region_img,
                 )
@@ -6876,7 +6866,7 @@ Rules:
                     m.metadata["geology_scope"] = "none"
             m.metadata["scale_bar"] = merged_scale.to_dict()
             m.metadata["geology_links"] = geo_list[:5]
-            m.metadata["m3_diagnostic"] = m3_diag
+            m.metadata["llm_diagnostic"] = llm_diag
 
         # ---- Optional Paleobiology Database (PBDB) enrichment ----------------
         # Audit 2026-09-05 (tier3-D3): this per-figure classical-tail
@@ -6888,14 +6878,14 @@ Rules:
 
         results: list[dict[str, Any]] = [m.to_dict() for m in matches]
 
-        # Stage 4.5 plumbing (2026-08-17 follow-on): the per-panel M3
+        # Stage 4.5 plumbing (2026-08-17 follow-on): the per-panel LLM
         # species-ID method reads ``caption_pairs`` and
         # ``page_context_snippet`` directly off each row dict. The
         # upstream ``match_panels()`` step CONSUMES the caption pairs
         # to build a label->species lookup but never propagates the raw
         # list back onto MatchResult, and the per-page body text from
         # ``grobid_sections`` is never sliced onto rows at all. Without
-        # this plumbing the Stage 4.5 prompt arrives at M3 with empty
+        # this plumbing the Stage 4.5 prompt arrives at LLM with empty
         # context and the model returns uniformly low confidence (0/67
         # high-conf overwrites in the Task 8 smoke). The fix attaches
         # the figure-level caption pairs (serialised) and a ~1500-char
@@ -6906,7 +6896,7 @@ Rules:
         if results:
             self._attach_stage4_5_context(
                 results,
-                caption_pairs=m3_caption_pairs,
+                caption_pairs=llm_caption_pairs,
                 grobid_sections=grobid_sections,
                 figure_page_index=best_page_index,
             )
@@ -6927,7 +6917,7 @@ Rules:
                     "geology_links": section_links,
                     "knowledge_graph": knowledge_graph,
                     "scale_bar": merged_scale.to_dict(),
-                    "m3_diagnostic": m3_diag,
+                    "llm_diagnostic": llm_diag,
                     "panels": [asdict(p) for p in panels],
                     "matches": results,
                 },
@@ -6997,21 +6987,21 @@ Rules:
                     md["geology_scope"] = "none"
             md["scale_bar"] = merged_scale.to_dict()
             md["geology_links"] = geo_list[:5]
-            md.setdefault("m3_diagnostic", {})
+            md.setdefault("llm_diagnostic", {})
             row["metadata"] = md
         return rows
 
     def _switch_to_fallback_backend(self) -> bool:
         """Build the configured local fallback backend and swap it in.
 
-        Called after a FallbackRecommendedError (MiniMax 4xx). Uses the
+        Called after a FallbackRecommendedError (LLM 4xx). Uses the
         existing local-fallback builder (llama.cpp → ollama →
         transformers, whichever is configured) and points both the
-        pipeline runtime and the M3 engine at the new backend.
+        pipeline runtime and the LLM engine at the new backend.
         """
 
         # audit 2026-08-01 (D2): the assignment pair below
-        # (``self.gemma_runtime = ...`` + ``self.m3_engine.backend = ...``)
+        # (``self.gemma_runtime = ...`` + ``self.semantic_engine.backend = ...``)
         # used to be unprotected. Multiple workers can each catch a
         # FallbackRecommendedError at the same time and call this
         # method concurrently — N callers each load a fresh local
@@ -7024,17 +7014,17 @@ Rules:
             if new_runtime is None:
                 logger.warning(
                     "FallbackRecommendedError but no local backend configured; "
-                    "giving up on M3 for this call"
+                    "giving up on LLM for this call"
                 )
                 return False
             self.gemma_runtime = new_runtime
-            if self.m3_engine is not None:
-                self.m3_engine.backend = new_runtime.backend
-            logger.info("Switched M3 backend to %s", getattr(new_runtime, "backend_name", "?"))
+            if self.semantic_engine is not None:
+                self.semantic_engine.backend = new_runtime.backend
+            logger.info("Switched LLM backend to %s", getattr(new_runtime, "backend_name", "?"))
             return True
 
-    def _m3_call_with_fallback(self, fn, *args, **kwargs):
-        """Call an M3Engine method; on FallbackRecommendedError switch
+    def _llm_call_with_fallback(self, fn, *args, **kwargs):
+        """Call an SemanticEngine method; on FallbackRecommendedError switch
         to the configured fallback backend once and retry the call.
 
         audit 2026-07-31: the fallback-backend feature (Phase 61 Plan 4)
@@ -7048,7 +7038,7 @@ Rules:
             return fn(*args, **kwargs)
         except FallbackRecommendedError as fre:
             logger.warning(
-                "M3 backend requested fallback (%s); switching backends",
+                "LLM backend requested fallback (%s); switching backends",
                 getattr(fre, "recommended_backend", "?"),
             )
             if self._switch_to_fallback_backend():
@@ -7060,9 +7050,9 @@ Rules:
 
         Transformers' ``model.generate()`` shares mutable internal state
         across threads (random state, KV cache), so concurrent calls from
-        the ThreadPoolExecutor workers corrupt each other. MiniMax has its
+        the ThreadPoolExecutor workers corrupt each other. LLM has its
         own semaphore (``max_concurrent``); Ollama/llama.cpp are stateless
-        HTTP calls. Serializing those would kill MiniMax's throughput for
+        HTTP calls. Serializing those would kill LLM's throughput for
         no safety benefit, so we only lock for the Transformers backend.
         """
         if (
@@ -7072,21 +7062,23 @@ Rules:
             return self._gemma_lock
         return nullcontext()
 
-    def _apply_m3_stage4(
+    def _apply_llm_stage4(
         self,
         matches: list,
         caption_pairs: list[CaptionPair],
         caption_text: str,
         region_img: Any,
     ) -> list:
-        """Stage 4: re-match each panel via M3 with structured caption context."""
+        """Stage 4: re-match each panel via LLM with structured caption context."""
         from PIL import Image as _PILImage
 
         # If caption parsing found nothing AND the user opted to skip, fall through
-        if not caption_pairs and self.m3_engine.config.get("m3_skip_match_on_empty_caption", True):
+        if not caption_pairs and self.semantic_engine.config.get(
+            "llm_skip_match_on_empty_caption", True
+        ):
             return matches
         # Deduplicate matches by (panel_id, bbox-tuple) before calling
-        # M3 stage 4. The pre-fix code called M3 once per match row,
+        # LLM stage 4. The pre-fix code called LLM once per match row,
         # but a Stage-3 over-segmentation that produced N copies of
         # the same physical panel (e.g. 4 detections of the same
         # crop region) would all share panel_id="1" and a similar
@@ -7111,10 +7103,10 @@ Rules:
                 with _PILImage.open(m.panel_path) as im:
                     panel_image = im.convert("RGB")
                 suggested = None
-                # If panel metadata has a visible_label from M3 stage 3, use it
+                # If panel metadata has a visible_label from LLM stage 3, use it
                 md = m.metadata or {}
-                suggested = md.get("m3_visible_label") or md.get("visible_label")
-                panel_match: PanelMatch = self.m3_engine.match_panel(
+                suggested = md.get("llm_visible_label") or md.get("visible_label")
+                panel_match: PanelMatch = self.semantic_engine.match_panel(
                     panel_image=panel_image,
                     caption_pairs=caption_pairs,
                     caption_text=caption_text,
@@ -7129,40 +7121,40 @@ Rules:
                 # to the next match instead of losing every panel on this
                 # plate.
                 if panel_match is None:
-                    md["m3_stage4_error"] = "engine_returned_none"
+                    md["llm_stage4_error"] = "engine_returned_none"
                     new_matches.append(m)
                     continue
-                # Merge: prefer M3 result when its confidence >= 0.40 OR it has
-                # a different species from the rule-based guess (M3 sees more).
-                m3_conf = panel_match.confidence
+                # Merge: prefer LLM result when its confidence >= 0.40 OR it has
+                # a different species from the rule-based guess (LLM sees more).
+                llm_conf = panel_match.confidence
                 rule_conf = float(m.confidence or 0.0)
-                # Always record M3 vote for diagnostic
-                md["m3_stage4"] = {
+                # Always record LLM vote for diagnostic
+                md["llm_stage4"] = {
                     "label": panel_match.label,
                     "species": panel_match.species,
-                    "confidence": m3_conf,
+                    "confidence": llm_conf,
                     "alternative": panel_match.alternative,
                     "is_radiolarian": panel_match.is_radiolarian,
                     "reasoning": panel_match.reasoning,
                     "votes": (panel_match.raw or {}).get("votes", 1),
                     "agreement": (panel_match.raw or {}).get("agreement", 1.0),
                 }
-                # Carry MiniMax telemetry (request id, cost, model version,
+                # Carry LLM telemetry (request id, cost, model version,
                 # token usage) from the backend call into MatchResult
-                # metadata. Without this plumbing, M3 stage-4 calls never
+                # metadata. Without this plumbing, LLM stage-4 calls never
                 # reach /system/llm-status aggregation because the cost
                 # only lived transiently inside ``PanelMatch.raw``. /system/
                 # llm-status aggregates via match.metadata across the row.
                 for tk, tv in (panel_match.raw or {}).items():
-                    if tk.startswith("MiniMax_") and tk not in md:
+                    if tk.startswith("llm_") and tk not in md:
                         md[tk] = tv
                 use_m3 = False
                 if panel_match.is_radiolarian and panel_match.species:
-                    # Use M3 if it's at least moderately confident AND
+                    # Use LLM if it's at least moderately confident AND
                     # either it has higher confidence than rules OR it disagrees
-                    # (M3 has the visual signal that rules don't).
-                    if m3_conf >= 0.40 and (
-                        m3_conf > rule_conf
+                    # (LLM has the visual signal that rules don't).
+                    if llm_conf >= 0.40 and (
+                        llm_conf > rule_conf
                         or (m.species and panel_match.species.lower() != m.species.lower())
                         or (not m.species)
                     ):
@@ -7171,57 +7163,57 @@ Rules:
                     m.panel_id = panel_match.label or m.panel_id
                     m.species = panel_match.species or m.species
                     m.label_text = panel_match.label or m.label_text
-                    # Use m3_conf directly, not max(rule_conf, m3_conf). The
+                    # Use llm_conf directly, not max(rule_conf, llm_conf). The
                     # two scores come from different scoring systems (rule-
-                    # based heuristic vs M3 LLM); combining them with max()
-                    # can mask the M3's lower-but-more-honest score and
-                    # inflate downstream thresholds. When M3 is selected we
+                    # based heuristic vs LLM LLM); combining them with max()
+                    # can mask the LLM's lower-but-more-honest score and
+                    # inflate downstream thresholds. When LLM is selected we
                     # trust its verdict and use its confidence verbatim.
-                    m.confidence = m3_conf
+                    m.confidence = llm_conf
                     md["gemma_used"] = True
-                    md["gemma_confidence"] = m3_conf
+                    md["gemma_confidence"] = llm_conf
                     md["gemma_reasoning"] = panel_match.reasoning
                 else:
                     md["gemma_used"] = False
-                    # IMPORTANT: distinguish three different "M3 didn't produce a
+                    # IMPORTANT: distinguish three different "LLM didn't produce a
                     # match" cases, each with a different downstream consequence:
                     #   1. Real API / runtime error (raw["error"] set)
                     #      -> gemma_error  -> FallbackHandler popup (user can retry)
-                    #   2. M3 said "not a radiolarian specimen"
-                    #      -> m3_rejected_non_radiolarian  -> silently dropped
-                    #   3. M3 returned low-confidence verdict
+                    #   2. LLM said "not a radiolarian specimen"
+                    #      -> llm_rejected_non_radiolarian  -> silently dropped
+                    #   3. LLM returned low-confidence verdict
                     #      -> gemma_fallback  -> silently dropped (no error UI)
-                    m3_error = (panel_match.raw or {}).get("error")
-                    if m3_error:
-                        md["gemma_error"] = str(m3_error)
-                        md["gemma_error_type"] = "M3EngineError"
-                        md["gemma_reasoning"] = panel_match.reasoning or m3_error
+                    llm_error = (panel_match.raw or {}).get("error")
+                    if llm_error:
+                        md["gemma_error"] = str(llm_error)
+                        md["gemma_error_type"] = "SemanticEngineError"
+                        md["gemma_reasoning"] = panel_match.reasoning or llm_error
                     elif not panel_match.is_radiolarian:
-                        md["m3_rejected_non_radiolarian"] = True
+                        md["llm_rejected_non_radiolarian"] = True
                         md["gemma_reasoning"] = (
-                            panel_match.reasoning or "M3: not a radiolarian specimen"
+                            panel_match.reasoning or "LLM: not a radiolarian specimen"
                         )
                     else:
                         md["gemma_fallback"] = True
-                        md["gemma_reasoning"] = panel_match.reasoning or "M3 below threshold"
+                        md["gemma_reasoning"] = panel_match.reasoning or "LLM below threshold"
                 m.metadata = md
                 new_matches.append(m)
             except Exception as exc:
-                logger.exception("M3 stage 4 failed for one panel: %s", exc)
+                logger.exception("LLM stage 4 failed for one panel: %s", exc)
                 md = dict(m.metadata or {})
-                md["m3_stage4_error"] = str(exc)
+                md["llm_stage4_error"] = str(exc)
                 m.metadata = md
                 new_matches.append(m)
         return new_matches
 
-    def _apply_m3_stage5(
+    def _apply_llm_stage5(
         self,
         matches: list,
         caption_pairs: list[CaptionPair],
         caption_text: str,
         region_img: Any,
     ) -> list:
-        """Stage 5: cross-validate all panel matches via M3 self-critique."""
+        """Stage 5: cross-validate all panel matches via LLM self-critique."""
         from PIL import Image as _PILImage
 
         try:
@@ -7243,13 +7235,13 @@ Rules:
                         reasoning=(m.metadata or {}).get("gemma_reasoning", ""),
                     )
                 )
-            critiques = self.m3_engine.critique_matches(
+            critiques = self.semantic_engine.critique_matches(
                 plate_image=plate_pil,
                 matches=panel_matches,
                 caption_text=caption_text,
                 caption_pairs=caption_pairs,
             )
-            M3Engine.apply_critiques(panel_matches, critiques)
+            SemanticEngine.apply_critiques(panel_matches, critiques)
             # Back-apply to original matches by INDEX, not by panel_id.
             # ``panel_matches`` and ``matches`` are parallel arrays built in
             # the same loop above, so index correspondence is guaranteed.
@@ -7263,9 +7255,9 @@ Rules:
                     continue
                 md = dict(m.metadata or {})
                 if "critique" in (pm.raw or {}):
-                    md["m3_stage5_critique"] = pm.raw["critique"]
+                    md["llm_stage5_critique"] = pm.raw["critique"]
                 if pm.species and pm.species != m.species:
-                    md["m3_stage5_override"] = {
+                    md["llm_stage5_override"] = {
                         "from": m.species,
                         "to": pm.species,
                     }
@@ -7277,7 +7269,7 @@ Rules:
                     m.confidence = min(cur, max(0.3, float(pm.confidence or 0.0)))
                 m.metadata = md
         except Exception as exc:
-            logger.exception("M3 stage 5 failed: %s", exc)
+            logger.exception("LLM stage 5 failed: %s", exc)
         return matches
 
     # ------------------------------------------------------------------ helpers
@@ -7290,14 +7282,14 @@ Rules:
         paper_id: str,
         figure_id: str,
     ) -> list:
-        """Call Gemma (possibly MiniMax) and route errors through FallbackHandler.
+        """Call Gemma (possibly LLM) and route errors through FallbackHandler.
 
-        Decision flow when MiniMax M3 returns ``fallback_used=True`` errors:
+        Decision flow when LLM LLM returns ``fallback_used=True`` errors:
             1. Ask ``gemma_fallback_handler`` (CLI popup or callback).
             2. ``"gemma4"`` -> lazy-init local Gemma4 and retry once.
             3. ``"rules"``  -> keep rule-pipeline matches untouched.
             4. ``"stop"``   -> raise so the user sees the failure.
-            5. ``"retry"``  -> call MiniMax once more with same payload.
+            5. ``"retry"``  -> call LLM once more with same payload.
         """
         conf_threshold = float(self.config.extra.get("gemma_conf_threshold", 0.70))
         prompt_lang = str(self.config.extra.get("gemma_prompt_lang", "zh"))
@@ -7317,33 +7309,33 @@ Rules:
         if not self._matches_have_fallback_error(result):
             return result
 
-        # If we don't have a fallback handler (non-MiniMax backend), just return.
+        # If we don't have a fallback handler (non-LLM backend), just return.
         if self.gemma_fallback_handler is None:
             return result
 
         error_info = self._collect_fallback_error_info(result, paper_id, figure_id)
-        # Round 18 audit: M3 refuses to extract species from non-specimen
+        # Round 18 audit: LLM refuses to extract species from non-specimen
         # figures (bar charts, tables, maps). Surfacing these as popup
         # decisions wastes operator time and asks for a no-op answer.
         # Silently skip the figure when the error text clearly indicates
         # "this is not a specimen image". The figure is still recorded
-        # in m3_diagnostic with m3_rejected=True so the operator can
+        # in llm_diagnostic with llm_rejected=True so the operator can
         # audit the skip after the run.
         if error_info.get("is_non_specimen_figure"):
             logger.info(
-                "M3 returned 'non-specimen' refusal for %s/%s; silently skipping (no popup): %s",
+                "LLM returned 'non-specimen' refusal for %s/%s; silently skipping (no popup): %s",
                 paper_id,
                 figure_id,
                 (error_info.get("error") or "")[:200],
             )
             for m in result:
-                m.metadata["MiniMax_fallback_action"] = "skipped_non_specimen"
+                m.metadata["llm_fallback_action"] = "skipped_non_specimen"
             return result
         action = self.gemma_fallback_handler(error_info)
 
         if action == "stop":
             raise RuntimeError(
-                f"[MiniMax] user stopped pipeline at paper={paper_id} figure={figure_id}: "
+                f"[LLM] user stopped pipeline at paper={paper_id} figure={figure_id}: "
                 f"{error_info.get('error', '?')}"
             )
 
@@ -7353,18 +7345,18 @@ Rules:
             # causes — e.g. a local_only policy short-circuit reads
             # exactly like an outage while no call was ever attempted.
             logger.warning(
-                "[MiniMax] API error, falling back to rule pipeline for %s/%s: %s",
+                "[LLM] API error, falling back to rule pipeline for %s/%s: %s",
                 paper_id,
                 figure_id,
                 (error_info.get("error") or "?")[:300],
             )
             for m in result:
-                m.metadata["MiniMax_fallback_action"] = "rules"
+                m.metadata["llm_fallback_action"] = "rules"
             return result
 
         if action == "gemma4":
             logger.warning(
-                "[MiniMax] API error, switching to local Gemma4 for %s/%s",
+                "[LLM] API error, switching to local Gemma4 for %s/%s",
                 paper_id,
                 figure_id,
             )
@@ -7372,7 +7364,7 @@ Rules:
             # successful build so subsequent fallbacks don't reload a multi-GB
             # model each time.
             # Round 15 audit: previous unguarded lazy-init could let two
-            # concurrent MiniMax-fallback workers both see ``None``, both
+            # concurrent llm-fallback workers both see ``None``, both
             # build the multi-GB Gemma4 model, and OOM the box. Double-
             # checked locking under self._gemma_lock.
             if self._fallback_gemma_runtime is None:
@@ -7382,18 +7374,18 @@ Rules:
             if self._fallback_gemma_runtime is None:
                 logger.warning("Local Gemma4 fallback unavailable; keeping rule results.")
                 for m in result:
-                    m.metadata["MiniMax_fallback_action"] = "rules_no_local_gemma"
+                    m.metadata["llm_fallback_action"] = "rules_no_local_gemma"
                 return result
             retried = _call_once(self._fallback_gemma_runtime)
             for m in retried:
-                m.metadata["MiniMax_fallback_action"] = "gemma4"
+                m.metadata["llm_fallback_action"] = "gemma4"
             return retried
 
         if action == "retry":
-            logger.warning("[MiniMax] API error, retrying once for %s/%s", paper_id, figure_id)
+            logger.warning("[LLM] API error, retrying once for %s/%s", paper_id, figure_id)
             retried = _call_once(self.gemma_runtime)
             for m in retried:
-                m.metadata["MiniMax_fallback_action"] = "retry"
+                m.metadata["llm_fallback_action"] = "retry"
             return retried
 
         return result
@@ -7540,7 +7532,7 @@ Rules:
         matches: list, paper_id: str, figure_id: str
     ) -> dict[str, Any]:
         # Prefer gemma_error; fall back to gemma_reasoning (always set by
-        # _make_error_result to "MiniMax API error: <Type>: <message>"); only
+        # _make_error_result to "LLM API error: <Type>: <message>"); only
         # as last resort show the placeholder. This is what the Web
         # FallbackHandler popup surfaces to the user.
         first_err = next(
@@ -7568,15 +7560,15 @@ Rules:
             False,
         )
         return {
-            "error": first_err or "MiniMax returned fallback_used=True (see stderr for traceback)",
-            "error_type": first_type or ("MiniMaxAPIError" if first_fb else "Unknown"),
+            "error": first_err or "LLM returned fallback_used=True (see stderr for traceback)",
+            "error_type": first_type or ("LLMAPIError" if first_fb else "Unknown"),
             "context": f"paper={paper_id} figure={figure_id} affected_panels="
             f"{sum(1 for m in matches if m.metadata.get('gemma_error') or m.metadata.get('gemma_fallback'))}",
-            # Round 18 audit: M3 frequently refuses to extract species
+            # Round 18 audit: LLM frequently refuses to extract species
             # from non-specimen figures (bar charts, tables, maps,
             # publication-count graphs) and returns reasoning like
             # "该panel为图表…无标签与物种可判定". The previous code
-            # surfaced this as a MiniMaxAPIError to the popup, which
+            # surfaced this as an LLMAPIError to the popup, which
             # (a) wasted the operator's time on a no-decision and
             # (b) burned API cost on a question with only one answer
             # (skip the figure). Mark these cases so the popup
@@ -7589,18 +7581,18 @@ Rules:
 
     @staticmethod
     def _looks_like_non_specimen_error(err: str, err_type: str) -> bool:
-        """Return True if the MiniMax error text / type signals that
+        """Return True if the LLM error text / type signals that
         the figure isn't a radiolarian specimen image.
 
-        M3's stage-2 / LLM-first paths return deliberate refusals
+        LLM's stage-2 / LLM-first paths return deliberate refusals
         for non-specimen content ("this is a bar chart, no species
-        to extract"). Surfacing those as MiniMaxAPIError to the
+        to extract"). Surfacing those as LLMAPIError to the
         popup makes the operator click through a no-op. Detect them
         and silently skip the figure instead.
         """
         if not err and not err_type:
             return False
-        # Patterns that indicate M3 correctly refused to extract
+        # Patterns that indicate LLM correctly refused to extract
         # species because the figure isn't a radiolarian specimen
         # image. Mix of Chinese ("该panel", "非标本") and English
         # ("bar chart", "no specimen panels") markers; lowercased
@@ -7812,10 +7804,10 @@ def stage3_rescale_bbox(
     source_dpi: int,
     crop_dpi: int,
 ) -> tuple[int, int, int, int]:
-    """Phase 61 Plan 4 (Bug 4.5): rescale an M3 Stage 3 bbox from the
+    """Phase 61 Plan 4 (Bug 4.5): rescale an LLM Stage 3 bbox from the
     extraction DPI to the visual-storage DPI used for the cropped image.
 
-    M3 returns bboxes in pixels of the rendered plate (the DPI it saw
+    LLM returns bboxes in pixels of the rendered plate (the DPI it saw
     when generating). The crop helper re-saves the panel at a possibly
     different ``crop_dpi``; if the consumer (a downstream LLM call, an
     annotation overlay, …) reads the bbox as-is it will land on the
@@ -7905,9 +7897,9 @@ def _sort_od_images_numerically(files) -> list[str]:
     return sorted(files, key=sort_key)
 
 
-def _resolve_m3_prompt_lang(value: Any) -> str | None:
-    """Phase 27: translate the CLI's ``--m3-prompt-lang`` value to the
-    argument expected by ``M3Engine.parse_caption(..., lang=)``.
+def _resolve_llm_prompt_lang(value: Any) -> str | None:
+    """Phase 27: translate the CLI's ``--llm-prompt-lang`` value to the
+    argument expected by ``SemanticEngine.parse_caption(..., lang=)``.
 
     Rules:
     - ``None`` / ``"auto"`` / empty → return ``None`` so the engine
@@ -7928,23 +7920,23 @@ def _resolve_m3_prompt_lang(value: Any) -> str | None:
 
 def _merge_panel_hints(
     classical_panels: list[PanelCandidate],
-    m3_panels: list[PanelBox],
+    llm_panels: list[PanelBox],
     iou_match: float = 0.10,
 ) -> list[PanelCandidate]:
-    """Attach M3 stage-3 hints (visible_label, morphology) to classical panels.
+    """Attach LLM stage-3 hints (visible_label, morphology) to classical panels.
 
     Pairs are matched by IoU of the bboxes; the panel with the highest IoU to
     a classical panel is treated as its hint source. Classical bboxes are kept
-    (more reliable for downstream crop). M3 adds two metadata fields that the
+    (more reliable for downstream crop). LLM adds two metadata fields that the
     stage-4 matcher consumes as priors.
     """
-    if not classical_panels or not m3_panels:
+    if not classical_panels or not llm_panels:
         return classical_panels
 
     out: list[PanelCandidate] = []
     for cp in classical_panels:
         best: tuple[float, PanelBox] | None = None
-        for mp in m3_panels:
+        for mp in llm_panels:
             score = _iou(cp.bbox, mp.bbox)
             if score >= iou_match and (best is None or score > best[0]):
                 best = (score, mp)
@@ -7952,52 +7944,52 @@ def _merge_panel_hints(
             mp = best[1]
             new_md = dict(cp.metadata or {})
             if mp.visible_label:
-                new_md["m3_visible_label"] = mp.visible_label
+                new_md["llm_visible_label"] = mp.visible_label
                 if not new_md.get("visible_label"):
                     new_md["visible_label"] = mp.visible_label
             if mp.morphology:
-                new_md["m3_morphology"] = mp.morphology
+                new_md["llm_morphology"] = mp.morphology
             if mp.panel_id and (not cp.panel_id or cp.panel_id == "P?"):
                 cp.panel_id = mp.panel_id
-            new_md["m3_stage3_confidence"] = mp.confidence
+            new_md["llm_stage3_confidence"] = mp.confidence
             cp.metadata = new_md
         out.append(cp)
     return out
 
 
-def _add_unmatched_m3_panels(
+def _add_unmatched_llm_panels(
     classical_panels: list[PanelCandidate],
-    m3_panels: list[PanelBox],
+    llm_panels: list[PanelBox],
     iou_match: float = 0.10,
 ) -> int:
-    """Append M3 panels that do not overlap any classical panel.
+    """Append LLM panels that do not overlap any classical panel.
 
-    Returns the number of M3 panels added. Useful when the classical CV
+    Returns the number of LLM panels added. Useful when the classical CV
     (OpenCV / SAM2) under-segments — merges touching specimens into a
-    single blob — and M3's vision model correctly identifies the missing
-    ones. The added panels carry ``metadata.method == "m3_stage3_only"``
+    single blob — and LLM's vision model correctly identifies the missing
+    ones. The added panels carry ``metadata.method == "llm_stage3_only"``
     so downstream code knows they came from the LLM vision hint, not the
     classical detector.
     """
-    if not m3_panels:
+    if not llm_panels:
         return 0
 
     matched_m3: set[int] = set()
     for cp in classical_panels:
-        for idx, mp in enumerate(m3_panels):
+        for idx, mp in enumerate(llm_panels):
             if _iou(cp.bbox, mp.bbox) >= iou_match:
                 matched_m3.add(idx)
     added = 0
-    for idx, mp in enumerate(m3_panels):
+    for idx, mp in enumerate(llm_panels):
         if idx in matched_m3:
             continue
         md = {
-            "method": "m3_stage3_only",
-            "m3_morphology": mp.morphology,
-            "m3_stage3_confidence": mp.confidence,
+            "method": "llm_stage3_only",
+            "llm_morphology": mp.morphology,
+            "llm_stage3_confidence": mp.confidence,
         }
         if mp.visible_label:
-            md["m3_visible_label"] = mp.visible_label
+            md["llm_visible_label"] = mp.visible_label
             md["visible_label"] = mp.visible_label
         classical_panels.append(
             PanelCandidate(

@@ -12,7 +12,7 @@ when the caption didn't already name them:
           identification.
 
 The model is NOT a radiolarian expert. The "guess from morphology"
-rule was the root cause of fabricated species names in M3 outputs
+rule was the root cause of fabricated species names in LLM outputs
 — the model invented binomial strings that look plausible but
 don't correspond to a real species. These fabricated names then
 flowed into Darwin Core exports and GBIF submissions.

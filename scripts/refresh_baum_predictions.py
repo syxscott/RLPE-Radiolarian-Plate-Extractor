@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
+from rlpe.semantic_engine import _regex_parse_caption  # noqa: E402
 
 PREDICTIONS_IN = ROOT / "work" / "combined_7_v8.jsonl"
 PREDICTIONS_OUT = ROOT / "work" / "combined_7_v9.jsonl"

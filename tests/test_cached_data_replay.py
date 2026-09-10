@@ -18,7 +18,7 @@ they reproduce real bugs from the actual production pipeline.
 A bug in the fix would cause the test to fail because the
 replay numbers would not match.
 
-These tests run in any env (no cv2 / OCR / M3 API required).
+These tests run in any env (no cv2 / OCR / LLM API required).
 """
 
 from __future__ import annotations
@@ -200,14 +200,14 @@ class TestP1PouilleReplayedOnV18Cached:
 
 
 class TestM7TotalCallsReplayOnV18Cached:
-    """M7 (MiniMax M3 backend call counter): the fix bumps
+    """M7 (LLM LLM backend call counter): the fix bumps
     ``total_calls`` at the START of each attempt (not after
     success). Replay the count on the v18 cached run that
     pre-dates the fix.
 
     The audit: pre-fix, ``total_calls`` undercounted by exactly
     1 per retry-exhausted sequence. We can't replay the
-    MiniMax API call itself without network, but we CAN verify
+    LLM API call itself without network, but we CAN verify
     the in-source counter behavior via a synthetic call: spawn
     3 fake failed attempts + 1 success, verify ``total_calls ==
     4`` (not 3, which the pre-fix code would have reported).
@@ -225,16 +225,16 @@ class TestM7TotalCallsReplayOnV18Cached:
         check ``total_calls == 1`` for a single success) but
         would undercount retries.
         """
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         # Bypass __init__ (no anthropic SDK in sandbox) and
         # construct a minimal stub with the post-fix counter
         # behavior. We patch in _call_api via the production
         # function in llm_backends.
         from rlpe.llm_backends import (
-            MiniMaxM3Backend as _Backend,
+            AnthropicCompatBackend as _Backend,
         )
-        from tests.fakes.fake_m3_backend import FakeM3Backend
+        from tests.fakes.fake_llm_backend import FakeM3Backend
 
         # Build a backend without running __init__.
         backend = _Backend.__new__(_Backend)

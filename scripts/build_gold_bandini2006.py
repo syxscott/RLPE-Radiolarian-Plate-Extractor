@@ -60,7 +60,7 @@ REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
 sys.path.insert(0, str(SRC))
 
-from rlpe.m3_engine import _regex_parse_caption, _normalize_species  # noqa: E402
+from rlpe.semantic_engine import _regex_parse_caption, _normalize_species  # noqa: E402
 from rlpe.opendataloader_extractor import _find_plate_captions  # noqa: E402
 
 # Paper ID = SHA1 of bandini2006_greece.pdf. The cached OD output

@@ -1,6 +1,6 @@
 """Re-run v19 9-paper baseline with current prompt for fair comparison.
 
-Uses the same MiniMax-M3 backend + same caption_fixer / prompt / post_process
+Uses the same cloud LLM backend + same caption_fixer / prompt / post_process
 pipeline as ``scripts/run_research_eval.py`` so the re-measured F1 is directly
 comparable to our 9-paper research eval result.
 
@@ -29,15 +29,12 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import pymupdf
-from PIL import Image
 
 # Read API key + base URL + model strictly from the environment. Never define
 # any default key string here — if these env vars are missing the script must
 # fail loudly at the first real API call rather than silently use a fake key.
-os.environ.setdefault("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic")
-os.environ.setdefault("ANTHROPIC_MODEL", "MiniMax-M3")
-
 from caption_fixer import select_caption  # noqa: E402
+from PIL import Image
 from post_process import (  # noqa: E402
     dedup_panels,
     filter_low_confidence,
@@ -259,12 +256,12 @@ def main():
         print("ERROR: ANTHROPIC_API_KEY env var is required.", file=sys.stderr)
         return 2
 
-    from rlpe.llm_backends import MiniMaxM3Backend
+    from rlpe.llm_backends import AnthropicCompatBackend
 
-    backend = MiniMaxM3Backend(
+    backend = AnthropicCompatBackend(
         api_key=os.environ["ANTHROPIC_API_KEY"],
-        base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"),
-        model=os.environ.get("ANTHROPIC_MODEL", "MiniMax-M3"),
+        base_url=os.environ.get("ANTHROPIC_BASE_URL", ""),
+        model=os.environ.get("ANTHROPIC_MODEL", ""),
         timeout_sec=60,
     )
 

@@ -1,20 +1,20 @@
-"""Tests for Plan C: M3 Stage 3 YOLO fallback.
+"""Tests for Plan C: LLM Stage 3 YOLO fallback.
 
-Audit 2026-08-16 (fill-gaps): previously M3 Stage 3 bbox enrichment
-short-circuited when the M3 vision model returned zero panels. This
+Audit 2026-08-16 (fill-gaps): previously LLM Stage 3 bbox enrichment
+short-circuited when the LLM vision model returned zero panels. This
 helper synthesises stage3_panel records from YOLO so the crop pass
-still produces useful output for papers that exhausted M3 quota or
-whose plates M3 declined to segment.
+still produces useful output for papers that exhausted LLM quota or
+whose plates LLM declined to segment.
 
 These tests guard:
   - Helper is a no-op when ``use_yolo_figures`` is False
   - Helper returns {} when ``yolo_model_path`` is empty
   - Helper returns {} when no figure has a plate image
-  - Each synthesised panel has the M3-shaped dict contract
+  - Each synthesised panel has the LLM-shaped dict contract
   - Source tag is ``"yolo_fallback"`` so downstream consumers can
-    distinguish it from M3's ``"m3_vision"`` source
+    distinguish it from LLM's ``"llm_vision"`` source
   - The crop pass promotes ``panel_id_source`` from the
-    synthesised source (no regression on the M3 path)
+    synthesised source (no regression on the LLM path)
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ def test_yolo_fallback_skips_missing_plate_files(tmp_path):
 
 
 def test_yolo_fallback_panel_dict_contract(tmp_path, monkeypatch):
-    """Synthesised panels must match the M3 PanelBox.to_dict() contract."""
+    """Synthesised panels must match the LLM PanelBox.to_dict() contract."""
     from rlpe.layout import FigureRegion
 
     cfg = _make_config(
@@ -170,7 +170,7 @@ def test_yolo_fallback_panel_dict_contract(tmp_path, monkeypatch):
     assert len(panels) == 2
 
     p1, p2 = panels
-    # M3-shaped contract:
+    # LLM-shaped contract:
     assert p1["panel_id"] == "P1"
     assert p1["bbox"] == [10, 20, 100, 80]
     assert p1["visible_label"] is None
@@ -370,7 +370,7 @@ def test_plate_path_priority_audit_c1(tmp_path):
 
 def test_panel_id_source_promoted_from_matched(monkeypatch):
     """The crop pass must honour the synthesised ``source`` field so
-    downstream can distinguish M3 vs YOLO. This is a regression guard
+    downstream can distinguish LLM vs YOLO. This is a regression guard
     on the source-tag-stamping change in ``_apply_stage3_bbox_crops``.
     """
     import inspect
@@ -382,10 +382,10 @@ def test_panel_id_source_promoted_from_matched(monkeypatch):
         if hasattr(pipeline_mod, "RadiololarianPipeline")
         else pipeline_mod.RadiolarianPipeline
     )
-    assert 'matched.get("source") or "m3_vision"' in src, (
+    assert 'matched.get("source") or "llm_vision"' in src, (
         "Plan C: stage3 crop pass must read source from the matched dict "
         "so YOLO fallback panels get tagged 'yolo_fallback' instead of "
-        "'m3_vision'."
+        "'llm_vision'."
     )
 
 

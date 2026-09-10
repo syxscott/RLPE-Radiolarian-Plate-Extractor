@@ -17,6 +17,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from .llm_settings import load_llm_settings
+
 logger = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 _JSON_ARR_RE = re.compile(r"\[.*?\]", re.DOTALL)
@@ -173,9 +175,9 @@ def select_backend_after_4xx(
     return configured_fallback
 
 
-# Match Anthropic / MiniMax / OpenAI style API keys (sk-ant-..., sk-...,
+# Match Anthropic / LLM / OpenAI style API keys (sk-ant-..., sk-...,
 # plus generic 40+ char sk- prefixes). Anthropic's actual key shape is
-# ``sk-ant-api03-<48 alnum>``; MiniMax / OpenAI use ``sk-<30+ alnum>`` or
+# ``sk-ant-api03-<48 alnum>``; LLM / OpenAI use ``sk-<30+ alnum>`` or
 # ``sk-proj-<...>``. We use a conservative pattern that:
 #   - requires a non-key character (or start) immediately before ``sk-``,
 #   - requires the key body to be at least 16 alnum characters long,
@@ -192,7 +194,7 @@ _API_KEY_PATTERNS = (
     re.compile(r"(?<![A-Za-z0-9_])sk-cp-[A-Za-z0-9]{16,}"),
     # Audit 2026-09-01 CR-17: extend the redaction set to cover the
     # cloud-provider credentials that the operator may inject into
-    # ``extra`` when routing MiniMax via AWS Bedrock / Vertex /
+    # ``extra`` when routing LLM via AWS Bedrock / Vertex /
     # Azure. Without these patterns, an AKIA / ya29 / Azure key
     # embedded in the run would be persisted verbatim into
     # ``matches.jsonl`` and exposed via the public-facing
@@ -414,7 +416,7 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
         obj = json.loads(cleaned)
         if isinstance(obj, list):
             # Audit 2026-09-01 (live end-to-end test on Bandini_2011
-            # via MiniMax-M3): M3 returns the FULL multi-panel output
+            # via the cloud LLM): LLM returns the FULL multi-panel output
             # as a top-level JSON array — e.g. ``[{"label":"1",
             # "species":"Genus species A"}, {"label":"2", ...}, ...]``.
             # The previous implementation normalised only the FIRST
@@ -487,7 +489,7 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
                 # else: not a panel-shape JSON, keep looking
         except Exception:
             pass
-    # 4) Audit 2026-08-17: brace-balanced scan. Real M3 / Qwen3
+    # 4) Audit 2026-08-17: brace-balanced scan. Real LLM / Qwen3
     #    responses sometimes emit a prose preamble that itself
     #    contains ``{...}`` placeholders (e.g. "The relevant context is
     #    {locality: Tunisia, age: Late Cretaceous}") followed by a
@@ -517,7 +519,7 @@ def parse_json_from_text(text: str) -> dict[str, Any]:
 # Phase 4B M-21). The species-identification vision prompt declares a
 # JSON contract with a fixed set of canonical keys plus a handful of
 # optional structured extras (see ``_MATCH_PANEL_SYSTEM`` in
-# ``m3_engine.py``). Without an explicit whitelist, the LLM occasionally
+# ``semantic_engine.py``). Without an explicit whitelist, the LLM occasionally
 # emits hallucinated fields ("ocr_confidence", "valid_name",
 # "fake_field", ...) which — even when filtered by the canonical-key
 # loop below — pollute log output, downstream record schemas, and the
@@ -533,7 +535,7 @@ _ALLOWED_PANEL_FIELDS = frozenset(
         "species",
         "confidence",
         "reasoning",
-        # Optional structured fields documented in M3 match-panel
+        # Optional structured fields documented in LLM match-panel
         # prompts (``_MATCH_PANEL_SYSTEM``); the LLM may emit any
         # subset of these per response.
         "open_nomenclature_strength",
@@ -793,11 +795,11 @@ def _validate_ma_range(ma_top: Any, ma_base: Any) -> tuple[Any, Any]:
     Returns ``(ma_top, ma_base)`` — either the input unchanged or the
     swapped pair. Non-numeric values are passed through unchanged
     (the strict null-on-violation path lives in
-    ``m3_engine._validate_ma_range``; this helper just fixes the
+    ``semantic_engine._validate_ma_range``; this helper just fixes the
     ordering when both numbers are present and comparable).
 
     This helper is intentionally DIFFERENT from
-    ``rlpe.m3_engine._validate_ma_range``: the engine helper enforces
+    ``rlpe.semantic_engine._validate_ma_range``: the engine helper enforces
     the schema contract (null on violation); the llm_backends helper
     fixes the value (swap on violation). Both helpers coexist — the
     engine one runs in the strict ``extract_geology`` pipeline, this
@@ -838,11 +840,11 @@ def _apply_geo_whitelist(item: dict[str, Any]) -> dict[str, Any]:
 
     Note: ``_apply_geo_whitelist`` does NOT call
     :func:`_validate_ma_range` — the strict null-on-violation policy
-    is owned by ``m3_engine._validate_ma_range``, which runs downstream
+    is owned by ``semantic_engine._validate_ma_range``, which runs downstream
     of this helper inside ``extract_geology``. Adding a swap here
     would mask bad ranges from the engine's null branch and silently
     break the M-13 regression tests in
-    ``tests/test_audit_2026_08_19_phase2b_m3_prompts.py``. Callers
+    ``tests/test_audit_2026_08_19_phase2b_llm_prompts.py``. Callers
     wanting lenient swap-on-violation should call
     ``_validate_ma_range`` explicitly.
 
@@ -868,7 +870,7 @@ class BaseLLMBackend:
     def __init__(self) -> None:
         # Audit 2026-09-01 (PERF-18): shared HTTP session per backend
         # instance. The previous implementation called
-        # ``requests.post(...)`` directly, so every M3 / Anthropic /
+        # ``requests.post(...)`` directly, so every LLM / Anthropic /
         # Ollama inference rebuilt a fresh TCP connection (DNS +
         # TLS + HTTP handshake) — typically 80-200 ms per call. A
         # typical paper issues 200+ LLM calls; that's 16-40 seconds
@@ -1144,7 +1146,7 @@ class LlamaCppGemmaBackend(BaseLLMBackend):
             Primary image (e.g. SEM plate). ``None`` means text-only.
         caption_text : str
             Optional caption text (unused by llama.cpp but kept for
-            backend signature parity with ``MiniMaxM3Backend``).
+            backend signature parity with ``AnthropicCompatBackend``).
         ocr_labels : list[str]
             Optional OCR-detected panel labels (also kept for parity).
         system_prompt : str
@@ -1542,32 +1544,37 @@ def _encode_image_anthropic_block(image) -> dict[str, Any]:
 
 
 # =============================================================================
-# MiniMax M3 backend (Anthropic-compatible API)
+# Anthropic-compatible cloud API backend (provider-agnostic)
 # =============================================================================
-
-# Cost per million tokens (CNY), reference 2026-06
-MiniMax_PRICE_INPUT_PER_M = 2.1
-MiniMax_PRICE_OUTPUT_PER_M = 8.4
 
 
 @dataclass(slots=True)
-class MiniMaxM3Backend(BaseLLMBackend):
-    """MiniMax M3 API backend, Anthropic-compatible protocol.
+class AnthropicCompatBackend(BaseLLMBackend):
+    """Anthropic-compatible cloud API backend (provider-agnostic).
 
-    Endpoint: https://api.minimaxi.com/anthropic
-    Auth:     Token Plan subscription key (ANTHROPIC_API_KEY env or explicit param)
-    Model:    MiniMax-M3 (default)
+    The endpoint, API key and model name are all caller-supplied, so
+    any vendor speaking the Anthropic wire protocol works (MiniMax,
+    DeepSeek, Kimi, OpenRouter's /anthropic route, Claude relays, ...).
+    There is deliberately NO hard-coded vendor default: configuration
+    resolves through ``build_anthropic_compat_backend`` in the order
+
+        per-run explicit option > ~/.rlpe/llm_api.json > environment
+
+    Auth:      bearer key (ANTHROPIC_API_KEY env, the persisted settings
+               file, or an explicit constructor argument)
+    Model:     required (no default) — e.g. the vendor's model string
 
     Features:
       - Native multimodal (image + text)
-      - Up to 1M token context (MSA architecture)
-      - Optional extended thinking (default ON)
-      - Token-usage and cost accounting per call
+      - Optional extended thinking (default OFF; opt-in via CLI/UI)
+      - Token-usage accounting per call (calls + tokens only; pricing
+        is vendor-specific and deliberately NOT tracked here — F17
+        removed the cost_cny accounting entirely)
     """
 
     api_key: str
-    base_url: str = "https://api.minimaxi.com/anthropic"
-    model: str = "MiniMax-M3"
+    base_url: str = ""
+    model: str = ""
     max_output_tokens: int = 2048
     thinking_budget_tokens: int = 1024
     enable_thinking: bool = False  # default OFF to avoid surprise API cost; opt-in via CLI/UI
@@ -1576,13 +1583,13 @@ class MiniMaxM3Backend(BaseLLMBackend):
     top_p: float = 0.9
     max_retries: int = 3
     max_concurrent: int = 8
-    backend_name: str = "MiniMax"
+    backend_name: str = "anthropic"
     # Callback invoked when an error occurs and fallback is needed.
     # Signature: (error_info: dict) -> "gemma4" | "rules" | "stop"
     on_error: Callable[[dict[str, Any]], str] | None = None
     # Data-outbound policy. One of:
     #   * "api_full"    - send the full panel image + caption + OCR + GROBID
-    #                     paragraphs to the MiniMax API. This is the historical
+    #                     paragraphs to the LLM API. This is the historical
     #                     default and the only mode the upstream service
     #                     actually consumes.
     #   * "api_redacted"- strip long, identifiable text from the outbound
@@ -1592,18 +1599,18 @@ class MiniMaxM3Backend(BaseLLMBackend):
     #                     (location-bearing geological context, copyright
     #                     concerns) where the model only needs the
     #                     species cue, not the whole text.
-    #   * "local_only"  - never contact the MiniMax API. ``infer_panel``
+    #   * "local_only"  - never contact the LLM API. ``infer_panel``
     #                     and ``infer_text`` return a deterministic
     #                     no-op result that the surrounding pipeline
     #                     treats as "fallback_used=True", forcing the
     #                     rule-based path to be authoritative. This
     #                     is the correct setting for offline / air-gapped
-    #                     deployments (M3 weights not yet open-sourced,
+    #                     deployments (LLM weights not yet open-sourced,
     #                     privacy-sensitive papers).
     # Audit 2026-09-03 (BLOCKER-#2): default flipped from ``api_full``
     # to ``api_redacted`` so a fresh pipeline run does NOT silently ship
     # the full PDF / panel image / full caption text / OCR text / GROBID
-    # paragraphs to the MiniMax cloud. Operators must opt in explicitly
+    # paragraphs to the LLM cloud. Operators must opt in explicitly
     # to ``api_full`` (full-resolution image + verbatim caption) via one of:
     #   * Environment variable:  RLPE_DATA_OUTBOUND_OPT_IN=1
     #   * CLI flag:              --i-understand-data-leaves-my-machine
@@ -1625,7 +1632,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
         if int(self.max_concurrent) < 1:
             raise ValueError(
                 f"max_concurrent must be >= 1 (got {self.max_concurrent!r}); "
-                f"a value of 0 would deadlock the MiniMax _sem."
+                f"a value of 0 would deadlock the LLM _sem."
             )
         # ``local_only`` does not need an API key: the backend will refuse
         # every outbound request and return a no-op result, which the
@@ -1637,7 +1644,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
             )
         # Audit 2026-09-03 (BLOCKER-#2): ``api_full`` is opt-in by design.
         # The historical default silently sent full panel images + verbatim
-        # captions to the MiniMax cloud, which is inappropriate for (a)
+        # captions to the LLM cloud, which is inappropriate for (a)
         # unpublished preprints and (b) copyright-restricted SEM plates.
         # Require an explicit env var (``RLPE_DATA_OUTBOUND_OPT_IN=1``) or
         # the matching CLI flag before allowing ``api_full`` to remain in
@@ -1654,8 +1661,8 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     "'local_only' for the private posture."
                 )
         # Phase 54 audit: B2 — SSRF guard. Ollama / LlamaCpp both call
-        # ``_validate_llm_host`` in their ``__post_init__``; MiniMax did
-        # not, so a job with ``MiniMax_endpoint="http://169.254.169.254/..."``
+        # ``_validate_llm_host`` in their ``__post_init__``; LLM did
+        # not, so a job with ``llm_base_url="http://169.254.169.254/..."``
         # would ship the panel image + caption + the Authorization header
         # (which carries the API key) to the AWS / GCP / Azure metadata
         # endpoint. ``_validate_llm_host`` blocks link-local / unspecified /
@@ -1665,9 +1672,25 @@ class MiniMaxM3Backend(BaseLLMBackend):
         # an outbound call in that mode.
         if self.data_outbound_policy != "local_only":
             self.base_url = _validate_llm_host(self.base_url)
+            if not self.base_url:
+                raise ValueError(
+                    "base_url is required (no vendor default exists). Provide one via:\n"
+                    "  - PipelineConfig.extra['llm_base_url']\n"
+                    "  - the saved API settings (~/.rlpe/llm_api.json, editable in\n"
+                    "    the Web settings tab or the desktop GUI)\n"
+                    "  - environment variable ANTHROPIC_BASE_URL\n"
+                    "  - .env file (see .env.example)"
+                )
         if not self.api_key and self.data_outbound_policy != "local_only":
             raise ValueError(
-                "MiniMax api_key is required (set ANTHROPIC_API_KEY env or pass explicitly)."
+                "api_key is required (set ANTHROPIC_API_KEY env, save a key in the "
+                "API settings (~/.rlpe/llm_api.json), or pass it explicitly; or set "
+                "data_outbound_policy=local_only to run without the API)."
+            )
+        if not self.model and self.data_outbound_policy != "local_only":
+            raise ValueError(
+                "model is required (no vendor default exists). Provide one via "
+                "extra['llm_model'], the saved API settings, or ANTHROPIC_MODEL."
             )
         # The ``local_only`` policy promises "no network, no SDK required":
         # the backend short-circuits every ``infer_*`` call to a deterministic
@@ -1702,7 +1725,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
             )
         # Per-process semaphore (cheap; limits concurrent in-flight requests).
         self._sem = threading.Semaphore(self.max_concurrent)
-        # Per-thread context storage — prevents concurrent threads (e.g. m3_engine
+        # Per-thread context storage — prevents concurrent threads (e.g. semantic_engine
         # workers) from overwriting each other's caption/OCR state mid-call.
         self._thread_local = threading.local()
         # Running totals (read by callers for cost dashboards).
@@ -1771,7 +1794,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
         # P2-9 fix (Plan B): prepend OCR-detected panel labels and figure
         # caption to the user prompt when available. This enriches the LLM's
         # context with text that was detected independently of the user_prompt
-        # (which is constructed by m3_engine with its own caption parsing).
+        # (which is constructed by semantic_engine with its own caption parsing).
         # Only prepend if not already embedded in user_prompt to avoid duplication.
         extra_parts: list[str] = []
         ocr_labels = getattr(self._thread_local, "ocr_labels", None) or []
@@ -1957,7 +1980,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
         # clauses below — an ``AttributeError`` that masks the real issue.
         if anthropic_mod is None or self._client is None:
             raise RuntimeError(
-                "MiniMax _call_api invoked without an Anthropic client "
+                "LLM _call_api invoked without an Anthropic client "
                 "(data_outbound_policy=local_only or SDK not installed)."
             )
         last_exc: Exception | None = None
@@ -2008,7 +2031,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 if retry_after is not None:
                     wait = min(retry_after + random.uniform(0, 1), 60.0)
                     logger.warning(
-                        "MiniMax rate-limited (attempt %d); Retry-After=%ss, sleeping %ds: %s",
+                        "LLM rate-limited (attempt %d); Retry-After=%ss, sleeping %ds: %s",
                         attempt + 1,
                         retry_after,
                         wait,
@@ -2018,7 +2041,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 else:
                     wait = min(2**attempt, 30) + random.uniform(0, 1)
                     logger.warning(
-                        "MiniMax rate-limited (attempt %d), sleeping %ds: %s",
+                        "LLM rate-limited (attempt %d), sleeping %ds: %s",
                         attempt + 1,
                         wait,
                         # M11: redact API keys that may appear in exception text.
@@ -2029,7 +2052,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 last_exc = exc
                 wait = min(2**attempt, 30) + random.uniform(0, 1)
                 logger.warning(
-                    "MiniMax connection error (attempt %d), sleeping %ds: %s",
+                    "LLM connection error (attempt %d), sleeping %ds: %s",
                     attempt + 1,
                     wait,
                     # M11: redact API keys that may appear in exception text.
@@ -2059,7 +2082,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     if retry_after is not None:
                         wait = min(retry_after + random.uniform(0, 1), 60.0)
                         logger.warning(
-                            "MiniMax %d (attempt %d); Retry-After=%ss, sleeping %ds: %s",
+                            "LLM %d (attempt %d); Retry-After=%ss, sleeping %ds: %s",
                             status,
                             attempt + 1,
                             retry_after,
@@ -2076,7 +2099,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                         # the extra 5xx-only attempt slot).
                         wait = (2.0, 8.0, 30.0, 60.0)[min(attempt, 3)] + random.uniform(0, 1)
                         logger.warning(
-                            "MiniMax %d (attempt %d), sleeping %ds: %s",
+                            "LLM %d (attempt %d), sleeping %ds: %s",
                             status,
                             attempt + 1,
                             wait,
@@ -2086,7 +2109,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     else:
                         wait = min(2**attempt, 30) + random.uniform(0, 1)
                         logger.warning(
-                            "MiniMax %d (attempt %d), sleeping %ds: %s",
+                            "LLM %d (attempt %d), sleeping %ds: %s",
                             status,
                             attempt + 1,
                             wait,
@@ -2105,7 +2128,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                     with self._lock:
                         self.total_errors += 1
                     logger.warning(
-                        "MiniMax %d (non-retryable auth error): %s",
+                        "LLM %d (non-retryable auth error): %s",
                         status,
                         # M11: redact API keys that may appear in exception text.
                         _redact_api_keys(str(exc)),
@@ -2125,7 +2148,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                         )
                         if recommended != self.backend_name:
                             logger.info(
-                                "MiniMax 4xx: switching to fallback "
+                                "LLM 4xx: switching to fallback "
                                 "backend %r (current=%r, attempts=%d)",
                                 recommended,
                                 self.backend_name,
@@ -2139,10 +2162,10 @@ class MiniMaxM3Backend(BaseLLMBackend):
                             with self._lock:
                                 self.total_errors += 1
                             raise FallbackRecommendedError(
-                                f"MiniMax 4xx error, fallback {recommended} recommended",
+                                f"LLM 4xx error, fallback {recommended} recommended",
                                 recommended_backend=recommended,
                             ) from exc
-                        # Audit M3: no real fallback configured (the
+                        # Audit LLM: no real fallback configured (the
                         # helper returns the same backend when nothing
                         # better is wired up). Fail fast — don't loop
                         # 3 more times against a permanently broken
@@ -2173,14 +2196,14 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 self._storm_count = 0
             if getattr(self, "_storm_count", 0) >= 3:
                 logger.warning(
-                    "MiniMax 5xx storm: %d consecutive exhausted calls — "
+                    "LLM 5xx storm: %d consecutive exhausted calls — "
                     "non-core vision calls (geo-vision/schematic) will be "
                     "skipped for 5 minutes (pipeline checks "
                     "backend.in_5xx_storm())",
                     self._storm_count,
                 )
             logger.error(
-                "MiniMax API call failed after %d retries: %s: %s",
+                "LLM API call failed after %d retries: %s: %s",
                 self.max_retries,
                 type(last_exc).__name__,
                 # M11: redact API keys that may appear in exception text.
@@ -2188,7 +2211,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 exc_info=last_exc,
             )
             raise last_exc
-        raise RuntimeError("MiniMax call failed without explicit exception")
+        raise RuntimeError("LLM call failed without explicit exception")
 
     def in_5xx_storm(self) -> bool:
         """F9: True while consecutive 5xx retry-exhaustions (>=3) mark a
@@ -2246,7 +2269,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
                 "label": None,
                 "species": None,
                 "confidence": 0.0,
-                "reasoning": f"MiniMax JSON parse error: {type(exc).__name__}: {safe_exc}",
+                "reasoning": f"LLM JSON parse error: {type(exc).__name__}: {safe_exc}",
                 "fallback_used": True,
                 "error": f"{type(exc).__name__}: {safe_exc}",
                 "error_type": "JSONParseError",
@@ -2263,11 +2286,6 @@ class MiniMaxM3Backend(BaseLLMBackend):
             in_t = int(getattr(usage, "input_tokens", 0) or 0)
             out_t = int(getattr(usage, "output_tokens", 0) or 0)
             parsed["usage"] = {"input_tokens": in_t, "output_tokens": out_t}
-            parsed["cost_cny"] = round(
-                in_t / 1_000_000 * MiniMax_PRICE_INPUT_PER_M
-                + out_t / 1_000_000 * MiniMax_PRICE_OUTPUT_PER_M,
-                6,
-            )
         return parsed
 
     def _make_error_result(self, exc: Exception) -> dict[str, Any]:
@@ -2282,7 +2300,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
             "label": None,
             "species": None,
             "confidence": 0.0,
-            "reasoning": f"MiniMax API error: {type(exc).__name__}: {safe_exc}",
+            "reasoning": f"LLM API error: {type(exc).__name__}: {safe_exc}",
             "fallback_used": True,
             "error": safe_exc,
             "error_type": type(exc).__name__,
@@ -2438,10 +2456,10 @@ class MiniMaxM3Backend(BaseLLMBackend):
             no extra image behave exactly as before.
         """
         if self.data_outbound_policy == "local_only":
-            return self._local_only_noop("MiniMax disabled (data_outbound_policy=local_only)")
+            return self._local_only_noop("LLM disabled (data_outbound_policy=local_only)")
         # P2-9 fix (Plan B): store caption_text / ocr_labels so _build_user_content
         # can prepend them to the user prompt. This keeps all callers (including
-        # m3_engine which passes empty strings) working while enabling future callers
+        # semantic_engine which passes empty strings) working while enabling future callers
         # to pass actual caption / OCR context through these parameters.
         #
         # Audit 2026-09-04 llm-2: must store the REDACTED caption /
@@ -2466,7 +2484,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
             resp = self._call_api(system_prompt, messages)
             return self._make_result(resp)
         except FallbackRecommendedError:
-            # Let FallbackRecommendedError propagate to the caller (m3_engine)
+            # Let FallbackRecommendedError propagate to the caller (semantic_engine)
             # so it can switch to the configured fallback backend.
             raise
         except Exception as exc:
@@ -2474,7 +2492,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
 
     def infer_text(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         if self.data_outbound_policy == "local_only":
-            return self._local_only_noop("MiniMax disabled (data_outbound_policy=local_only)")
+            return self._local_only_noop("LLM disabled (data_outbound_policy=local_only)")
         try:
             _, up, _, _ = self._apply_outbound_policy(None, "", [], user_prompt)
             messages = self._build_text_messages(up)
@@ -2486,23 +2504,20 @@ class MiniMaxM3Backend(BaseLLMBackend):
             return self._make_error_result(exc)
 
     def cost_summary(self) -> dict[str, Any]:
+        """Usage summary. Name kept for API compatibility; per-call
+        pricing was removed (F17) so only call/token counters remain.
+        """
         with self._lock:
             in_t = self.total_input_tokens
             out_t = self.total_output_tokens
             calls = self.total_calls
             errs = self.total_errors
             failed_thinking = self.failed_with_thinking
-        cost = round(
-            in_t / 1_000_000 * MiniMax_PRICE_INPUT_PER_M
-            + out_t / 1_000_000 * MiniMax_PRICE_OUTPUT_PER_M,
-            4,
-        )
         return {
             "calls": calls,
             "errors": errs,
             "input_tokens": in_t,
             "output_tokens": out_t,
-            "total_cost_cny": cost,
             # Phase 61 Plan 4 (Bug 4.8): surface failed-with-thinking
             # rate separately so dashboards can distinguish "API error"
             # from "API returned reasoning but malformed JSON body".
@@ -2546,7 +2561,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
             if has_thinking:
                 self.failed_with_thinking += 1
         logger.debug(
-            "MiniMax: JSON parse failure (has_thinking=%s, failed_with_thinking=%d, total_errors=%d)",
+            "LLM: JSON parse failure (has_thinking=%s, failed_with_thinking=%d, total_errors=%d)",
             has_thinking,
             self.failed_with_thinking,
             self.total_errors,
@@ -2571,7 +2586,7 @@ class MiniMaxM3Backend(BaseLLMBackend):
 
 
 # =============================================================================
-# FallbackHandler: user-prompted fallback when MiniMax API errors occur
+# FallbackHandler: user-prompted fallback when LLM API errors occur
 # =============================================================================
 
 # Type alias for the action the handler returns.
@@ -2591,21 +2606,21 @@ def cli_fallback_prompt(error_info: dict[str, Any]) -> FallbackAction:
     FallbackHandler and fell through to the default_action, which
     meant a worker thread under the API server would just hang.
     We now raise an explicit, actionable RuntimeError so the caller
-    can fall back to ``MiniMax_fallback_default`` instead.
+    can fall back to ``llm_fallback_default`` instead.
     """
     import sys as _sys
 
     if not _sys.stdin.isatty():
         raise RuntimeError(
-            "MiniMax_interactive=True but stdin is not a TTY; "
+            "llm_interactive=True but stdin is not a TTY; "
             "cannot prompt for fallback action in a non-interactive "
-            "context. Set MiniMax_fallback_default='rules' or 'gemma4' "
-            "instead, or unset MiniMax_interactive."
+            "context. Set llm_fallback_default='rules' or 'gemma4' "
+            "instead, or unset llm_interactive."
         )
     _sys.stderr.write(
         "\n"
         "=" * 70 + "\n"
-        "[MiniMax API ERROR]\n"
+        "[LLM API ERROR]\n"
         f"  type    : {error_info.get('error_type', '?')}\n"
         f"  message : {error_info.get('error', '?')}\n"
         f"  context : {error_info.get('context', '(no context)')}\n"
@@ -2614,7 +2629,7 @@ def cli_fallback_prompt(error_info: dict[str, Any]) -> FallbackAction:
         "  [1] gemma4  -> switch to local Gemma4 backend (if available)\n"
         "  [2] rules   -> skip LLM, keep rule-pipeline results\n"
         "  [3] stop    -> abort the whole pipeline\n"
-        "  [4] retry   -> retry the same MiniMax call once\n"
+        "  [4] retry   -> retry the same LLM call once\n"
         "Enter 1/2/3/4 (default=2): "
     )
     _sys.stderr.flush()
@@ -2629,7 +2644,7 @@ def cli_fallback_prompt(error_info: dict[str, Any]) -> FallbackAction:
 
 @dataclass(slots=True)
 class FallbackHandler:
-    """Resolves what to do when MiniMax M3 API encounters an error.
+    """Resolves what to do when LLM LLM API encounters an error.
 
     Modes
     -----
@@ -2641,7 +2656,7 @@ class FallbackHandler:
     -----
     >>> handler = FallbackHandler(default_action="rules")
     >>> handler.on_error = cli_fallback_prompt   # for CLI
-    >>> backend = MiniMaxM3Backend(..., on_error=handler)
+    >>> backend = AnthropicCompatBackend(..., on_error=handler)
     """
 
     default_action: FallbackAction = "rules"
@@ -2667,96 +2682,115 @@ class FallbackHandler:
         return action
 
 
-def resolve_minimax_api_key(extra: dict[str, Any] | None = None) -> str | None:
-    """Single source of truth for MiniMax API-key resolution.
+def resolve_llm_api_key(extra: dict[str, Any] | None = None) -> str | None:
+    """Single source of truth for LLM API-key resolution (F17).
 
-    Mirrors the key sources the pipeline actually consumes, in priority
-    order:
+    Priority order (per-run explicit > persisted settings > env):
 
-      1. ``extra["MiniMax_api_key"]`` (GUI Settings field / CLI config);
-      2. ``MiniMax_API_KEY`` / ``MINIMAX_API_KEY`` environment;
-      3. ``ANTHROPIC_API_KEY`` environment — Round 18: the project's
-         documented .env key (the MiniMax API speaks the Anthropic wire
-         protocol, and the ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_MODEL``
-         pair keeps the endpoint consistent). ``RadiolarianPipeline``
-         injects the same fallback into ``extra["MiniMax_api_key"]``
-         before building the backend (pipeline.py), so callers that
-         resolve the key BEFORE the pipeline exists (the GUI worker's
-         outbound-policy resolution) must agree or they silently
-         disable the LLM (BUG-4, audit 2026-09-04).
+      1. ``extra["llm_api_key"]`` (GUI Settings field / CLI config);
+         legacy ``extra["MiniMax_api_key"]`` still honoured;
+      2. the persisted settings file ``~/.rlpe/llm_api.json`` (shared
+         by the Web settings tab and the desktop GUI);
+      3. ``ANTHROPIC_API_KEY`` environment (the project's documented
+         .env key; legacy ``MiniMax_API_KEY`` / ``MINIMAX_API_KEY``
+         remain as read-only fallbacks for existing deployments).
+
+    ``RadiolarianPipeline`` injects the same fallback into
+    ``extra["llm_api_key"]`` before building the backend (pipeline.py),
+    so callers that resolve the key BEFORE the pipeline exists (the GUI
+    worker's outbound-policy resolution) must agree or they silently
+    disable the LLM (BUG-4, audit 2026-09-04).
     """
     extra = extra or {}
     key = (
-        extra.get("MiniMax_api_key")
-        or os.environ.get("MiniMax_API_KEY")
-        or os.environ.get("MINIMAX_API_KEY")
+        extra.get("llm_api_key")
+        or extra.get("MiniMax_api_key")  # legacy config key (F17 compat)
+        or load_llm_settings().api_key
         or os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("MiniMax_API_KEY")  # legacy env fallback
+        or os.environ.get("MINIMAX_API_KEY")  # legacy env fallback
     )
     return str(key) if key else None
 
 
-def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3Backend:
-    """Build a MiniMaxM3Backend from ``extra`` config, falling back to env vars.
+def resolve_llm_base_url(extra: dict[str, Any] | None = None) -> str:
+    """Resolve the Anthropic-compatible endpoint (F17 chain:
+    extra > saved settings > env; legacy keys/envs honoured)."""
+    extra = extra or {}
+    url = (
+        str(extra.get("llm_base_url") or "").strip()
+        or str(extra.get("MiniMax_endpoint") or "").strip()  # legacy key
+        or load_llm_settings().base_url
+        or os.environ.get("ANTHROPIC_BASE_URL", "").strip()
+        or os.environ.get("MiniMax_BASE_URL", "").strip()  # legacy env
+    )
+    return url
 
-    Required keys (in priority order):
-      - ``MiniMax_api_key``  / ``ANTHROPIC_API_KEY``
-      - ``MiniMax_endpoint`` / ``ANTHROPIC_BASE_URL``
-      - ``MiniMax_model``    / ``ANTHROPIC_MODEL`` / ``MiniMax_MODEL``
+
+def resolve_llm_model(extra: dict[str, Any] | None = None) -> str:
+    """Resolve the model name (F17 chain: extra > saved settings > env;
+    legacy keys/envs honoured; NO hard-coded vendor default)."""
+    extra = extra or {}
+    model = (
+        str(extra.get("llm_model") or "").strip()
+        or str(extra.get("MiniMax_model") or "").strip()  # legacy key
+        or load_llm_settings().model
+        or os.environ.get("ANTHROPIC_MODEL", "").strip()
+        or os.environ.get("MiniMax_MODEL", "").strip()  # legacy env
+    )
+    return model
+
+
+def build_anthropic_compat_backend(extra: dict[str, Any]) -> AnthropicCompatBackend:
+    """Build an AnthropicCompatBackend from ``extra`` config, the saved
+    settings file and env vars (F17 resolution chain).
+
+    Sources per field, in priority order:
+      - api_key:  ``extra["llm_api_key"]`` → legacy ``MiniMax_api_key``
+                  → ``~/.rlpe/llm_api.json`` → env ``ANTHROPIC_API_KEY``
+                  → legacy env ``MiniMax_API_KEY``/``MINIMAX_API_KEY``
+      - base_url: ``extra["llm_base_url"]`` → legacy ``MiniMax_endpoint``
+                  → saved settings → env ``ANTHROPIC_BASE_URL`` → legacy
+                  env ``MiniMax_BASE_URL``
+      - model:    ``extra["llm_model"]`` → legacy ``MiniMax_model`` →
+                  saved settings → env ``ANTHROPIC_MODEL`` → legacy env
+                  ``MiniMax_MODEL``
     """
     # The data_outbound_policy gates whether we need an API key at all:
     #   * api_full / api_redacted -> need a key
     #   * local_only              -> key is optional; the backend will
     #                                short-circuit every outbound call
-    # Audit 2026-09-04 (BLOCKER-#2 consistency fix): the dataclass
-    # field default was flipped to ``api_redacted`` when ``api_full``
-    # became opt-in only, but this builder still defaulted to
-    # ``api_full`` — so every caller that did not set the key
-    # explicitly (tests, GUI, direct PipelineConfig users) hit the
-    # opt-in ValueError at construction instead of the private
-    # default. Align with the dataclass.
     policy = str(extra.get("data_outbound_policy", "api_redacted"))
     # BUG-4 (audit 2026-09-04): key resolution lives in the shared
-    # ``resolve_minimax_api_key`` helper so this builder, the pipeline
+    # ``resolve_llm_api_key`` helper so this builder, the pipeline
     # heuristic and the GUI worker's policy resolver can never drift
-    # apart again. The chain includes ``ANTHROPIC_API_KEY`` (Round 18:
-    # the project's documented .env key — the base_url chain below
-    # honours ``ANTHROPIC_BASE_URL``, so the key/endpoint pair stays
-    # self-consistent).
-    api_key = resolve_minimax_api_key(extra)
+    # apart again.
+    api_key = resolve_llm_api_key(extra)
     if not api_key and policy != "local_only":
         raise ValueError(
-            "MiniMax api_key not set. Provide one via:\n"
-            "  - PipelineConfig.extra['MiniMax_api_key']\n"
-            "  - environment variable MiniMax_API_KEY or MINIMAX_API_KEY\n"
-            "  - environment variable ANTHROPIC_API_KEY (Round 18 fallback:\n"
-            "    the project .env documents it; MiniMax speaks the Anthropic\n"
-            "    wire protocol, ANTHROPIC_BASE_URL keeps the endpoint aligned)\n"
+            "api_key not set. Provide one via:\n"
+            "  - the API settings (Web settings tab / desktop GUI; persisted\n"
+            "    to ~/.rlpe/llm_api.json)\n"
+            "  - PipelineConfig.extra['llm_api_key']\n"
+            "  - environment variable ANTHROPIC_API_KEY (legacy\n"
+            "    MiniMax_API_KEY / MINIMAX_API_KEY still honoured)\n"
             "  - .env file (see .env.example)\n"
             "Or set data_outbound_policy=local_only to run without the API."
         )
-    base_url = (
-        extra.get("MiniMax_endpoint")
-        or os.environ.get("ANTHROPIC_BASE_URL")
-        or "https://api.minimaxi.com/anthropic"
-    )
-    model = (
-        extra.get("MiniMax_model")
-        or os.environ.get("MiniMax_MODEL")
-        or os.environ.get("ANTHROPIC_MODEL")
-        or "MiniMax-M3"
-    )
-    return MiniMaxM3Backend(
+    base_url = resolve_llm_base_url(extra)
+    model = resolve_llm_model(extra)
+    return AnthropicCompatBackend(
         api_key=api_key or "",
         base_url=base_url,
         model=model,
         data_outbound_policy=policy,
         max_output_tokens=_coerce_int(
-            extra.get("MiniMax_max_output_tokens"), default=2048, name="MiniMax_max_output_tokens"
+            extra.get("llm_max_output_tokens"), default=2048, name="llm_max_output_tokens"
         ),
         thinking_budget_tokens=_coerce_int(
-            extra.get("MiniMax_thinking_budget_tokens"),
+            extra.get("llm_thinking_budget_tokens"),
             default=1024,
-            name="MiniMax_thinking_budget_tokens",
+            name="llm_thinking_budget_tokens",
         ),
         # Phase 54 audit: H4 — the dataclass field default
         # (``enable_thinking: bool = False`` at line 587) and the env
@@ -2767,19 +2801,15 @@ def build_MiniMax_backend_from_env_or_config(extra: dict[str, Any]) -> MiniMaxM3
         # common path used by CLI and Web) was running with thinking
         # ON, paying ≥1024 thinking tokens per panel call. Align the
         # builder to the dataclass default.
-        enable_thinking=_coerce_bool(extra.get("MiniMax_enable_thinking"), default=False),
-        timeout_sec=_coerce_int(
-            extra.get("MiniMax_timeout_sec"), default=120, name="MiniMax_timeout_sec"
-        ),
+        enable_thinking=_coerce_bool(extra.get("llm_enable_thinking"), default=False),
+        timeout_sec=_coerce_int(extra.get("llm_timeout_sec"), default=120, name="llm_timeout_sec"),
         temperature=_coerce_float(
             extra.get("gemma_temperature"), default=0.1, name="gemma_temperature"
         ),
         top_p=_coerce_float(extra.get("gemma_top_p"), default=0.9, name="gemma_top_p"),
-        max_retries=_coerce_int(
-            extra.get("MiniMax_max_retries"), default=3, name="MiniMax_max_retries"
-        ),
+        max_retries=_coerce_int(extra.get("llm_max_retries"), default=3, name="llm_max_retries"),
         max_concurrent=_coerce_int(
-            extra.get("MiniMax_max_concurrent"), default=8, name="MiniMax_max_concurrent"
+            extra.get("llm_max_concurrent"), default=8, name="llm_max_concurrent"
         ),
     )
 
@@ -2794,7 +2824,7 @@ def _coerce_int(value: Any, *, default: int, name: str) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
-        logger.debug("MiniMax config: %s=%r is not an int; using default %d", name, value, default)
+        logger.debug("LLM config: %s=%r is not an int; using default %d", name, value, default)
         return default
 
 
@@ -2804,7 +2834,7 @@ def _coerce_float(value: Any, *, default: float, name: str) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
-        logger.debug("MiniMax config: %s=%r is not a float; using default %f", name, value, default)
+        logger.debug("LLM config: %s=%r is not a float; using default %f", name, value, default)
         return default
 
 

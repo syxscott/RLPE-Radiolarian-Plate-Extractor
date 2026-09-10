@@ -8,7 +8,7 @@ Japanese papers Takahashi 2004 and Uchino 2005 returned
    and ``Fig.`` markers — Japanese ``図版`` / ``図`` were invisible.
 2. ``OCRBackend`` had no ``lang`` parameter; PaddleOCR/EasyOCR were
    hardcoded to English.
-3. The M3 ``parse_caption`` system prompt was Chinese-only and
+3. The LLM ``parse_caption`` system prompt was Chinese-only and
    offered no language dispatch for JA captions.
 
 These tests pin the new behavior so future refactors don't silently
@@ -28,11 +28,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.m3_engine import (  # noqa: E402
-    _PARSE_CAPTION_SYSTEM,
-    _PARSE_CAPTION_SYSTEM_JA,
-    _detect_caption_lang,
-)
 from rlpe.ocr import OCRBackend  # noqa: E402
 from rlpe.opendataloader_extractor import (  # noqa: E402
     _JA_FIG_CAPTION_RE,
@@ -41,7 +36,12 @@ from rlpe.opendataloader_extractor import (  # noqa: E402
     _is_caption_kind_marker,
     _normalise_ocr_lang,
 )
-from rlpe.pipeline import _resolve_m3_prompt_lang  # noqa: E402
+from rlpe.pipeline import _resolve_llm_prompt_lang  # noqa: E402
+from rlpe.semantic_engine import (  # noqa: E402
+    _PARSE_CAPTION_SYSTEM,
+    _PARSE_CAPTION_SYSTEM_JA,
+    _detect_caption_lang,
+)
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -236,12 +236,12 @@ def test_normalise_ocr_lang_accepts_string_and_list():
     assert _normalise_ocr_lang("") == ["en"]
 
 
-def test_config_extra_keys_includes_ocr_lang_and_m3_prompt_lang():
+def test_config_extra_keys_includes_ocr_lang_and_llm_prompt_lang():
     """Source guard: the new keys must be in the whitelist so the
     ``__post_init__`` warning doesn't fire on a clean CLI invocation."""
     src = _read("src/rlpe/config.py")
     assert '"ocr_lang"' in src
-    assert '"m3_prompt_lang"' in src
+    assert '"llm_prompt_lang"' in src
 
 
 def test_cli_exposes_ocr_lang_flag():
@@ -251,10 +251,10 @@ def test_cli_exposes_ocr_lang_flag():
     assert '"ocr_lang": args.ocr_lang' in src
 
 
-def test_cli_exposes_m3_prompt_lang_flag():
+def test_cli_exposes_llm_prompt_lang_flag():
     src = _read("src/rlpe/cli.py")
-    assert "--m3-prompt-lang" in src
-    assert '"m3_prompt_lang": args.m3_prompt_lang' in src
+    assert "--llm-prompt-lang" in src
+    assert '"llm_prompt_lang": args.llm_prompt_lang' in src
 
 
 def test_pipeline_forwards_ocr_lang_to_ocr_backend():
@@ -270,16 +270,16 @@ def test_pipeline_forwards_ocr_lang_to_ocr_backend():
     assert m, "pipeline.py must pass lang= kwarg to OCRBackend"
 
 
-def test_pipeline_forwards_m3_prompt_lang_to_parse_caption():
-    """Source guard: pipeline.py must thread ``m3_prompt_lang`` through
-    ``_resolve_m3_prompt_lang`` to the two ``parse_caption`` call sites."""
+def test_pipeline_forwards_llm_prompt_lang_to_parse_caption():
+    """Source guard: pipeline.py must thread ``llm_prompt_lang`` through
+    ``_resolve_llm_prompt_lang`` to the two ``parse_caption`` call sites."""
     src = _read("src/rlpe/pipeline.py")
-    assert "_resolve_m3_prompt_lang" in src
-    assert "m3_prompt_lang" in src
+    assert "_resolve_llm_prompt_lang" in src
+    assert "llm_prompt_lang" in src
 
 
 # ============================================================================
-# Phase C — M3 JA prompt + lang dispatch
+# Phase C — LLM JA prompt + lang dispatch
 # ============================================================================
 
 
@@ -324,9 +324,9 @@ def test_parse_caption_uses_ja_system_when_lang_ja():
             captured["system"] = system_prompt
             return {"raw_text": "[]"}
 
-    from rlpe.m3_engine import M3Engine
+    from rlpe.semantic_engine import SemanticEngine
 
-    eng = M3Engine(FakeBackend(), config={"m3_stage_1": True})
+    eng = SemanticEngine(FakeBackend(), config={"llm_stage_1": True})
     eng.parse_caption("図1. A: Species X", lang="ja")
     assert captured["system"] == _PARSE_CAPTION_SYSTEM_JA
 
@@ -339,9 +339,9 @@ def test_parse_caption_uses_zh_system_when_lang_zh():
             captured["system"] = system_prompt
             return {"raw_text": "[]"}
 
-    from rlpe.m3_engine import M3Engine
+    from rlpe.semantic_engine import SemanticEngine
 
-    eng = M3Engine(FakeBackend(), config={"m3_stage_1": True})
+    eng = SemanticEngine(FakeBackend(), config={"llm_stage_1": True})
     eng.parse_caption("Plate 1. A: Species X", lang="zh")
     assert captured["system"] == _PARSE_CAPTION_SYSTEM
 
@@ -356,9 +356,9 @@ def test_parse_caption_auto_detects_ja_from_caption_text():
             captured["system"] = system_prompt
             return {"raw_text": "[]"}
 
-    from rlpe.m3_engine import M3Engine
+    from rlpe.semantic_engine import SemanticEngine
 
-    eng = M3Engine(FakeBackend(), config={"m3_stage_1": True})
+    eng = SemanticEngine(FakeBackend(), config={"llm_stage_1": True})
     eng.parse_caption("図1 走査電子顕微鏡写真")
     assert captured["system"] == _PARSE_CAPTION_SYSTEM_JA
 
@@ -374,7 +374,7 @@ def test_parse_caption_prompts_are_byte_distinct():
 
 
 # ============================================================================
-# Phase C — _resolve_m3_prompt_lang helper
+# Phase C — _resolve_llm_prompt_lang helper
 # ============================================================================
 
 
@@ -391,9 +391,9 @@ def test_parse_caption_prompts_are_byte_distinct():
         ("en", "en"),
     ],
 )
-def test_resolve_m3_prompt_lang(raw, expected):
+def test_resolve_llm_prompt_lang(raw, expected):
     """CLI string → parse_caption kwarg translation."""
-    assert _resolve_m3_prompt_lang(raw) == expected
+    assert _resolve_llm_prompt_lang(raw) == expected
 
 
 # ============================================================================
@@ -412,8 +412,8 @@ def test_phase27_anchored_in_opendataloader_extractor():
     assert "_normalise_ocr_lang" in src
 
 
-def test_phase27_anchored_in_m3_engine():
-    src = _read("src/rlpe/m3_engine.py")
+def test_phase27_anchored_in_semantic_engine():
+    src = _read("src/rlpe/semantic_engine.py")
     assert "_PARSE_CAPTION_SYSTEM_JA" in src
     assert "_detect_caption_lang" in src
     # The parse_caption signature must accept lang=

@@ -10,7 +10,7 @@
 
 ## 1. Goal & user pain
 
-RLPE today extracts radiolarian species **only from plate / figure captions** (caption_fixer + M3 plate-mode prompt). This misses significant radiolarian content in many real papers:
+RLPE today extracts radiolarian species **only from plate / figure captions** (caption_fixer + LLM plate-mode prompt). This misses significant radiolarian content in many real papers:
 
 1. **Range charts / distribution tables**: papers with a single `Fig. 1. Distribution of the radiolarians...` chart listing species per stratigraphic zone, with no per-panel specimen images.
 2. **Species lists in body text**: papers that introduce "Genus species" inline in the systematic-paleontology section without a plate figure.
@@ -27,14 +27,14 @@ This spec adds two complementary features:
 
 | Question | Decision |
 |---|---|
-| A priority | "Two things together (broad extraction + location)" — both A.1 regex + A.2 M3 text-mode + A.3 location field |
+| A priority | "Two things together (broad extraction + location)" — both A.1 regex + A.2 LLM text-mode + A.3 location field |
 | B storage | "Flat + occurrence_id" — keep current row shape, add `occurrence_group_id` column |
 
 ---
 
 ## 3. Approach
 
-### 3.1 Feature A — text-level extraction (regex + M3 text-mode fallback)
+### 3.1 Feature A — text-level extraction (regex + LLM text-mode fallback)
 
 #### 3.1.1 `extract_species_from_text(pdf_path) -> list[dict]`
 
@@ -60,16 +60,16 @@ A new pure-Python extractor that does **not** require a plate caption and **does
 
 **Acceptance**: regex extractor adds at least 5 species/paper on the v19 set (small gain on already-curated gold but big gain on generic 184-paper corpus).
 
-#### 3.1.2 M3 text-mode fallback (only when `select_caption` returns None)
+#### 3.1.2 LLM text-mode fallback (only when `select_caption` returns None)
 
 When `caption_fixer.select_caption(text, target_plate)` returns `None` (no plate-style caption in the text), instead of giving up the run, fall through to a text-mode extraction:
 
-- New `scripts/prompts.py` constant: `TEXT_MODE_PROMPT` — instructs M3 to extract every radiolarian species from the provided text, with page numbers if possible, and to return one row per species.
+- New `scripts/prompts.py` constant: `TEXT_MODE_PROMPT` — instructs LLM to extract every radiolarian species from the provided text, with page numbers if possible, and to return one row per species.
 - Call `backend.infer_panel(panel_image=None, caption_text=full_text, ...)` with the new prompt. (NOTE: `infer_panel` currently requires a `panel_image`; we will need to either pass a 1x1 placeholder or add a `infer_text` path. The design is to add a thin `infer_text(backend, full_text, prompt)` wrapper that constructs a minimal 1x1 white image so the existing Anthropic API call still works.)
 - Post-process the result identically to plate-mode (parse_open_nomenclature + dedup + conf filter).
 - `figure_id` field for these rows = `"text_section_pN"` (where N is the page number where the species appears, or `"full_paper"` for cross-page mentions).
 
-**When to trigger**: only when `select_caption` returns `None` AND the paper has at least 1 radiolarian keyword (`"Radiolaria"|"radiolarian"|"Polycystina"|"Nassellaria"|"Spumellaria"`, case-insensitive) in its text. Skip the M3 call otherwise (the paper is not radiolarian-related).
+**When to trigger**: only when `select_caption` returns `None` AND the paper has at least 1 radiolarian keyword (`"Radiolaria"|"radiolarian"|"Polycystina"|"Nassellaria"|"Spumellaria"`, case-insensitive) in its text. Skip the LLM call otherwise (the paper is not radiolarian-related).
 
 **Acceptance**: text-mode runs only on `text_extraction` papers; no impact on the 9 v19 gold papers (which all have plate captions).
 
@@ -181,17 +181,17 @@ PDF
 [3] (concurrent or sequential) caption_fixer.select_caption → caption OR None
   ↓
 [4] if caption found:
-       M3 plate-mode → panels
+       LLM plate-mode → panels
        parse_open_nomenclature + dedup + conf_filter
        extraction_method='plate_M3'
   else:
-       M3 text-mode (TEXT_MODE_PROMPT) → species
+       LLM text-mode (TEXT_MODE_PROMPT) → species
        parse_open_nomenclature + dedup + conf_filter
        extraction_method='text_M3'
   ↓
-[5] (optional) if paper has no radiolarian keywords, skip M3 call
+[5] (optional) if paper has no radiolarian keywords, skip LLM call
   ↓
-[6] merge regex_list results + M3 results (dedup by normalized species)
+[6] merge regex_list results + LLM results (dedup by normalized species)
   ↓
 [7] add occurrence_group_id to every row
   ↓
@@ -208,7 +208,7 @@ PDF
 | `test_occurrence_group_id_*:_*` | Same paper + same species → same group; different paper or different species → different group |
 | `test_text_mode_prompt_*:_*` | New prompt exists, has JSON output instructions, no specific taxa |
 | Integration: `run_research_eval.py` with a paper that has no plate → at least 1 regex row | proves the no-figure extraction path |
-| Regression: existing 9-paper eval still produces equivalent F1 (plate-M3 path unchanged) | proves we didn't break anything |
+| Regression: existing 9-paper eval still produces equivalent F1 (plate-LLM path unchanged) | proves we didn't break anything |
 
 ---
 
@@ -228,8 +228,8 @@ PDF
 | Risk | Probability | Impact | Mitigation |
 |---|---|---|---|
 | Regex false positives in body text ("Most species", "Two taxa") | Medium | Low (we have `_BINOMIAL_DENY` already) | Add tests covering English false-positive cases; consider tightening the regex to require a Latinate suffix or 2+ words preceded by "of"/"including" |
-| M3 text-mode hallucination (inventing species not in the text) | Medium | Medium | Prompt explicitly says "ONLY extract species that appear in the provided text"; add a verification step (post-M3: verify each species name appears in the original text) |
-| `infer_panel` requires `panel_image` — text-mode needs a different path | Low | Low | Reuse the same Anthropic call by passing a 1x1 white image (still exercises the API path); if that fails, add an `infer_text` method to `MiniMaxM3Backend` |
+| LLM text-mode hallucination (inventing species not in the text) | Medium | Medium | Prompt explicitly says "ONLY extract species that appear in the provided text"; add a verification step (post-LLM: verify each species name appears in the original text) |
+| `infer_panel` requires `panel_image` — text-mode needs a different path | Low | Low | Reuse the same Anthropic call by passing a 1x1 white image (still exercises the API path); if that fails, add an `infer_text` method to `AnthropicCompatBackend` |
 | `occurrence_group_id` not stable across paper_id changes (e.g. gold uses `bandini2011`, pred uses `4f1bf415485765b8`) | Medium | Low (eval doesn't use this field yet) | Document the algorithm clearly; defer gold-vs-pred joining to a future spec |
 
 ---
@@ -237,7 +237,7 @@ PDF
 ## 9. Open questions for user
 
 1. Should `regex_list` rows count toward the F1 metric, or be kept separate (e.g. `matches_text.jsonl`)? My recommendation: **yes, count them in F1** (adds ~10-20 species/paper, helps F1 by 5-10pp on text-heavy papers).
-2. Should we also add a **post-M3 verification step** that drops hallucinated species (verify each is in the original text)? My recommendation: **yes**, simple substring check, low cost.
+2. Should we also add a **post-LLM verification step** that drops hallucinated species (verify each is in the original text)? My recommendation: **yes**, simple substring check, low cost.
 3. For the 11 holdout papers (Task 6 / future), should we run the regex extractor on them too, in addition to the v19 9? My recommendation: **yes** — this gives the user free "extra" data while doing manual gold annotation.
 
 ---

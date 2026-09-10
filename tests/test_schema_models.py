@@ -202,7 +202,7 @@ class TestRunOutput:
                         "confidence": 0.6,
                     },
                 ],
-                "m3_diagnostic": {"regex_groups": 3, "fallback_used": False},
+                "llm_diagnostic": {"regex_groups": 3, "fallback_used": False},
                 "extraction_source": "opendataloader",
                 "reassigned_from_figure": "od_fig_X_p001_01",
                 "reassigned_reason": "neighbor caption match",
@@ -230,7 +230,7 @@ class TestRunOutput:
         assert len(rp.metadata.geology_links) == 2
         assert rp.metadata.geology_links[0].locality == "Italy"
         assert rp.metadata.reassigned_from_figure == "od_fig_X_p001_01"
-        assert rp.metadata.m3_diagnostic == {"regex_groups": 3, "fallback_used": False}
+        assert rp.metadata.llm_diagnostic == {"regex_groups": 3, "fallback_used": False}
         assert rp.paper_metadata is not None
         assert rp.paper_metadata.authors == ["Author A", "Author B"]
         # Full equality (Pydantic __eq__ compares all fields)
@@ -344,7 +344,7 @@ def _make_match() -> MatchResult:
                     "confidence": 0.7,
                 },
             ],
-            "m3_diagnostic": {},
+            "llm_diagnostic": {},
             "extraction_source": "opendataloader",
         },
         paper_metadata=pm,

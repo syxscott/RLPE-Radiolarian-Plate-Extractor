@@ -1,4 +1,4 @@
-"""Regression tests for audit 2026-07-31 batch 4 (LLM/M3/OCR chain).
+"""Regression tests for audit 2026-07-31 batch 4 (LLM/LLM/OCR chain).
 
 Covers:
   - LLM-first consumption of backend-parsed results (no strict
@@ -7,7 +7,7 @@ Covers:
   - period-separated discrete labels ("Figs 1-3. 5. 8. 10. 12:")
   - string "false" booleans
   - _safe_json_loads with multiple objects
-  - m3_temperature / m3_thinking_budget config knobs reach the backend
+  - llm_temperature / llm_thinking_budget config knobs reach the backend
   - FallbackRecommendedError wiring (not swallowed, backend switched)
   - OCR zh → ch_sim for EasyOCR
 """
@@ -26,7 +26,7 @@ if str(_SRC) not in sys.path:
 
 class TestSafeBool:
     def test_string_false_is_false(self):
-        from rlpe.m3_engine import _safe_bool
+        from rlpe.semantic_engine import _safe_bool
 
         assert _safe_bool("false") is False
         assert _safe_bool("False") is False
@@ -35,7 +35,7 @@ class TestSafeBool:
         assert _safe_bool(False) is False
 
     def test_true_spellings(self):
-        from rlpe.m3_engine import _safe_bool
+        from rlpe.semantic_engine import _safe_bool
 
         assert _safe_bool("true") is True
         assert _safe_bool(True) is True
@@ -43,7 +43,7 @@ class TestSafeBool:
         assert _safe_bool("1") is True
 
     def test_default_on_garbage(self):
-        from rlpe.m3_engine import _safe_bool
+        from rlpe.semantic_engine import _safe_bool
 
         assert _safe_bool("maybe", default=True) is True
         assert _safe_bool(None, default=True) is True
@@ -51,7 +51,7 @@ class TestSafeBool:
 
 class TestSafeFloat:
     def test_non_numeric_confidence(self):
-        from rlpe.m3_engine import _safe_float
+        from rlpe.semantic_engine import _safe_float
 
         assert _safe_float("high") == 0.0
         assert _safe_float("0.8") == 0.8
@@ -61,17 +61,17 @@ class TestSafeFloat:
 
 class TestSafeJsonLoads:
     def test_multiple_objects(self):
-        from rlpe.m3_engine import _safe_json_loads
+        from rlpe.semantic_engine import _safe_json_loads
 
         assert _safe_json_loads('{"a": 1} {"b": 2}') == {"a": 1}
 
     def test_preamble(self):
-        from rlpe.m3_engine import _safe_json_loads
+        from rlpe.semantic_engine import _safe_json_loads
 
         assert _safe_json_loads('Here are the panels: {"label": "1"}') == {"label": "1"}
 
     def test_array_and_nested(self):
-        from rlpe.m3_engine import _safe_json_loads
+        from rlpe.semantic_engine import _safe_json_loads
 
         # Audit 2026-09-04: a top-level JSON array is returned as-is.
         # The 2026-09-01 "unwrap array to first element" behaviour was
@@ -86,14 +86,14 @@ class TestSafeJsonLoads:
 
 class TestPeriodSeparatedLabels:
     def test_discrete_labels_parse(self):
-        from rlpe.m3_engine import _regex_parse_caption
+        from rlpe.semantic_engine import _regex_parse_caption
 
         pairs = _regex_parse_caption("Figs 1-3. 5. 8. 10. 12: Archaespongoprunum sp.")
         assert len(pairs) == 1
         assert pairs[0].labels == ["1", "2", "3", "5", "8", "10", "12"]
 
     def test_normal_caption_untouched(self):
-        from rlpe.m3_engine import _regex_parse_caption
+        from rlpe.semantic_engine import _regex_parse_caption
 
         pairs = _regex_parse_caption("figs 1-2. Entactinia itsukichiensis")
         assert pairs[0].labels == ["1", "2"]
@@ -228,29 +228,29 @@ class TestLlmFirstContract:
 
 class TestConfigKnobs:
     def test_temperature_and_thinking_reach_backend(self):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         class FakeBackend:
             temperature = 0.1
             thinking_budget_tokens = 1024
             max_output_tokens = 2048
 
-        eng = M3Engine(
+        eng = SemanticEngine(
             FakeBackend(),
-            {"m3_temperature": 0.7, "m3_thinking_budget": 512, "m3_max_output_tokens": 8192},
+            {"llm_temperature": 0.7, "llm_thinking_budget": 512, "llm_max_output_tokens": 8192},
         )
         assert eng.backend.temperature == 0.7
         assert eng.backend.thinking_budget_tokens == 512
         assert eng.backend.max_output_tokens == 8192
 
     def test_defaults_preserved(self):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         class FakeBackend:
             temperature = 0.1
             thinking_budget_tokens = 1024
 
-        eng = M3Engine(FakeBackend(), {})
+        eng = SemanticEngine(FakeBackend(), {})
         assert eng.backend.temperature == 0.1
         assert eng.backend.thinking_budget_tokens == 1024
 
@@ -260,7 +260,7 @@ class TestFallbackWiring:
         """_infer_text must re-raise FallbackRecommendedError (it used
         to be swallowed by except Exception)."""
         from rlpe.llm_backends import FallbackRecommendedError
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         class FakeBackend:
             enable_thinking = True
@@ -268,7 +268,7 @@ class TestFallbackWiring:
             def infer_text(self, **kwargs):
                 raise FallbackRecommendedError("4xx", "ollama")
 
-        eng = M3Engine(FakeBackend(), {})
+        eng = SemanticEngine(FakeBackend(), {})
         with pytest.raises(FallbackRecommendedError):
             eng._infer_text("sys", "user")
 
@@ -304,13 +304,13 @@ class TestFallbackWiring:
                 backend = object()
 
             pipe.gemma_runtime = FakeRuntime()
-            pipe.m3_engine = FakeM3()
+            pipe.semantic_engine = FakeM3()
             pipe._build_local_gemma_fallback = lambda: FakeRuntime()
 
-            result = pipe._m3_call_with_fallback(boom)
+            result = pipe._llm_call_with_fallback(boom)
             assert result == "ok"
             assert calls["n"] == 2
-            assert pipe.m3_engine.backend is pipe.gemma_runtime.backend
+            assert pipe.semantic_engine.backend is pipe.gemma_runtime.backend
 
 
 class TestOcrLangMapping:

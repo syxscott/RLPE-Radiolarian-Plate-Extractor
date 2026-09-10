@@ -37,7 +37,7 @@ class TestCrossFigureVisualLinksField:
                     "target_age": "Late Cretaceous",
                     "target_formation": "Scaglia Rossa",
                     "confidence": 0.92,
-                    "source": "m3_visual",
+                    "source": "llm_visual",
                 }
             ]
         )
@@ -46,7 +46,7 @@ class TestCrossFigureVisualLinksField:
         assert entry["target_figure_id"] == "fig_strat_2"
         assert entry["target_layer"] == 3
         assert entry["confidence"] == 0.92
-        assert entry["source"] == "m3_visual"
+        assert entry["source"] == "llm_visual"
 
     def test_field_can_hold_multiple_entries(self):
         meta = PanelMetadata(
@@ -57,7 +57,7 @@ class TestCrossFigureVisualLinksField:
                     "target_age": "Late Cretaceous",
                     "target_formation": "Scaglia",
                     "confidence": 0.88,
-                    "source": "m3_visual",
+                    "source": "llm_visual",
                 },
                 {
                     "target_figure_id": "fig_strat_2",
@@ -65,7 +65,7 @@ class TestCrossFigureVisualLinksField:
                     "target_age": "Late Cretaceous",
                     "target_formation": "Scaglia",
                     "confidence": 0.81,
-                    "source": "m3_visual",
+                    "source": "llm_visual",
                 },
             ]
         )
@@ -73,7 +73,7 @@ class TestCrossFigureVisualLinksField:
 
     def test_field_optional_keys_use_none(self):
         """target_layer / target_age / target_formation are all optional
-        in the visual-link contract — the M3 prompt contract marks
+        in the visual-link contract — the LLM prompt contract marks
         them all as nullable. The schema must round-trip None values."""
         meta = PanelMetadata(
             cross_figure_visual_links=[
@@ -83,7 +83,7 @@ class TestCrossFigureVisualLinksField:
                     "target_age": None,
                     "target_formation": None,
                     "confidence": 0.7,
-                    "source": "m3_visual",
+                    "source": "llm_visual",
                 }
             ]
         )
@@ -112,7 +112,7 @@ class TestPanelRecordRoundTrip:
                         "target_age": "Late Triassic",
                         "target_formation": "Scaglia",
                         "confidence": 0.95,
-                        "source": "m3_visual",
+                        "source": "llm_visual",
                     }
                 ]
             ),

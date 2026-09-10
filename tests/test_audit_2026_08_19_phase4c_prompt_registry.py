@@ -1,28 +1,28 @@
-"""Regression tests for audit 2026-08-19 Phase 4C — unified M3 / Gemma
+"""Regression tests for audit 2026-08-19 Phase 4C — unified LLM / Gemma
 prompt registry + Gemma postprocess field-name fallback.
 
 Bug fixes covered:
-- M-10 (Gemma fallback receives stale M3 prompt): Gemma
+- M-10 (Gemma fallback receives stale LLM prompt): Gemma
   ``apply_gemma_to_matches`` / ``batch_gemma_postprocess_rows`` used to
-  re-define their own per-panel system prompt inline. When M3's prompt
+  re-define their own per-panel system prompt inline. When LLM's prompt
   was updated upstream (Phase 27 added the Japanese parse_caption
   prompt; Phase 64/65/66 added new prompts to the registry) the inline
-  Gemma copy silently drifted, so the Gemma fallback path after an M3
-  failure used a STALE prompt that no longer matched M3's JSON
-  contract. Fix: unify through ``rlpe.m3_engine.get_prompt_registry()``
+  Gemma copy silently drifted, so the Gemma fallback path after an LLM
+  failure used a STALE prompt that no longer matched LLM's JSON
+  contract. Fix: unify through ``rlpe.semantic_engine.get_prompt_registry()``
   and let Gemma pull from the registry.
 
-- M-11 (Gemma schema drift): M3's per-stage output has used several
+- M-11 (Gemma schema drift): LLM's per-stage output has used several
   field-name variants across migration cycles —
   ``confidence`` / ``conf_score`` / ``c_score`` / ``score`` for the
   probability field, and ``verbatim_name`` / ``raw_name`` / ``name`` /
   ``taxon`` for the raw species string. Gemma hard-coded ``out.get(
-  "confidence")`` and ``out.get("species")``, so a successful M3 call
+  "confidence")`` and ``out.get("species")``, so a successful LLM call
   with ``conf_score`` would silently be mapped to ``gemma_conf = 0.0``
   and the row marked fallback. Fix: add a field-name fallback list and
   a shared ``_pick_field`` helper.
 
-- M-12 (M3 prompt duplicates): ``m3_engine`` and ``gemma_postprocess``
+- M-12 (LLM prompt duplicates): ``semantic_engine`` and ``gemma_postprocess``
   used to each maintain their own copy of the per-panel prompt.
   ``get_prompt_registry()`` is now the single source of truth; Gemma
   imports it instead of re-defining the prompt.
@@ -45,24 +45,24 @@ if str(_SRC) not in sys.path:
 
 
 # ===========================================================================
-# M-10 / M-12: prompt registry exists and exposes the canonical M3 prompts
+# M-10 / M-12: prompt registry exists and exposes the canonical LLM prompts
 # ===========================================================================
 
 
 class TestPromptRegistry:
-    """``m3_engine.get_prompt_registry()`` must be importable and
+    """``semantic_engine.get_prompt_registry()`` must be importable and
     return a tuple ``(dict, version_str)`` containing the canonical
     5+ stage system prompts (audit Phase 4E / Phase 4C)."""
 
     def test_get_prompt_registry_importable(self):
-        from rlpe.m3_engine import get_prompt_registry
+        from rlpe.semantic_engine import get_prompt_registry
 
         assert callable(get_prompt_registry)
 
     def test_get_prompt_registry_returns_tuple(self):
         """Phase 4E: registry now returns ``(dict, version_str)`` so
         callers can pin a result to a known prompt version."""
-        from rlpe.m3_engine import get_prompt_registry
+        from rlpe.semantic_engine import get_prompt_registry
 
         result = get_prompt_registry()
         assert isinstance(result, tuple)
@@ -76,7 +76,7 @@ class TestPromptRegistry:
         """The registry must cover at least the 5 vision stages plus
         the Japanese parse_caption variant (audit 2026-08-19 Bug
         M-12: registry completeness guard)."""
-        from rlpe.m3_engine import get_prompt_registry
+        from rlpe.semantic_engine import get_prompt_registry
 
         registry, _version = get_prompt_registry()
         expected_keys = {
@@ -99,7 +99,7 @@ class TestPromptRegistry:
     def test_each_prompt_is_substantive(self):
         """No empty / placeholder prompts in the registry — each is a
         multi-stage JSON contract several-hundred tokens long."""
-        from rlpe.m3_engine import get_prompt_registry
+        from rlpe.semantic_engine import get_prompt_registry
 
         registry, _version = get_prompt_registry()
         for key, prompt in registry.items():
@@ -111,8 +111,8 @@ class TestPromptRegistry:
 
     def test_registry_keys_match_module_constants(self):
         """Sanity: the registry keys must mirror the module-level
-        constants in m3_engine (no accidental renaming)."""
-        from rlpe.m3_engine import (
+        constants in semantic_engine (no accidental renaming)."""
+        from rlpe.semantic_engine import (
             _CLASSIFY_PLATE_SYSTEM,
             _CRITIQUE_SYSTEM,
             _MATCH_PANEL_SYSTEM,
@@ -135,7 +135,7 @@ class TestPromptRegistry:
     def test_registry_returns_independent_dict(self):
         """Mutating the returned dict MUST NOT poison the cached
         module-level constants (defensive copy contract)."""
-        from rlpe.m3_engine import get_prompt_registry
+        from rlpe.semantic_engine import get_prompt_registry
 
         registry1, _v1 = get_prompt_registry()
         original_len = len(registry1)
@@ -147,7 +147,7 @@ class TestPromptRegistry:
     def test_registry_version_constant_exported(self):
         """Phase 4E: the ``PROMPT_REGISTRY_VERSION`` constant must be
         importable and follow the ``vMAJOR.MINOR.PATCH`` convention."""
-        from rlpe.m3_engine import PROMPT_REGISTRY_VERSION
+        from rlpe.semantic_engine import PROMPT_REGISTRY_VERSION
 
         assert isinstance(PROMPT_REGISTRY_VERSION, str)
         assert PROMPT_REGISTRY_VERSION.startswith("v")
@@ -160,50 +160,50 @@ class TestPromptRegistry:
 
 
 # ===========================================================================
-# M-10: Gemma postprocess uses M3's canonical prompts (no drift)
+# M-10: Gemma postprocess uses LLM's canonical prompts (no drift)
 # ===========================================================================
 
 
 class TestGemmaUsesM3Prompts:
-    """Gemma postprocess must pull per-panel prompts from the M3
+    """Gemma postprocess must pull per-panel prompts from the LLM
     registry, not re-define them inline (audit 2026-08-19 Bug M-10)."""
 
-    def test_gemma_module_imports_m3_registry(self):
+    def test_gemma_module_imports_llm_registry(self):
         """Static guard: ``gemma_postprocess`` must import
-        ``get_prompt_registry`` from ``m3_engine`` so a refactor that
+        ``get_prompt_registry`` from ``semantic_engine`` so a refactor that
         re-defines the prompt inline breaks the test loudly."""
         import rlpe.gemma_postprocess as mod
 
         assert hasattr(mod, "get_prompt_registry"), (
-            "gemma_postprocess must import get_prompt_registry from m3_engine; "
+            "gemma_postprocess must import get_prompt_registry from semantic_engine; "
             "if this test fails, someone re-introduced the inline duplicate prompt"
         )
 
-    def test_gemma_get_system_prompt_matches_m3_registry(self):
+    def test_gemma_get_system_prompt_matches_llm_registry(self):
         """Compare ``gemma._get_system_prompt('match_panel')`` with
-        ``m3.get_prompt_registry()[0]['match_panel']`` — they must be
+        ``llm.get_prompt_registry()[0]['match_panel']`` — they must be
         the SAME STRING. A drift here means Gemma would emit a
-        different JSON contract than M3 (the original M-10 bug)."""
+        different JSON contract than LLM (the original M-10 bug)."""
         import rlpe.gemma_postprocess as gemma
-        from rlpe.m3_engine import get_prompt_registry
+        from rlpe.semantic_engine import get_prompt_registry
 
         registry, _version = get_prompt_registry()
-        m3_prompt = registry["match_panel"]
+        llm_prompt = registry["match_panel"]
         gemma_prompt = gemma._get_system_prompt("match_panel")
-        assert gemma_prompt == m3_prompt, (
-            "Gemma's match_panel prompt has drifted from M3's. "
+        assert gemma_prompt == llm_prompt, (
+            "Gemma's match_panel prompt has drifted from LLM's. "
             "This means Gemma fallback will silently emit a different "
-            "JSON shape than the M3 outputs it is supposed to replace."
+            "JSON shape than the LLM outputs it is supposed to replace."
         )
 
     def test_gemma_get_system_prompt_visual_only_matches(self):
         import rlpe.gemma_postprocess as gemma
-        from rlpe.m3_engine import get_prompt_registry
+        from rlpe.semantic_engine import get_prompt_registry
 
         registry, _version = get_prompt_registry()
-        m3_prompt = registry["match_panel_visual_only"]
+        llm_prompt = registry["match_panel_visual_only"]
         gemma_prompt = gemma._get_system_prompt("match_panel_visual_only")
-        assert gemma_prompt == m3_prompt
+        assert gemma_prompt == llm_prompt
 
     def test_gemma_get_system_prompt_unknown_returns_none(self):
         """Unknown stages return None so callers fall back to the
@@ -216,7 +216,7 @@ class TestGemmaUsesM3Prompts:
         """``zh`` / ``en`` / ``match`` aliases are accepted so legacy
         callers keep working without code changes."""
         import rlpe.gemma_postprocess as gemma
-        from rlpe.m3_engine import get_prompt_registry
+        from rlpe.semantic_engine import get_prompt_registry
 
         registry, _version = get_prompt_registry()
         assert gemma._get_system_prompt("zh") == registry["match_panel"]
@@ -224,7 +224,7 @@ class TestGemmaUsesM3Prompts:
         assert gemma._get_system_prompt("en") == registry["match_panel_visual_only"]
 
     def test_gemma_handles_tuple_and_legacy_dict_registries(self):
-        """Phase 4E: ``_get_m3_prompts`` must transparently accept both
+        """Phase 4E: ``_get_llm_prompts`` must transparently accept both
         the new tuple-returning registry and a legacy dict for
         backward compatibility during the migration."""
         import rlpe.gemma_postprocess as gemma
@@ -238,7 +238,7 @@ class TestGemmaUsesM3Prompts:
                 gemma.get_prompt_registry = lambda: ({"match_panel": "Z"}, "v9.9.9")
                 gemma._PROMPTS_CACHE = None
                 gemma._PROMPTS_VERSION = None
-                prompts = gemma._get_m3_prompts()
+                prompts = gemma._get_llm_prompts()
             finally:
                 gemma.get_prompt_registry = original
         assert prompts.get("match_panel") == "Z"
@@ -252,7 +252,7 @@ class TestGemmaUsesM3Prompts:
                 gemma.get_prompt_registry = lambda: {"match_panel": "Y"}
                 gemma._PROMPTS_CACHE = None
                 gemma._PROMPTS_VERSION = None
-                prompts = gemma._get_m3_prompts()
+                prompts = gemma._get_llm_prompts()
             finally:
                 gemma.get_prompt_registry = original
         assert prompts.get("match_panel") == "Y"
@@ -280,7 +280,7 @@ class TestConfidenceFieldFallback:
     def test_pick_field_prefers_confidence(self):
         from rlpe.gemma_postprocess import _CONFIDENCE_FIELD_FALLBACK, _pick_field
 
-        # ``confidence`` is the canonical M3 name and must be preferred.
+        # ``confidence`` is the canonical LLM name and must be preferred.
         payload = {"confidence": 0.9, "conf_score": 0.5, "score": 0.1}
         assert _pick_field(payload, _CONFIDENCE_FIELD_FALLBACK) == 0.9
 
@@ -348,7 +348,7 @@ class TestNameFieldFallback:
     def test_pick_field_falls_back_to_name(self):
         from rlpe.gemma_postprocess import _NAME_FIELD_FALLBACK, _pick_field
 
-        # Older M3 prompts emitted ``name``.
+        # Older LLM prompts emitted ``name``.
         payload = {"name": "Entactinia"}
         assert _pick_field(payload, _NAME_FIELD_FALLBACK) == "Entactinia"
 
@@ -371,7 +371,7 @@ class TestNameFieldFallback:
 
 
 class TestConfidenceCoercion:
-    """The confidence coercion must not crash on a non-numeric M3
+    """The confidence coercion must not crash on a non-numeric LLM
     payload — auditing claim: a malformed ``conf_score`` string should
     become ``gemma_conf = 0.0`` rather than raise."""
 
@@ -403,7 +403,7 @@ class TestConfidenceCoercion:
 
 
 # ===========================================================================
-# Few-shot format guards (the original M3 prompts must keep their examples)
+# Few-shot format guards (the original LLM prompts must keep their examples)
 # ===========================================================================
 
 
@@ -415,7 +415,7 @@ class TestM3PromptsRetainFewShotFormat:
     def test_match_panel_prompt_has_fewshot_example(self):
         """``_MATCH_PANEL_SYSTEM`` must contain at least one complete
         input->output example after the refactor."""
-        from rlpe.m3_engine import _MATCH_PANEL_SYSTEM
+        from rlpe.semantic_engine import _MATCH_PANEL_SYSTEM
 
         assert "Example" in _MATCH_PANEL_SYSTEM
         # The example must reference the JSON shape Gemma now reads
@@ -424,17 +424,17 @@ class TestM3PromptsRetainFewShotFormat:
             assert key in _MATCH_PANEL_SYSTEM, f"_MATCH_PANEL_SYSTEM missing output key {key!r}"
 
     def test_critique_system_has_fewshot_example(self):
-        from rlpe.m3_engine import _CRITIQUE_SYSTEM
+        from rlpe.semantic_engine import _CRITIQUE_SYSTEM
 
         assert "Example" in _CRITIQUE_SYSTEM
 
     def test_classify_plate_has_fewshot_example(self):
-        from rlpe.m3_engine import _CLASSIFY_PLATE_SYSTEM
+        from rlpe.semantic_engine import _CLASSIFY_PLATE_SYSTEM
 
         assert "Example" in _CLASSIFY_PLATE_SYSTEM
 
     def test_segment_panels_has_fewshot_example(self):
-        from rlpe.m3_engine import _SEGMENT_PANELS_SYSTEM
+        from rlpe.semantic_engine import _SEGMENT_PANELS_SYSTEM
 
         assert "Example" in _SEGMENT_PANELS_SYSTEM
 
@@ -442,7 +442,7 @@ class TestM3PromptsRetainFewShotFormat:
         """``_MATCH_PANEL_SYSTEM_VISUAL_ONLY`` is a concise prompt and
         may not embed an ``Example`` header literally, but it MUST
         document the JSON output schema Gemma reads."""
-        from rlpe.m3_engine import _MATCH_PANEL_SYSTEM_VISUAL_ONLY
+        from rlpe.semantic_engine import _MATCH_PANEL_SYSTEM_VISUAL_ONLY
 
         for key in ("label", "species", "confidence", "reasoning"):
             assert key in _MATCH_PANEL_SYSTEM_VISUAL_ONLY, (
@@ -466,7 +466,7 @@ class TestGemmaAPISurfaceUnchanged:
         # Each public surface used by other tests / scripts. The
         # Phase 4C migration dropped the legacy ``GEMMA_SYSTEM_PROMPT_ZH``
         # / ``_EN`` module constants in favour of ``_get_system_prompt``
-        # (the M3 registry), so those two are NOT expected to remain.
+        # (the LLM registry), so those two are NOT expected to remain.
         for name in (
             "GemmaRuntime",
             "set_global_seed",
@@ -480,8 +480,8 @@ class TestGemmaAPISurfaceUnchanged:
             "batch_gemma_postprocess_rows",
             "get_prompt_registry",
             "_get_system_prompt",
-            "_get_m3_prompts",
-            "_get_m3_prompt_version",
+            "_get_llm_prompts",
+            "_get_llm_prompt_version",
             "_pick_field",
             "_CONFIDENCE_FIELD_FALLBACK",
             "_NAME_FIELD_FALLBACK",

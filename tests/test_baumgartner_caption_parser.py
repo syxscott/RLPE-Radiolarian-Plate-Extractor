@@ -9,7 +9,7 @@ preamble.
 
 from __future__ import annotations
 
-from rlpe.m3_engine import _regex_parse_caption
+from rlpe.semantic_engine import _regex_parse_caption
 
 
 def test_baumgartner_plate1_full_caption():

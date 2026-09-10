@@ -34,7 +34,7 @@ B 方案需要 8-12 周 + GPU + 训练调优 + 数据集扩到 100+。 风险高
 
 ### 2.2 选 A 的理由
 
-- **依赖云 API** + 现成 M3 (无需 GPU server)
+- **依赖云 API** + 现成 LLM (无需 GPU server)
 - **代码量 < 1k 行** (eval harness 200 行 + caption 修复 300 行 + 后处理 200 行)
 - **耗时 4-6 周** (可发表)
 - **目标 F1 78-82%** (接近 v19 84%)
@@ -50,7 +50,7 @@ rlpe/
 ├── scripts/
 │   ├── gold_eval_anchored.py       # 现有 — 加 5-fold + bootstrap
 │   ├── caption_fixer.py             # NEW: 通用 caption selector
-│   ├── prompts.py                   # NEW: M3 prompt library
+│   ├── prompts.py                   # NEW: LLM prompt library
 │   └── post_process.py              # NEW: panel 归一化 + species 同物异名
 ├── data/
 │   └── gold/                        # 扩到 20+ 论文, 多 plate/论文
@@ -82,7 +82,7 @@ PDF → OpenDataLoader → per-plate JSON
 
 | 决策 | 选择 | 理由 |
 |---|---|---|
-| M3 模型 | MiniMax-M3 (已有) | 已验证可工作, 不需 fine-tune |
+| LLM 模型 | MiniMax-M3 (已有) | 已验证可工作, 不需 fine-tune |
 | Caption selector | 通用规则, 不引用 gold | 防过拟合 |
 | 黄金集 split | 6 train / 3 test, 写死不变 | 多论文迭代时 train 不被污染 |
 | 后处理阈值 | conf > 0.7 (基于 train 调) | 不接触 LLM 行为, 仅本地规则 |
@@ -110,7 +110,7 @@ PDF → OpenDataLoader → per-plate JSON
 
 **预期影响**: 多 plate 论文 (bandini, bragin) 召回率 +20pp, 测试泛化 F1 -3pp 以内
 
-### 4.2 `scripts/prompts.py` — M3 prompt library
+### 4.2 `scripts/prompts.py` — LLM prompt library
 
 **4 个 prompt templates** (按 paper type 选):
 - `RANGE_CHART_PROMPT` (e.g. bragin "Fig. 1. Distribution of radiolarians...")
@@ -130,7 +130,7 @@ PDF → OpenDataLoader → per-plate JSON
 
 **预期影响**: 
 - 误判降 (RANGE/SEM/MAP 分类错误) → F1 +5pp
-- M3 over-extraction 降 (更明确的 prompt) → F1 +3pp
+- LLM over-extraction 降 (更明确的 prompt) → F1 +3pp
 
 ### 4.3 `scripts/post_process.py` — 后处理
 
@@ -141,7 +141,7 @@ PDF → OpenDataLoader → per-plate JSON
 - `filter_low_confidence(panels, threshold=0.7)` — 过滤 conf < 0.7 (基于 train 调)
 
 **预期影响**:
-- dedup: recall +5pp (去掉 M3 重复检测)
+- dedup: recall +5pp (去掉 LLM 重复检测)
 - conf filter: precision +5pp (去掉低 conf 假阳性)
 - n. sp. 解析: recall +3pp
 
@@ -195,7 +195,7 @@ SPLIT = {
 |---|---|---|
 | 1 | 黄金集扩到 20 篇 (本仓库) | train=6, test=3, holdout=11 (新加) |
 | 1 | caption_fixer.py 通用版本 + 单测 | 不接触 gold 测泛化, train F1 ≥ 0.65 |
-| 2 | prompts.py 4 templates + M3 call | 5-fold CV, 9-paper train F1 ≥ 0.70 |
+| 2 | prompts.py 4 templates + LLM call | 5-fold CV, 9-paper train F1 ≥ 0.70 |
 | 3 | post_process.py 4 functions | 9-paper combined F1 ≥ 0.75 |
 | 4 | 集成 eval harness + bootstrap CI | `make eval-research` 30 min 内, 输出 JSON |
 | 5 | v19 baseline 重测 + 论文方法学写 | train F1 ≥ 0.78, test F1 ≥ 0.70, gap ≤ 8pp |
@@ -206,9 +206,9 @@ SPLIT = {
 | Risk | Probability | Impact | Mitigation |
 |---|---|---|---|
 | v19 84% 是"全 pipeline" 测的, 我们 LLM-first direct F1 不能直接对比 | 高 | 中 | 写 spec 时明确"我们测的是 LLM-first 提取质量, 端到端 pipeline 留 v19 对比" |
-| MiniMax API 限流 (Token Plan) | 中 | 中 | 6 weeks 估算 20 paper × 5 plate × 1 API call × 4 轮 = 400 calls ≈ ¥2 |
-| M3 漏抽 (panel_count < gold_count) | 高 | 高 | 加 "extract every panel" prompt 强化 + post_process dedup |
-| M3 over-extract (panel_count > gold_count × 2) | 中 | 中 | conf filter (threshold 0.7 from train) |
+| LLM API 限流 (Token Plan) | 中 | 中 | 6 weeks 估算 20 paper × 5 plate × 1 API call × 4 轮 = 400 calls ≈ ¥2 |
+| LLM 漏抽 (panel_count < gold_count) | 高 | 高 | 加 "extract every panel" prompt 强化 + post_process dedup |
+| LLM over-extract (panel_count > gold_count × 2) | 中 | 中 | conf filter (threshold 0.7 from train) |
 | 黄金集人工标注慢 | 中 | 中 | 利用 OCR output + PDF 文本半自动, 1 hour / paper |
 | 跨物种 cf./aff. 归一化错 | 中 | 中 | 利用 _norm_species 已有规则, 不重做 |
 

@@ -5,7 +5,7 @@ Evidence chain from the user's GUI log:
 
 1. ``Pipeline finished: 0 rows`` + the new local_only warning fired,
    so ``_resolve_outbound_policy`` resolved **local_only**;
-2. yet pipeline.py logged ``[MiniMax] API error, falling back to rule
+2. yet pipeline.py logged ``[LLM] API error, falling back to rule
    pipeline`` — that is NOT a network error: it is the local_only
    no-op result (``error_type=LocalOnlyPolicy``) flowing through the
    generic FallbackHandler, which mislabels it as an "API error". No
@@ -18,8 +18,8 @@ Root causes:
   project .env (``ANTHROPIC_API_KEY`` / ``ANTHROPIC_BASE_URL`` /
   ``ANTHROPIC_MODEL`` pointing at api.minimaxi.com).
 * **BUG-4b**: pipeline.py:289 (Round 18) injects ``ANTHROPIC_API_KEY``
-  into ``extra["MiniMax_api_key"]`` — that is the project's documented
-  key layout (MiniMax speaks the Anthropic wire protocol) — but the
+  into ``extra["llm_api_key"]`` — that is the project's documented
+  key layout (LLM speaks the Anthropic wire protocol) — but the
   BUG-1 worker resolver ``_resolve_outbound_policy`` only checked
   settings + ``MiniMax_API_KEY``/``MINIMAX_API_KEY`` env, so it
   resolved local_only even though the pipeline would have had a key.
@@ -61,46 +61,46 @@ def _clear_llm_env(monkeypatch):
 
 
 # ----------------------------------------------------------------------
-# resolve_minimax_api_key — single source of truth
+# resolve_llm_api_key — single source of truth
 # ----------------------------------------------------------------------
 class TestResolveMinimaxApiKey:
     def test_extra_key_wins(self, monkeypatch):
-        from rlpe.llm_backends import resolve_minimax_api_key
+        from rlpe.llm_backends import resolve_llm_api_key
 
         _clear_llm_env(monkeypatch)
         monkeypatch.setenv("MINIMAX_API_KEY", "env-key")
-        assert resolve_minimax_api_key({"MiniMax_api_key": "extra-key"}) == "extra-key"
+        assert resolve_llm_api_key({"llm_api_key": "extra-key"}) == "extra-key"
 
     def test_minimax_upper_camel_env(self, monkeypatch):
-        from rlpe.llm_backends import resolve_minimax_api_key
+        from rlpe.llm_backends import resolve_llm_api_key
 
         _clear_llm_env(monkeypatch)
         monkeypatch.setenv("MiniMax_API_KEY", "camel-key")
-        assert resolve_minimax_api_key() == "camel-key"
+        assert resolve_llm_api_key() == "camel-key"
 
     def test_minimax_upper_env(self, monkeypatch):
-        from rlpe.llm_backends import resolve_minimax_api_key
+        from rlpe.llm_backends import resolve_llm_api_key
 
         _clear_llm_env(monkeypatch)
         monkeypatch.setenv("MINIMAX_API_KEY", "upper-key")
-        assert resolve_minimax_api_key() == "upper-key"
+        assert resolve_llm_api_key() == "upper-key"
 
     def test_anthropic_api_key_fallback_round18(self, monkeypatch):
         """Round 18 semantics: the project's .env documents
-        ANTHROPIC_API_KEY as the user-facing key (MiniMax speaks the
+        ANTHROPIC_API_KEY as the user-facing key (LLM speaks the
         Anthropic wire protocol) and pipeline.py injects it into
-        extra["MiniMax_api_key"]. The resolver must agree."""
-        from rlpe.llm_backends import resolve_minimax_api_key
+        extra["llm_api_key"]. The resolver must agree."""
+        from rlpe.llm_backends import resolve_llm_api_key
 
         _clear_llm_env(monkeypatch)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-cp-test")
-        assert resolve_minimax_api_key() == "sk-cp-test"
+        assert resolve_llm_api_key() == "sk-cp-test"
 
     def test_none_when_no_key_anywhere(self, monkeypatch):
-        from rlpe.llm_backends import resolve_minimax_api_key
+        from rlpe.llm_backends import resolve_llm_api_key
 
         _clear_llm_env(monkeypatch)
-        assert resolve_minimax_api_key() is None
+        assert resolve_llm_api_key() is None
 
 
 # ----------------------------------------------------------------------

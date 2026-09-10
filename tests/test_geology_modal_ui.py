@@ -64,7 +64,7 @@ class TestGeologyModalCode:
         """Task 6 enrichment: the modal must render Ma range (ma_top /
         ma_base), lithology, member, group, and biozone when present.
         These fields come from Task 5's deterministic Ma propagation
-        and the planned MiniMax-assisted lithology/member/group
+        and the planned LLM-assisted lithology/member/group
         extractor. They were previously dropped on the floor.
         """
         i = js.find("function openImageModal(")
@@ -138,7 +138,7 @@ class TestGeologyModalCode:
     def test_country_field_rendered_in_modal(self, js: str) -> None:
         """Round-3 Commit 3: country + coordinates must surface in the modal.
 
-        The new multi-modal geology vision extractor (M3Engine.extract_geology)
+        The new multi-modal geology vision extractor (SemanticEngine.extract_geology)
         populates ``country`` and ``latitude``/``longitude``. The modal
         must surface these so the operator can see WHERE a panel's
         geological context was anchored (which matters more for map /

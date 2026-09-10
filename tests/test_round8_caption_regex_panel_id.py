@@ -42,7 +42,7 @@ class TestCaptionClauseRegexHollis:
         After fix, _CAPTION_CLAUSE_RE must match the ``1. Amphisphaera``
         clause.
         """
-        from rlpe.m3_engine import _CAPTION_CLAUSE_RE, _regex_parse_caption
+        from rlpe.semantic_engine import _CAPTION_CLAUSE_RE, _regex_parse_caption
 
         hollis_caption = (
             "Plate 1\n\n"
@@ -72,7 +72,7 @@ class TestCaptionClauseRegexHollis:
         greedily match the first uppercase word after every ``<digit>.``
         and silently absorb section headers as panel labels.
         """
-        from rlpe.m3_engine import _CAPTION_CLAUSE_RE
+        from rlpe.semantic_engine import _CAPTION_CLAUSE_RE
 
         # ``Abstract. 1. Introduction.`` should yield zero matches
         # because "Introduction" is followed by "." not a species, and

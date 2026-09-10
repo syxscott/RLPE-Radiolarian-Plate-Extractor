@@ -1,6 +1,6 @@
 """Phase 61 Plan 4 (Bug 4.8): surface thinking tokens on JSON parse failure.
 
-When MiniMax extended-thinking produced a JSON parse error, the
+When LLM extended-thinking produced a JSON parse error, the
 thinking text was preserved on ``result["thinking"]`` but never made
 it into ``cost_summary`` aggregations nor any UI dashboard field. The
 operator had no way to tell "this call was paid for but the model
@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import pytest
 
-from rlpe.llm_backends import MiniMaxM3Backend
+from rlpe.llm_backends import AnthropicCompatBackend
 
 
 def test_cost_summary_marks_failed_with_thinking():
     """A parse-failure with non-empty thinking bumps the dedicated counter."""
     # Construct a backend in local_only mode to skip real API init.
-    backend = MiniMaxM3Backend(
+    backend = AnthropicCompatBackend(
         api_key="",
         base_url="http://localhost:0",
         model="MiniMax-M3",
@@ -37,7 +37,7 @@ def test_cost_summary_marks_failed_with_thinking():
 
 def test_failed_with_thinking_increments_once_per_call():
     """Multiple calls each bump the counter independently."""
-    backend = MiniMaxM3Backend(
+    backend = AnthropicCompatBackend(
         api_key="",
         base_url="http://localhost:0",
         model="MiniMax-M3",

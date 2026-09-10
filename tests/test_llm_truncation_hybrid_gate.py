@@ -6,7 +6,7 @@ Before the fix (2026-07-01), the LLM-first hybrid in
   - the LLM returned fewer than 2 panels
 
 This silently dropped panels whenever the LLM capped its output at ~19
-panels (a soft training-data ceiling on Gemma-3/M3) while the caption
+panels (a soft training-data ceiling on Gemma-3/LLM) while the caption
 actually enumerated 21-35 panels. baumgartner2008 pl02 (21 panels)
 and pl03 (27 panels), beccaro2006 (35 panels), and wever2006 (long
 captions) all hit this bug.
@@ -139,7 +139,7 @@ class TestBaumgartnerRealCase:
     panels, 27 caption panels, full species returned by LLM."""
 
     def test_baum_pl03_27_panels_vs_19_llm(self):
-        """Real bug: pl03 has 27 species in caption; M3 returned 19.
+        """Real bug: pl03 has 27 species in caption; LLM returned 19.
         Pre-fix: hybrid skipped, panels 20-27 silently dropped.
         Post-fix: hybrid fires, regex adds panels 20-27."""
         llm_results = _make_llm_results(19, with_species=True)
@@ -157,7 +157,7 @@ class TestBeccaroRealCase:
     """Reproduce the actual beccaro2006 case: 33 LLM panels, 35 caption."""
 
     def test_beccaro_33_llm_vs_35_caption(self):
-        """M3 truncated beccaro to 33 panels (caption has 35).
+        """LLM truncated beccaro to 33 panels (caption has 35).
         Hybrid must fire to add panels 34-35."""
         llm_results = _make_llm_results(33, with_species=True)
         pair_lookup = {str(i): f"Sp{i}" for i in range(1, 36)}

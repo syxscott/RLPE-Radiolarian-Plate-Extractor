@@ -94,7 +94,7 @@ class GeologyLinkRecord(BaseModel):
     # Phase 65 / audit 2026-07-24 (P1-1): track the cross-figure
     # link provenance so a Darwin Core / GBIF auditor can trace
     # each link back to its source figure. ``link_source`` is
-    # one of ``"sample_match" | "locality_match" | "m3_inference"
+    # one of ``"sample_match" | "locality_match" | "llm_inference"
     # | "unlinked"``. ``figure_id`` is the source figure's id
     # (None for unlinked fallbacks). Required for Phase A's
     # provenance contract — downstream consumers can't tell
@@ -328,7 +328,7 @@ class TaxonRecord(BaseModel):
     # Audit 2026-08-02: link from TaxonRecord to one or more
     # MorphologyRecord entries extracted for the same species. Empty
     # list when Stage 6 is off, the species had no anchorable
-    # description section, or M3 returned an empty dict. Stable IDs
+    # description section, or LLM returned an empty dict. Stable IDs
     # (see ``converters.morphology_records_from_matches``) so the
     # JSONL export round-trips.
     morphology_ids: list[str] = Field(default_factory=list)
@@ -374,12 +374,12 @@ class GeologyContextRecord(BaseModel):
 class MorphologyRecord(BaseModel):
     """Structured morphological description for one species.
 
-    Audit 2026-08-02 — Stage 6 (M3 morphology extraction, opt-in).
+    Audit 2026-08-02 — Stage 6 (LLM morphology extraction, opt-in).
     For each unique (paper, species) pair with an anchorable
     Description / Diagnosis section, the pipeline emits ONE
     MorphologyRecord. Fields the source text doesn't mention are
     left ``None`` — never ``False`` / ``0`` / ``""`` — so the JSONL
-    export distinguishes "M3 said yes" from "M3 had nothing to
+    export distinguishes "LLM said yes" from "LLM had nothing to
     say".
     """
 
@@ -388,7 +388,7 @@ class MorphologyRecord(BaseModel):
     taxon_id: str
     paper_id: str
     # Provenance.
-    source: str = ""  # "caption" | "body_text" | "m3_vision"
+    source: str = ""  # "caption" | "body_text" | "llm_vision"
     section_id: str | None = None
     section_title: str | None = None
     figure_id: str | None = None
@@ -504,7 +504,7 @@ class PanelMetadata(BaseModel):
     caption_pairs_used: bool = False
     scale_bar: ScaleBarRecord | None = None
     geology_links: list[GeologyLinkRecord] = Field(default_factory=list)
-    m3_diagnostic: dict[str, Any] = Field(default_factory=dict)
+    llm_diagnostic: dict[str, Any] = Field(default_factory=dict)
     # audit 2026-07-31: PBDB taxonomy forwarded from the match
     # metadata so the DwC-A exporter can populate the higher-rank
     # classification columns (kingdom … family). Optional; absent for
@@ -526,7 +526,7 @@ class PanelMetadata(BaseModel):
     # Phase 64 Plan B (Task B.2): per-panel storage for the
     # ``extract_schematic`` output on schematic / diagram /
     # reconstruction / phylogenetic figures. The shape is the same
-    # JSON the M3 prompt contract emits:
+    # JSON the LLM prompt contract emits:
     #   {
     #     "figure_type": str,
     #     "text_elements": [{text, type, confidence}, ...],
@@ -544,7 +544,7 @@ class PanelMetadata(BaseModel):
     figure_schematic_data: dict[str, Any] | None = None
     # Phase 65 Plan A.4: cross-figure linker provenance.
     # ``link_source`` records which strategy won (``sample_match`` /
-    # ``locality_match`` / ``m3_inference`` / ``unlinked``); the
+    # ``locality_match`` / ``llm_inference`` / ``unlinked``); the
     # paired ``link_confidence`` is the linker's own confidence (NOT
     # the species-extraction confidence above). ``link_figure_id``
     # is the paper-level figure id the panel was linked to (None for
@@ -567,11 +567,11 @@ class PanelMetadata(BaseModel):
     #                             linked layer
     #   target_formation: str | None — formation name on the linked
     #                                  layer
-    #   confidence: float (0.0-1.0) — M3's own visual-link confidence
+    #   confidence: float (0.0-1.0) — LLM's own visual-link confidence
     #                                  (unclamped; vision grounding is
     #                                  intrinsically more reliable
     #                                  than the text-only Strategy 3)
-    #   source: str — always "m3_visual" for Phase C entries
+    #   source: str — always "llm_visual" for Phase C entries
     # Default empty list so legacy Phase A records remain valid.
     cross_figure_visual_links: list[dict[str, Any]] = Field(default_factory=list)
     # Audit 2026-09-05 (tier3-B6): export channel for the revived

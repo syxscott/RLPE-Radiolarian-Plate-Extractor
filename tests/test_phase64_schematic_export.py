@@ -1,6 +1,6 @@
 """Phase 64 Plan B Task 5: export figure_schematic_data to JSONL / xlsx / DwC-A.
 
-The ``figure_schematic_data`` payload that the M3 engine produces
+The ``figure_schematic_data`` payload that the LLM engine produces
 must survive the export pipeline:
 
   * JSONL (converters.panel_metadata_from_match): the payload
@@ -207,7 +207,7 @@ class TestArchiveDynamicProperties:
 
     def test_dynamic_properties_serializes_to_json(self):
         """The schematic payload is serialised as a JSON blob
-        matching the M3 prompt contract."""
+        matching the LLM prompt contract."""
         payload = _schematic_payload()
         blob = _schematic_dynamic_properties(payload)
         assert isinstance(blob, str)

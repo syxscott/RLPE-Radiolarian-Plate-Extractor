@@ -19,7 +19,7 @@ only is wired into the two species SOURCE paths:
     simply never matches, so normalizing only the extracted output
     would fix nothing for exactly the mangled-token class the
     normalizer exists for.
-  * ``m3_engine._normalize_species`` — the LLM-path species
+  * ``semantic_engine._normalize_species`` — the LLM-path species
     normalizer (covers all three LLM call sites).
 
 The CORRECTIONS / PAPER_WHITELIST mapping layers stay unwired for
@@ -39,22 +39,22 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from rlpe.association import extract_taxa_from_caption
-from rlpe.m3_engine import _normalize_species
 from rlpe.ocr_corrections import _normalize_ocr_chars
+from rlpe.semantic_engine import _normalize_species
 
 
 class TestWiringCharacterNormalizer:
-    def test_m3_normalize_species_digit_one_folded(self):
+    def test_llm_normalize_species_digit_one_folded(self):
         # digit-1 after a letter -> l (Sponguru1 is the documented example)
         assert _normalize_species("Sponguru1 torsionis") == "Spongurul torsionis"
 
-    def test_m3_normalize_species_long_vowel_folded(self):
+    def test_llm_normalize_species_long_vowel_folded(self):
         assert _normalize_species("Archaeodictyomitrā apiarium") == ("Archaeodictyomitra apiarium")
 
-    def test_m3_normalize_species_capital_i_folded(self):
+    def test_llm_normalize_species_capital_i_folded(self):
         assert _normalize_species("TheocorIs robusta") == "Theocorls robusta"
 
-    def test_m3_normalize_species_clean_name_untouched(self):
+    def test_llm_normalize_species_clean_name_untouched(self):
         assert _normalize_species("Follicucullus scholasticus") == ("Follicucullus scholasticus")
 
     def test_extract_taxa_caption_digit_one_recovered(self):
@@ -101,16 +101,16 @@ class TestSourceGuardProductionCaller:
             "correction layer is dead code again (audit 2026-09-04 taxon-2)"
         )
         # And the importers must include the wired production paths.
-        assert any("m3_engine" in i or "association" in i for i in importers), importers
+        assert any("semantic_engine" in i or "association" in i for i in importers), importers
 
-    def test_m3_engine_normalizes_before_gold_rules(self):
+    def test_semantic_engine_normalizes_before_gold_rules(self):
         """The char pass must run on the raw species string, not after
         the gold-shape rules have already consumed it."""
         import inspect
 
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        src = inspect.getsource(m3_engine._normalize_species)
+        src = inspect.getsource(semantic_engine._normalize_species)
         assert "_normalize_ocr_chars" in src
 
     def test_caption_extract_normalizes_text_before_matching(self):

@@ -1,10 +1,10 @@
 """Regression tests for audit 2026-08-19 Phase 2c — LLM backend robustness.
 
 Bug fixes covered:
-- M-14: ``cross_figure_visual_inference`` in ``m3_engine.py`` accepts a
+- M-14: ``cross_figure_visual_inference`` in ``semantic_engine.py`` accepts a
   ``strat_image`` parameter but the previous implementation dropped it
   silently and only sent ``plate_image`` to the backend. The fix
-  forwards BOTH images to the Anthropic-backed ``MiniMaxM3Backend``
+  forwards BOTH images to the Anthropic-backed ``AnthropicCompatBackend``
   via a new ``extra_image`` keyword on ``infer_panel``. Local backends
   (llama.cpp / Ollama) accept ``extra_image`` too and inject a prompt
   note that the second image is dropped (single-image contract).
@@ -16,8 +16,8 @@ Bug fixes covered:
   (or ``exc.status_code``) and re-raises any 4xx so the caller sees
   the real failure rather than a silently degraded text-only path.
 
-- M-4: ``MiniMaxM3Backend._call_api`` retry loop ignored the
-  ``Retry-After`` header sent by the MiniMax endpoint. The fix
+- M-4: ``AnthropicCompatBackend._call_api`` retry loop ignored the
+  ``Retry-After`` header sent by the LLM endpoint. The fix
   parses the header (numeric form) via the new
   ``_parse_retry_after`` static method and uses it (capped at 60s)
   INSTEAD of the exponential backoff when present.
@@ -70,7 +70,7 @@ def _make_pil_image(width: int = 64, height: int = 64, color: str = "red") -> An
 
 
 def _make_fake_anthropic_module() -> Any:
-    """Tiny stand-in for the ``anthropic`` SDK so ``MiniMaxM3Backend``
+    """Tiny stand-in for the ``anthropic`` SDK so ``AnthropicCompatBackend``
     can be constructed without the real package."""
 
     class RateLimitError(Exception):
@@ -93,18 +93,18 @@ def _make_fake_anthropic_module() -> Any:
 
 
 def _make_MiniMax_backend(**overrides) -> Any:
-    """Return a ``MiniMaxM3Backend`` with the SDK stubbed out."""
+    """Return a ``AnthropicCompatBackend`` with the SDK stubbed out."""
     fake_anth = _make_fake_anthropic_module()
     fake_client = mock.MagicMock()
     import threading
 
     with mock.patch.dict(sys.modules, {"anthropic": fake_anth}):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         defaults = dict(api_key="sk-test-1234567890123456", data_outbound_policy="api_full")
         defaults.update(overrides)
-        with mock.patch.object(MiniMaxM3Backend, "__post_init__", lambda self: None):
-            backend = MiniMaxM3Backend(**defaults)
+        with mock.patch.object(AnthropicCompatBackend, "__post_init__", lambda self: None):
+            backend = AnthropicCompatBackend(**defaults)
             backend._anthropic = fake_anth
             backend._client = fake_client
             backend._lock = threading.Lock()
@@ -124,7 +124,7 @@ class _CaptureMessagesBackend:
     ``infer_panel`` so we can assert ``extra_image`` was forwarded.
 
     The contract this backend implements is the same as
-    ``MiniMaxM3Backend.infer_panel`` for our purposes: it receives
+    ``AnthropicCompatBackend.infer_panel`` for our purposes: it receives
     ``panel_image`` + ``extra_image`` and passes them through to
     ``_build_messages``. The engine sees the result dict and returns
     a canned ``plate_panels`` payload so the cross-figure flow exits
@@ -176,10 +176,10 @@ def _make_engine_with_capture_backend(
     canned_response: dict[str, Any] | None = None,
 ) -> tuple[Any, _CaptureMessagesBackend]:
     """Return ``(engine, capture_backend)`` for cross-figure tests."""
-    from rlpe.m3_engine import M3Engine
+    from rlpe.semantic_engine import SemanticEngine
 
     capture = _CaptureMessagesBackend(canned_response)
-    engine = M3Engine(backend=capture, config={})
+    engine = SemanticEngine(backend=capture, config={})
     return engine, capture
 
 
@@ -189,7 +189,7 @@ def _make_engine_with_capture_backend(
 
 
 class TestM14CrossFigureStratImageForwarded:
-    """The Anthropic ``MiniMaxM3Backend`` (and any backend that supports
+    """The Anthropic ``AnthropicCompatBackend`` (and any backend that supports
     multi-image content blocks) must receive the strat column image as
     the ``extra_image`` keyword argument, so the model can reason over
     BOTH images in a single Messages API call."""
@@ -244,9 +244,9 @@ class TestM14CrossFigureStratImageForwarded:
         # _infer_vision instead — that's the layer that controls the
         # ``extra_image`` propagation.
         backend = _CaptureMessagesBackend()
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         plate = _make_pil_image()
         # Call _infer_vision with extra_image=None (default).
         res = engine._infer_vision(
@@ -260,7 +260,7 @@ class TestM14CrossFigureStratImageForwarded:
         assert backend.calls[0]["extra_image"] is None
 
     def test_minimax_backend_build_messages_includes_two_images(self):
-        """``MiniMaxM3Backend._build_messages(panel_image, user_prompt,
+        """``AnthropicCompatBackend._build_messages(panel_image, user_prompt,
         extra_image=strat)`` must emit a user message with TWO image
         blocks when both images are provided (Anthropic multimodal
         contract)."""
@@ -599,12 +599,12 @@ class TestB4LlamaCppNoDegradeOn4xx:
 
 
 class TestM4RetryAfterHeader:
-    """``MiniMaxM3Backend._parse_retry_after`` extracts the
+    """``AnthropicCompatBackend._parse_retry_after`` extracts the
     ``Retry-After`` value from an exception's response headers."""
 
     def test_retry_after_30_seconds_parsed(self):
         """A header value of ``'30'`` (seconds) returns 30.0."""
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         class _Resp:
             headers = {"Retry-After": "30"}
@@ -612,12 +612,12 @@ class TestM4RetryAfterHeader:
         class _Exc(Exception):
             response = _Resp()
 
-        assert MiniMaxM3Backend._parse_retry_after(_Exc()) == 30.0
+        assert AnthropicCompatBackend._parse_retry_after(_Exc()) == 30.0
 
     def test_retry_after_missing_returns_none(self):
         """When no ``Retry-After`` header is present, returns ``None``
         so the caller falls back to exponential backoff."""
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         class _Resp:
             headers = {"Content-Type": "application/json"}
@@ -625,18 +625,18 @@ class TestM4RetryAfterHeader:
         class _Exc(Exception):
             response = _Resp()
 
-        assert MiniMaxM3Backend._parse_retry_after(_Exc()) is None
+        assert AnthropicCompatBackend._parse_retry_after(_Exc()) is None
 
     def test_retry_after_no_response_attribute_returns_none(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         class _Exc(Exception):
             pass
 
-        assert MiniMaxM3Backend._parse_retry_after(_Exc()) is None
+        assert AnthropicCompatBackend._parse_retry_after(_Exc()) is None
 
     def test_retry_after_non_numeric_returns_none(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         class _Resp:
             headers = {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}
@@ -647,10 +647,10 @@ class TestM4RetryAfterHeader:
         # Date-form Retry-After is intentionally not parsed — see
         # _parse_retry_after docstring. Returns None so the caller
         # uses exponential backoff.
-        assert MiniMaxM3Backend._parse_retry_after(_Exc()) is None
+        assert AnthropicCompatBackend._parse_retry_after(_Exc()) is None
 
     def test_retry_after_zero_or_negative_returns_none(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         class _RespZero:
             headers = {"Retry-After": "0"}
@@ -664,8 +664,8 @@ class TestM4RetryAfterHeader:
         class _Exc2(Exception):
             response = _RespNegative()
 
-        assert MiniMaxM3Backend._parse_retry_after(_Exc1()) is None
-        assert MiniMaxM3Backend._parse_retry_after(_Exc2()) is None
+        assert AnthropicCompatBackend._parse_retry_after(_Exc1()) is None
+        assert AnthropicCompatBackend._parse_retry_after(_Exc2()) is None
 
 
 class TestM4CallApiRespectsRetryAfter:
@@ -792,10 +792,10 @@ class TestSourceGuard:
     """Source-guard tests: detect accidental removal of the new helpers."""
 
     def test_parse_retry_after_still_defined(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert hasattr(MiniMaxM3Backend, "_parse_retry_after")
-        assert callable(MiniMaxM3Backend._parse_retry_after)
+        assert hasattr(AnthropicCompatBackend, "_parse_retry_after")
+        assert callable(AnthropicCompatBackend._parse_retry_after)
 
     def test_extract_status_code_still_defined(self):
         from rlpe.llm_backends import LlamaCppGemmaBackend
@@ -808,9 +808,9 @@ class TestSourceGuard:
         keyword (backward-compatible default ``None``)."""
         import inspect
 
-        from rlpe.llm_backends import LlamaCppGemmaBackend, MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend, LlamaCppGemmaBackend
 
-        sig_minimax = inspect.signature(MiniMaxM3Backend.infer_panel)
+        sig_minimax = inspect.signature(AnthropicCompatBackend.infer_panel)
         sig_llamacpp = inspect.signature(LlamaCppGemmaBackend.infer_panel)
         assert "extra_image" in sig_minimax.parameters
         assert "extra_image" in sig_llamacpp.parameters

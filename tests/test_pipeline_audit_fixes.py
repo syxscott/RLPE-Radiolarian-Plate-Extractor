@@ -153,7 +153,7 @@ class TestPipelineSourceAuditFixes:
     These tests grep pipeline.py to assert the audited fix lines are
     present, guarding against accidental revert. The frontend-style
     grep tests are a known compromise when a full integration test
-    would require a live M3 backend (see ``tests/test_web_fetch_patterns.py``).
+    would require a live LLM backend (see ``tests/test_web_fetch_patterns.py``).
     """
 
     def test_apply_geo_vision_uses_is_file_not_exists(self):

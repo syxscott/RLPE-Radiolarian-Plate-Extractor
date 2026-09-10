@@ -75,16 +75,16 @@ class TestLooksLikePlaceholderCaption:
 
 
 class TestStage4SkipLogic:
-    """Verify that m3_rejected_non_radiolarian does NOT trigger the FallbackHandler."""
+    """Verify that llm_rejected_non_radiolarian does NOT trigger the FallbackHandler."""
 
     def test_non_radiolarian_flag_does_not_count_as_fallback_error(self):
         from rlpe.text_filters import matches_have_fallback_error as _matches_have_fallback_error
 
-        # Build a fake match dict with m3_rejected_non_radiolarian
+        # Build a fake match dict with llm_rejected_non_radiolarian
         class _FakeMatch:
             def __init__(self):
                 self.metadata = {
-                    "m3_rejected_non_radiolarian": True,
+                    "llm_rejected_non_radiolarian": True,
                     "gemma_reasoning": "该panel并非古生物标本图版",
                 }
 
@@ -115,7 +115,7 @@ class TestStage4SkipLogic:
 
 class TestPlaceholderSkipsStage4EvenWhenStage2Passes:
     """Regression: the placeholder-caption check used to be an `elif` after the
-    `m3_plate_cls is not None` branch, so a "Page 1 auto-generated image"
+    `llm_plate_cls is not None` branch, so a "Page 1 auto-generated image"
     caption on an accepted micrograph would still hit stage 4. The fix
     promoted it to an `if` so it runs regardless of stage 2's verdict.
 

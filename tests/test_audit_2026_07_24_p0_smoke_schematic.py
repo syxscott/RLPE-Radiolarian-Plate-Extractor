@@ -3,7 +3,7 @@
 Original (Phase 64 commit 6a003cd + eb3c728) had a matcher that
 checked ``"schematic_geo" in sp``, but PROMPT_REGISTRY uses
 ``schematic_extract`` (renamed in Phase 64 fixup commit eb3c728
-to avoid collision with test_m3_geology_extraction's every-_geo-
+to avoid collision with test_llm_geology_extraction's every-_geo-
 prompt-must-mention-formation assertion). The old matcher NEVER
 fired, so the 5-paper smoke test was a silent no-op.
 
@@ -38,7 +38,7 @@ def test_matcher_uses_schematic_extract_key():
     assert matched_key == "schematic_extract", (
         f"smoke_schematic matcher checks '{matched_key}' but "
         f"PROMPT_REGISTRY uses 'schematic_extract'. This means the "
-        f"canned M3 response never fires and the smoke test is a no-op. "
+        f"canned LLM response never fires and the smoke test is a no-op. "
         f"Fix: change the lambda to use 'schematic_extract'."
     )
 

@@ -3,7 +3,7 @@
 Five small fixes landed in this sweep:
 
 1. **N2** — ``_run_job`` finally block now drops the
-   ``MiniMax_fallback_handler`` from ``RESULT_CACHE[jid]`` AND pops
+   ``llm_fallback_handler`` from ``RESULT_CACHE[jid]`` AND pops
    ``FALLBACK_PENDING[jid]`` so the ``_web_fallback_popup`` closure
    (which captures ``error_info``, the threading.Event, and a
    back-reference to ``_run_job``'s frame) doesn't pin the entry for
@@ -53,15 +53,15 @@ _SRC_APP = _REPO_ROOT / "src" / "rlpe" / "api" / "app.py"
 
 
 class TestSweep7N2FallbackClosureRelease:
-    """N2 — finally block releases the MiniMax fallback closure."""
+    """N2 — finally block releases the LLM fallback closure."""
 
-    def test_finally_drops_MiniMax_fallback_handler(self):
-        """The finally block of ``_run_job`` must ``pop("MiniMax_fallback_handler")``
+    def test_finally_drops_llm_fallback_handler(self):
+        """The finally block of ``_run_job`` must ``pop("llm_fallback_handler")``
         from the job's RESULT_CACHE entry."""
         src = _SRC_APP.read_text(encoding="utf-8")
-        assert '"MiniMax_fallback_handler"' in src
-        assert 'entry.pop("MiniMax_fallback_handler", None)' in src, (
-            "_run_job finally block must drop MiniMax_fallback_handler "
+        assert '"llm_fallback_handler"' in src
+        assert 'entry.pop("llm_fallback_handler", None)' in src, (
+            "_run_job finally block must drop llm_fallback_handler "
             "from RESULT_CACHE[jid] so the _web_fallback_popup closure "
             "isn't pinned for up to 5 minutes after the worker exits"
         )

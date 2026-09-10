@@ -50,7 +50,7 @@ class TestFigureTypeRouting:
 
 class TestLetterSuffixLabels:
     def test_figs_12_14b(self):
-        from rlpe.m3_engine import _regex_parse_caption
+        from rlpe.semantic_engine import _regex_parse_caption
 
         pairs = _regex_parse_caption("figs 12-14b. Hiscocapsa lugeoni n. sp.")
         assert [(p.labels, p.species) for p in pairs] == [
@@ -58,7 +58,7 @@ class TestLetterSuffixLabels:
         ]
 
     def test_figs_1a_b(self):
-        from rlpe.m3_engine import _regex_parse_caption
+        from rlpe.semantic_engine import _regex_parse_caption
 
         pairs = _regex_parse_caption("Pl. 1, figs 1a–b: Cenodiscinus amphitectus Haeckel")
         assert [(p.labels, p.species) for p in pairs] == [
@@ -66,7 +66,7 @@ class TestLetterSuffixLabels:
         ]
 
     def test_expand_label_list_letter_suffix(self):
-        from rlpe.m3_engine import _regex_expand_label_list
+        from rlpe.semantic_engine import _regex_expand_label_list
 
         assert _regex_expand_label_list("1a-b") == ["1a", "1b"]
         assert _regex_expand_label_list("12-14b") == ["12", "13", "14b"]
@@ -75,19 +75,19 @@ class TestLetterSuffixLabels:
 
 class TestAuthorInitialNotSwallowed:
     def test_main_regex_path(self):
-        from rlpe.m3_engine import _regex_parse_caption
+        from rlpe.semantic_engine import _regex_parse_caption
 
         pairs = _regex_parse_caption("figs 1-2. Stichocapsa excelsa cf. S. excelsa")
         assert [(p.labels, p.species) for p in pairs] == [(["1", "2"], "Stichocapsa excelsa")]
 
     def test_danelian_path(self):
-        from rlpe.m3_engine import _regex_parse_caption
+        from rlpe.semantic_engine import _regex_parse_caption
 
         pairs = _regex_parse_caption("1) Stichocapsa excelsa cf. S. excelsa")
         assert pairs[0].species == "Stichocapsa excelsa"
 
     def test_hollis_specimen_codes_kept(self):
-        from rlpe.m3_engine import _regex_parse_caption
+        from rlpe.semantic_engine import _regex_parse_caption
 
         pairs = _regex_parse_caption("1. Corythomelissa sp. A. B-F36/0")
         assert pairs[0].species == "Corythomelissa sp. A. B-F36/0"

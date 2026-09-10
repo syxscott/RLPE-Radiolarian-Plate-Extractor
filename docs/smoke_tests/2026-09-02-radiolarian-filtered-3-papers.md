@@ -2,7 +2,7 @@
 
 **Goal**: pick random radiolarian-focused papers NOT in the v19 gold set,
 run the new pipeline (`caption_fixer` + `prompts` + `post_process`
-+ MiniMax M3) end-to-end, and report what comes out.
++ LLM LLM) end-to-end, and report what comes out.
 
 This is a follow-up to `2026-09-02-random-3-papers.md`, which used no
 filename filter and got 0/3 papers with real radiolarian species. Here
@@ -66,11 +66,11 @@ Per-paper JSON dumps and rendered PNGs are under `/tmp/random_test2/`.
 - **Page used**: 4, **Plate anchor**: 1.
 - **Caption length**: 1505 chars.
 - **Prompt template chosen**: standard radiolarian plate prompt (`select_prompt` saw no `range|distribution|bar=|scanning electron` markers — caption is a classic plate caption with species list).
-- **Raw M3 panels**: 13 (all 13 `Fig. N` figures listed in the caption).
+- **Raw LLM panels**: 13 (all 13 `Fig. N` figures listed in the caption).
 - **Preds after `dedup_panels` + `filter_low_confidence(0.7)`**: **13/13 survive**.
 - **Faithfulness check vs the printed caption text**:
 
-  | Fig | Caption says | M3 returned | Match |
+  | Fig | Caption says | LLM returned | Match |
   |-----|--------------|-------------|-------|
   | 1   | `Stichocorys peregrina (Riedel)` | `Stichocorys peregrina` | yes |
   | 2   | `Stichocorys peregrina (Riedel)` | `Stichocorys peregrina` | yes |
@@ -102,16 +102,16 @@ Per-paper JSON dumps and rendered PNGs are under `/tmp/random_test2/`.
 - **Page used**: 3, **Plate anchor**: 2.
 - **Caption length**: 2556 chars.
 - **Prompt template chosen**: "Given a figure caption and image" (broad figure prompt — caption mentions neither maps nor strat columns, so `select_prompt` falls through to the GENERIC prompt).
-- **Raw M3 panels**: 1.
+- **Raw LLM panels**: 1.
 - **Preds after dedup + conf**: 1 panel with `species="None"`, confidence 1.0.
-- **Interpretation**: the runner stopped at *plate 2* (the first plate anchor in the document). Plate 2 in this paper is a stratigraphic/range-chart figure, not a species SEM plate. The M3 model correctly recognized that no species is depicted and returned None with high confidence. The pipeline did **not** hallucinate a species.
+- **Interpretation**: the runner stopped at *plate 2* (the first plate anchor in the document). Plate 2 in this paper is a stratigraphic/range-chart figure, not a species SEM plate. The LLM model correctly recognized that no species is depicted and returned None with high confidence. The pipeline did **not** hallucinate a species.
 
 ### Paper 5 — Ble_2020 (supplementary)
 
 - **Page used**: 3, **Plate anchor**: 1.
 - **Caption length**: 808 chars.
 - **Prompt template chosen**: **"Given a map caption and image"** (caption contains geographic / locality markers that trigger the MAP_PROMPT predicate).
-- **Raw M3 panels**: 6 (labelled `a`–`f`).
+- **Raw LLM panels**: 6 (labelled `a`–`f`).
 - **Preds after dedup + conf**: 6 preds — 3 with `species="None"` and 3 with `species="radiolarian"`.
 - **Interpretation**: This is a SIMS-analysis figure (a–f panels of isotope data on radiolarian tests). No species binomials appear in the caption because the figure isn't a species plate. The model correctly returned None for 3 sub-panels and the uninformative placeholder "radiolarian" for the other 3 (the caption text only says "radiolarian test"). The MAP_PROMPT was the right call (it's a locality/data figure) — but for plate-style figures this is the prompt to suppress. **No bug**, but it's a useful reminder that `select_prompt`'s keyword markers can misfire.
 
@@ -120,7 +120,7 @@ Per-paper JSON dumps and rendered PNGs are under `/tmp/random_test2/`.
 - **Page used**: 2, **Plate anchor**: 1.
 - **Caption length**: 4165 chars (very long — caption lists 6 figures with multiple sub-panels each).
 - **Prompt template chosen**: standard radiolarian plate prompt.
-- **Raw M3 panels**: 16 (1 fig header + 15 sub-panel entries).
+- **Raw LLM panels**: 16 (1 fig header + 15 sub-panel entries).
 - **Preds after dedup + conf**: **16/16 survive**.
 - **Unique species extracted (3)**:
 
@@ -163,7 +163,7 @@ Per-paper JSON dumps and rendered PNGs are under `/tmp/random_test2/`.
    Lazarus, Anderson, Kurihara, and Ble (header-only sub-panels) all
    returned `species=None` with high confidence — the "right"
    non-extraction rather than the "wrong" hallucination. This is the
-   inverse of the random-3 test (where M3 correctly ignored ammonite
+   inverse of the random-3 test (where LLM correctly ignored ammonite
    plates in a non-radiolarian paper).
 
 3. **`caption_fixer.select_caption` has a real false-negative rate for
@@ -212,5 +212,5 @@ guaranteed to have plates**, not pipeline quality.
 ## Files
 
 - `/tmp/random_test2/runner.py` — single-paper driver
-- `/tmp/random_test2/<paper>_p<N>.json` — per-paper dump of raw M3 panels + post-processed preds
-- `/tmp/random_test2/panel_<paper>_p<N>.png` — the page image sent to M3 (DPI 150)
+- `/tmp/random_test2/<paper>_p<N>.json` — per-paper dump of raw LLM panels + post-processed preds
+- `/tmp/random_test2/panel_<paper>_p<N>.png` — the page image sent to LLM (DPI 150)

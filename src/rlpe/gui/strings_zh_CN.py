@@ -196,7 +196,7 @@ STRINGS = {
     # Phase 65 Plan A.6: cross-figure linker source chip labels.
     "restab.detail.link_source.sample_match": "样品号匹配",
     "restab.detail.link_source.locality_match": "产地匹配",
-    "restab.detail.link_source.m3_inference": "M3 推理",
+    "restab.detail.link_source.llm_inference": "LLM 推理",
     "restab.detail.link_source.unlinked": "未关联",
     # Phase 66 Plan C.6: visual-coordinate cross-reference section
     # labels (Phase C fires only when Phase A Strategy-1 didn't match).
@@ -225,7 +225,7 @@ STRINGS = {
     "restab.no_job": "未加载任务",
     "restab.search.label": "搜索：",
     "restab.search.placeholder": "按 species / caption / panel id / family 过滤…",
-    "runtab.adv_group": "🔬 高级 (LLM / M3 / PBDB)",
+    "runtab.adv_group": "🔬 高级 (LLM / LLM / PBDB)",
     "runtab.basic_group": "⚙️ 基础配置",
     "runtab.browse": "浏览…",
     "runtab.cancel": "⏹  取消",
@@ -241,12 +241,12 @@ STRINGS = {
     "runtab.label.grobid_timeout": "GROBID 超时 (秒)：",
     "runtab.label.grobid_url": "GROBID 地址：",
     "runtab.label.llm_backend": "LLM 后端：",
-    "runtab.label.m3_budget": "M3 思考预算：",
-    "runtab.label.m3_lang": "M3 prompt 语言：",
-    "runtab.label.m3_max_retries": "M3 最大重试：",
-    "runtab.label.m3_model": "M3 模型：",
-    "runtab.label.m3_output": "M3 最大输出 tokens：",
-    "runtab.label.m3_timeout": "M3 超时 (秒)：",
+    "runtab.label.llm_budget": "LLM 思考预算：",
+    "runtab.label.llm_lang": "LLM prompt 语言：",
+    "runtab.label.llm_max_retries": "LLM 最大重试：",
+    "runtab.label.llm_model": "LLM 模型：",
+    "runtab.label.llm_output": "LLM 最大输出 tokens：",
+    "runtab.label.llm_timeout": "LLM 超时 (秒)：",
     "runtab.label.ocr_backend": "OCR 后端：",
     "runtab.label.ocr_lang": "OCR 语言：",
     "runtab.label.od_caption_window": "OD Caption 窗口：",
@@ -255,8 +255,8 @@ STRINGS = {
     "runtab.label.panel_score": "Panel 分数阈值：",
     "runtab.label.use_gpu": "使用 GPU：",
     "runtab.label.workers": "工作线程数：",
-    "runtab.m3_multi_plate": "M3 多图版增强",
-    "runtab.m3_stage3": "M3 阶段 3 (panel 精修)",
+    "runtab.llm_multi_plate": "LLM 多图版增强",
+    "runtab.llm_stage3": "LLM 阶段 3 (panel 精修)",
     "runtab.ocr_lang.placeholder": "如 English、中文 (简体)、日本語",
     "runtab.ocr_lang.tooltip": 'OCR 语言（如 English、中文、日本語）。\n可编辑——高级用户可输入 "en,ja" 以支持多语言。',
     "runtab.od_fallback": "GROBID 失败时允许 OpenDataLoader 兜底",
@@ -301,20 +301,23 @@ STRINGS = {
     "settab.grobid.retries": "最大重试：",
     "settab.grobid.timeout": "超时 (秒)：",
     "settab.grobid.url": "GROBID 地址：",
-    "settab.llm": "LLM / M3",
+    "settab.llm": "LLM 云端 API",
     "settab.llm.backend": "LLM 后端：",
-    "settab.llm.api_key": "MiniMax API 密钥：",
+    "settab.llm.base_url": "API 地址：",
+    "settab.llm.base_url_hint": "https://<供应商>/anthropic（留空 = 已保存配置 / ANTHROPIC_BASE_URL）",
+    "settab.llm.api_key": "API 密钥：",
+    "settab.llm.api_key_hint": "（留空 = 已保存配置 / ANTHROPIC_API_KEY 环境变量）",
     "settab.llm.outbound": "数据出站策略：",
     "settab.log.open_fail": "无法打开：{error}\n\n路径：{path}",
     "settab.log.path": "日志文件：{path}",
     "settab.log.not_yet": "暂无日志文件。\n\n日志将在首次运行流水线后生成。\n\n预期路径：\n{path}",
     "settab.log.title": "日志文件",
-    "settab.m3.budget": "M3 思考预算：",
-    "settab.m3.lang": "M3 prompt 语言：",
-    "settab.m3.max_retries": "M3 最大重试：",
-    "settab.m3.model": "M3 模型：",
-    "settab.m3.output": "M3 最大输出 tokens：",
-    "settab.m3.timeout": "M3 超时 (秒)：",
+    "settab.llm.budget": "LLM 思考预算：",
+    "settab.llm.lang": "LLM prompt 语言：",
+    "settab.llm.max_retries": "LLM 最大重试：",
+    "settab.llm.model": "LLM 模型：",
+    "settab.llm.output": "LLM 最大输出 tokens：",
+    "settab.llm.timeout": "LLM 超时 (秒)：",
     "settab.ocr": "OCR",
     "settab.ocr.backend": "OCR 后端：",
     "settab.ocr.caption_window": "Caption 窗口 (GROBID)：",
@@ -389,13 +392,13 @@ STRINGS = {
 }
 
 
-# Phase 55 audit M3 — fail loudly if the auto-translate script ever
+# Phase 55 audit LLM — fail loudly if the auto-translate script ever
 # emits a duplicate key. Python silently keeps the LAST duplicate
 # in a dict literal, masking upstream bugs in the translation
 # generator. Walking ``STRINGS.items()`` and reporting collisions
 # here surfaces them at import time (which runs at GUI startup)
 # instead of letting them silently shadow each other.
-# Phase 55 audit M3 — fail loudly if the auto-translate script ever
+# Phase 55 audit LLM — fail loudly if the auto-translate script ever
 # emits a duplicate key. Python silently keeps the LAST duplicate
 # in a dict literal, masking upstream bugs in the translation
 # generator. We re-parse the source file (this very module) and

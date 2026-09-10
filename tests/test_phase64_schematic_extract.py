@@ -1,6 +1,6 @@
-"""Phase 64 Plan B Task 3: M3 ``extract_schematic`` method + prompt.
+"""Phase 64 Plan B Task 3: LLM ``extract_schematic`` method + prompt.
 
-The new method on ``M3Engine`` runs the ``schematic_geo`` vision
+The new method on ``SemanticEngine`` runs the ``schematic_geo`` vision
 prompt on schematic / diagram / reconstruction / phylogenetic
 figures and returns the JSON matching the prompt contract:
 
@@ -16,7 +16,7 @@ figures and returns the JSON matching the prompt contract:
     "confidence": float,
   }
 
-Tests use ``FakeM3Backend`` (tests/fakes/fake_m3_backend.py) to
+Tests use ``FakeM3Backend`` (tests/fakes/fake_llm_backend.py) to
 avoid any outbound HTTP traffic. The fake accepts canned responses
 keyed by ``match`` callable on the system prompt so we can route
 the new ``schematic_geo`` prompt to its own canned answer.
@@ -32,8 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 from PIL import Image
 
-from rlpe.m3_engine import PROMPT_REGISTRY, SECTION_TYPE_BY_FIGURE, M3Engine
-from tests.fakes.fake_m3_backend import FakeM3Backend
+from rlpe.semantic_engine import PROMPT_REGISTRY, SECTION_TYPE_BY_FIGURE, SemanticEngine
+from tests.fakes.fake_llm_backend import FakeM3Backend
 
 
 def _make_image(w: int = 64, h: int = 64) -> Image.Image:
@@ -43,7 +43,7 @@ def _make_image(w: int = 64, h: int = 64) -> Image.Image:
 
 
 def _schematic_canned() -> dict:
-    """Representative M3 response for a schematic figure."""
+    """Representative LLM response for a schematic figure."""
     return {
         "label": None,
         "species": None,
@@ -76,7 +76,7 @@ def _schematic_canned() -> dict:
 
 
 def _phylogenetic_canned() -> dict:
-    """Representative M3 response for a phylogenetic tree."""
+    """Representative LLM response for a phylogenetic tree."""
     return {
         "label": None,
         "species": None,
@@ -107,9 +107,9 @@ def _phylogenetic_canned() -> dict:
     }
 
 
-def _make_engine_with_canned(canned: list[dict]) -> M3Engine:
+def _make_engine_with_canned(canned: list[dict]) -> SemanticEngine:
     backend = FakeM3Backend(canned_responses=canned)
-    return M3Engine(backend=backend)
+    return SemanticEngine(backend=backend)
 
 
 class TestSchematicGeoPrompt:
@@ -134,7 +134,7 @@ class TestSchematicGeoPrompt:
 
 
 class TestExtractSchematic:
-    """M3Engine.extract_schematic dispatches to schematic_extract prompt."""
+    """SemanticEngine.extract_schematic dispatches to schematic_extract prompt."""
 
     def test_returns_prompt_contract_shape(self) -> None:
         engine = _make_engine_with_canned(
@@ -196,7 +196,7 @@ class TestExtractSchematic:
 
     def test_returns_none_for_tiny_image(self) -> None:
         """An image below 32x32 returns None without making the
-        M3 call — vision on a 16x16 thumbnail is pure noise."""
+        LLM call — vision on a 16x16 thumbnail is pure noise."""
         engine = _make_engine_with_canned(
             [
                 {

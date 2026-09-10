@@ -1,6 +1,6 @@
 """Phase 61 Plan 4 (Bug 4.9): enrichment caption must keep the current plate's content.
 
-Previously ``enrich_plate_panels`` sent the full ``page_caption`` to M3,
+Previously ``enrich_plate_panels`` sent the full ``page_caption`` to LLM,
 which contains captions for *other* plates on the same page. The
 ``api_redacted`` outbound policy then truncated the entire thing to 200
 chars via ``_apply_outbound_policy``, losing the current plate's
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from rlpe.m3_engine import _redact_enrichment_caption
+from rlpe.semantic_engine import _redact_enrichment_caption
 
 
 def test_enrichment_redact_keeps_relevant_plate_caption():

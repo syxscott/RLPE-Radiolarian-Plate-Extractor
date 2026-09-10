@@ -1,14 +1,14 @@
 """Run the full research-grade F1 eval.
 
-Combines: caption_fixer + prompts + post_process + LLM-first MiniMax M3
+Combines: caption_fixer + prompts + post_process + LLM-first LLM LLM
 + 5-fold CV + bootstrap CI on the 9-paper v19 set.
 
 Reports train/test F1 separately to expose generalization gap.
 
 Environment variables (set these BEFORE running):
-  - ANTHROPIC_API_KEY   : MiniMax API key (Anthropic-compatible)
-  - ANTHROPIC_BASE_URL  : defaults to https://api.minimaxi.com/anthropic
-  - ANTHROPIC_MODEL     : defaults to MiniMax-M3
+  - ANTHROPIC_API_KEY   : LLM API key (Anthropic-compatible)
+  - ANTHROPIC_BASE_URL  : required (no vendor default since F17)
+  - ANTHROPIC_MODEL     : required (no vendor default since F17)
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ from post_process import (
 )
 from prompts import build_user_prompt, select_prompt
 
-from rlpe.llm_backends import MiniMaxM3Backend
+from rlpe.llm_backends import AnthropicCompatBackend
 from rlpe.utils import stable_id
 
 PAPERS_DIR = REPO / "data" / "pdfs"
@@ -110,7 +110,7 @@ def call_m3(backend, img, caption, system_prompt) -> dict | None:
 
 
 def extract_panels_for_paper(backend, slug: str, gold: list[dict]) -> list[dict]:
-    """Run caption_fixer + prompts + M3 + post_process on one paper."""
+    """Run caption_fixer + prompts + LLM + post_process on one paper."""
     pdf_path = find_pdf(slug)
     if pdf_path is None:
         print(f"  no PDF for {slug}, skip")
@@ -210,10 +210,10 @@ def main():
                         os.environ["ANTHROPIC_API_KEY"] = val
                     break
 
-    backend = MiniMaxM3Backend(
+    backend = AnthropicCompatBackend(
         api_key=os.environ["ANTHROPIC_API_KEY"],
-        base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"),
-        model=os.environ.get("ANTHROPIC_MODEL", "MiniMax-M3"),
+        base_url=os.environ.get("ANTHROPIC_BASE_URL", ""),
+        model=os.environ.get("ANTHROPIC_MODEL", ""),
         timeout_sec=60,
     )
 

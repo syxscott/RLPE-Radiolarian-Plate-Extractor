@@ -3,7 +3,7 @@
 6 figure types must be correctly classified by
 ``classify_figure_type`` AND piped through the correct vision
 prompt in the pipeline. Previously only ``plate`` and
-``range_chart`` had proper M3 vision extraction — the other 4
+``range_chart`` had proper LLM vision extraction — the other 4
 (``strat_column``, ``litholog_column``, ``paleogeographic_map``,
 ``map``) either fell through to plate processing or only
 produced text-only stubs.
@@ -123,24 +123,24 @@ class TestPromptRegistry:
     """Every new figure type must have a corresponding prompt."""
 
     def test_strat_column_prompt_exists(self):
-        from rlpe.m3_engine import PROMPT_REGISTRY
+        from rlpe.semantic_engine import PROMPT_REGISTRY
 
         assert "strat_column_geo" in PROMPT_REGISTRY
 
     def test_litholog_column_prompt_exists(self):
-        from rlpe.m3_engine import PROMPT_REGISTRY
+        from rlpe.semantic_engine import PROMPT_REGISTRY
 
         # Key MUST match f"{figure_type}_geo" contract.
         assert "litholog_column_geo" in PROMPT_REGISTRY
 
     def test_paleogeographic_map_prompt_exists(self):
-        from rlpe.m3_engine import PROMPT_REGISTRY
+        from rlpe.semantic_engine import PROMPT_REGISTRY
 
         # Key MUST match f"{figure_type}_geo" contract.
         assert "paleogeographic_map_geo" in PROMPT_REGISTRY
 
     def test_section_type_mapping(self):
-        from rlpe.m3_engine import SECTION_TYPE_BY_FIGURE
+        from rlpe.semantic_engine import SECTION_TYPE_BY_FIGURE
 
         assert SECTION_TYPE_BY_FIGURE["strat_column"] == "stratigraphic_column"
         assert SECTION_TYPE_BY_FIGURE["litholog_column"] == "litholog_column"
@@ -175,8 +175,10 @@ class TestPipelineRoutingSource:
         # call to be wrapped across lines (commit ac99b12 split the
         # long line); regex matches newline-tolerant whitespace.
         assert _re.search(
-            r"_m3_call_with_fallback\(\s*self\.m3_engine\.extract_geology\s*,", text
-        ), "pipeline.py must call _m3_call_with_fallback(self.m3_engine.extract_geology, ...)"
+            r"_llm_call_with_fallback\(\s*self\.semantic_engine\.extract_geology\s*,", text
+        ), (
+            "pipeline.py must call _llm_call_with_fallback(self.semantic_engine.extract_geology, ...)"
+        )
         assert "figure_type=fig_type," in text
 
     def test_pipeline_creates_stub_record_for_geo_vision(self):

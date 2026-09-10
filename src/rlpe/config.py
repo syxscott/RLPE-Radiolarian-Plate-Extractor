@@ -68,7 +68,23 @@ _KNOWN_EXTRA_KEYS = {
     "gemma_device_map",
     "use_geology_llm",
     "gemma_init_error",
-    # MiniMax M3 API (Anthropic-compatible)
+    # LLM cloud API (Anthropic-compatible, provider-agnostic)
+    "llm_api_key",
+    "llm_base_url",
+    "llm_model",
+    "llm_max_concurrent",
+    "llm_timeout_sec",
+    "llm_max_retries",
+    "llm_enable_thinking",
+    "llm_thinking_budget_tokens",
+    "llm_max_output_tokens",
+    "llm_fallback_default",
+    "llm_interactive",
+    "data_outbound_policy",
+    "_llm_external_handler",  # injected by web/API layer
+    # Legacy vendor-branded aliases of the llm_* keys above (F17
+    # rename). Kept listed so old configs load without typo warnings;
+    # the backend builders read them as fallbacks.
     "MiniMax_api_key",
     "MiniMax_endpoint",
     "MiniMax_model",
@@ -80,8 +96,7 @@ _KNOWN_EXTRA_KEYS = {
     "MiniMax_max_output_tokens",
     "MiniMax_fallback_default",
     "MiniMax_interactive",
-    "data_outbound_policy",
-    "_MiniMax_external_handler",  # injected by web/API layer
+    "_MiniMax_external_handler",
     # OpenDataLoader integration
     "use_opendataloader",
     "od_use_ocr",
@@ -89,7 +104,7 @@ _KNOWN_EXTRA_KEYS = {
     "od_merge_gap_pt",
     # Phase 27: multilingual OCR + caption language selection
     "ocr_lang",
-    "m3_prompt_lang",
+    "llm_prompt_lang",
     # Phase 29: GROBID retry + OD-fallback knobs. ``grobid_max_retries``
     # is the total HTTP attempts; ``grobid_timeout`` is the per-attempt
     # request timeout. ``disable_od_fallback`` is an escape hatch for
@@ -100,34 +115,34 @@ _KNOWN_EXTRA_KEYS = {
     "max_regions_per_caption",
     "grobid_no_probe",  # Phase 43: skip is_available() probe
     "disable_od_fallback",
-    # M3 5-stage semantic engine
-    "m3_enhanced_mode",
-    "m3_stage_1",
-    "m3_stage_2",
-    "m3_stage_3",
-    "m3_stage_4",
-    "m3_stage_5",
-    "m3_match_samples",
-    "m3_diagnostic_dir",
-    "m3_skip_match_on_empty_caption",
-    "m3_retry_without_thinking",
-    "m3_temperature",
-    "m3_thinking_budget",
+    # LLM 5-stage semantic engine
+    "llm_enhanced_mode",
+    "llm_stage_1",
+    "llm_stage_2",
+    "llm_stage_3",
+    "llm_stage_4",
+    "llm_stage_5",
+    "llm_match_samples",
+    "llm_diagnostic_dir",
+    "llm_skip_match_on_empty_caption",
+    "llm_retry_without_thinking",
+    "llm_temperature",
+    "llm_thinking_budget",
     # Round 6 + Round 7 multi-modal vision toggles
-    "use_m3_stage3",
-    "m3_multi_plate_enrich",
-    # Sweep 6 (audit 2026-08-02 C4): ``m3_stage_6`` and the four
-    # ``m3_per_panel_*`` knobs were listed here as legitimate extras,
+    "use_llm_stage3",
+    "llm_multi_plate_enrich",
+    # Sweep 6 (audit 2026-08-02 C4): ``llm_stage_6`` and the four
+    # ``llm_per_panel_*`` knobs were listed here as legitimate extras,
     # but they're real ``PipelineConfig`` dataclass fields (see
-    # ``m3_stage_6`` at line 211, ``m3_per_panel_*`` at lines
+    # ``llm_stage_6`` at line 211, ``llm_per_panel_*`` at lines
     # 218-220). Code that wrote them to ``cfg.extra`` was wrong
     # and would have tripped the unknown-keys warning. Removed.
-    # Audit 2026-09-05 (tier3-D2): ``m3_stage_6`` is back — BOTH the
+    # Audit 2026-09-05 (tier3-D2): ``llm_stage_6`` is back — BOTH the
     # CLI and the Web extra builder write it into ``extra``, and
     # ``__post_init__`` now promotes it onto the typed field. Without
-    # whitelisting it, every ``--m3-stage-6`` run tripped the
+    # whitelisting it, every ``--llm-stage-6`` run tripped the
     # unknown-extra-key warning.
-    "m3_stage_6",
+    "llm_stage_6",
     # LLM-first extraction (opt-in; default True when Gemma runtime is set)
     "use_llm_first",
     # Multi-modal geology vision (Commit 2 / Round 3)
@@ -221,44 +236,44 @@ class PipelineConfig:
     num_workers: int = 4
     render_dpi: int = 200
     save_intermediate: bool = False  # Round 14 audit: default OFF — flipping this to True dumps per-region / per-page JSON to disk; on a 200-page PDF this produced ~117 GB of smoke-output during a Round 14 replay. Keep the default off; only set True for short debugging runs.
-    # Audit 2026-08-02: M3 morphology extraction (Stage 6). Opt-in.
-    # When True, the pipeline asks ``M3Engine.infer_morphology`` for
+    # Audit 2026-08-02: LLM morphology extraction (Stage 6). Opt-in.
+    # When True, the pipeline asks ``SemanticEngine.infer_morphology`` for
     # one MorphologyRecord per unique (paper, species) pair that has
     # an anchorable Description / Diagnosis section. Per-paper dedup
     # caps the API cost at
-    # ``m3_morphology_max_species_per_paper`` species (default 100).
+    # ``llm_morphology_max_species_per_paper`` species (default 100).
     # When False (default), no morphology records are produced and
-    # no M3 call is made for morphology.
-    m3_stage_6: bool = False
-    m3_morphology_max_species_per_paper: int = 100
-    m3_morphology_max_context_chars: int = 6000
-    m3_morphology_min_caption_chars: int = 120
-    # Phase 2026-08-17: Stage 4.5 per-panel M3 vision species ID.
-    # Opt-in; when True, fans out one M3 vision call per Stage-3 panel
-    # crop and overwrites the regex-matched species when M3's confidence
+    # no LLM call is made for morphology.
+    llm_stage_6: bool = False
+    llm_morphology_max_species_per_paper: int = 100
+    llm_morphology_max_context_chars: int = 6000
+    llm_morphology_min_caption_chars: int = 120
+    # Phase 2026-08-17: Stage 4.5 per-panel LLM vision species ID.
+    # Opt-in; when True, fans out one LLM vision call per Stage-3 panel
+    # crop and overwrites the regex-matched species when LLM's confidence
     # meets the threshold. Pure additive — falls back to regex on any
-    # backend error. See ``_apply_m3_per_panel_species_id``.
-    m3_per_panel_enabled: bool = False
-    m3_per_panel_min_conf: float = 0.55
-    m3_per_panel_max_per_figure: int = 20
-    m3_per_panel_max_per_paper: int = 200
+    # backend error. See ``_apply_llm_per_panel_species_id``.
+    llm_per_panel_enabled: bool = False
+    llm_per_panel_min_conf: float = 0.55
+    llm_per_panel_max_per_figure: int = 20
+    llm_per_panel_max_per_paper: int = 200
     # Audit 2026-08-17: Stage 3 bbox + crop enrichment gate (was previously
-    # read from ``config.extra["m3_stage3"]`` but the CLI set the key as
-    # ``use_m3_stage3`` -- the gate never fired). Now a typed attribute
-    # populated by the CLI as ``m3_stage3_enabled=args.use_m3_stage3``.
+    # read from ``config.extra["llm_stage3"]`` but the CLI set the key as
+    # ``use_llm_stage3`` -- the gate never fired). Now a typed attribute
+    # populated by the CLI as ``llm_stage3_enabled=args.use_llm_stage3``.
     # When True, ``_apply_stage3_bbox_crops`` crops each Stage 3 panel
-    # bbox to disk and stamps ``panel_id_source="m3_vision"`` on the
+    # bbox to disk and stamps ``panel_id_source="llm_vision"`` on the
     # matching result rows.
-    m3_stage3_enabled: bool = False
+    llm_stage3_enabled: bool = False
     # Audit 2026-08-17: Round 7 multi-plate enrichment gate (was
-    # previously read from ``config.extra["m3_multi_plate_enrich"]`` but
+    # previously read from ``config.extra["llm_multi_plate_enrich"]`` but
     # the CLI path never populated the key, so the second-pass was
     # silently disabled). Now a typed attribute populated by the CLI as
-    # ``m3_multi_plate_enrich_enabled=args.m3_multi_plate_enrich``. When
-    # True, ``_apply_multi_plate_enrichment`` fires a second-pass M3
+    # ``llm_multi_plate_enrich_enabled=args.llm_multi_plate_enrich``. When
+    # True, ``_apply_multi_plate_enrichment`` fires a second-pass LLM
     # vision call on figures where the caption-image pairing missed a
     # plate (e.g. Bandini 2011 Plates 7-9).
-    m3_multi_plate_enrich_enabled: bool = False
+    llm_multi_plate_enrich_enabled: bool = False
     # Round 14: default OFF. When True, _process_region dumps a
     # per-region ``auto_fig_pNNN_rNN.json`` to disk (34 MB each on
     # 200-page PDFs) and _process_one_pdf dumps the full
@@ -383,73 +398,75 @@ class PipelineConfig:
                 f"(or empty string ''), got {self.yolo_device!r}"
             )
 
-        # Audit 2026-08-02: M3 morphology Stage-6 validation. Coerce
+        # Audit 2026-08-02: LLM morphology Stage-6 validation. Coerce
         # incoming types (string from YAML/JSON) and clamp to safe
         # ranges so a bad operator value doesn't crash the run.
         # Audit 2026-09-05 (tier3-D2 follow-up): promote
-        # ``extra["m3_stage_6"]`` onto the typed field. Both the CLI and
+        # ``extra["llm_stage_6"]`` onto the typed field. Both the CLI and
         # the Web extra builder write the key into ``extra``, but only
         # the CLI also set the typed attribute — a web job with
-        # ``m3_stage_6: true`` never reached
+        # ``llm_stage_6: true`` never reached
         # ``_apply_morphology_enrichment`` (which reads the typed
         # field) and silently produced nothing. ``None`` (the CLI's
         # BooleanOptionalAction default) is skipped; an explicit CLI
         # flag still wins because it assigns the typed field after
         # construction.
-        if self.extra.get("m3_stage_6") is not None:
-            self.m3_stage_6 = bool(self.extra["m3_stage_6"])
+        if self.extra.get("llm_stage_6") is not None:
+            self.llm_stage_6 = bool(self.extra["llm_stage_6"])
         try:
-            self.m3_stage_6 = bool(self.m3_stage_6)
-            self.m3_morphology_max_species_per_paper = int(self.m3_morphology_max_species_per_paper)
-            self.m3_morphology_max_context_chars = int(self.m3_morphology_max_context_chars)
-            self.m3_morphology_min_caption_chars = int(self.m3_morphology_min_caption_chars)
+            self.llm_stage_6 = bool(self.llm_stage_6)
+            self.llm_morphology_max_species_per_paper = int(
+                self.llm_morphology_max_species_per_paper
+            )
+            self.llm_morphology_max_context_chars = int(self.llm_morphology_max_context_chars)
+            self.llm_morphology_min_caption_chars = int(self.llm_morphology_min_caption_chars)
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                "m3_morphology_* fields must be ints/bools, got "
-                f"max={self.m3_morphology_max_species_per_paper!r}, "
-                f"context={self.m3_morphology_max_context_chars!r}, "
-                f"min_caption={self.m3_morphology_min_caption_chars!r} ({exc})"
+                "llm_morphology_* fields must be ints/bools, got "
+                f"max={self.llm_morphology_max_species_per_paper!r}, "
+                f"context={self.llm_morphology_max_context_chars!r}, "
+                f"min_caption={self.llm_morphology_min_caption_chars!r} ({exc})"
             ) from exc
-        if self.m3_morphology_max_species_per_paper < 1:
+        if self.llm_morphology_max_species_per_paper < 1:
             raise ValueError(
-                "m3_morphology_max_species_per_paper must be >= 1, "
-                f"got {self.m3_morphology_max_species_per_paper}"
+                "llm_morphology_max_species_per_paper must be >= 1, "
+                f"got {self.llm_morphology_max_species_per_paper}"
             )
-        if self.m3_morphology_max_context_chars < 200:
+        if self.llm_morphology_max_context_chars < 200:
             raise ValueError(
-                "m3_morphology_max_context_chars must be >= 200, "
-                f"got {self.m3_morphology_max_context_chars}"
+                "llm_morphology_max_context_chars must be >= 200, "
+                f"got {self.llm_morphology_max_context_chars}"
             )
-        if self.m3_morphology_min_caption_chars < 0:
+        if self.llm_morphology_min_caption_chars < 0:
             raise ValueError(
-                "m3_morphology_min_caption_chars must be >= 0, "
-                f"got {self.m3_morphology_min_caption_chars}"
+                "llm_morphology_min_caption_chars must be >= 0, "
+                f"got {self.llm_morphology_min_caption_chars}"
             )
 
         # Phase 2026-08-17 Stage 4.5: coerce the 4 new fields from YAML
         # string inputs and validate their ranges. Matches the
-        # ``m3_morphology_*`` precedent right above.
-        self.m3_per_panel_enabled = bool(self.m3_per_panel_enabled)
-        self.m3_per_panel_min_conf = float(self.m3_per_panel_min_conf)
-        if not (0.0 <= self.m3_per_panel_min_conf <= 1.0):
+        # ``llm_morphology_*`` precedent right above.
+        self.llm_per_panel_enabled = bool(self.llm_per_panel_enabled)
+        self.llm_per_panel_min_conf = float(self.llm_per_panel_min_conf)
+        if not (0.0 <= self.llm_per_panel_min_conf <= 1.0):
             raise ValueError(
-                f"m3_per_panel_min_conf must be in [0, 1], got {self.m3_per_panel_min_conf}"
+                f"llm_per_panel_min_conf must be in [0, 1], got {self.llm_per_panel_min_conf}"
             )
-        self.m3_per_panel_max_per_figure = int(self.m3_per_panel_max_per_figure)
-        self.m3_per_panel_max_per_paper = int(self.m3_per_panel_max_per_paper)
-        if self.m3_per_panel_max_per_figure < 1 or self.m3_per_panel_max_per_paper < 1:
+        self.llm_per_panel_max_per_figure = int(self.llm_per_panel_max_per_figure)
+        self.llm_per_panel_max_per_paper = int(self.llm_per_panel_max_per_paper)
+        if self.llm_per_panel_max_per_figure < 1 or self.llm_per_panel_max_per_paper < 1:
             raise ValueError(
-                "m3_per_panel_max_per_figure / m3_per_panel_max_per_paper "
-                f"must be >= 1 (got {self.m3_per_panel_max_per_figure}, "
-                f"{self.m3_per_panel_max_per_paper})"
+                "llm_per_panel_max_per_figure / llm_per_panel_max_per_paper "
+                f"must be >= 1 (got {self.llm_per_panel_max_per_figure}, "
+                f"{self.llm_per_panel_max_per_paper})"
             )
 
         # Audit 2026-08-17: coerce the two Stage 3 / multi-plate enrichment
         # gate flags that were promoted from ``config.extra`` to typed
         # attributes. Default False for backward compat; CLI sets them to
-        # ``args.use_m3_stage3`` / ``args.m3_multi_plate_enrich``.
-        self.m3_stage3_enabled = bool(self.m3_stage3_enabled)
-        self.m3_multi_plate_enrich_enabled = bool(self.m3_multi_plate_enrich_enabled)
+        # ``args.use_llm_stage3`` / ``args.llm_multi_plate_enrich``.
+        self.llm_stage3_enabled = bool(self.llm_stage3_enabled)
+        self.llm_multi_plate_enrich_enabled = bool(self.llm_multi_plate_enrich_enabled)
 
         # Phase 38: warn (don't raise) for unknown extra-config keys.
         # A typo like ``minimax_api_key`` (lowercase) silently produces

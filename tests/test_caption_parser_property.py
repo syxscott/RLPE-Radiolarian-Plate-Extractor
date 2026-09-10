@@ -1,7 +1,7 @@
 """Property-based / fuzz tests for the regex caption parsers.
 
 The caption parsers (``_regex_parse_caption`` and the inline regexes
-in ``m3_engine.py``) are the only path the pipeline takes when the LLM
+in ``semantic_engine.py``) are the only path the pipeline takes when the LLM
 stage is disabled. A bug in any of them — e.g. an unescaped backslash
 that makes a token consume the rest of the string, or a character
 class that matches newlines and breaks pair-boundary detection —
@@ -33,7 +33,7 @@ from hypothesis import given, settings  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
-from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
+from rlpe.semantic_engine import _regex_parse_caption  # noqa: E402
 
 
 # Realistic caption fragments. A hypothesis strategy that produces

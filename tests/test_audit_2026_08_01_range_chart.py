@@ -1,4 +1,4 @@
-"""Regression tests for audit 2026-08-01 batch W2 — range_chart_extractor M3/M21."""
+"""Regression tests for audit 2026-08-01 batch W2 — range_chart_extractor LLM/M21."""
 
 from __future__ import annotations
 
@@ -50,12 +50,12 @@ def _make_chart(species_ranges: list[tuple[str, float | None]]):
 
 
 # ---------------------------------------------------------------------------
-# Bug M3 — genus disambiguation
+# Bug LLM — genus disambiguation
 # ---------------------------------------------------------------------------
 
 
 class TestSpeciesDisambiguation:
-    """Bug M3: a bare-genus panel must NOT silently link to the first
+    """Bug LLM: a bare-genus panel must NOT silently link to the first
     chart species of that genus when multiple species exist.
 
     Pre-fix: ``build_geology_links_for_panels`` took the first ``sp_key``
@@ -149,7 +149,7 @@ class TestStatusField:
         assert d["status"] == "ok"
 
     def test_safe_json_loads_returns_error_status(self, tmp_path):
-        """When the M3 backend returns non-JSON prose, extract_range_chart
+        """When the LLM backend returns non-JSON prose, extract_range_chart
         must surface ``status='error'`` with a populated ``error_message``."""
         from rlpe.range_chart_extractor import extract_range_chart
 

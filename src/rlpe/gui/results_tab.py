@@ -69,20 +69,20 @@ _SCOPE_CLASSES: dict[str, str] = {
 
 # Phase 65 Plan A.6: cross-figure linker source chip styling.
 # ``sample_match`` and ``locality_match`` are deterministic so we use
-# the "good" green chip; ``m3_inference`` is the fallback so we use
+# the "good" green chip; ``llm_inference`` is the fallback so we use
 # amber; ``unlinked`` is muted red so operators can spot rows that
 # need manual review at a glance.
 _LINK_SOURCE_PREFIX = "cross_figure_linker:"
 _LINK_SOURCE_CHIP_CLASSES: dict[str, str] = {
     "sample_match": "badge-info",  # blue chip
     "locality_match": "badge-info",  # blue chip
-    "m3_inference": "badge-warn",  # amber chip
+    "llm_inference": "badge-warn",  # amber chip
     "unlinked": "badge-muted",  # grey chip
 }
 _LINK_SOURCE_LABEL_KEYS: dict[str, str] = {
     "sample_match": "restab.detail.link_source.sample_match",
     "locality_match": "restab.detail.link_source.locality_match",
-    "m3_inference": "restab.detail.link_source.m3_inference",
+    "llm_inference": "restab.detail.link_source.llm_inference",
     "unlinked": "restab.detail.link_source.unlinked",
 }
 
@@ -1709,7 +1709,7 @@ class ResultsTab(QWidget):
 
         # ── Schematic content (Phase 64 Plan B Task B.7) ─────────
         # When the figure was classified as schematic / diagram /
-        # reconstruction / phylogenetic, the M3 ``extract_schematic``
+        # reconstruction / phylogenetic, the LLM ``extract_schematic``
         # result lives on ``metadata.figure_schematic_data``. Render
         # a compact summary so the operator can confirm the
         # extraction worked without opening the raw JSON.
@@ -1754,7 +1754,7 @@ class ResultsTab(QWidget):
                 ),
             ]
             # Sample of text elements (first 3) so the operator can
-            # see what M3 read without opening the raw JSON.
+            # see what LLM read without opening the raw JSON.
             if text_elements:
                 sample_parts: list[str] = []
                 for el in text_elements[:3]:

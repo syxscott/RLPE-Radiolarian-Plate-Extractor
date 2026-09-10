@@ -103,7 +103,7 @@ class TestAllIGNORECASEPatterns:
             patch("rlpe.pipeline.PanelSegmenter"),
         ):
             pipe = RadiolarianPipeline(cfg)
-        pipe.m3_engine = None
+        pipe.semantic_engine = None
         return pipe
 
     def test_rule3_at_line_2870_fires_on_uppercase(self, tmp_path, monkeypatch):

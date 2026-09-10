@@ -1,4 +1,4 @@
-"""MiniMax M3 API integration smoke test.
+"""LLM LLM API integration smoke test.
 
 Usage:
     # 1. Set your key in .env or env var
@@ -6,12 +6,12 @@ Usage:
     # edit .env, set ANTHROPIC_API_KEY
 
     # 2. Run
-    python scripts/test_MiniMax_api.py
+    python scripts/test_llm_api.py
 
     # Optional flags
-    python scripts/test_MiniMax_api.py --no-thinking        # disable thinking
-    python scripts/test_MiniMax_api.py --panel /path/to.png  # specific panel
-    python scripts/test_MiniMax_api.py --text-only          # skip image, just text
+    python scripts/test_llm_api.py --no-thinking        # disable thinking
+    python scripts/test_llm_api.py --panel /path/to.png  # specific panel
+    python scripts/test_llm_api.py --text-only          # skip image, just text
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ if str(SRC) not in sys.path:
 # Load .env if available, with project-key precedence over OS env.
 # See ``run_web_server.py`` / ``cli.py`` for the rationale: tools like
 # Claude Code set ANTHROPIC_BASE_URL globally for their own backend, so
-# we must override the project's MiniMax keys explicitly.
+# we must override the project's LLM keys explicitly.
 try:
     from dotenv import dotenv_values, find_dotenv, load_dotenv
 
@@ -61,12 +61,10 @@ except Exception:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MiniMax M3 API smoke test")
-    parser.add_argument("--MiniMax-api-key", type=str, default=None)
-    parser.add_argument(
-        "--MiniMax-endpoint", type=str, default="https://api.minimaxi.com/anthropic"
-    )
-    parser.add_argument("--MiniMax-model", type=str, default="MiniMax-M3")
+    parser = argparse.ArgumentParser(description="Anthropic-compatible LLM API smoke test")
+    parser.add_argument("--llm-api-key", type=str, default=None)
+    parser.add_argument("--llm-base-url", type=str, default=None)
+    parser.add_argument("--llm-model", type=str, default=None)
     parser.add_argument("--no-thinking", action="store_true")
     parser.add_argument("--thinking-budget", type=int, default=1024)
     parser.add_argument("--max-output-tokens", type=int, default=2048)
@@ -79,19 +77,36 @@ def main() -> int:
     parser.add_argument("--text-only", action="store_true", help="Skip image, test text-only path")
     args = parser.parse_args()
 
-    api_key = args.MiniMax_api_key or os.environ.get("ANTHROPIC_API_KEY")
+    from rlpe.llm_backends import (
+        AnthropicCompatBackend,
+        resolve_llm_api_key,
+        resolve_llm_base_url,
+        resolve_llm_model,
+    )
+
+    api_key = args.llm_api_key or resolve_llm_api_key()
     if not api_key:
-        print("ERROR: set ANTHROPIC_API_KEY (or pass --MiniMax-api-key)", file=sys.stderr)
-        print("  Get a Token Plan subscription key at:", file=sys.stderr)
-        print("  https://platform.minimaxi.com/user-center/payment/token-plan", file=sys.stderr)
+        print(
+            "ERROR: no API key found (pass --llm-api-key, save one in the API "
+            "settings, or set ANTHROPIC_API_KEY)",
+            file=sys.stderr,
+        )
+        return 2
+    base_url = args.llm_base_url or resolve_llm_base_url()
+    model = args.llm_model or resolve_llm_model()
+    if not base_url or not model:
+        print(
+            "ERROR: endpoint/model not configured (no vendor default exists). "
+            "Pass --llm-base-url/--llm-model, save them in the API settings, or "
+            "set ANTHROPIC_BASE_URL / ANTHROPIC_MODEL.",
+            file=sys.stderr,
+        )
         return 2
 
-    from rlpe.llm_backends import MiniMaxM3Backend
-
-    backend = MiniMaxM3Backend(
+    backend = AnthropicCompatBackend(
         api_key=api_key,
-        base_url=args.MiniMax_endpoint,
-        model=args.MiniMax_model,
+        base_url=base_url,
+        model=model,
         enable_thinking=not args.no_thinking,
         thinking_budget_tokens=args.thinking_budget,
         max_output_tokens=args.max_output_tokens,
@@ -138,7 +153,7 @@ def main() -> int:
     )
 
     print(
-        f"[2/3] Calling MiniMax M3 (model={args.MiniMax_model}, thinking={'ON' if not args.no_thinking else 'OFF'})...",
+        f"[2/3] Calling LLM LLM (model={args.llm_model}, thinking={'ON' if not args.no_thinking else 'OFF'})...",
         file=sys.stderr,
     )
     t0 = time.time()
@@ -161,10 +176,9 @@ def main() -> int:
     print(f"  model_version = {result.get('model_version')}")
     print(f"  fallback_used = {result.get('fallback_used')}")
     print(f"  usage         = {result.get('usage', {})}")
-    print(f"  cost_cny      = {result.get('cost_cny', 'n/a')}")
     summary = backend.cost_summary()
     print(
-        f"  session total = calls={summary['calls']} in={summary['input_tokens']} out={summary['output_tokens']} cost_cny={summary['total_cost_cny']}"
+        f"  session total = calls={summary['calls']} in={summary['input_tokens']} out={summary['output_tokens']}"
     )
     return 0 if not result.get("fallback_used") else 1
 

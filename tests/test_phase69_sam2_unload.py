@@ -154,7 +154,7 @@ class TestWebApiUnloadsSam2:
         assert last_idx > 0, "stop_hb.set() not found — refactored job runner?"
         # The runner finally block starts BEFORE the ``stop_hb.set()``
         # call (the cleanup preamble). Sweep 7 (N2) added ~15 lines of
-        # MiniMax_fallback_handler cleanup between ``finally:`` and
+        # llm_fallback_handler cleanup between ``finally:`` and
         # ``stop_hb.set()``; widen the window to 3000 chars to keep
         # this source guard robust to future cleanups.
         window_start = max(0, last_idx - 3000)

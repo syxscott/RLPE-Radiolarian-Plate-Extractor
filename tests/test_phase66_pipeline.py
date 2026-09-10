@@ -10,10 +10,10 @@ from rlpe.config import PipelineConfig
 
 
 def _make_tiny_png(tmp_path: Any, name: str) -> str:
-    """Write a 48x48 PNG (above the M3 tiny-image 32px guard).
+    """Write a 48x48 PNG (above the LLM tiny-image 32px guard).
 
     Audit 2026-09-05 (tier3-B4): the visual linker now REQUIRES
-    loadable images — previously it passed ``None, None`` and the M3
+    loadable images — previously it passed ``None, None`` and the LLM
     method bailed on its tiny-image guard, so the channel could never
     fire. Tests must supply real image files to exercise it.
     """
@@ -94,7 +94,7 @@ def _make_map_row(
 
 
 class _FakeM3Visual:
-    """Stand-in M3 engine exposing only cross_figure_visual_inference."""
+    """Stand-in LLM engine exposing only cross_figure_visual_inference."""
 
     def __init__(self, response: dict[str, Any] | None = None) -> None:
         self.response = response or {
@@ -124,7 +124,7 @@ def pipe(tmp_path):
 
     cfg = PipelineConfig(pdf_dir=tmp_path, work_dir=tmp_path / "work")
     p = RadiolarianPipeline(cfg)
-    p.m3_engine = None
+    p.semantic_engine = None
     return p
 
 
@@ -145,14 +145,14 @@ class TestVisualLinkerIntegration:
             image_path=_make_tiny_png(tmp_path, "strat.png"),
         )
         rows = [plate, strat]
-        pipe.m3_engine = _FakeM3Visual()
+        pipe.semantic_engine = _FakeM3Visual()
         out = pipe._apply_cross_figure_linker(rows, paper_id="p1")
         plate_out = out[0]
         links = plate_out["metadata"].get("cross_figure_visual_links") or []
         assert len(links) == 1
         link = links[0]
         assert link["target_figure_id"] == "strat1"
-        assert link["source"] == "m3_visual"
+        assert link["source"] == "llm_visual"
         assert link["target_layer"] == 3
         assert link["target_age"] == "Late Triassic"
         assert link["target_formation"] == "Scaglia Fm"
@@ -167,14 +167,14 @@ class TestVisualLinkerIntegration:
         )
         strat = _make_strat_row(figure_id="strat1", caption="Sample S1, Scaglia Fm")
         rows = [plate, strat]
-        m3 = _FakeM3Visual()
-        pipe.m3_engine = m3
+        llm = _FakeM3Visual()
+        pipe.semantic_engine = llm
         out = pipe._apply_cross_figure_linker(rows, paper_id="p1")
         plate_out = out[0]
         # No visual links should have been added
         links = plate_out["metadata"].get("cross_figure_visual_links") or []
         assert links == []
-        assert m3.calls == 0
+        assert llm.calls == 0
 
     def test_visual_linker_skipped_when_no_anchor_figure(self, pipe):
         """No strat column / map → Phase C silently skips."""
@@ -184,13 +184,13 @@ class TestVisualLinkerIntegration:
             link_source="locality_match",
         )
         rows = [plate]  # only a plate, no anchor figure
-        m3 = _FakeM3Visual()
-        pipe.m3_engine = m3
+        llm = _FakeM3Visual()
+        pipe.semantic_engine = llm
         out = pipe._apply_cross_figure_linker(rows, paper_id="p1")
         plate_out = out[0]
         links = plate_out["metadata"].get("cross_figure_visual_links") or []
         assert links == []
-        assert m3.calls == 0
+        assert llm.calls == 0
 
     def test_visual_linker_supports_paleogeographic_map(self, pipe, tmp_path):
         """Paleogeographic map counts as an anchor figure."""
@@ -200,8 +200,8 @@ class TestVisualLinkerIntegration:
             link_source="locality_match",
             image_path=_make_tiny_png(tmp_path, "plate.png"),
         )
-        m3 = _FakeM3Visual()
-        pipe.m3_engine = m3
+        llm = _FakeM3Visual()
+        pipe.semantic_engine = llm
         rows = [
             plate,
             _make_map_row(
@@ -216,7 +216,7 @@ class TestVisualLinkerIntegration:
         assert links[0]["target_figure_id"] == "map1"
 
     def test_visual_linker_empty_response(self, pipe):
-        """When M3 returns empty plate_panels, panel gets empty list."""
+        """When LLM returns empty plate_panels, panel gets empty list."""
         plate = _make_plate_row(
             panel_id="p1",
             caption="Italy",
@@ -224,7 +224,7 @@ class TestVisualLinkerIntegration:
         )
         strat = _make_strat_row(figure_id="strat1", caption="Scaglia Fm")
         rows = [plate, strat]
-        pipe.m3_engine = _FakeM3Visual(response={"plate_panels": []})
+        pipe.semantic_engine = _FakeM3Visual(response={"plate_panels": []})
         out = pipe._apply_cross_figure_linker(rows, paper_id="p1")
         plate_out = out[0]
         links = plate_out["metadata"].get("cross_figure_visual_links") or []

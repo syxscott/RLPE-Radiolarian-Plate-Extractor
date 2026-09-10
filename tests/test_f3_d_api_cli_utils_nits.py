@@ -156,7 +156,7 @@ class TestF3DCliRunDry:
             use_gpu=None,
             ocr_backend="paddleocr",
             ocr_lang="en",
-            m3_prompt_lang="auto",
+            llm_prompt_lang="auto",
             llm_backend="rules",
             deterministic=False,
             data_outbound_policy="local_only",

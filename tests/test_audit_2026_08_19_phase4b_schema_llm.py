@@ -13,7 +13,7 @@ Bug fixes covered:
   (``ma_top > ma_base``) untouched. The new ``_validate_ma_range``
   helper auto-swaps inverted pairs with a warning log so the caller
   still has *some* usable range to work with. The strict
-  ``m3_engine._validate_ma_range`` (Phase 2b M-13) still NULLS bad
+  ``semantic_engine._validate_ma_range`` (Phase 2b M-13) still NULLS bad
   ranges in the post-whitelist path — both policies coexist.
 
 - M-23: ``LlamaCppGemmaBackend._chat_completion`` used to silently
@@ -23,7 +23,7 @@ Bug fixes covered:
   (``LLMNotFoundError``) and 429 (``LLMRateLimitError``) so callers
   can route the error correctly.
 
-- M-24: ``MiniMaxM3Backend._parse_retry_after(exc)`` only parsed the
+- M-24: ``AnthropicCompatBackend._parse_retry_after(exc)`` only parsed the
   numeric ``Retry-After`` form. The new ``_parse_retry_after_header``
   static method also parses the HTTP-date form (per RFC 7231 §7.1.3)
   so future retry loops can honour both without a breaking change.
@@ -81,7 +81,7 @@ def _make_pil_image(width: int = 64, height: int = 64, color: str = "red") -> An
 class TestM21AllowedPanelFieldsConstant:
     """``_ALLOWED_PANEL_FIELDS`` exists, is a frozenset, and contains
     the canonical keys the function always emits plus the optional
-    structured extras documented in the M3 match-panel prompt."""
+    structured extras documented in the LLM match-panel prompt."""
 
     def test_constant_exists_and_is_frozenset(self):
         from rlpe.llm_backends import _ALLOWED_PANEL_FIELDS
@@ -97,7 +97,7 @@ class TestM21AllowedPanelFieldsConstant:
             )
 
     def test_contains_structural_extras(self):
-        """Optional structured extras documented in M3 prompts."""
+        """Optional structured extras documented in LLM prompts."""
         from rlpe.llm_backends import _ALLOWED_PANEL_FIELDS
 
         for key in (
@@ -242,7 +242,7 @@ class TestM22ValidateMaRangeHelper:
     """``_validate_ma_range(ma_top, ma_base)`` enforces ICZN convention
     ``ma_top < ma_base`` (younger = smaller Ma). The llm_backends
     version AUTO-SWAPS so the caller still has a usable range; the
-    strict ``m3_engine._validate_ma_range`` NULLS — both policies
+    strict ``semantic_engine._validate_ma_range`` NULLS — both policies
     coexist (engine helper runs AFTER ``_apply_geo_whitelist``)."""
 
     def test_already_valid_range_preserved(self):
@@ -321,7 +321,7 @@ class TestM22ValidateMaRangeHelper:
 
 class TestM22ApplyGeoWhitelistDoesNotAutoSwap:
     """``_apply_geo_whitelist`` MUST NOT auto-call ``_validate_ma_range``
-    because the strict ``m3_engine._validate_ma_range`` (Phase 2b M-13)
+    because the strict ``semantic_engine._validate_ma_range`` (Phase 2b M-13)
     owns the null-on-violation policy downstream. Swapping here would
     mask bad ranges from the engine's null branch and silently break
     the Phase 2b regression tests.
@@ -610,7 +610,7 @@ class TestM23LlamaCppRaisesSpecificExceptions:
 
 
 class TestM24ParseRetryAfterHeader:
-    """``MiniMaxM3Backend._parse_retry_after_header`` parses a
+    """``AnthropicCompatBackend._parse_retry_after_header`` parses a
     ``Retry-After`` header value (string) per RFC 7231 §7.1.3.
 
     Accepts:
@@ -623,59 +623,59 @@ class TestM24ParseRetryAfterHeader:
     """
 
     def test_numeric_30(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert MiniMaxM3Backend._parse_retry_after_header("30") == 30.0
+        assert AnthropicCompatBackend._parse_retry_after_header("30") == 30.0
 
     def test_numeric_60(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert MiniMaxM3Backend._parse_retry_after_header("60") == 60.0
+        assert AnthropicCompatBackend._parse_retry_after_header("60") == 60.0
 
     def test_numeric_120_capped_at_60(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert MiniMaxM3Backend._parse_retry_after_header("120") == 60.0
+        assert AnthropicCompatBackend._parse_retry_after_header("120") == 60.0
 
     def test_numeric_decimal_seconds(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         # RFC 7231 allows delta-seconds as a non-negative integer,
         # but production servers sometimes emit decimals.
-        assert MiniMaxM3Backend._parse_retry_after_header("12.5") == 12.5
+        assert AnthropicCompatBackend._parse_retry_after_header("12.5") == 12.5
 
     def test_numeric_zero_returns_zero(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         # 0 seconds is a "retry immediately" signal — return 0 so
         # the caller doesn't wait at all.
-        assert MiniMaxM3Backend._parse_retry_after_header("0") == 0.0
+        assert AnthropicCompatBackend._parse_retry_after_header("0") == 0.0
 
     def test_numeric_negative_returns_zero(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         # Negative seconds is nonsensical — treat as 0.
-        assert MiniMaxM3Backend._parse_retry_after_header("-5") == 0.0
+        assert AnthropicCompatBackend._parse_retry_after_header("-5") == 0.0
 
     def test_none_returns_zero(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert MiniMaxM3Backend._parse_retry_after_header(None) == 0.0
+        assert AnthropicCompatBackend._parse_retry_after_header(None) == 0.0
 
     def test_empty_string_returns_zero(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert MiniMaxM3Backend._parse_retry_after_header("") == 0.0
+        assert AnthropicCompatBackend._parse_retry_after_header("") == 0.0
 
     def test_whitespace_only_returns_zero(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert MiniMaxM3Backend._parse_retry_after_header("   ") == 0.0
+        assert AnthropicCompatBackend._parse_retry_after_header("   ") == 0.0
 
     def test_unparseable_garbage_returns_zero(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert MiniMaxM3Backend._parse_retry_after_header("not a number") == 0.0
+        assert AnthropicCompatBackend._parse_retry_after_header("not a number") == 0.0
 
     def test_http_date_in_future_returns_seconds(self):
         """An HTTP-date in the future returns the seconds-to-date,
@@ -684,7 +684,7 @@ class TestM24ParseRetryAfterHeader:
         from datetime import timedelta
         from email.utils import format_datetime
 
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         future = _UTC_NOW() + timedelta(minutes=5)
         # Audit 2026-09-04 (CI regression): format the date with
@@ -697,7 +697,7 @@ class TestM24ParseRetryAfterHeader:
         # ``parsedate_to_datetime`` returns 0.0. format_datetime is
         # locale-independent.
         http_date = format_datetime(future, usegmt=True)
-        result = MiniMaxM3Backend._parse_retry_after_header(http_date)
+        result = AnthropicCompatBackend._parse_retry_after_header(http_date)
         # Must be > 0 (future date) and <= 60 (cap).
         assert 0 < result <= 60.0
 
@@ -706,11 +706,11 @@ class TestM24ParseRetryAfterHeader:
         from datetime import timedelta
         from email.utils import format_datetime
 
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         past = _UTC_NOW() - timedelta(minutes=5)
         http_date = format_datetime(past, usegmt=True)
-        assert MiniMaxM3Backend._parse_retry_after_header(http_date) == 0.0
+        assert AnthropicCompatBackend._parse_retry_after_header(http_date) == 0.0
 
     def test_http_date_far_future_capped_at_60(self):
         """An HTTP-date far in the future is capped at 60 seconds so a
@@ -718,12 +718,12 @@ class TestM24ParseRetryAfterHeader:
         from datetime import timedelta
         from email.utils import format_datetime
 
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         # 24 hours in the future.
         future = _UTC_NOW() + timedelta(days=1)
         http_date = format_datetime(future, usegmt=True)
-        result = MiniMaxM3Backend._parse_retry_after_header(http_date)
+        result = AnthropicCompatBackend._parse_retry_after_header(http_date)
         assert result == 60.0
 
     def test_http_date_static_format_returns_near_timestamp(self):
@@ -731,9 +731,9 @@ class TestM24ParseRetryAfterHeader:
         07:28:00 GMT`` returns a value close to the actual delta
         (within the 60s cap, since we can't predict the wall-clock
         gap during the test)."""
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        result = MiniMaxM3Backend._parse_retry_after_header("Wed, 21 Oct 2026 07:28:00 GMT")
+        result = AnthropicCompatBackend._parse_retry_after_header("Wed, 21 Oct 2026 07:28:00 GMT")
         # The test runs in real time — the date could be in the past
         # OR far in the future. Either way the helper must return a
         # well-formed cap-bounded value:
@@ -744,17 +744,19 @@ class TestM24ParseRetryAfterHeader:
     def test_http_date_rfc_850_format(self):
         """RFC 850 format (``Sunday, 06-Nov-94 08:49:37 GMT``) is also
         accepted per RFC 7231 §7.1.1.1."""
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         # Use a past date so we expect 0.0 (regardless of wall clock).
-        result = MiniMaxM3Backend._parse_retry_after_header("Wednesday, 21-Oct-2026 07:28:00 GMT")
+        result = AnthropicCompatBackend._parse_retry_after_header(
+            "Wednesday, 21-Oct-2026 07:28:00 GMT"
+        )
         assert 0.0 <= result <= 60.0
 
     def test_http_date_invalid_returns_zero(self):
         """An unparseable HTTP-date returns 0 (no crash)."""
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert MiniMaxM3Backend._parse_retry_after_header("this is not a date 12345") == 0.0
+        assert AnthropicCompatBackend._parse_retry_after_header("this is not a date 12345") == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -768,7 +770,7 @@ class TestSourceGuard:
 
     def test_geo_whitelist_does_NOT_call_validate_ma_range(self):
         """``_apply_geo_whitelist`` must NOT call ``_validate_ma_range``
-        directly — the strict ``m3_engine._validate_ma_range`` owns
+        directly — the strict ``semantic_engine._validate_ma_range`` owns
         the null-on-violation policy downstream. A swap here would
         mask bad ranges from the engine's null branch and silently
         break the Phase 2b regression tests."""
@@ -784,7 +786,7 @@ class TestSourceGuard:
         names = set(code.co_names)
         assert "_validate_ma_range" not in names, (
             "_apply_geo_whitelist must not reference _validate_ma_range — "
-            "the strict null-on-violation policy is owned by m3_engine."
+            "the strict null-on-violation policy is owned by semantic_engine."
         )
         # Sanity: both helpers still exist as module-level callables.
         assert callable(_validate_ma_range)
@@ -810,7 +812,7 @@ class TestSourceGuard:
             assert name in src, f"LlamaCppGemmaBackend source lost reference to {name!r}"
 
     def test_minimax_defines_parse_retry_after_header(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        assert hasattr(MiniMaxM3Backend, "_parse_retry_after_header")
-        assert callable(MiniMaxM3Backend._parse_retry_after_header)
+        assert hasattr(AnthropicCompatBackend, "_parse_retry_after_header")
+        assert callable(AnthropicCompatBackend._parse_retry_after_header)

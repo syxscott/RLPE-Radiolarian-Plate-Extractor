@@ -4,7 +4,7 @@ Locks in fixes for 3 silent fallbacks found when the user ran a
 Suzuki 2011 paper and got only 1 garbage row ("Annual number of"
 matched as a species). Server log showed:
 
-  Gemma4 backend init failed: MiniMax api_key not set.
+  Gemma4 backend init failed: LLM api_key not set.
   PaddleOCR init failed; falling back to EasyOCR
   TaxoNERD init failed (model='en_eco'): __init__() got an
     unexpected keyword argument 'model'
@@ -122,19 +122,19 @@ def test_taxonerd_does_not_pass_model_kwarg():
 def test_pipeline_accepts_anthropic_api_key_as_fallback():
     """The project's .env uses ANTHROPIC_API_KEY as the documented
     user-facing key (Claude-Code-compatible name). The pipeline
-    must inject this into MiniMax_api_key when no vendor-specific
+    must inject this into llm_api_key when no vendor-specific
     key is set, so web-UI jobs don't silently lose their key."""
     src = _read("src/rlpe/pipeline.py")
     # The injection happens in __init__ before _try_init_gemma.
     # Look for the pattern: 'if not self.config.extra.get(...) and
-    # ANTHROPIC_API_KEY: ... self.config.extra["MiniMax_api_key"] ='
+    # ANTHROPIC_API_KEY: ... self.config.extra["llm_api_key"] ='
     assert "ANTHROPIC_API_KEY" in src, "Pipeline doesn't reference ANTHROPIC_API_KEY"
     assert (
-        'extra["MiniMax_api_key"]' in src
-        and "ANTHROPIC_API_KEY" in src.split('extra["MiniMax_api_key"]', 1)[0]
+        'extra["llm_api_key"]' in src
+        and "ANTHROPIC_API_KEY" in src.split('extra["llm_api_key"]', 1)[0]
     ), (
         "pipeline.py doesn't inject ANTHROPIC_API_KEY into "
-        "self.config.extra['MiniMax_api_key']. The MiniMax API is "
+        "self.config.extra['llm_api_key']. The LLM API is "
         "Anthropic-protocol — the same key works — but the backend "
         "builder only reads the explicit vendor key."
     )

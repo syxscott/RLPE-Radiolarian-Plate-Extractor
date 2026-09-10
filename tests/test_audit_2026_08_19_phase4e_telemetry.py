@@ -1,11 +1,11 @@
-"""Regression tests for audit 2026-08-19 Phase 4E — M3 telemetry + LLM
+"""Regression tests for audit 2026-08-19 Phase 4E — LLM telemetry + LLM
 error classification + prompt-registry version stamp.
 
 Phase 4E covers three closely-related fixes that landed together so the
 LLM-failure surfaces in ``/system/llm-status`` are debuggable:
 
 1. **Task 1 — LLM failure reason recorded.**  Before Phase 4E the engine
-   caught every M3 exception in one bucket (``except Exception``) and
+   caught every LLM exception in one bucket (``except Exception``) and
    only logged ``"infer_panel failed"``. Operators had no way to
    distinguish an auth failure (which requires a key rotation) from a
    rate-limit (which is transient) from a timeout (which is
@@ -16,7 +16,7 @@ LLM-failure surfaces in ``/system/llm-status`` are debuggable:
    chain in ``_infer_text`` / ``_infer_vision`` that maps each one to
    a short code stored on ``_telemetry.llm_error``.
 
-2. **Task 2 — M3 telemetry fields.**  Every M3 result now carries a
+2. **Task 2 — LLM telemetry fields.**  Every LLM result now carries a
    ``_telemetry`` sub-dict with ``model`` / ``prompt_version`` /
    ``latency_ms`` / ``timestamp`` (and the optional ``llm_error`` on
    failure paths) so downstream code can correlate cost / latency /
@@ -29,7 +29,7 @@ LLM-failure surfaces in ``/system/llm-status`` are debuggable:
    so audit can pin a result to a known prompt revision.
 
 These tests are run via ``pytest tests/test_audit_2026_08_19_phase4e_
-telemetry.py tests/test_m3_engine.py -v``.
+telemetry.py tests/test_semantic_engine.py -v``.
 """
 
 from __future__ import annotations
@@ -44,17 +44,17 @@ if str(_SRC) not in sys.path:
 
 from PIL import Image  # noqa: E402
 
-from rlpe.m3_engine import (  # noqa: E402
+from rlpe.semantic_engine import (  # noqa: E402
     PROMPT_REGISTRY,
     PROMPT_REGISTRY_VERSION,
     LLMAuthenticationError,
     LLMRateLimitError,
     LLMSchemaError,
-    M3Engine,
+    SemanticEngine,
     get_prompt_registry,
     get_prompt_registry_version,
 )
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
+from tests.fakes.fake_llm_backend import FakeM3Backend  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -66,10 +66,10 @@ def _plate(size: int = 256) -> Image.Image:
     return Image.new("RGB", (size, size))
 
 
-def _engine_with_backend(backend) -> M3Engine:
-    """Wrap ``backend`` in an M3Engine with retry-without-thinking OFF
+def _engine_with_backend(backend) -> SemanticEngine:
+    """Wrap ``backend`` in an SemanticEngine with retry-without-thinking OFF
     so the test can isolate first-attempt behaviour."""
-    return M3Engine(backend, config={"m3_retry_without_thinking": False})
+    return SemanticEngine(backend, config={"llm_retry_without_thinking": False})
 
 
 # ===========================================================================
@@ -126,7 +126,7 @@ class TestPromptRegistryVersion:
 
 
 # ===========================================================================
-# Task 2 — M3 telemetry fields on the success path
+# Task 2 — LLM telemetry fields on the success path
 # ===========================================================================
 
 
@@ -186,7 +186,7 @@ class TestInferVisionTelemetry:
         """The ``self.backend is None`` short-circuit must also stamp
         ``_telemetry`` with ``llm_error='other'`` so callers can
         distinguish 'no backend wired' from 'backend returned nothing'."""
-        engine = M3Engine(None, config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(None, config={"llm_retry_without_thinking": False})
         out = engine._infer_vision("sys", "user", _plate())
         assert out.get("fallback_used") is True
         assert out["_telemetry"]["llm_error"] == "other"
@@ -217,7 +217,7 @@ class TestInferTextTelemetry:
         assert "llm_error" not in tel
 
     def test_telemetry_no_backend_returns_other_error(self):
-        engine = M3Engine(None, config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(None, config={"llm_retry_without_thinking": False})
         out = engine._infer_text("sys", "user")
         assert out.get("fallback_used") is True
         assert out["_telemetry"]["llm_error"] == "other"
@@ -242,7 +242,7 @@ class TestInferVisionErrorClassification:
             def infer_panel(self, **_):
                 raise LLMAuthenticationError("401 invalid api key")
 
-        engine = M3Engine(_AuthBackend(), config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(_AuthBackend(), config={"llm_retry_without_thinking": False})
         out = engine._infer_vision("sys", "user", _plate())
         assert out.get("fallback_used") is True
         assert out["_telemetry"]["llm_error"] == "auth"
@@ -259,7 +259,7 @@ class TestInferVisionErrorClassification:
             def infer_panel(self, **_):
                 raise LLMRateLimitError("429 too many requests")
 
-        engine = M3Engine(_RateLimitBackend(), config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(_RateLimitBackend(), config={"llm_retry_without_thinking": False})
         out = engine._infer_vision("sys", "user", _plate())
         assert out.get("fallback_used") is True
         assert out["_telemetry"]["llm_error"] == "rate_limit"
@@ -277,7 +277,7 @@ class TestInferVisionErrorClassification:
             def infer_panel(self, **_):
                 raise TimeoutError("socket read timeout")
 
-        engine = M3Engine(_TimeoutBackend(), config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(_TimeoutBackend(), config={"llm_retry_without_thinking": False})
         out = engine._infer_vision("sys", "user", _plate())
         assert out.get("fallback_used") is True
         assert out["_telemetry"]["llm_error"] == "timeout"
@@ -296,7 +296,7 @@ class TestInferVisionErrorClassification:
             def infer_panel(self, **_):
                 raise LLMSchemaError("missing required field 'species'")
 
-        engine = M3Engine(_SchemaBackend(), config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(_SchemaBackend(), config={"llm_retry_without_thinking": False})
         out = engine._infer_vision("sys", "user", _plate())
         assert out.get("fallback_used") is True
         assert out["_telemetry"]["llm_error"] == "parse"
@@ -315,7 +315,7 @@ class TestInferVisionErrorClassification:
             def infer_panel(self, **_):
                 raise RuntimeError("kaboom")
 
-        engine = M3Engine(_BoomBackend(), config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(_BoomBackend(), config={"llm_retry_without_thinking": False})
         out = engine._infer_vision("sys", "user", _plate())
         assert out.get("fallback_used") is True
         assert out["_telemetry"]["llm_error"] == "other"
@@ -334,7 +334,7 @@ class TestInferVisionErrorClassification:
             def infer_panel(self, **_):
                 raise LLMAuthenticationError("nope")
 
-        engine = M3Engine(_BoomBackend(), config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(_BoomBackend(), config={"llm_retry_without_thinking": False})
         out = engine._infer_vision("sys", "user", _plate())
         tel = out["_telemetry"]
         assert tel["model"] == "fake-model-42"
@@ -356,7 +356,7 @@ class TestInferTextErrorClassification:
             def infer_text(self, **kwargs):
                 raise LLMAuthenticationError("401 bad key")
 
-        engine = M3Engine(_AuthBackend(), config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(_AuthBackend(), config={"llm_retry_without_thinking": False})
         out = engine._infer_text("sys", "user")
         assert out.get("fallback_used") is True
         assert out["_telemetry"]["llm_error"] == "auth"
@@ -370,7 +370,7 @@ class TestInferTextErrorClassification:
             def infer_text(self, **kwargs):
                 raise TimeoutError("read timeout")
 
-        engine = M3Engine(_TimeoutBackend(), config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(_TimeoutBackend(), config={"llm_retry_without_thinking": False})
         out = engine._infer_text("sys", "user")
         assert out.get("fallback_used") is True
         assert out["_telemetry"]["llm_error"] == "timeout"
@@ -384,7 +384,7 @@ class TestInferTextErrorClassification:
             def infer_text(self, **kwargs):
                 raise LLMRateLimitError("429 thundering herd")
 
-        engine = M3Engine(_RateLimitBackend(), config={"m3_retry_without_thinking": False})
+        engine = SemanticEngine(_RateLimitBackend(), config={"llm_retry_without_thinking": False})
         out = engine._infer_text("sys", "user")
         assert out["_telemetry"]["llm_error"] == "rate_limit"
 
@@ -396,17 +396,17 @@ class TestInferTextErrorClassification:
 
 class TestTelemetryPropagation:
     """The match_panel stage consumes ``_infer_vision`` results. Even
-    though PanelMatch.raw is the canonical carrier of MiniMax_*
-    telemetry, the new ``_telemetry`` field must NOT corrupt the
+    though PanelMatch.raw is the canonical carrier of llm_* telemetry
+    (F17 rename), the new ``_telemetry`` field must NOT corrupt the
     PanelMatch contract (no extra unknown key that downstream JSON
     schema would reject)."""
 
-    def test_match_panel_preserves_existing_MiniMax_keys(self):
-        from rlpe.m3_engine import CaptionPair
+    def test_match_panel_preserves_existing_llm_keys(self):
+        from rlpe.semantic_engine import CaptionPair
 
         class _Backend:
-            backend_name = "MiniMax"
-            model = "MiniMax-M3"
+            backend_name = "anthropic"
+            model = "test-model"
             enable_thinking = False
             max_concurrent = 1
 
@@ -427,8 +427,7 @@ class TestTelemetryPropagation:
                         }
                     ),
                     "request_id": "req-1",
-                    "model_version": "MiniMax-M3",
-                    "cost_cny": 0.045,
+                    "model_version": "test-model",
                     "usage": {"input_tokens": 100, "output_tokens": 20},
                 }
 
@@ -445,8 +444,9 @@ class TestTelemetryPropagation:
             caption_pairs=pairs,
             caption_text="Plate 1. figs 1. Actinomma leptodermum",
         )
-        # Existing MiniMax_* keys must still be on PanelMatch.raw.
+        # Existing llm_* keys must still be on PanelMatch.raw
+        # (F17: cost telemetry no longer propagated — token usage is).
         raw = out.raw or {}
-        assert raw.get("MiniMax_request_id") == "req-1"
-        assert abs(float(raw.get("MiniMax_cost_cny", 0)) - 0.045) < 1e-9
-        assert raw.get("MiniMax_model_version") == "MiniMax-M3"
+        assert raw.get("llm_request_id") == "req-1"
+        assert raw.get("llm_model_version") == "test-model"
+        assert raw.get("llm_usage") == {"input_tokens": 100, "output_tokens": 20}

@@ -24,7 +24,7 @@ Bugs found in audit:
     the LLM backend combo entry, but the combo stores friendly
     names as itemText and ISO codes as userData (Phase 47
     pattern). findText("minimax") always failed to match
-    "MiniMax-M3 (推荐)". Same bug for m3_prompt_lang.
+    "MiniMax-M3 (推荐)". Same bug for llm_prompt_lang.
 
   * MAJOR-2: Column headers set from hardcoded English on init
     ("Species (Latin)", "Panel ID", ...). The _refresh_texts
@@ -43,7 +43,7 @@ Tests:
   3. BLOCKER-1: "no" filter keeps only rows without PBDB data
   4. BLOCKER-2: page_index is read from metadata.page_index
   5. MAJOR-1: apply_settings restores llm_backend by ISO code
-  6. MAJOR-1: apply_settings restores m3_prompt_lang by ISO code
+  6. MAJOR-1: apply_settings restores llm_prompt_lang by ISO code
   7. MAJOR-2: column headers are in zh_CN on first paint (init)
   8. MAJOR-2: column headers are in en on first paint
 """
@@ -240,16 +240,16 @@ def test_run_tab_apply_settings_restores_llm_backend_by_iso_code():
     )
 
 
-def test_run_tab_apply_settings_restores_m3_prompt_lang_by_iso_code():
-    """Phase 53: same fix for M3 prompt language."""
+def test_run_tab_apply_settings_restores_llm_prompt_lang_by_iso_code():
+    """Phase 53: same fix for LLM prompt language."""
     from rlpe.gui.run_tab import RunTab
 
     rt = RunTab({})
-    rt.apply_settings({"m3_prompt_lang": "ja"})
+    rt.apply_settings({"llm_prompt_lang": "ja"})
     settings = rt.collect_settings()
-    assert settings["m3_prompt_lang"] == "ja", (
-        f"apply_settings should restore m3_prompt_lang='ja' by ISO code, "
-        f"got {settings['m3_prompt_lang']!r}"
+    assert settings["llm_prompt_lang"] == "ja", (
+        f"apply_settings should restore llm_prompt_lang='ja' by ISO code, "
+        f"got {settings['llm_prompt_lang']!r}"
     )
 
 

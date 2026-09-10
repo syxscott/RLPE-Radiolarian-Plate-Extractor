@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from rlpe.m3_engine import _LIGATURE_MAP, _normalize_caption_text
+from rlpe.semantic_engine import _LIGATURE_MAP, _normalize_caption_text
 
 
 def test_ligature_oe_ae_h():

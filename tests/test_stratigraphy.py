@@ -134,7 +134,7 @@ class TestMaPropagation:
     AgeClassification and onwards into the public GeologyRecord fields.
 
     This is the deterministic Ma mapping Task 5 wires up; lithology /
-    member / group remain for the later MiniMax-assisted extractor.
+    member / group remain for the later LLM-assisted extractor.
     """
 
     def test_changhsingian_carries_numeric_ma(self):

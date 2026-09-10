@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from rlpe.cross_figure_linker import (
+    LINK_SOURCE_LLM,
     LINK_SOURCE_LOCALITY,
-    LINK_SOURCE_M3,
     LINK_SOURCE_SAMPLE,
     LINK_SOURCE_UNLINKED,
     LinkResult,
@@ -113,7 +113,7 @@ class TestStrategy2LocalityMatch:
 
 
 class TestStrategy3M3Inference:
-    def test_m3_called_when_no_other_match(self):
+    def test_llm_called_when_no_other_match(self):
         panel = FakePanel(caption_snippet="Plate with no sample or locality")
         fig = _strat_column(figure_id="fig2", caption="Scaglia Fm, Italy")
 
@@ -129,42 +129,42 @@ class TestStrategy3M3Inference:
                 "confidence": 0.5,
             }
 
-        results = link_species_to_geology([panel], [fig], m3_inference_callable=fake_m3)
+        results = link_species_to_geology([panel], [fig], llm_inference_callable=fake_m3)
         assert len(called) == 1
-        assert results[0].source == LINK_SOURCE_M3
+        assert results[0].source == LINK_SOURCE_LLM
         assert results[0].confidence == 0.5
         assert results[0].formation == "Scaglia"
 
-    def test_m3_not_called_when_sample_matches(self):
+    def test_llm_not_called_when_sample_matches(self):
         panel = FakePanel(caption_snippet="Sample S1")
         fig = _strat_column(figure_id="fig2", caption="Sample S1, Scaglia Fm")
 
         def fake_m3(panel_caption: str, paper_context):
-            raise AssertionError("M3 should NOT be called when sample matches")
+            raise AssertionError("LLM should NOT be called when sample matches")
 
-        results = link_species_to_geology([panel], [fig], m3_inference_callable=fake_m3)
+        results = link_species_to_geology([panel], [fig], llm_inference_callable=fake_m3)
         assert results[0].source == LINK_SOURCE_SAMPLE
 
-    def test_m3_confidence_clamped(self):
+    def test_llm_confidence_clamped(self):
         panel = FakePanel(caption_snippet="Plate with no info")
         fig = _strat_column(figure_id="fig2", caption="Italy")
 
         def fake_m3(panel_caption: str, paper_context):
             return {"confidence": 0.95, "formation": "F", "age": "A"}
 
-        results = link_species_to_geology([panel], [fig], m3_inference_callable=fake_m3)
-        assert results[0].source == LINK_SOURCE_M3
+        results = link_species_to_geology([panel], [fig], llm_inference_callable=fake_m3)
+        assert results[0].source == LINK_SOURCE_LLM
         # Confidence clamped to <= 0.6 per spec
         assert results[0].confidence <= 0.6
 
-    def test_m3_returns_garbage(self):
+    def test_llm_returns_garbage(self):
         panel = FakePanel(caption_snippet="Plate with no info")
         fig = _strat_column(figure_id="fig2", caption="Italy")
 
         def fake_m3(panel_caption: str, paper_context):
             return "not a dict"
 
-        results = link_species_to_geology([panel], [fig], m3_inference_callable=fake_m3)
+        results = link_species_to_geology([panel], [fig], llm_inference_callable=fake_m3)
         assert results[0].source == LINK_SOURCE_UNLINKED
 
 

@@ -1,12 +1,12 @@
 """Phase 64 Plan B Task 2: PanelMetadata.figure_schematic_data field.
 
-The Phase 64 Plan B M3 pipeline writes the
+The Phase 64 Plan B LLM pipeline writes the
 ``extract_schematic()`` output JSON into a new per-panel field
 ``PanelMetadata.figure_schematic_data``. The field is the storage
 location for the conceptual-figure extraction result on
 schematic / diagram / reconstruction / phylogenetic figures.
 
-The shape stored matches the M3 prompt contract:
+The shape stored matches the LLM prompt contract:
 
   {
     "figure_type": "schematic" | "diagram" | "reconstruction" | "phylogenetic",
@@ -32,7 +32,7 @@ same shape without re-marshalling.
 
 This test file locks:
   1. The field exists on PanelMetadata and defaults to None.
-  2. The field accepts the M3 prompt contract shape.
+  2. The field accepts the LLM prompt contract shape.
   3. The published JSON schema (`schemas/rlpe-v1.0.0.json`) lists
      the new field so downstream consumers see it.
 """
@@ -63,8 +63,8 @@ class TestPanelMetadataSchematicField:
         pm = PanelMetadata()
         assert pm.figure_schematic_data is None
 
-    def test_field_accepts_m3_prompt_contract_shape(self) -> None:
-        """A representative M3 prompt-contract JSON is round-tripped
+    def test_field_accepts_llm_prompt_contract_shape(self) -> None:
+        """A representative LLM prompt-contract JSON is round-tripped
         through PanelMetadata without data loss."""
         schematic = {
             "figure_type": "schematic",

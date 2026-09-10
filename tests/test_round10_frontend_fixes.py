@@ -184,12 +184,12 @@ def test_fm1_escape_key_handler_present():
 
 
 def test_fm1_minimax_modal_excluded_from_escape():
-    """The MiniMax fallback modal must NOT close on Escape (force a
+    """The LLM fallback modal must NOT close on Escape (force a
     choice UX). The handler should reference its id explicitly.
     """
     text = _read(APP_JS)
-    assert "MiniMax-fallback-modal" in text, (
-        "MiniMax fallback modal must be referenced (excluded from auto-close on Escape)"
+    assert "llm-fallback-modal" in text, (
+        "LLM fallback modal must be referenced (excluded from auto-close on Escape)"
     )
 
 

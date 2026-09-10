@@ -1,7 +1,7 @@
 """Fake MiniMax-M3 backend for tests + smoke runs.
 
-Replaces ``MiniMaxM3Backend`` (src/rlpe/llm_backends.py) in tests so we
-can exercise the entire M3-engine pipeline (vision prompts, retry
+Replaces ``AnthropicCompatBackend`` (src/rlpe/llm_backends.py) in tests so we
+can exercise the entire LLM-engine pipeline (vision prompts, retry
 plumbing, cost aggregation) without any outbound HTTP traffic.
 
 Public API mirrors the methods the engine actually calls:
@@ -10,7 +10,7 @@ Public API mirrors the methods the engine actually calls:
   ``label/species/confidence/reasoning`` keys
 * ``infer_panel(panel_image, caption_text, ocr_labels, system_prompt,
   user_prompt)`` -> same shape as ``infer_text`` plus ``request_id``
-  / ``model_version`` / ``usage`` / ``cost_cny`` so the M3 telemetry
+  / ``model_version`` / ``usage`` / ``cost_cny`` so the LLM telemetry
   tests can assert propagation.
 
 The fake captures every call in ``self.calls`` (list of dicts) and
@@ -56,7 +56,7 @@ class FakeM3Backend:
     canned_responses: list[dict[str, Any]] = field(default_factory=list)
     # Per-call records for test assertions.
     calls: list[_CallRecord] = field(default_factory=list)
-    # Cost / token counters, mirroring MiniMaxM3Backend.
+    # Cost / token counters, mirroring AnthropicCompatBackend.
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_calls: int = 0

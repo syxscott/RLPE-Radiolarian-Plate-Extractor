@@ -1,6 +1,6 @@
 """Regression tests for Round 9 thinking-retry lock fix.
 
-Bug-M3: ``M3Engine._infer_vision`` previously held its retry lock in
+Bug-LLM: ``SemanticEngine._infer_vision`` previously held its retry lock in
 two pieces — one to flip ``backend.enable_thinking`` off, then released
 the lock for the duration of ``infer_panel()``, then re-acquired to
 restore. Another thread could flip ``enable_thinking`` in between,
@@ -18,14 +18,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.m3_engine import M3Engine  # noqa: E402
+from rlpe.semantic_engine import SemanticEngine  # noqa: E402
 
 
 def test_thinking_retry_lock_is_reentrant():
     """The lock MUST be an RLock so a backend that re-enters
-    ``_infer_vision`` (e.g. a custom subclass that calls M3 again
+    ``_infer_vision`` (e.g. a custom subclass that calls LLM again
     inside its handler) doesn't deadlock."""
-    engine = M3Engine(backend=None)
+    engine = SemanticEngine(backend=None)
     # RLock exposes ``_is_owned`` (private but stable since Python 3.x).
     assert hasattr(engine._thinking_retry_lock, "_is_owned"), (
         "Lock must be reentrant (RLock) for the retry path"
@@ -37,7 +37,7 @@ def test_thinking_retry_lock_is_reentrant():
 
 
 def test_thinking_retry_restores_final_state_under_concurrency():
-    """Round 9 Bug-M3: under concurrent retries, ``enable_thinking``
+    """Round 9 Bug-LLM: under concurrent retries, ``enable_thinking``
     must end up restored to its ORIGINAL value (True), not corrupted
     by interleaved save/restore pairs from different threads.
 
@@ -92,7 +92,7 @@ def test_thinking_retry_restores_final_state_under_concurrency():
         return real_infer(**kwargs)
 
     backend.infer_panel = stub_infer
-    engine = M3Engine(backend=backend, config={"m3_retry_without_thinking": True})
+    engine = SemanticEngine(backend=backend, config={"llm_retry_without_thinking": True})
 
     errors = []
     results = []
@@ -163,7 +163,7 @@ def test_thinking_retry_serialises_concurrent_workers():
         return real_infer(**kwargs)
 
     backend.infer_panel = stub_infer
-    engine = M3Engine(backend=backend, config={"m3_retry_without_thinking": True})
+    engine = SemanticEngine(backend=backend, config={"llm_retry_without_thinking": True})
 
     def worker():
         engine._infer_vision("sys", "user", None)
@@ -215,7 +215,7 @@ def test_thinking_retry_restores_on_exception():
             raise RuntimeError("simulated API failure")
 
     backend = ExplodingBackend()
-    engine = M3Engine(backend=backend, config={"m3_retry_without_thinking": True})
+    engine = SemanticEngine(backend=backend, config={"llm_retry_without_thinking": True})
     res = engine._infer_vision("sys", "user", None)
     # Retry failed → engine returns the empty `res` (not raise)
     assert res.get("fallback_used") is False  # original res

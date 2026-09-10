@@ -2,7 +2,7 @@
 
 When ``classify_figure_type`` returns one of the four new types
 (schematic / diagram / reconstruction / phylogenetic), the pipeline
-must route the figure through ``M3Engine.extract_schematic`` instead
+must route the figure through ``SemanticEngine.extract_schematic`` instead
 of falling through to the classical plate-segmentation path. The
 extracted JSON is stored on
 ``panel.metadata.figure_schematic_data``.
@@ -28,8 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 from PIL import Image
 
-from rlpe.m3_engine import M3Engine
-from tests.fakes.fake_m3_backend import FakeM3Backend
+from rlpe.semantic_engine import SemanticEngine
+from tests.fakes.fake_llm_backend import FakeM3Backend
 
 
 def _make_image() -> Image.Image:
@@ -60,7 +60,7 @@ def _schematic_canned() -> dict:
     }
 
 
-def _make_engine(canned=None) -> M3Engine:
+def _make_engine(canned=None) -> SemanticEngine:
     if canned is None:
         canned = [
             {
@@ -68,11 +68,11 @@ def _make_engine(canned=None) -> M3Engine:
                 **_schematic_canned(),
             }
         ]
-    return M3Engine(backend=FakeM3Backend(canned_responses=canned))
+    return SemanticEngine(backend=FakeM3Backend(canned_responses=canned))
 
 
 def _build_record(
-    engine: M3Engine,
+    engine: SemanticEngine,
     fig_type: str,
     image: Image.Image | None = None,
     caption: str = "Schematic diagram caption",
@@ -154,7 +154,7 @@ class TestPipelineSchematicRouting:
         assert "_source" not in sd
 
     def test_stub_emitted_even_when_extract_returns_none(self) -> None:
-        """When extract_schematic returns None (image too small, M3
+        """When extract_schematic returns None (image too small, LLM
         unavailable, malformed JSON), the pipeline still emits a
         stub record so the figure isn't silently dropped — same
         Round 23 audit fix used for geo_vision."""

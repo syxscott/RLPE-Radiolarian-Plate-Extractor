@@ -1,6 +1,6 @@
 """Tests for the 2026-07-03 audit low-severity backend bugs.
 
-M7: llm_backends.MiniMaxM3Backend._call_api() previously bumped
+M7: llm_backends.AnthropicCompatBackend._call_api() previously bumped
 ``total_calls`` only AFTER the API call succeeded. If a retry
 sequence was exhausted (all max_retries attempts failed), the
 final failed attempt was never counted in ``total_calls`` — only
@@ -17,7 +17,7 @@ L3: llm_backends.cli_fallback_prompt() called ``input()`` even when
 stdin was not a TTY (background worker thread, API server context).
 ``input()`` blocks forever waiting for input that never arrives.
 The fix raises an explicit RuntimeError so the FallbackHandler
-falls through to ``MiniMax_fallback_default``.
+falls through to ``llm_fallback_default``.
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ class TestCliFallbackPromptNonTTY:
         assert result == "rules"
         # The prompt text must have been written to stderr.
         captured = capsys.readouterr()
-        assert "MiniMax API ERROR" in captured.err
+        assert "LLM API ERROR" in captured.err
 
 
 # --------------------------------------------------------------------------- M7
@@ -138,7 +138,7 @@ class TestM3BackendCallCounter:
     def _build_backend_bypassing_init(self):
         import types
 
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         # Build a stub anthropic module with the error classes
         # ``_call_api`` references. We don't import the real SDK.
@@ -149,7 +149,7 @@ class TestM3BackendCallCounter:
         fake_anthropic_module = fake_anthropic
 
         # Manually construct an instance without running __init__.
-        backend = MiniMaxM3Backend.__new__(MiniMaxM3Backend)
+        backend = AnthropicCompatBackend.__new__(AnthropicCompatBackend)
         backend.api_key = "test"
         backend.base_url = "http://fake"
         backend.model = "MiniMax-M3-fake"

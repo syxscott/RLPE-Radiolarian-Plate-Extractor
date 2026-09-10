@@ -43,7 +43,7 @@ def _make_pipeline() -> RadiolarianPipeline:
 
     The dedup helper only reads ``self._STUB_PANEL_IDS`` (a class
     attribute) and writes to ``logger``. Bypassing ``__init__`` keeps
-    these tests free of GROBID / OCR / SAM2 / MiniMax dependencies.
+    these tests free of GROBID / OCR / SAM2 / LLM dependencies.
     """
     return RadiolarianPipeline.__new__(RadiolarianPipeline)
 

@@ -1,8 +1,8 @@
-"""Phase 6D m3_engine / stratigraphy NIT sweep (2026-08-19).
+"""Phase 6D semantic_engine / stratigraphy NIT sweep (2026-08-19).
 
 Four NIT bugs from the 2026-08-19 multi-agent audit follow-up:
 
-* **NIT-1** — ``_coerce_bbox`` in ``m3_engine.py`` silently clamped
+* **NIT-1** — ``_coerce_bbox`` in ``semantic_engine.py`` silently clamped
   out-of-range values. A bbox with a negative coordinate
   (``[-0.5, 0.3, 0.4, 0.2]``) was clamped to ``(0, 30, 40, 20)`` and
   a bbox with a value > 1.0 in the normalized range
@@ -24,7 +24,7 @@ Four NIT bugs from the 2026-08-19 multi-agent audit follow-up:
   ``zone_publication_year: int | None``. Both default to ``None``
   for backward compatibility.
 
-* **NIT-3** — ``extract_geology`` in ``m3_engine.py`` received an
+* **NIT-3** — ``extract_geology`` in ``semantic_engine.py`` received an
   inverted ``ma_top / ma_base`` pair (``ma_top=100, ma_base=50``)
   and the previous :func:`_validate_ma_range` helper nulled both
   fields. The new :func:`_normalize_ma_pair` helper auto-swaps the
@@ -33,7 +33,7 @@ Four NIT bugs from the 2026-08-19 multi-agent audit follow-up:
   is retained for callers that prefer it (chain ``_normalize_ma_pair``
   before ``_validate_ma_range``).
 
-* **NIT-4** — ``_normalize_species`` in ``m3_engine.py`` had a
+* **NIT-4** — ``_normalize_species`` in ``semantic_engine.py`` had a
   trailing ``re.sub(r"\\s+", " ", s)`` but the collapse only ran
   at the END of the function. A malformed multi-space species
   name (``"Entactinia   sp."`` with 3 spaces) would survive all
@@ -48,7 +48,7 @@ or any of the new helpers is removed.
 
 Run with::
 
-    python -m pytest tests/test_audit_2026_08_19_phase6d_m3_strat_nit.py -v
+    python -m pytest tests/test_audit_2026_08_19_phase6d_llm_strat_nit.py -v
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ if str(_SRC) not in sys.path:
 
 
 _REPO = Path(__file__).resolve().parents[1]
-_SRC_M3 = _REPO / "src" / "rlpe" / "m3_engine.py"
+_SRC_M3 = _REPO / "src" / "rlpe" / "semantic_engine.py"
 _SRC_RCE = _REPO / "src" / "rlpe" / "range_chart_extractor.py"
 
 
@@ -84,25 +84,25 @@ class TestNIT1CoerceBboxRejectsNegative:
     interpretation)."""
 
     def test_negative_in_x_position_raises(self):
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         with pytest.raises(ValueError):
             _coerce_bbox([-0.5, 0.3, 0.4, 0.2], 1000, 1000)
 
     def test_negative_in_y_position_raises(self):
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         with pytest.raises(ValueError):
             _coerce_bbox([0.5, -0.3, 0.4, 0.2], 1000, 1000)
 
     def test_negative_in_width_raises(self):
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         with pytest.raises(ValueError):
             _coerce_bbox([0.5, 0.3, -0.4, 0.2], 1000, 1000)
 
     def test_negative_in_height_raises(self):
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         with pytest.raises(ValueError):
             _coerce_bbox([0.5, 0.3, 0.4, -0.2], 1000, 1000)
@@ -111,7 +111,7 @@ class TestNIT1CoerceBboxRejectsNegative:
         """A bbox with a negative value that would otherwise be
         routed through the pixel path (because max > 1.01) must
         also raise — negative pixel coords are equally invalid."""
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         with pytest.raises(ValueError):
             _coerce_bbox([100, 200, -5, 80], 1000, 1000)
@@ -124,7 +124,7 @@ class TestNIT1CoerceBboxRejectsOverOne:
     def test_value_just_above_one_raises(self):
         """A bbox with 1.005 (still within the 1.01 tolerance for
         CLASSIFICATION purposes) must be rejected as malformed."""
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         with pytest.raises(ValueError):
             _coerce_bbox([0.5, 0.3, 0.4, 1.005], 1000, 1000)
@@ -132,7 +132,7 @@ class TestNIT1CoerceBboxRejectsOverOne:
     def test_value_at_upper_tolerance_raises(self):
         """A bbox with 1.01 (exactly at the classification tolerance)
         must be rejected as malformed because the value is still > 1.0."""
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         with pytest.raises(ValueError):
             _coerce_bbox([0.5, 0.3, 1.01, 0.2], 1000, 1000)
@@ -140,7 +140,7 @@ class TestNIT1CoerceBboxRejectsOverOne:
     def test_height_above_one_raises(self):
         """A bbox with 1.005 in the height position (still within
         the 1.01 tolerance) must be rejected."""
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         with pytest.raises(ValueError):
             _coerce_bbox([0.5, 0.3, 0.4, 1.005], 1000, 1000)
@@ -152,7 +152,7 @@ class TestNIT1CoerceBboxAcceptsValid:
     legitimate normalized and pixel bboxes)."""
 
     def test_normalized_bbox_accepted(self):
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         out = _coerce_bbox([0.5, 0.3, 0.4, 0.2], 1000, 1000)
         assert out is not None
@@ -160,7 +160,7 @@ class TestNIT1CoerceBboxAcceptsValid:
         assert out == (500, 300, 400, 200)
 
     def test_normalized_bbox_zero_origin_accepted(self):
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         out = _coerce_bbox([0.0, 0.0, 1.0, 1.0], 1000, 1000)
         assert out == (0, 0, 1000, 1000)
@@ -169,7 +169,7 @@ class TestNIT1CoerceBboxAcceptsValid:
         """A pixel coord bbox (max > 1.01) must still be accepted
         without raising — the validation only rejects out-of-range
         normalized values."""
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         out = _coerce_bbox([100, 200, 300, 400], 1000, 1000)
         assert out == (100, 200, 300, 400)
@@ -177,7 +177,7 @@ class TestNIT1CoerceBboxAcceptsValid:
     def test_pixel_bbox_clamps_to_image_bounds(self):
         """The pixel path still clamps to image bounds (preserves
         the existing Phase 55 audit fix)."""
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         out = _coerce_bbox([500, 400, 800, 900], 1000, 1000)
         # w capped at img_w - x = 1000 - 500 = 500
@@ -186,7 +186,7 @@ class TestNIT1CoerceBboxAcceptsValid:
 
     def test_invalid_input_returns_none(self):
         """Non-list/tuple input still returns None (no raise)."""
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         assert _coerce_bbox(None, 1000, 1000) is None
         assert _coerce_bbox("not a list", 1000, 1000) is None
@@ -195,7 +195,7 @@ class TestNIT1CoerceBboxAcceptsValid:
 
     def test_non_numeric_entry_returns_none(self):
         """Non-numeric entries still return None (no raise)."""
-        from rlpe.m3_engine import _coerce_bbox
+        from rlpe.semantic_engine import _coerce_bbox
 
         assert _coerce_bbox(["not", "a", "number", "list"], 1000, 1000) is None
 
@@ -360,17 +360,17 @@ class TestNIT2ParseExtractionResponse:
 
 
 class TestNIT2PromptMentionsFields:
-    """The M3 prompt for range_chart_extractor must mention the
+    """The LLM prompt for range_chart_extractor must mention the
     new fields so the LLM knows to emit them."""
 
     def test_prompt_mentions_zone_authority(self):
         src = _read(_SRC_RCE)
-        assert "zone_authority" in src, "M3 range_chart prompt must mention zone_authority"
+        assert "zone_authority" in src, "LLM range_chart prompt must mention zone_authority"
 
     def test_prompt_mentions_zone_publication_year(self):
         src = _read(_SRC_RCE)
         assert "zone_publication_year" in src, (
-            "M3 range_chart prompt must mention zone_publication_year"
+            "LLM range_chart prompt must mention zone_publication_year"
         )
 
 
@@ -384,7 +384,7 @@ class TestNIT3NormalizeMaPair:
     inverted."""
 
     def test_swap_inverted_pair(self):
-        from rlpe.m3_engine import _normalize_ma_pair
+        from rlpe.semantic_engine import _normalize_ma_pair
 
         record = {"ma_top": 100.0, "ma_base": 50.0}
         out = _normalize_ma_pair(record)
@@ -392,7 +392,7 @@ class TestNIT3NormalizeMaPair:
         assert out["ma_base"] == 100.0
 
     def test_does_not_swap_correct_pair(self):
-        from rlpe.m3_engine import _normalize_ma_pair
+        from rlpe.semantic_engine import _normalize_ma_pair
 
         record = {"ma_top": 50.0, "ma_base": 100.0}
         out = _normalize_ma_pair(record)
@@ -400,7 +400,7 @@ class TestNIT3NormalizeMaPair:
         assert out["ma_base"] == 100.0
 
     def test_does_not_swap_equal_pair(self):
-        from rlpe.m3_engine import _normalize_ma_pair
+        from rlpe.semantic_engine import _normalize_ma_pair
 
         record = {"ma_top": 50.0, "ma_base": 50.0}
         out = _normalize_ma_pair(record)
@@ -408,7 +408,7 @@ class TestNIT3NormalizeMaPair:
         assert out["ma_base"] == 50.0
 
     def test_null_top_passes_through(self):
-        from rlpe.m3_engine import _normalize_ma_pair
+        from rlpe.semantic_engine import _normalize_ma_pair
 
         record = {"ma_top": None, "ma_base": 50.0}
         out = _normalize_ma_pair(record)
@@ -416,7 +416,7 @@ class TestNIT3NormalizeMaPair:
         assert out["ma_base"] == 50.0
 
     def test_null_base_passes_through(self):
-        from rlpe.m3_engine import _normalize_ma_pair
+        from rlpe.semantic_engine import _normalize_ma_pair
 
         record = {"ma_top": 100.0, "ma_base": None}
         out = _normalize_ma_pair(record)
@@ -424,7 +424,7 @@ class TestNIT3NormalizeMaPair:
         assert out["ma_base"] is None
 
     def test_non_numeric_passes_through(self):
-        from rlpe.m3_engine import _normalize_ma_pair
+        from rlpe.semantic_engine import _normalize_ma_pair
 
         record = {"ma_top": "old", "ma_base": "young"}
         out = _normalize_ma_pair(record)
@@ -436,7 +436,7 @@ class TestNIT3NormalizeMaPair:
     def test_returns_same_object(self):
         """The helper mutates in place and returns the same object
         for chaining (mirrors _validate_ma_range contract)."""
-        from rlpe.m3_engine import _normalize_ma_pair
+        from rlpe.semantic_engine import _normalize_ma_pair
 
         record = {"ma_top": 100.0, "ma_base": 50.0}
         out = _normalize_ma_pair(record)
@@ -451,7 +451,7 @@ class TestNIT3ExtractGeologyAutoswaps:
         """Drive ``extract_geology`` with a fake backend that
         returns an inverted ma_top / ma_base pair and verify the
         resulting record has the values swapped (not nulled)."""
-        from rlpe.m3_engine import M3Engine, _normalize_ma_pair, _validate_ma_range
+        from rlpe.semantic_engine import SemanticEngine, _normalize_ma_pair, _validate_ma_range
 
         # Use the helpers directly with the JSON the LLM would emit
         # — this avoids the heavy image / puppet backend plumbing.
@@ -493,7 +493,7 @@ class TestNIT3SourceGuard:
     def test_normalize_ma_pair_function_defined(self):
         src = _read(_SRC_M3)
         assert "def _normalize_ma_pair" in src, (
-            "_normalize_ma_pair function must be defined in m3_engine.py (NIT-3)"
+            "_normalize_ma_pair function must be defined in semantic_engine.py (NIT-3)"
         )
 
     def test_normalize_ma_pair_documented(self):
@@ -517,44 +517,44 @@ class TestNIT4NormalizeSpeciesCollapsesWhitespace:
     including multi-space OCR artefacts like ``"Entactinia   sp."``."""
 
     def test_three_space_collapses(self):
-        from rlpe.m3_engine import _normalize_species
+        from rlpe.semantic_engine import _normalize_species
 
         out = _normalize_species("Entactinia   sp.")
         assert out == "Entactinia sp."
 
     def test_tab_collapses(self):
-        from rlpe.m3_engine import _normalize_species
+        from rlpe.semantic_engine import _normalize_species
 
         out = _normalize_species("Entactinia\t\tsp.")
         assert out == "Entactinia sp."
 
     def test_mixed_whitespace_collapses(self):
-        from rlpe.m3_engine import _normalize_species
+        from rlpe.semantic_engine import _normalize_species
 
         out = _normalize_species("Entactinia \t \n sp.")
         assert out == "Entactinia sp."
 
     def test_binomial_with_extra_spaces(self):
-        from rlpe.m3_engine import _normalize_species
+        from rlpe.semantic_engine import _normalize_species
 
         out = _normalize_species("Archaeodictyomitra    mitra")
         assert out == "Archaeodictyomitra mitra"
 
     def test_leading_and_trailing_whitespace_stripped(self):
-        from rlpe.m3_engine import _normalize_species
+        from rlpe.semantic_engine import _normalize_species
 
         out = _normalize_species("   Entactinia sp.   ")
         assert out == "Entactinia sp."
 
     def test_single_spaces_preserved(self):
         """A normal single-spaced name must be preserved unchanged."""
-        from rlpe.m3_engine import _normalize_species
+        from rlpe.semantic_engine import _normalize_species
 
         out = _normalize_species("Archaeodictyomitra mitra")
         assert out == "Archaeodictyomitra mitra"
 
     def test_empty_returns_none(self):
-        from rlpe.m3_engine import _normalize_species
+        from rlpe.semantic_engine import _normalize_species
 
         assert _normalize_species("") is None
         assert _normalize_species("   ") is None

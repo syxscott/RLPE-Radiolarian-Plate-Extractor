@@ -86,11 +86,11 @@ THEME_SYSTEM: Final[str] = "system"
 
 # Default OCR backend / LLM backend (mirror CLI defaults)
 DEFAULT_OCR_BACKEND: Final[str] = "paddleocr"
-DEFAULT_LLM_BACKEND: Final[str] = "minimax"
-DEFAULT_MINIMAX_MODEL: Final[str] = "MiniMax-M3"
+DEFAULT_LLM_BACKEND: Final[str] = "anthropic"
+DEFAULT_LLM_MODEL: Final[str] = ""  # no vendor default (F17): saved settings / env
 DEFAULT_GROBID_URL: Final[str] = "http://localhost:8070"
 DEFAULT_OCR_LANG: Final[str] = "en"
-DEFAULT_M3_PROMPT_LANG: Final[str] = "auto"
+DEFAULT_LLM_PROMPT_LANG: Final[str] = "auto"
 DEFAULT_CAPTION_WINDOW: Final[int] = 2
 DEFAULT_OD_CAPTION_WINDOW: Final[int] = 5
 DEFAULT_GROBID_MAX_RETRIES: Final[int] = 3
@@ -99,11 +99,11 @@ DEFAULT_NUM_WORKERS: Final[int] = 1
 DEFAULT_MIN_PANEL_SCORE: Final[float] = 0.80
 DEFAULT_RENDER_DPI: Final[int] = 200
 DEFAULT_PALEO_MAX_OCC: Final[int] = 25
-DEFAULT_M3_BUDGET: Final[int] = 1024
-DEFAULT_M3_THINKING_BUDGET: Final[int] = 1024
-DEFAULT_M3_OUTPUT_TOKENS: Final[int] = 2048
-DEFAULT_M3_TIMEOUT: Final[int] = 60
-DEFAULT_M3_MAX_RETRIES: Final[int] = 3
+DEFAULT_LLM_BUDGET: Final[int] = 1024
+DEFAULT_LLM_THINKING_BUDGET: Final[int] = 1024
+DEFAULT_LLM_OUTPUT_TOKENS: Final[int] = 2048
+DEFAULT_LLM_TIMEOUT: Final[int] = 60
+DEFAULT_LLM_MAX_RETRIES: Final[int] = 3
 DEFAULT_THEME: Final[str] = "light"
 
 # File extensions accepted by the file picker
@@ -130,10 +130,10 @@ RANGE_NUM_WORKERS: Final[tuple[int, int]] = (1, 32)
 RANGE_PANEL_SCORE: Final[tuple[float, float]] = (0.0, 1.0)
 RANGE_DPI: Final[tuple[int, int]] = (50, 600)
 RANGE_PALEO_OCC: Final[tuple[int, int]] = (1, 1000)
-RANGE_M3_BUDGET: Final[tuple[int, int]] = (0, 32000)
-RANGE_M3_OUTPUT_TOKENS: Final[tuple[int, int]] = (1, 32000)
-RANGE_M3_TIMEOUT: Final[tuple[int, int]] = (1, 3600)
-RANGE_M3_MAX_RETRIES: Final[tuple[int, int]] = (1, 20)
+RANGE_LLM_BUDGET: Final[tuple[int, int]] = (0, 32000)
+RANGE_LLM_OUTPUT_TOKENS: Final[tuple[int, int]] = (1, 32000)
+RANGE_LLM_TIMEOUT: Final[tuple[int, int]] = (1, 3600)
+RANGE_LLM_MAX_RETRIES: Final[tuple[int, int]] = (1, 20)
 
 # YOLO figure detection defaults
 DEFAULT_YOLO_MODEL_PATH: Final[str] = "models/yolo11x.pt"
@@ -230,9 +230,10 @@ _validate_ranges()
 # check at import time that the constant is one of the known
 # backends, not that pipeline_worker actually uses it.
 _KNOWN_LLM_BACKENDS: Final[tuple[str, ...]] = (
-    "minimax",
-    "minimax-m3",
-    "minimax_api",
+    "anthropic",
+    "minimax",  # legacy alias (F17)
+    "minimax-m3",  # legacy alias (F17)
+    "minimax_api",  # legacy alias (F17)
     "rules",
     "transformers",
     "ollama",
@@ -296,7 +297,7 @@ def ocr_lang_friendly_options() -> list[tuple[str, str]]:
 # ============================================================
 # Phase 47: friendly-name mappings for other technical tokens
 # ============================================================
-# OCR backend, LLM backend, M3 prompt language, and theme all show
+# OCR backend, LLM backend, LLM prompt language, and theme all show
 # raw technical strings to the user (e.g. "paddleocr",
 # "minimax", "auto", "dark"). Phase 47 maps them to friendly
 # Chinese / English names. Each entry: (raw_code, en_name, zh_name)
@@ -319,11 +320,12 @@ def ocr_backend_friendly_options() -> list[tuple[str, str]]:
     ]
 
 
-# LLM backend options
+# LLM backend options. F17: the cloud option is vendor-agnostic
+# (any Anthropic-compatible API); the pre-F17 vendor aliases are no
+# longer offered in the UI but remain valid stored values (mapped by
+# the pipeline heuristic).
 LLM_BACKEND_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
-    ("minimax", "MiniMax-M3 (Recommended)", "MiniMax-M3 (推荐)"),
-    ("minimax-m3", "MiniMax-M3 (alt endpoint)", "MiniMax-M3 (备用接入点)"),
-    ("minimax_api", "MiniMax API (legacy)", "MiniMax API (旧版)"),
+    ("anthropic", "Anthropic-compatible API (Recommended)", "Anthropic 兼容 API（云端，推荐）"),
     ("transformers", "Local Transformers", "本地 Transformers"),
     ("ollama", "Ollama (Local Server)", "Ollama (本地服务器)"),
     ("llamacpp", "llama.cpp (Local)", "llama.cpp (本地)"),
@@ -343,8 +345,8 @@ def llm_backend_friendly_options() -> list[tuple[str, str]]:
 
 
 # Data-outbound policy options (BUG-1, audit 2026-09-04). Values mirror
-# ``MiniMaxM3Backend.data_outbound_policy``; "auto" resolves to
-# api_redacted when a MiniMax key is reachable, local_only otherwise
+# ``AnthropicCompatBackend.data_outbound_policy``; "auto" resolves to
+# api_redacted when a LLM key is reachable, local_only otherwise
 # (see gui.pipeline_worker._resolve_outbound_policy).
 DATA_OUTBOUND_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
     ("auto", "Auto (uses API if key set)", "自动（配置密钥后调用 API）"),
@@ -365,7 +367,7 @@ def data_outbound_friendly_options() -> list[tuple[str, str]]:
     ]
 
 
-# M3 prompt language options
+# LLM prompt language options
 M3_PROMPT_LANG_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
     ("auto", "Auto-detect", "自动检测"),
     ("zh", "Chinese (中文)", "中文 (中文)"),
@@ -374,7 +376,7 @@ M3_PROMPT_LANG_OPTIONS: Final[tuple[tuple[str, str, str], ...]] = (
 )
 
 
-def m3_prompt_lang_friendly_options() -> list[tuple[str, str]]:
+def llm_prompt_lang_friendly_options() -> list[tuple[str, str]]:
     """``[(code, friendly_name), ...]`` in the current language."""
     from . import i18n as _i18n
 

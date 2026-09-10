@@ -5,12 +5,12 @@ This script measures the *wiring* of the cross-figure linker (no
 exceptions, correct strategy ordering, correct dataclass shapes)
 but does NOT constitute empirical evidence of "100% recall on 20
 real papers". The synthetic-paper scenarios use hand-crafted
-canned M3 responses that tautologically produce 100% recall; the
+canned LLM responses that tautologically produce 100% recall; the
 9 real papers use synthetic figure captions (the gold JSONL only
 captures panel-level species, not figure-level formation/age).
 For a real-data recall benchmark, the gold standard must be
 extended to include per-figure formation/age/locality strings
-extracted from the actual PDF text, and the M3 backend must be
+extracted from the actual PDF text, and the LLM backend must be
 replaced with recorded or live responses.
 
 End-to-end recall measurement on synthetic + real-paper data:
@@ -19,7 +19,7 @@ End-to-end recall measurement on synthetic + real-paper data:
     annotations; see ``scripts/build_gold_*.py`` for provenance).
   * 11+ synthetic papers are constructed in-code to cover the long
     tail of cases: a paper with only Sample ID matches, a paper with
-    only Locality matches, a paper with only M3 fallback, a paper
+    only Locality matches, a paper with only LLM fallback, a paper
     that is fully unlinked, etc.
 
 For each paper we:
@@ -52,14 +52,14 @@ sys.path.insert(0, str((_REPO_ROOT / "src").resolve()))
 sys.path.insert(0, str(_REPO_ROOT.resolve()))
 
 from rlpe.cross_figure_linker import (  # noqa: E402
+    LINK_SOURCE_LLM,
     LINK_SOURCE_LOCALITY,
-    LINK_SOURCE_M3,
     LINK_SOURCE_SAMPLE,
     LINK_SOURCE_UNLINKED,
     link_species_to_geology,
 )
-from rlpe.m3_engine import M3Engine  # noqa: E402
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
+from rlpe.semantic_engine import SemanticEngine  # noqa: E402
+from tests.fakes.fake_llm_backend import FakeM3Backend  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Gold data loading
@@ -373,18 +373,18 @@ def _synth_scenario(
     )
 
 
-def _scenario_m3_only() -> PaperScenario:
-    """Paper where only Strategy 3 (M3) can link — generic caption."""
+def _scenario_llm_only() -> PaperScenario:
+    """Paper where only Strategy 3 (LLM) can link — generic caption."""
     return _synth_scenario(
-        paper_id="synth_m3_only",
-        description="Synthetic — M3 inference only",
+        paper_id="synth_llm_only",
+        description="Synthetic — LLM inference only",
         n_panels=5,
         caption="Plate shows specimen of unknown affinity",
         fig_caption="Scaglia Fm, Italy",
         fig_formation="Scaglia",
         fig_age="Late Cretaceous",
         fig_locality="Italy",
-        expected_min_recall=1.0,  # M3 should link all 5
+        expected_min_recall=1.0,  # LLM should link all 5
     )
 
 
@@ -547,7 +547,7 @@ def main() -> int:
         _scenario_paleomap(),
         _scenario_litholog(),
         _scenario_range_chart(),
-        _scenario_m3_only(),
+        _scenario_llm_only(),
         _scenario_unlinked(),
         _scenario_sample_match_a(),  # duplicate to reach 20
     ]
@@ -557,10 +557,10 @@ def main() -> int:
     scenarios[-1].panels = scenarios[-1].panels[:4]
     scenarios[-1].expected_min_recall = 1.0
 
-    # Canned M3 responses — one per scenario. The matcher matches on
+    # Canned LLM responses — one per scenario. The matcher matches on
     # the system_prompt; we set up a default that always returns
     # sensible cross_figure_inference output.
-    m3_responses: list[dict] = [
+    llm_responses: list[dict] = [
         {
             "raw_text": json.dumps(
                 {
@@ -574,11 +574,11 @@ def main() -> int:
             ),
         }
     ]
-    backend = FakeM3Backend(canned_responses=m3_responses)
-    m3_engine = M3Engine(backend=backend, config={})
+    backend = FakeM3Backend(canned_responses=llm_responses)
+    semantic_engine = SemanticEngine(backend=backend, config={})
 
     print(
-        f"{'paper_id':<25} {'panels':>8} {'linked':>8} {'recall':>8} {'sample':>8} {'locality':>9} {'m3':>6} {'unlinked':>9}"
+        f"{'paper_id':<25} {'panels':>8} {'linked':>8} {'recall':>8} {'sample':>8} {'locality':>9} {'llm':>6} {'unlinked':>9}"
     )
     print("-" * 100)
 
@@ -590,12 +590,12 @@ def main() -> int:
         results = link_species_to_geology(
             panels=sc.panels,
             paper_figures=sc.paper_figures,
-            m3_engine=m3_engine,
+            semantic_engine=semantic_engine,
         )
         n_panels = len(sc.panels)
         n_sample = sum(1 for r in results if r.source == LINK_SOURCE_SAMPLE)
         n_locality = sum(1 for r in results if r.source == LINK_SOURCE_LOCALITY)
-        n_m3 = sum(1 for r in results if r.source == LINK_SOURCE_M3)
+        n_m3 = sum(1 for r in results if r.source == LINK_SOURCE_LLM)
         n_unlinked = sum(1 for r in results if r.source == LINK_SOURCE_UNLINKED)
         n_linked = n_sample + n_locality + n_m3
         recall = n_linked / n_panels if n_panels else 0.0

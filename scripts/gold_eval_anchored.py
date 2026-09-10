@@ -1,7 +1,7 @@
 """9-paper gold eval v4: gold-anchored.
 For each paper, find the gold figure_id with most panels. Use that
 figure_id as the pred figure_id (so panel-level matching is direct).
-Use the page text from pymupdf + the page image. M3 extracts panels.
+Use the page text from pymupdf + the page image. LLM extracts panels.
 """
 
 import json
@@ -16,10 +16,10 @@ sys.path.insert(0, "/home/user/shenyaxuan/RLPE-Radiolarian-Plate-Extractor/src")
 import pymupdf
 from PIL import Image
 
-from rlpe.llm_backends import MiniMaxM3Backend
+from rlpe.llm_backends import AnthropicCompatBackend
 from rlpe.utils import stable_id
 
-backend = MiniMaxM3Backend(
+backend = AnthropicCompatBackend(
     api_key=os.environ["ANTHROPIC_API_KEY"],
     base_url=os.environ["ANTHROPIC_BASE_URL"],
     model=os.environ["ANTHROPIC_MODEL"],

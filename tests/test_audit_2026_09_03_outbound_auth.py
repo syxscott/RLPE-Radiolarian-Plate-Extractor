@@ -14,7 +14,7 @@ This file covers the fail-secure defaults added in commit
 * ``llm_status`` endpoint exposes the new consent / security fields.
 
 Each test is independent — failing one does not cascade. We also
-avoid touching the network (no real MiniMax calls) and avoid loading
+avoid touching the network (no real LLM calls) and avoid loading
 the full PipelineConfig so the suite stays fast.
 """
 
@@ -33,11 +33,16 @@ import pytest
 
 def test_data_outbound_policy_default_is_api_redacted() -> None:
     """Without any opt-in, the default is the private posture."""
-    from rlpe.llm_backends import MiniMaxM3Backend
+    from rlpe.llm_backends import AnthropicCompatBackend
 
     # Pass a fake API key so the api_key check at __post_init__ doesn't
     # fire; we are only asserting the policy field default here.
-    b = MiniMaxM3Backend(api_key="fake-test-key", data_outbound_policy="api_redacted")
+    b = AnthropicCompatBackend(
+        api_key="fake-test-key",
+        base_url="http://localhost:0",
+        model="test-model",
+        data_outbound_policy="api_redacted",
+    )
     assert b.data_outbound_policy == "api_redacted"
 
 
@@ -94,11 +99,11 @@ def test_api_full_without_opt_in_raises(monkeypatch: pytest.MonkeyPatch) -> None
     """Selecting ``api_full`` without the opt-in env var must raise
     ValueError. The error message must point the operator at the
     opt-in knob so the fix is obvious."""
-    from rlpe.llm_backends import MiniMaxM3Backend
+    from rlpe.llm_backends import AnthropicCompatBackend
 
     monkeypatch.delenv("RLPE_DATA_OUTBOUND_OPT_IN", raising=False)
     with pytest.raises(ValueError) as excinfo:
-        MiniMaxM3Backend(api_key="fake-test-key", data_outbound_policy="api_full")
+        AnthropicCompatBackend(api_key="fake-test-key", data_outbound_policy="api_full")
     msg = str(excinfo.value)
     assert "api_full" in msg
     assert "RLPE_DATA_OUTBOUND_OPT_IN" in msg
@@ -109,10 +114,15 @@ def test_api_full_without_opt_in_raises(monkeypatch: pytest.MonkeyPatch) -> None
 @pytest.mark.parametrize("opt_in_value", ["1", "true", "yes", "on"])
 def test_api_full_with_opt_in_succeeds(monkeypatch: pytest.MonkeyPatch, opt_in_value: str) -> None:
     """All four accepted opt-in spellings must unblock api_full."""
-    from rlpe.llm_backends import MiniMaxM3Backend
+    from rlpe.llm_backends import AnthropicCompatBackend
 
     monkeypatch.setenv("RLPE_DATA_OUTBOUND_OPT_IN", opt_in_value)
-    b = MiniMaxM3Backend(api_key="fake-test-key", data_outbound_policy="api_full")
+    b = AnthropicCompatBackend(
+        api_key="fake-test-key",
+        base_url="http://localhost:0",
+        model="test-model",
+        data_outbound_policy="api_full",
+    )
     assert b.data_outbound_policy == "api_full"
 
 
@@ -122,13 +132,18 @@ def test_api_redacted_does_not_require_opt_in(
     """The default posture must NEVER require an opt-in flag —
     that would break every existing fresh install. The opt-in is
     strictly for the more permissive api_full mode."""
-    from rlpe.llm_backends import MiniMaxM3Backend
+    from rlpe.llm_backends import AnthropicCompatBackend
 
     monkeypatch.delenv("RLPE_DATA_OUTBOUND_OPT_IN", raising=False)
     # Pass a fake API key — the api_redacted mode still requires one
     # for the SDK to initialise; the opt-in flag is an additional
     # check we are testing here.
-    b = MiniMaxM3Backend(api_key="fake-test-key", data_outbound_policy="api_redacted")
+    b = AnthropicCompatBackend(
+        api_key="fake-test-key",
+        base_url="http://localhost:0",
+        model="test-model",
+        data_outbound_policy="api_redacted",
+    )
     assert b.data_outbound_policy == "api_redacted"
 
 
@@ -136,10 +151,10 @@ def test_local_only_does_not_require_opt_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The local-only posture (no network) must also work without opt-in."""
-    from rlpe.llm_backends import MiniMaxM3Backend
+    from rlpe.llm_backends import AnthropicCompatBackend
 
     monkeypatch.delenv("RLPE_DATA_OUTBOUND_OPT_IN", raising=False)
-    b = MiniMaxM3Backend(api_key="", data_outbound_policy="local_only")
+    b = AnthropicCompatBackend(api_key="", data_outbound_policy="local_only")
     assert b.data_outbound_policy == "local_only"
 
 

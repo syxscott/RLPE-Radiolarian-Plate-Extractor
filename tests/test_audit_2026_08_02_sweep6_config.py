@@ -12,15 +12,15 @@ Three small fixes landed in this sweep:
    the GROBID fallback silently used ``"auto"``.
 
 3. **C4** — ``_KNOWN_EXTRA_KEYS`` no longer lists the five YOLO knobs or
-   the five m3 knobs (``m3_stage_6`` + 4× ``m3_per_panel_*``) that are
+   the five llm knobs (``llm_stage_6`` + 4× ``llm_per_panel_*``) that are
    actually real ``PipelineConfig`` dataclass fields. ``cli.py`` was
-   setting ``cfg.extra["m3_stage_6"]`` instead of ``cfg.m3_stage_6``;
+   setting ``cfg.extra["llm_stage_6"]`` instead of ``cfg.llm_stage_6``;
    that line now writes the typed attribute directly.
 
 These tests pin the design so a future refactor doesn't silently
 regress:
-- ``cli.py`` must NOT mirror ``m3_stage_6`` into ``cfg.extra`` (the
-  Stage 4.5 test already locks the four ``m3_per_panel_*`` knobs).
+- ``cli.py`` must NOT mirror ``llm_stage_6`` into ``cfg.extra`` (the
+  Stage 4.5 test already locks the four ``llm_per_panel_*`` knobs).
 - The GROBID fallback ``detect_figure_regions`` call MUST pass
   ``yolo_device``.
 - ``_KNOWN_EXTRA_KEYS`` must NOT contain any of the 10 redundant keys.
@@ -115,23 +115,23 @@ class TestSweep6C4KnownExtraKeys:
             "yolo_conf_threshold",
             "yolo_iou_threshold",
             "yolo_device",
-            # Audit 2026-09-05 (tier3-D2): ``m3_stage_6`` was REMOVED from
+            # Audit 2026-09-05 (tier3-D2): ``llm_stage_6`` was REMOVED from
             # this list. Unlike the other nine (pure shadowing hazards),
-            # ``m3_stage_6`` is legitimately written into ``extra`` by
+            # ``llm_stage_6`` is legitimately written into ``extra`` by
             # BOTH the CLI and the Web extra builder, and
             # ``PipelineConfig.__post_init__`` now PROMOTES it onto the
-            # typed field (a web job with ``m3_stage_6: true`` previously
+            # typed field (a web job with ``llm_stage_6: true`` previously
             # never reached the typed attribute and silently no-op'd).
-            "m3_per_panel_enabled",
-            "m3_per_panel_min_conf",
-            "m3_per_panel_max_per_figure",
-            "m3_per_panel_max_per_paper",
+            "llm_per_panel_enabled",
+            "llm_per_panel_min_conf",
+            "llm_per_panel_max_per_figure",
+            "llm_per_panel_max_per_paper",
         ],
     )
     def test_redundant_key_removed(self, redundant_key):
         """The 9 redundant keys must NOT be in ``_KNOWN_EXTRA_KEYS`` —
         they're real PipelineConfig dataclass fields, so listing them
-        here let ``cli.py`` get away with ``cfg.extra['m3_stage_6'] = ...``
+        here let ``cli.py`` get away with ``cfg.extra['llm_stage_6'] = ...``
         instead of writing to the typed attribute."""
         assert redundant_key not in _KNOWN_EXTRA_KEYS, (
             f"{redundant_key!r} is a real PipelineConfig field — "
@@ -153,50 +153,50 @@ class TestSweep6C4KnownExtraKeys:
                 f"the 10 real-typed-attr duplicates were removed."
             )
 
-    def test_extra_m3_stage_6_promotes_to_typed_field(self):
-        """Audit 2026-09-05 (tier3-D2): ``cfg.extra['m3_stage_6']`` is now
+    def test_extra_llm_stage_6_promotes_to_typed_field(self):
+        """Audit 2026-09-05 (tier3-D2): ``cfg.extra['llm_stage_6']`` is now
         a legitimate transport — ``__post_init__`` promotes it onto the
-        typed ``m3_stage_6`` attribute. Pre-fix, the Web extra builder
+        typed ``llm_stage_6`` attribute. Pre-fix, the Web extra builder
         wrote the key into ``extra`` but nothing promoted it, so a web
-        job with ``m3_stage_6: true`` silently produced no morphology
+        job with ``llm_stage_6: true`` silently produced no morphology
         records."""
         from rlpe.config import PipelineConfig
 
         cfg = PipelineConfig(
             pdf_dir=Path("/tmp"),
             work_dir=Path("/tmp"),
-            extra={"m3_stage_6": True},
+            extra={"llm_stage_6": True},
         )
-        assert cfg.m3_stage_6 is True
+        assert cfg.llm_stage_6 is True
         # And the key no longer trips the unknown-keys warning.
-        assert "m3_stage_6" in _KNOWN_EXTRA_KEYS
+        assert "llm_stage_6" in _KNOWN_EXTRA_KEYS
         # None (CLI's BooleanOptionalAction default) must NOT promote.
         cfg2 = PipelineConfig(
             pdf_dir=Path("/tmp"),
             work_dir=Path("/tmp"),
-            extra={"m3_stage_6": None},
+            extra={"llm_stage_6": None},
         )
-        assert cfg2.m3_stage_6 is False
+        assert cfg2.llm_stage_6 is False
 
 
 class TestSweep6CliUsesTypedAttribute:
-    """The CLI must write ``m3_stage_6`` to ``cfg.m3_stage_6`` (typed
-    attr), not ``cfg.extra['m3_stage_6']``."""
+    """The CLI must write ``llm_stage_6`` to ``cfg.llm_stage_6`` (typed
+    attr), not ``cfg.extra['llm_stage_6']``."""
 
-    def test_cli_does_not_mirror_m3_stage_6_into_extra(self):
+    def test_cli_does_not_mirror_llm_stage_6_into_extra(self):
         src = _SRC_CLI.read_text(encoding="utf-8")
-        assert 'cfg.extra["m3_stage_6"]' not in src, (
-            "CLI must write m3_stage_6 to the typed attribute "
-            "(cfg.m3_stage_6), not cfg.extra. Mirror-into-extra hides "
+        assert 'cfg.extra["llm_stage_6"]' not in src, (
+            "CLI must write llm_stage_6 to the typed attribute "
+            "(cfg.llm_stage_6), not cfg.extra. Mirror-into-extra hides "
             "the value from __post_init__ validators."
         )
 
-    def test_cli_writes_m3_stage_6_to_typed_attr(self):
-        """Pin the fix: ``cfg.m3_stage_6 = bool(args.m3_stage_6)``."""
+    def test_cli_writes_llm_stage_6_to_typed_attr(self):
+        """Pin the fix: ``cfg.llm_stage_6 = bool(args.llm_stage_6)``."""
         src = _SRC_CLI.read_text(encoding="utf-8")
-        assert "cfg.m3_stage_6 = bool(args.m3_stage_6)" in src, (
-            "CLI must assign m3_stage_6 to the typed attribute. "
-            "Pattern: `cfg.m3_stage_6 = bool(args.m3_stage_6)`."
+        assert "cfg.llm_stage_6 = bool(args.llm_stage_6)" in src, (
+            "CLI must assign llm_stage_6 to the typed attribute. "
+            "Pattern: `cfg.llm_stage_6 = bool(args.llm_stage_6)`."
         )
 
 
@@ -204,7 +204,7 @@ class TestSweep6EndToEnd:
     """End-to-end: a PipelineConfig with the 10 fields as direct
     attributes (not extras) should build cleanly."""
 
-    def test_pipeline_config_with_yolo_and_m3_attrs(self, tmp_path):
+    def test_pipeline_config_with_yolo_and_llm_attrs(self, tmp_path):
         """Build a PipelineConfig with the previously-redundant fields
         as direct attributes (the new world) and confirm construction
         + validation succeeds."""
@@ -217,20 +217,20 @@ class TestSweep6EndToEnd:
             yolo_conf_threshold=0.25,
             yolo_iou_threshold=0.45,
             yolo_device="auto",
-            m3_stage_6=True,
-            m3_per_panel_enabled=True,
-            m3_per_panel_min_conf=0.55,
-            m3_per_panel_max_per_figure=20,
-            m3_per_panel_max_per_paper=200,
+            llm_stage_6=True,
+            llm_per_panel_enabled=True,
+            llm_per_panel_min_conf=0.55,
+            llm_per_panel_max_per_figure=20,
+            llm_per_panel_max_per_paper=200,
         )
         # Typed attrs read back as expected (the whole point of sweep 6
         # is that these are first-class fields, not buried in extra).
         assert cfg.use_yolo_figures is False
         assert cfg.yolo_conf_threshold == 0.25
         assert cfg.yolo_device == "auto"
-        assert cfg.m3_stage_6 is True
-        assert cfg.m3_per_panel_enabled is True
-        assert cfg.m3_per_panel_min_conf == 0.55
+        assert cfg.llm_stage_6 is True
+        assert cfg.llm_per_panel_enabled is True
+        assert cfg.llm_per_panel_min_conf == 0.55
         # Constructing it must NOT raise — the previously-redundant
         # fields now flow through the normal ``__init__`` path.
         cfg.__post_init__()

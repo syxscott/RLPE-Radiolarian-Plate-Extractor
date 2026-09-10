@@ -3,7 +3,7 @@
 The PySide6 GUI could never use the LLM. ``PipelineWorker._build_config``
 hardcoded ``data_outbound_policy`` to ``local_only`` (the setting dict
 never carries the key), and the GUI had no API-key / policy controls at
-all. ``MiniMaxM3Backend`` short-circuits every ``infer_*`` call under
+all. ``AnthropicCompatBackend`` short-circuits every ``infer_*`` call under
 ``local_only``, so Stage-1 caption parsing silently fell back to the
 regex parser — which produces a garbage CaptionPair for the
 "Explanation of Plate N" caption convention — and the run finished with
@@ -11,11 +11,11 @@ regex parser — which produces a garbage CaptionPair for the
 
 Fixes covered here:
   * ``_resolve_outbound_policy``: auto policy — ``api_redacted`` when a
-    MiniMax key is reachable (settings or env), ``local_only`` otherwise;
+    LLM key is reachable (settings or env), ``local_only`` otherwise;
     an explicit user choice always wins.
   * ``api_full`` without the ``RLPE_DATA_OUTBOUND_OPT_IN`` env var
     downgrades to ``api_redacted`` instead of raising mid-run.
-  * ``collect_settings`` forwards ``MiniMax_api_key`` /
+  * ``collect_settings`` forwards ``llm_api_key`` /
     ``data_outbound_policy`` from the shared settings dict.
   * Settings tab exposes the API key (password echo) + policy combo and
     persists both under the bare QSettings keys.
@@ -111,18 +111,18 @@ def _make_run_tab(settings: dict):
     tab._workers = _StubWidget(value=1)
     tab._panel_score = _StubWidget(value=0.8)
     tab._gpu_check = _StubWidget(value=False)
-    tab._llm_combo = _StubWidget(data="minimax", text="MiniMax M2.5")
-    tab._m3_lang = _StubWidget(data="auto")
-    tab._m3_model_edit = _StubWidget(text="MiniMax-M3")
-    tab._m3_budget = _StubWidget(value=1024)
-    tab._m3_output = _StubWidget(value=2048)
-    tab._m3_timeout = _StubWidget(value=60)
-    tab._m3_max_retries = _StubWidget(value=3)
+    tab._llm_combo = _StubWidget(data="minimax", text="LLM M2.5")
+    tab._llm_lang = _StubWidget(data="auto")
+    tab._llm_model_edit = _StubWidget(text="MiniMax-M3")
+    tab._llm_budget = _StubWidget(value=1024)
+    tab._llm_output = _StubWidget(value=2048)
+    tab._llm_timeout = _StubWidget(value=60)
+    tab._llm_max_retries = _StubWidget(value=3)
     tab._paleodb_check = _StubWidget(value=False)
     tab._paleodb_occ = _StubWidget(value=25)
     tab._geo_vision = _StubWidget(value=False)
-    tab._m3_stage3 = _StubWidget(value=True)
-    tab._m3_multi_plate = _StubWidget(value=True)
+    tab._llm_stage3 = _StubWidget(value=True)
+    tab._llm_multi_plate = _StubWidget(value=True)
     tab._od_fallback = _StubWidget(value=True)
     tab._save_intermediate = _StubWidget(value=False)
     tab._dpi = _StubWidget(value=200)
@@ -194,9 +194,9 @@ class TestBuildConfigPolicy:
     def test_settings_key_forwarded_and_policy_redacted(self, monkeypatch, tmp_path):
         monkeypatch.delenv("MiniMax_API_KEY", raising=False)
         monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-        worker = _make_worker({"use_gpu": False, "MiniMax_api_key": "sk-abc"}, tmp_path)
+        worker = _make_worker({"use_gpu": False, "llm_api_key": "sk-abc"}, tmp_path)
         cfg = worker._build_config()
-        assert cfg.extra["MiniMax_api_key"] == "sk-abc"
+        assert cfg.extra["llm_api_key"] == "sk-abc"
         assert cfg.extra["data_outbound_policy"] == "api_redacted"
 
     def test_explicit_local_only_kept_even_with_key(self, monkeypatch, tmp_path):
@@ -208,7 +208,7 @@ class TestBuildConfigPolicy:
     def test_api_full_without_optin_downgrades_to_redacted(self, monkeypatch, tmp_path):
         monkeypatch.delenv("RLPE_DATA_OUTBOUND_OPT_IN", raising=False)
         worker = _make_worker(
-            {"use_gpu": False, "data_outbound_policy": "api_full", "MiniMax_api_key": "sk-abc"},
+            {"use_gpu": False, "data_outbound_policy": "api_full", "llm_api_key": "sk-abc"},
             tmp_path,
         )
         cfg = worker._build_config()
@@ -219,7 +219,7 @@ class TestBuildConfigPolicy:
     def test_api_full_with_optin_kept(self, monkeypatch, tmp_path):
         monkeypatch.setenv("RLPE_DATA_OUTBOUND_OPT_IN", "1")
         worker = _make_worker(
-            {"use_gpu": False, "data_outbound_policy": "api_full", "MiniMax_api_key": "sk-abc"},
+            {"use_gpu": False, "data_outbound_policy": "api_full", "llm_api_key": "sk-abc"},
             tmp_path,
         )
         cfg = worker._build_config()
@@ -231,15 +231,15 @@ class TestBuildConfigPolicy:
 # ----------------------------------------------------------------------
 class TestCollectSettingsForwardsLlmAuth:
     def test_api_key_and_policy_forwarded(self):
-        tab = _make_run_tab({"MiniMax_api_key": "sk-run", "data_outbound_policy": "auto"})
+        tab = _make_run_tab({"llm_api_key": "sk-run", "data_outbound_policy": "auto"})
         s = tab.collect_settings()
-        assert s["MiniMax_api_key"] == "sk-run"
+        assert s["llm_api_key"] == "sk-run"
         assert s["data_outbound_policy"] == "auto"
 
     def test_missing_keys_default_empty(self):
         tab = _make_run_tab({})
         s = tab.collect_settings()
-        assert s["MiniMax_api_key"] == ""
+        assert s["llm_api_key"] == ""
         assert s["data_outbound_policy"] == "auto"  # default, resolved worker-side
 
 
@@ -251,22 +251,22 @@ _SETTINGS_TAB_SRC = (_SRC / "rlpe" / "gui" / "settings_tab.py").read_text(encodi
 
 class TestSettingsTabControls:
     def test_api_key_widget_exists(self):
-        assert "_minimax_api_key" in _SETTINGS_TAB_SRC
+        assert "_llm_api_key" in _SETTINGS_TAB_SRC
         assert "EchoMode.Password" in _SETTINGS_TAB_SRC
 
     def test_policy_combo_widget_exists(self):
         assert "_data_outbound" in _SETTINGS_TAB_SRC
 
     def test_save_persists_both_keys(self):
-        assert '_qsettings.setValue("MiniMax_api_key"' in _SETTINGS_TAB_SRC
+        assert '_qsettings.setValue("llm_api_key"' in _SETTINGS_TAB_SRC
         assert '_qsettings.setValue("data_outbound_policy"' in _SETTINGS_TAB_SRC
 
     def test_load_restores_both_keys(self):
-        assert 'self._qsettings.value("MiniMax_api_key"' in _SETTINGS_TAB_SRC
+        assert 'self._qsettings.value("llm_api_key"' in _SETTINGS_TAB_SRC
         assert 'self._qsettings.value("data_outbound_policy"' in _SETTINGS_TAB_SRC
 
     def test_apply_to_run_settings_carries_both(self):
-        assert '"MiniMax_api_key"' in _SETTINGS_TAB_SRC
+        assert '"llm_api_key"' in _SETTINGS_TAB_SRC
         assert '"data_outbound_policy"' in _SETTINGS_TAB_SRC
 
 

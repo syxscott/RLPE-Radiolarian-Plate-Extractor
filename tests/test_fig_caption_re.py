@@ -306,7 +306,7 @@ class TestDanelianQuestionMarkPrefix:
     """
 
     def test_danelian_clause_with_question_prefix(self):
-        from rlpe.m3_engine import _DANELIAN_CLAUSE_RE
+        from rlpe.semantic_engine import _DANELIAN_CLAUSE_RE
 
         # Item 16
         m = _DANELIAN_CLAUSE_RE.match("16) ?Sethocapsa sp.")
@@ -330,7 +330,7 @@ class TestDanelianQuestionMarkPrefix:
 
     def test_danelian_clause_without_question_prefix_still_works(self):
         """Regression guard: the existing "no-?" clauses must still match."""
-        from rlpe.m3_engine import _DANELIAN_CLAUSE_RE
+        from rlpe.semantic_engine import _DANELIAN_CLAUSE_RE
 
         m = _DANELIAN_CLAUSE_RE.match("1) Ristola altissima altissima")
         assert m is not None

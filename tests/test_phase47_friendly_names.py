@@ -3,9 +3,9 @@
 Phase 46 added friendly names for OCR languages. This commit
 extends the same approach to:
   * Theme (light/dark/system → 浅色/深色/跟随系统)
-  * LLM backend (minimax/minimax-m3/... → MiniMax-M3 (推荐)/...)
+  * LLM backend (llm/llm-llm/... → MiniMax-M3 (推荐)/...)
   * OCR backend (paddleocr/easyocr → PaddleOCR (推荐)/...)
-  * M3 prompt language (auto/zh/en/ja → 自动检测/中文/英语/日本語)
+  * LLM prompt language (auto/zh/en/ja → 自动检测/中文/英语/日本語)
 
 The underlying code (worker, pipeline) still receives the ISO
 codes via QComboBox.userData; the UI displays the friendly
@@ -78,8 +78,8 @@ def test_ocr_backend_options_use_friendly_names():
     assert "easyocr" in codes
 
 
-def test_m3_prompt_lang_options_use_friendly_names():
-    """Phase 47: M3 prompt language dropdown shows 自动检测 / etc."""
+def test_llm_prompt_lang_options_use_friendly_names():
+    """Phase 47: LLM prompt language dropdown shows 自动检测 / etc."""
     from rlpe.gui.constants import M3_PROMPT_LANG_OPTIONS
 
     codes = [code for code, _en, _zh in M3_PROMPT_LANG_OPTIONS]
@@ -95,7 +95,7 @@ def test_friendly_options_helpers_return_pairs():
     from rlpe.gui import i18n
     from rlpe.gui.constants import (
         llm_backend_friendly_options,
-        m3_prompt_lang_friendly_options,
+        llm_prompt_lang_friendly_options,
         ocr_backend_friendly_options,
         theme_friendly_options,
     )
@@ -104,7 +104,7 @@ def test_friendly_options_helpers_return_pairs():
         theme_friendly_options,
         llm_backend_friendly_options,
         ocr_backend_friendly_options,
-        m3_prompt_lang_friendly_options,
+        llm_prompt_lang_friendly_options,
     ):
         i18n.set_language("en")
         en_options = helper()
@@ -151,7 +151,7 @@ def test_run_tab_llm_combo_uses_friendly_names():
     pytest.fail("Could not find LLM backend QComboBox in Run tab")
 
 
-def test_run_tab_m3_lang_uses_friendly_names():
+def test_run_tab_llm_lang_uses_friendly_names():
     from rlpe.gui.run_tab import RunTab
 
     rt = RunTab({})
@@ -162,10 +162,10 @@ def test_run_tab_m3_lang_uses_friendly_names():
             # Verify text != data
             for i in range(cb.count()):
                 assert cb.itemText(i) != cb.itemData(i), (
-                    f"Run tab M3 lang combo item {i} has raw code as text"
+                    f"Run tab LLM lang combo item {i} has raw code as text"
                 )
             return
-    pytest.fail("Could not find M3 prompt language QComboBox in Run tab")
+    pytest.fail("Could not find LLM prompt language QComboBox in Run tab")
 
 
 def test_run_tab_ocr_lang_uses_friendly_names():
@@ -208,9 +208,9 @@ def test_run_tab_collect_settings_returns_iso_codes():
         "llamacpp",
         "rules",
     }, f"llm_backend should be ISO code, got {settings['llm_backend']!r}"
-    # M3 prompt lang
-    assert settings["m3_prompt_lang"] in {"auto", "zh", "en", "ja"}, (
-        f"m3_prompt_lang should be ISO code, got {settings['m3_prompt_lang']!r}"
+    # LLM prompt lang
+    assert settings["llm_prompt_lang"] in {"auto", "zh", "en", "ja"}, (
+        f"llm_prompt_lang should be ISO code, got {settings['llm_prompt_lang']!r}"
     )
 
 
@@ -268,7 +268,7 @@ def test_settings_tab_llm_backend_combo_uses_friendly_names():
     pytest.fail("Could not find LLM backend QComboBox in Settings tab")
 
 
-def test_settings_tab_m3_prompt_lang_uses_friendly_names():
+def test_settings_tab_llm_prompt_lang_uses_friendly_names():
     from rlpe.gui.settings_tab import SettingsTab
 
     st = SettingsTab({})
@@ -276,10 +276,10 @@ def test_settings_tab_m3_prompt_lang_uses_friendly_names():
         if cb.itemData(0) in ("auto", "zh", "en", "ja"):
             for i in range(cb.count()):
                 assert cb.itemText(i) != cb.itemData(i), (
-                    f"Settings tab M3 prompt lang combo item {i} has raw code"
+                    f"Settings tab LLM prompt lang combo item {i} has raw code"
                 )
             return
-    pytest.fail("Could not find M3 prompt language QComboBox in Settings tab")
+    pytest.fail("Could not find LLM prompt language QComboBox in Settings tab")
 
 
 def test_settings_tab_save_uses_current_data_iso_codes():

@@ -3,7 +3,7 @@
 User audit: 4 OA papers (Bandini 2006 / Boughdiri 2007 / Danelian 2006 /
 Bragin 2025) were sampled. Of the 12 strat_column / paleogeographic_map /
 litholog_column figures across these papers, only 3 reached the
-geo_vision M3 prompt. The classifier returned ``other`` for 5 captions
+geo_vision LLM prompt. The classifier returned ``other`` for 5 captions
 and ``map`` for 1 (the latter being correct but not wired into the
 geo_vision pipeline).
 

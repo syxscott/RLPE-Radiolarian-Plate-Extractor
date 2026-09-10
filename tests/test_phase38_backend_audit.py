@@ -5,7 +5,7 @@ This file pins the highest-impact fixes:
 
   * config.py — type coercion (BUG #67) + range validation (#68, #69, #70)
   * paleodb.py — pooled HTTP opener + close() (BUG PBDB-2, 5)
-  * m3_engine.py — _coerce_label handles list values (BUG m3-1)
+  * semantic_engine.py — _coerce_label handles list values (BUG llm-1)
   * xlsx.py — atomic write via tmp+os.replace (BUG xlsx-4)
   * archive.py — DwC country field (BUG arch-3)
   * ocr.py — paddleocr 2.x / 3.x compatibility (BUG ocr-1)
@@ -113,11 +113,11 @@ def test_config_suggests_typo_for_unknown_extra_keys(caplog):
         PipelineConfig(
             pdf_dir=Path("/tmp"),
             work_dir=Path("/tmp"),
-            extra={"minimax_api_key": "x"},  # typo: should be "MiniMax_api_key"
+            extra={"minimax_api_key": "x"},  # typo: should be "llm_api_key"
         )
     assert "minimax_api_key" in caplog.text
     # The suggestion should mention the correct key
-    assert "MiniMax_api_key" in caplog.text or "did you mean" in caplog.text
+    assert "llm_api_key" in caplog.text or "did you mean" in caplog.text
 
 
 # ============================================================
@@ -146,10 +146,10 @@ def test_paleodb_close_clears_opener():
 
 
 # ============================================================
-# m3_engine.py — _coerce_label handles list values
+# semantic_engine.py — _coerce_label handles list values
 # ============================================================
 def test_coerce_label_handles_string():
-    from rlpe.m3_engine import _coerce_label
+    from rlpe.semantic_engine import _coerce_label
 
     assert _coerce_label("A") == "A"
     assert _coerce_label("  B  ") == "B"
@@ -157,9 +157,9 @@ def test_coerce_label_handles_string():
 
 
 def test_coerce_label_handles_list():
-    """Phase 38: M3 sometimes returns visible_label as a list
+    """Phase 38: LLM sometimes returns visible_label as a list
     ['A', 'B']. Old code produced "['A', 'B']" (Python repr)."""
-    from rlpe.m3_engine import _coerce_label
+    from rlpe.semantic_engine import _coerce_label
 
     assert _coerce_label(["A", "B"]) == "A, B"
     assert _coerce_label(["X"]) == "X"
@@ -168,7 +168,7 @@ def test_coerce_label_handles_list():
 
 
 def test_coerce_label_handles_none_and_number():
-    from rlpe.m3_engine import _coerce_label
+    from rlpe.semantic_engine import _coerce_label
 
     assert _coerce_label(None) is None
     assert _coerce_label(42) == "42"

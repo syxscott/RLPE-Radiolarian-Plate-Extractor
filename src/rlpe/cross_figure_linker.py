@@ -20,9 +20,9 @@ most likely came from. The strategies, in order of confidence:
    ``source="locality_match"``) — same paper, same locality string
    (``Tunisia``, ``Greece``, ``Sicily``, ``NW Turkey``, …) shared
    between the plate caption and any paper-level geo figure.
-4. **M3 cross-figure inference** (``confidence=0.3-0.6``,
-   ``source="m3_inference"``) — for unlinked plates, send paper
-   figure summary + plate caption to M3 and let it infer the most
+4. **LLM cross-figure inference** (``confidence=0.3-0.6``,
+   ``source="llm_inference"``) — for unlinked plates, send paper
+   figure summary + plate caption to LLM and let it infer the most
    likely formation / age. Implemented as an optional callback so
    tests can use a deterministic FakeM3Backend.
 
@@ -33,7 +33,7 @@ idea" marker).
 
 Public API
 ----------
-* :func:`link_species_to_geology(panels, paper_figures, m3_engine=None)`
+* :func:`link_species_to_geology(panels, paper_figures, semantic_engine=None)`
   — list of panels + paper-level figure summaries → list of
   ``LinkResult``.
 * :class:`LinkResult` — dataclass result.
@@ -65,7 +65,7 @@ from .sample_id_extractor import (
 
 LINK_SOURCE_SAMPLE = "sample_match"
 LINK_SOURCE_LOCALITY = "locality_match"
-LINK_SOURCE_M3 = "m3_inference"
+LINK_SOURCE_LLM = "llm_inference"
 LINK_SOURCE_CROSS_REF = "cross_ref"
 LINK_SOURCE_UNLINKED = "unlinked"
 
@@ -92,14 +92,14 @@ class LinkResult:
         Locality string (verbatim).
     confidence : float
         Link confidence in ``[0.0, 1.0]``. ``1.0`` for sample ID hits,
-        ``0.7`` for locality hits, ``0.3-0.6`` for M3 inferences,
+        ``0.7`` for locality hits, ``0.3-0.6`` for LLM inferences,
         ``0.0`` for the unlinked fallback.
     source : str
         One of ``"sample_match"``, ``"locality_match"``,
-        ``"m3_inference"``, ``"unlinked"``.
+        ``"llm_inference"``, ``"unlinked"``.
     evidence : str
         Human-readable evidence string (the matched sample id, locality,
-        or M3 prompt summary) for audit / debugging.
+        or LLM prompt summary) for audit / debugging.
     """
 
     panel_id: str | None
@@ -114,15 +114,15 @@ class LinkResult:
 
 
 # ---------------------------------------------------------------------------
-# M3 callback protocol
+# LLM callback protocol
 # ---------------------------------------------------------------------------
 
 
-class M3InferenceCallable(Protocol):
-    """Protocol for the M3 cross-figure inference callable.
+class LLMInferenceCallable(Protocol):
+    """Protocol for the LLM cross-figure inference callable.
 
     Tests use a ``FakeM3Backend``-backed stub; production code passes
-    ``m3_engine.infer_species_age_formation``.
+    ``semantic_engine.infer_species_age_formation``.
     """
 
     def __call__(
@@ -546,18 +546,18 @@ def _strategy2_locality_match(
     return None
 
 
-def _strategy3_m3_inference(
+def _strategy3_llm_inference(
     panel: Any,
     fig_index: _FigureIndex,
-    m3_inference: M3InferenceCallable | None,
+    llm_inference: LLMInferenceCallable | None,
 ) -> LinkResult | None:
-    """M3 cross-figure inference.
+    """LLM cross-figure inference.
 
-    Confidence 0.3-0.6 depending on what M3 returns. If ``m3_inference``
+    Confidence 0.3-0.6 depending on what LLM returns. If ``llm_inference``
     is None or returns a low-quality answer, returns None so the
     caller falls back to the unlinked row.
     """
-    if m3_inference is None:
+    if llm_inference is None:
         return None
 
     paper_context = {
@@ -565,7 +565,7 @@ def _strategy3_m3_inference(
     }
     panel_caption = _panel_caption(panel)
     try:
-        result = m3_inference(panel_caption, paper_context)
+        result = llm_inference(panel_caption, paper_context)
     except Exception:
         return None
 
@@ -589,8 +589,8 @@ def _strategy3_m3_inference(
         age=str(age) if age else None,
         locality=str(locality) if locality else None,
         confidence=confidence,
-        source=LINK_SOURCE_M3,
-        evidence=f"m3_inference: conf={confidence}",
+        source=LINK_SOURCE_LLM,
+        evidence=f"llm_inference: conf={confidence}",
     )
 
 
@@ -621,7 +621,7 @@ def _strategy4_cross_refs_match(
     Audit 2026-08-16 (fill-gaps): this strategy was previously dead
     code (``rlpe.cross_refs`` had tests but no caller). Wiring it in
     here gives the linker an explicit-textual-match tier between the
-    regex locality match (0.7) and the M3 inference fallback
+    regex locality match (0.7) and the LLM inference fallback
     (0.3-0.6).
     """
     caption = _panel_caption(panel)
@@ -701,8 +701,8 @@ def _unlinked_fallback(panel: Any) -> LinkResult:
 def link_species_to_geology(
     panels: Iterable[Any],
     paper_figures: Iterable[PaperFigureLike],
-    m3_engine: Any | None = None,
-    m3_inference_callable: M3InferenceCallable | None = None,
+    semantic_engine: Any | None = None,
+    llm_inference_callable: LLMInferenceCallable | None = None,
 ) -> list[LinkResult]:
     """Run the 3-strategy linker on a paper's panels.
 
@@ -717,14 +717,14 @@ def link_species_to_geology(
         raw dict). Only ``strat_column`` / ``litholog_column`` /
         ``paleogeographic_map`` / ``range_chart`` figure_types are
         indexed for matching.
-    m3_engine : optional
-        A ``M3Engine`` instance with an
+    semantic_engine : optional
+        A ``SemanticEngine`` instance with an
         ``infer_species_age_formation(panel_caption, paper_context)``
         method. If provided, we adapt it to a plain callable. If
         ``None``, Strategy 3 is skipped.
-    m3_inference_callable : optional
-        Direct override for the M3 inference callback. Takes
-        precedence over ``m3_engine``.
+    llm_inference_callable : optional
+        Direct override for the LLM inference callback. Takes
+        precedence over ``semantic_engine``.
 
     Returns
     -------
@@ -733,9 +733,9 @@ def link_species_to_geology(
     """
     fig_index = _build_figure_index(paper_figures)
 
-    callback: M3InferenceCallable | None = m3_inference_callable
-    if callback is None and m3_engine is not None:
-        method = getattr(m3_engine, "infer_species_age_formation", None)
+    callback: LLMInferenceCallable | None = llm_inference_callable
+    if callback is None and semantic_engine is not None:
+        method = getattr(semantic_engine, "infer_species_age_formation", None)
         if callable(method):
             callback = method
 
@@ -757,7 +757,7 @@ def link_species_to_geology(
             _strategy1_sample_match(panel, fig_index)
             or _strategy4_cross_refs_match(panel, fig_index)
             or _strategy2_locality_match(panel, fig_index)
-            or _strategy3_m3_inference(panel, fig_index, callback)
+            or _strategy3_llm_inference(panel, fig_index, callback)
             or _unlinked_fallback(panel)
         )
         out.append(result)
@@ -768,7 +768,7 @@ def link_species_to_geology(
 # Source string stamped onto every Phase C visual link so downstream
 # audit / GUI / export can distinguish them from Phase A text-only
 # links.
-VISUAL_LINK_SOURCE = "m3_visual"
+VISUAL_LINK_SOURCE = "llm_visual"
 
 # Phase 66 Plan C.3: figures considered "anchor" figures for the
 # visual-coordinate trigger. If the paper has any of these alongside
@@ -838,7 +838,7 @@ def _load_figure_image(path: Any) -> Any:
     """Load a figure image from a row path, returning ``None`` on failure.
 
     Audit 2026-09-05 (tier3-B4): ``link_visual_coordinates`` used to
-    pass ``None`` for both images, which ``M3Engine.
+    pass ``None`` for both images, which ``SemanticEngine.
     cross_figure_visual_inference`` rejects on its tiny-image guard —
     the visual channel could never produce output in production. The
     pipeline now threads row-level image paths through the figure
@@ -859,11 +859,11 @@ def _load_figure_image(path: Any) -> Any:
 def link_visual_coordinates(
     panels: Iterable[Any],
     paper_figures: Iterable[PaperFigureLike],
-    m3_engine: Any | None = None,
+    semantic_engine: Any | None = None,
 ) -> list[list[dict[str, Any]]]:
     """Phase 66 Plan C.3 — vision-based cross-figure linkage.
 
-    Runs the ``cross_figure_visual_inference`` M3 method on each panel
+    Runs the ``cross_figure_visual_inference`` LLM method on each panel
     whose Phase A Strategy-1 (sample_match) didn't reach confidence
     1.0 AND whose paper has BOTH a plate figure AND a strat column /
     litholog / paleogeographic map. The returned visual links are
@@ -882,8 +882,8 @@ def link_visual_coordinates(
         stamps it from the row's ``panel_path`` /
         ``metadata.figure_image_path``); without it the visual call
         is skipped.
-    m3_engine : optional
-        A ``M3Engine`` instance with a
+    semantic_engine : optional
+        A ``SemanticEngine`` instance with a
         ``cross_figure_visual_inference(plate_image, strat_image,
         plate_caption, strat_caption)`` method. If ``None`` or the
         method is missing, Phase C is silently skipped.
@@ -893,7 +893,7 @@ def link_visual_coordinates(
     list[list[dict]]
         Outer list indexed by panel (preserves input order). Inner
         list is the visual links for that panel — empty when the
-        trigger condition is not met OR M3 returned nothing usable.
+        trigger condition is not met OR LLM returned nothing usable.
         Each entry has keys::
 
           {
@@ -902,7 +902,7 @@ def link_visual_coordinates(
             "target_age": str | None,
             "target_formation": str | None,
             "confidence": float (0.0-1.0),
-            "source": "m3_visual",
+            "source": "llm_visual",
           }
 
     Notes
@@ -913,7 +913,7 @@ def link_visual_coordinates(
     * The plate + anchor requirement is structural: without a strat
       column or map, there's nothing to visually link to. A paper
       with only plates is Phase A's territory.
-    * Audit 2026-09-05 (tier3-B4): the M3 inference result is
+    * Audit 2026-09-05 (tier3-B4): the LLM inference result is
       paper-level (both captions are fixed per paper), so the call is
       made ONCE and the links are shared across panels — the previous
       per-panel loop re-issued N identical calls. Panels whose images
@@ -928,7 +928,7 @@ def link_visual_coordinates(
     # Trigger condition (panel side): at least one panel whose Phase A
     # Strategy 1 didn't already nail it. If every panel is
     # sample_match, there is nothing to refine — skip without loading
-    # images or calling M3.
+    # images or calling LLM.
     if all(_panel_link_source(p) == LINK_SOURCE_SAMPLE for p in panels_list):
         return [[] for _ in panels_list]
 
@@ -936,17 +936,17 @@ def link_visual_coordinates(
     if not has_both:
         return [[] for _ in panels_list]
 
-    # No M3 engine (or no visual method) → silent skip, same as
+    # No LLM engine (or no visual method) → silent skip, same as
     # fallback_used upstream.
-    if m3_engine is None:
+    if semantic_engine is None:
         return [[] for _ in panels_list]
-    visual_method = getattr(m3_engine, "cross_figure_visual_inference", None)
+    visual_method = getattr(semantic_engine, "cross_figure_visual_inference", None)
     if not callable(visual_method):
         return [[] for _ in panels_list]
 
     # Audit 2026-09-05 (tier3-B4): load the real plate + anchor images
     # from the row paths the pipeline stamped onto the figure views.
-    # Without BOTH images the M3 method bails on its tiny-image guard
+    # Without BOTH images the LLM method bails on its tiny-image guard
     # and returns empty for every panel, so skip the call entirely
     # (previously this passed ``None, None`` — a guaranteed-empty,
     # per-panel API-shaped call).
@@ -977,7 +977,7 @@ def link_visual_coordinates(
         return [[] for _ in panels_list]
 
     # Build the shared per-paper link list. We emit one link per panel
-    # entry M3 returned; the panel itself doesn't filter by
+    # entry LLM returned; the panel itself doesn't filter by
     # cell_label (the schema stores them all and the GUI picks
     # the right one per printed_panel_id).
     links: list[dict[str, Any]] = []
@@ -1004,7 +1004,7 @@ def link_visual_coordinates(
     for panel in panels_list:
         # The trigger condition: skip panels whose Phase A Strategy 1
         # already nailed them. Everything else (locality_match,
-        # m3_inference, unlinked) gets the visual treatment.
+        # llm_inference, unlinked) gets the visual treatment.
         if _panel_link_source(panel) == LINK_SOURCE_SAMPLE:
             out.append([])
         else:

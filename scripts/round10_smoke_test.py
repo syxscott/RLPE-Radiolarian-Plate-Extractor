@@ -27,7 +27,7 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 from rlpe.evaluation import compare_before_after, evaluate
 from rlpe.evaluation.gold import GoldPanel, load_gold
 from rlpe.evaluation.metrics import load_predictions_jsonl
-from rlpe.m3_engine import _regex_parse_caption
+from rlpe.semantic_engine import _regex_parse_caption
 
 
 def _load_jsonl(path: Path) -> list[dict]:

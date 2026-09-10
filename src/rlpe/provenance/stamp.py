@@ -213,8 +213,8 @@ def _config_snapshot(config: Any) -> dict[str, Any]:
     value so a stray ``sk-...`` token embedded in a prompt, endpoint,
     or header can't leak into ``run_output.json`` /
     ``matches.jsonl``. The fallback walker already filters keys
-    starting with ``_`` (which is why ``_MiniMax_external_handler``
-    was never exposed), but the public ``MiniMax_api_key`` field
+    starting with ``_`` (which is why ``_llm_external_handler``
+    was never exposed), but the public ``llm_api_key`` field
     *was* exposed — the fix removes it by name before applying the
     string-level redaction to every remaining value.
     """
@@ -235,12 +235,13 @@ def _config_snapshot(config: Any) -> dict[str, Any]:
 
 # Known field names that carry credentials. Removing them by name is
 # safer than relying on regex alone because operators occasionally
-# store keys under domain-specific names (``MiniMax_api_key``,
+# store keys under domain-specific names (``llm_api_key``,
 # ``anthropic_api_key``, ``openai_api_key``, ...) and the canonical
-# ``MiniMax_api_key`` pattern needs an exact match. The regex layer
+# ``llm_api_key`` pattern needs an exact match. The regex layer
 # below still catches stray tokens embedded in any other string.
 _API_KEY_FIELD_NAMES = {
-    "MiniMax_api_key",
+    "llm_api_key",
+    "MiniMax_api_key",  # legacy extra-key name (F17 rename)
     "minimax_api_key",
     "MiniMax_api_token",
     "minimax_api_token",

@@ -251,7 +251,7 @@ jobs:
           #
           # Regenerating predictions against the current eval/gold would
           # require a fresh 9-paper pipeline run with working SAM2 GPU +
-          # EasyOCR + live MiniMax API. The current dev env has CUDA OOM
+          # EasyOCR + live cloud LLM API. The current dev env has CUDA OOM
           # on SAM2 init and EasyOCR init failure; full pipeline time
           # estimate is 30–60 min with API throttle risk.
           #

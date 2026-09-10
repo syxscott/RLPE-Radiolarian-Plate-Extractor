@@ -13,7 +13,7 @@ panel records with species). The role here is:
 
   1. Classify each figure as ``plate`` (SEM images) / ``range_chart`` /
      ``map`` / ``photo`` / ``other`` — a range chart gets special handling.
-  2. Send the range-chart image + caption to MiniMax M3 vision and extract
+  2. Send the range-chart image + caption to LLM LLM vision and extract
      sections, species ranges, biozones, and other fossil occurrences as
      a strict JSON contract.
   3. Link the extracted geology back to the per-panel records: each panel
@@ -38,7 +38,7 @@ Design constraints
     downstream merge step records the provenance of the link
     (``extraction_source="range_chart_vision"``) so an operator can
     filter out low-confidence links without losing the data.
-  - Best-effort OCR: M3's text reading on low-resolution charts is noisy;
+  - Best-effort OCR: LLM's text reading on low-resolution charts is noisy;
     we accept spelling errors in species names and recover via the
     existing ``_normalize_species`` against gold/caption-parser output.
 """
@@ -226,7 +226,7 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
     ),
     # Phase 64 Plan B: schematic / diagram / reconstruction /
     # phylogenetic figure types. These four new types route to a
-    # dedicated M3 prompt (``PROMPT_REGISTRY["schematic_geo"]``) that
+    # dedicated LLM prompt (``PROMPT_REGISTRY["schematic_geo"]``) that
     # extracts text elements + concept relationships (e.g. "evolved
     # into") + extracted facts (ages, geography, taxa). They are
     # distinct from the existing map / range_chart / strat_column /
@@ -410,7 +410,7 @@ class SpeciesRange:
     # legend. The new ``range_top_ma`` / ``range_base_ma`` carry the
     # numeric Ma values derived from a chart's Ma axis (if any);
     # ``None`` when the chart has no Ma axis or the model could not
-    # read it. These are populated from the M3 prompt JSON
+    # read it. These are populated from the LLM prompt JSON
     # ``"range_top_ma"`` / ``"range_base_ma"`` fields (see the
     # extract_range_chart PROMPT) and never re-derived from bed
     # numbers.
@@ -560,10 +560,10 @@ def _extract_balanced_json_object(text: str) -> str | None:
 
 
 def _safe_json_loads(text: str) -> dict[str, Any]:
-    """Lenient JSON object extraction. Same contract as ``m3_engine._safe_json_loads``
+    """Lenient JSON object extraction. Same contract as ``semantic_engine._safe_json_loads``
     but exposed locally to keep this module self-contained.
 
-    Audit M3: M3 occasionally emits trailing fences / extra prose that
+    Audit LLM: LLM occasionally emits trailing fences / extra prose that
     breaks the strict ``json.loads`` first pass. The fallback
     ``_extract_balanced_json_object`` already handles the common case
     (it scans for the first ``{`` and matches the closing ``}`` while
@@ -581,7 +581,7 @@ def _safe_json_loads(text: str) -> dict[str, Any]:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
             return parsed
-        # Audit 2026-09-01 BL-19: M3 sometimes wraps the whole response
+        # Audit 2026-09-01 BL-19: LLM sometimes wraps the whole response
         # in a JSON array (e.g. ``[{"sections": [...]}]``) instead of an
         # object. The previous code returned ``parsed`` unchanged and
         # the downstream ``dict``-only consumer then crashed. Wrap a
@@ -691,7 +691,7 @@ def extract_range_chart(
     image_path : str
         Absolute path to the figure image (PNG/JPG). Must be readable.
     api_key, base_url, model : str
-        MiniMax-Anthropic-compatible API configuration. The caller is
+        LLM-Anthropic-compatible API configuration. The caller is
         responsible for sourcing these from the active environment
         (typically loaded from ``.env``).
     timeout_sec : int
@@ -1154,7 +1154,7 @@ def build_geology_links_for_panels(
         candidates = by_species.get(ps_norm, [])
         if not candidates and len(ps_norm.split()) == 1:
             # Panel has only a genus name — collect ALL range-chart
-            # species in that genus. Audit 2026-08-01 (M3): previously
+            # species in that genus. Audit 2026-08-01 (LLM): previously
             # we took the FIRST genus-prefix match silently, which
             # linked bare-genus panels to whichever species happened
             # to be encountered first in the chart (e.g. Bandini 2006

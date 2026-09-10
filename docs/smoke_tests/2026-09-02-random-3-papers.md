@@ -2,7 +2,7 @@
 
 **Goal**: pick 3 random radiolarian papers NOT in the v19 gold set,
 run the new pipeline (`caption_fixer` + `prompts` + `post_process`
-+ MiniMax M3) end-to-end, and report what comes out.
++ LLM LLM) end-to-end, and report what comes out.
 
 **Note on F1**: these 3 papers have no gold annotations in
 `data/gold/` or `data/gold_v19_extended/`, so we cannot compute
@@ -45,8 +45,8 @@ processed PDF, rendered PNG, and per-paper JSON are under
     **ammonite genera**, not radiolarians.
 - **Prompt template chosen**: standard radiolarian template (no
   `range|distribution|scanning electron|bar=` markers in caption).
-- **M3 raw response**: 1 panel, `species="None"`, `confidence=0.99`.
-- **Interpretation**: M3 correctly recognized that the plate caption
+- **LLM raw response**: 1 panel, `species="None"`, `confidence=0.99`.
+- **Interpretation**: LLM correctly recognized that the plate caption
   is **about ammonite biostratigraphy, not radiolarians**, and
   returned a null species. This is the *right* behavior — the
   pipeline did not hallucinate radiolarian taxa on a non-radiolarian
@@ -62,10 +62,10 @@ processed PDF, rendered PNG, and per-paper JSON are under
   radiolarian biostratigraphy; the first plate anchor that
   `caption_fixer` picked is the ostracod plate.
 - **Prompt template chosen**: standard radiolarian template.
-- **M3 raw response**: 3 panels, after dedup still 3, after
+- **LLM raw response**: 3 panels, after dedup still 3, after
   `conf>=0.7` filter **1 panel**:
   - `Loxoconcha sp.` (panel `2, Figure 12`, confidence 0.95).
-- **Interpretation**: M3 faithfully transcribed the **ostracod**
+- **Interpretation**: LLM faithfully transcribed the **ostracod**
   taxon from the caption. `Loxoconcha` is an ostracod, **not a
   radiolarian**. The pipeline as a whole is honest about what it
   read, but the radiolarian-only prompt did not suppress
@@ -91,7 +91,7 @@ processed PDF, rendered PNG, and per-paper JSON are under
 
 ## Summary table
 
-| Paper | M3 raw | dedup | conf≥0.7 | radiolarian species? |
+| Paper | LLM raw | dedup | conf≥0.7 | radiolarian species? |
 |-------|--------|-------|----------|----------------------|
 | Zeiss_2003 | 1 | 1 | 1 | 0 (`species="None"`) |
 | Okosun_2013 | 3 | 3 | 1 | 0 (`Loxoconcha sp.` = ostracod) |
@@ -101,10 +101,10 @@ processed PDF, rendered PNG, and per-paper JSON are under
 species extraction in this random draw. Three independent reasons:
 
 1. **Zeiss**: paper is about ammonite-based Jurassic biostratigraphy,
-   not radiolarian systematics. M3 correctly said `None`.
+   not radiolarian systematics. LLM correctly said `None`.
 2. **Okosun**: paper mixes ostracods / diatoms / radiolarians; the
    first `Plate 2` anchor happens to be an ostracod SEM plate.
-   M3 transcribed the ostracod taxon honestly.
+   LLM transcribed the ostracod taxon honestly.
 3. **Danelian**: Cambrian–Ordovician preprint uses `Figure N` only;
    `caption_fixer`'s anchor regex is hard-coded to `Plate|Pl|表|図版`.
 
@@ -123,14 +123,14 @@ species extraction in this random draw. Three independent reasons:
   journal papers use only `Figure N`. Adding `Figure | Fig\.` to the
   anchor regex would let `select_caption` work on those.
   Recommend opening a follow-up task.
-- **M3's prompt-level "non-radiolarian → species=null" instruction
+- **LLM's prompt-level "non-radiolarian → species=null" instruction
   is not strict enough for Okosun-style mixed-content papers.**
   The model returned `Loxoconcha sp.` at confidence 0.95 even though
   `Loxoconcha` is unambiguously an ostracod. The prompt should
   either (a) instruct "set species=null for any taxon not in the
   Radiolaria", or (b) request the model to first output a per-panel
   `clade` field that downstream code can filter.
-- **API cost this run**: 3 successful MiniMax M3 calls, ~3 × 60s
+- **API cost this run**: 3 successful LLM LLM calls, ~3 × 60s
   total wall time (sequential 30s rate-limit gaps).
 
 ---

@@ -3,10 +3,10 @@
 
 What this test proves
 ---------------------
-1. ``MiniMaxM3Backend(data_outbound_policy="local_only")`` works
+1. ``AnthropicCompatBackend(data_outbound_policy="local_only")`` works
    without an API key and never touches the network.
 2. The same constructor with ``api_redacted`` shrinks payloads.
-3. ``build_MiniMax_backend_from_env_or_config`` honours the policy
+3. ``build_anthropic_compat_backend`` honours the policy
    and lets the operator run offline.
 4. The canonical ``RunOutput`` Pydantic schema round-trips through
    ``model_dump_json()`` and back, which is the contract the API
@@ -41,7 +41,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 # Ensure src/ is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from rlpe.llm_backends import MiniMaxM3Backend  # noqa: E402
+from rlpe.llm_backends import AnthropicCompatBackend  # noqa: E402
 from rlpe.schema_models import (  # noqa: E402
     PanelMetadata,
     PanelRecord,
@@ -58,7 +58,7 @@ def test_local_only_minimax_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
 
-    b = MiniMaxM3Backend(api_key="", data_outbound_policy="local_only")
+    b = AnthropicCompatBackend(api_key="", data_outbound_policy="local_only")
     assert b.data_outbound_policy == "local_only"
 
     r = b.infer_panel(
@@ -91,8 +91,10 @@ def test_api_redacted_thumbnail_and_truncate(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
-    b = MiniMaxM3Backend(
+    b = AnthropicCompatBackend(
         api_key="sk-test-dummy-dummy-dummy-dummy-dummy-dummy",
+        base_url="http://localhost:0",
+        model="test-model",
         data_outbound_policy="api_redacted",
     )
     img = Image.new("RGB", (2048, 2048), color=(128, 128, 128))
@@ -112,24 +114,24 @@ def test_api_redacted_thumbnail_and_truncate(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_builder_accepts_local_only_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    from rlpe.llm_backends import build_MiniMax_backend_from_env_or_config
+    from rlpe.llm_backends import build_anthropic_compat_backend
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
 
-    b = build_MiniMax_backend_from_env_or_config({"data_outbound_policy": "local_only"})
-    assert isinstance(b, MiniMaxM3Backend)
+    b = build_anthropic_compat_backend({"data_outbound_policy": "local_only"})
+    assert isinstance(b, AnthropicCompatBackend)
     assert b.data_outbound_policy == "local_only"
 
 
 def test_builder_rejects_bad_policy(monkeypatch: pytest.MonkeyPatch) -> None:
-    from rlpe.llm_backends import build_MiniMax_backend_from_env_or_config
+    from rlpe.llm_backends import build_anthropic_compat_backend
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("MiniMax_API_KEY", raising=False)
 
     with pytest.raises(ValueError, match="data_outbound_policy"):
-        build_MiniMax_backend_from_env_or_config({"data_outbound_policy": "bogus"})
+        build_anthropic_compat_backend({"data_outbound_policy": "bogus"})
 
 
 # ---------------------------------------------------------------------------

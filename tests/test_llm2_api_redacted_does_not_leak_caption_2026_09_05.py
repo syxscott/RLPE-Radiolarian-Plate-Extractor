@@ -54,10 +54,10 @@ class TestApplyOutboundPolicyRedactsCaption:
     def test_api_redacted_strips_caption_text(self):
         """Under api_redacted, the returned caption_text must be
         redacted (empty or a stub) — NOT the original."""
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
         # Bypass full backend init — only the redaction policy matters.
-        bk = MiniMaxM3Backend.__new__(MiniMaxM3Backend)
+        bk = AnthropicCompatBackend.__new__(AnthropicCompatBackend)
         bk.data_outbound_policy = "api_redacted"
 
         sample_caption = (
@@ -91,9 +91,9 @@ class TestApplyOutboundPolicyRedactsCaption:
         )
 
     def test_api_redacted_strips_ocr_labels(self):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        bk = MiniMaxM3Backend.__new__(MiniMaxM3Backend)
+        bk = AnthropicCompatBackend.__new__(AnthropicCompatBackend)
         bk.data_outbound_policy = "api_redacted"
         result = bk._apply_outbound_policy(
             panel_image=None,
@@ -112,9 +112,9 @@ class TestApplyOutboundPolicyRedactsCaption:
     def test_api_full_passes_caption_through(self):
         """Under api_full (opt-in), caption and ocr_labels pass
         through unchanged — that's the whole point of opting in."""
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        bk = MiniMaxM3Backend.__new__(MiniMaxM3Backend)
+        bk = AnthropicCompatBackend.__new__(AnthropicCompatBackend)
         bk.data_outbound_policy = "api_full"
         sample_caption = "Plate 5. Spumellarians from the Lower Cretaceous"
         result = bk._apply_outbound_policy(
@@ -133,9 +133,9 @@ class TestInferPanelDoesNotLeakCaptionUnderRedacted:
     sent to the API must NOT contain the original caption."""
 
     def _make_backend(self, policy: str):
-        from rlpe.llm_backends import MiniMaxM3Backend
+        from rlpe.llm_backends import AnthropicCompatBackend
 
-        bk = MiniMaxM3Backend.__new__(MiniMaxM3Backend)
+        bk = AnthropicCompatBackend.__new__(AnthropicCompatBackend)
         bk.data_outbound_policy = policy
         bk._thread_local = type("TL", (), {})()  # fresh thread-local
         return bk

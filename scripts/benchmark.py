@@ -144,11 +144,11 @@ def bench_caption_parser() -> dict[str, Any]:
     """Parse 3 representative caption strings of varying complexity.
 
     Uses the module-level `_regex_parse_caption` (no backend needed)
-    rather than `M3Engine.parse_caption` (which requires an LLM
+    rather than `SemanticEngine.parse_caption` (which requires an LLM
     backend). The regex parser is the one that actually does the
-    caption → (label, species) work; M3's value-add is critique.
+    caption → (label, species) work; LLM's value-add is critique.
     """
-    from rlpe.m3_engine import _regex_parse_caption
+    from rlpe.semantic_engine import _regex_parse_caption
 
     captions = [
         # (a) Pouille-style — exercises _POUILE_CLAUSE_RE
@@ -219,7 +219,7 @@ def main() -> int:
     print("  [4/5] OCR (PaddleOCR) ...", file=sys.stderr)
     report["stages"]["ocr"] = bench_ocr()
 
-    print("  [5/5] Caption parser (m3_engine) ...", file=sys.stderr)
+    print("  [5/5] Caption parser (semantic_engine) ...", file=sys.stderr)
     report["stages"]["caption_parser"] = bench_caption_parser()
 
     out = json.dumps(report, indent=2, sort_keys=True)

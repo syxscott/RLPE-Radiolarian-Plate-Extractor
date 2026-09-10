@@ -6,10 +6,10 @@
 
 **Architecture**: 
 - 新增 4 个 figure type（schematic / diagram / reconstruction / phylogenetic）
-- M3 vision prompt 提取 text elements + relationships + extracted facts
+- LLM vision prompt 提取 text elements + relationships + extracted facts
 - 输出存到 `PanelMetadata.figure_schematic_data` 新字段
 
-**Tech Stack**: Python 3.11, Pydantic v2, pytest, MiniMax M3
+**Tech Stack**: Python 3.11, Pydantic v2, pytest, LLM LLM
 
 ---
 
@@ -34,8 +34,8 @@
 - Modify: `schemas/rlpe-v1.0.0.json` (regenerate)
 - Test: `tests/test_phase64_schematic_schema.py`
 
-### Task 3: M3 schematic prompt + extract_schematic 方法
-- Modify: `src/rlpe/m3_engine.py`
+### Task 3: LLM schematic prompt + extract_schematic 方法
+- Modify: `src/rlpe/semantic_engine.py`
 - Test: `tests/test_phase64_schematic_extract.py`
 
 ### Task 4: Pipeline 路由
@@ -60,9 +60,9 @@
 ## Constraints
 
 - **TDD strictly** — 每个 task: 写测试 → RED → 实现 → GREEN → commit
-- **No live LLM calls** — mock M3 backend
+- **No live LLM calls** — mock LLM backend
 - **No new deps**
-- **Files touched**: m3_engine / range_chart_extractor / pipeline / schema_models / schema_dump / schemas / converters / exporters / gui/results_tab
+- **Files touched**: semantic_engine / range_chart_extractor / pipeline / schema_models / schema_dump / schemas / converters / exporters / gui/results_tab
 - **Commit format**: `feat(Phase 64 Plan B.X): <description>` per task + final `phase 64 (Plan B): schematic figure extraction complete`
 - **Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`**
 

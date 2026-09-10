@@ -12,7 +12,7 @@ Covers the fixes from the 40-paper coverage run:
 * F5  — per-figure observability logs in the OD loop.
 * F6  — duplicate range-chart caption suppression (Munasri p007_09/10).
 * F7  — ``--od-panel-detector yolo`` wiring.
-* F9  — MiniMax 5xx backoff/storm tracking + NoneType log fix.
+* F9  — LLM 5xx backoff/storm tracking + NoneType log fix.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ class TestStage2Override:
         assert "stage2_overridden" in src, "F4 override diagnostic flag missing"
         assert "_cap_evidence >= 2" in src, "F4 threshold must be >=2 signals"
         # override sits inside the Stage 2 rejection branch
-        i_override = src.find('m3_diag["stage2_overridden"] = True')
+        i_override = src.find('llm_diag["stage2_overridden"] = True')
         i_reject = src.find("rejected (not a radiolarian plate)")
         assert 0 < i_override < i_reject, (
             "override (if-branch) must precede the rejection log (else-branch) "
@@ -178,7 +178,7 @@ class TestMinimax5xxResilience:
 
         p = RadiolarianPipeline(PipelineConfig(pdf_dir=tmp_path, work_dir=tmp_path / "w"))
         # No backend built — the storm check must be a safe getattr.
-        backend = getattr(p.m3_engine, "backend", None) if p.m3_engine else None
+        backend = getattr(p.semantic_engine, "backend", None) if p.semantic_engine else None
         if backend is not None:
             assert backend.in_5xx_storm() is False
 
@@ -187,10 +187,10 @@ class TestMinimax5xxResilience:
         running outside an except block; the fix passes exc_info
         explicitly."""
         src = (_ROOT / "src" / "rlpe" / "llm_backends.py").read_text(encoding="utf-8")
-        assert "MiniMax API call failed after" in src
+        assert "LLM API call failed after" in src
         # the fixed call uses logger.error with exc_info=last_exc
         assert "exc_info=last_exc" in src
-        idx_log = src.find("MiniMax API call failed after")
+        idx_log = src.find("LLM API call failed after")
         idx_exc = src.find("exc_info=last_exc")
         assert 0 < idx_log < idx_exc
         # and the old bare logger.exception form is gone

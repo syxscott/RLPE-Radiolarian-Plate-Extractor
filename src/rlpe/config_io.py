@@ -32,20 +32,24 @@ def save_config(config: PipelineConfig, path: Path) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     # Redact secrets before persisting. The previous version wrote the
-    # full ``extra`` dict (which contains ``MiniMax_api_key`` if the
+    # full ``extra`` dict (which contains ``llm_api_key`` if the
     # user supplied one inline) to disk, which meant the API key
     # silently leaked into any backup / sync / file-sharing path that
     # picked up the config JSON. Strip the recognised secret fields
     # entirely (rather than substituting ``"***REDACTED***"`` which
     # the loader would have accepted as a valid API-key string).
     secret_keys = {
-        "MiniMax_api_key",
+        "llm_api_key",
         "ANTHROPIC_API_KEY",
         "MiniMax_API_KEY",
-        "_MiniMax_external_handler",  # injected by web/API layer, may carry tokens
+        # Legacy vendor-branded key names (F17 rename) — still stripped
+        # so re-saving an old config never persists the credential.
+        "MiniMax_api_key",
+        "_MiniMax_external_handler",
+        "_llm_external_handler",  # injected by web/API layer, may carry tokens
         # Audit 2026-09-01 CR-17 follow-up: also redact cloud-provider
         # keys that may be carried via ``extra`` when the operator
-        # routes MiniMax through AWS Bedrock / Vertex / Azure.
+        # routes LLM through AWS Bedrock / Vertex / Azure.
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "GOOGLE_APPLICATION_CREDENTIALS",

@@ -19,7 +19,7 @@ from rlpe.gemma_postprocess import (
 )
 from rlpe.llm_backends import (
     FallbackHandler,
-    build_MiniMax_backend_from_env_or_config,
+    build_anthropic_compat_backend,
     cli_fallback_prompt,
 )
 
@@ -56,7 +56,7 @@ def main() -> int:
             "llamacpp",
             "llama.cpp",
             "llama_cpp",
-            "MiniMax",
+            "anthropic",
             "minimax",
         ],
     )
@@ -70,21 +70,19 @@ def main() -> int:
     parser.add_argument("--use-4bit", action="store_true")
     parser.add_argument("--no-bfloat16", action="store_true")
     parser.add_argument("--timeout-sec", type=int, default=120)
-    # MiniMax M3 API arguments
-    parser.add_argument("--MiniMax-api-key", type=str, default=None)
+    # LLM LLM API arguments
+    parser.add_argument("--llm-api-key", type=str, default=None)
+    parser.add_argument("--llm-base-url", type=str, default=None)
+    parser.add_argument("--llm-model", type=str, default=None)
+    parser.add_argument("--LLM-max-concurrent", type=int, default=8)
+    parser.add_argument("--LLM-max-retries", type=int, default=3)
+    parser.add_argument("--llm-thinking-budget", type=int, default=1024)
+    parser.add_argument("--LLM-no-thinking", action="store_true")
     parser.add_argument(
-        "--MiniMax-endpoint", type=str, default="https://api.minimaxi.com/anthropic"
-    )
-    parser.add_argument("--MiniMax-model", type=str, default="MiniMax-M3")
-    parser.add_argument("--MiniMax-max-concurrent", type=int, default=8)
-    parser.add_argument("--MiniMax-max-retries", type=int, default=3)
-    parser.add_argument("--MiniMax-thinking-budget", type=int, default=1024)
-    parser.add_argument("--MiniMax-no-thinking", action="store_true")
-    parser.add_argument(
-        "--MiniMax-interactive", action="store_true", help="Prompt user (CLI) on API errors"
+        "--LLM-interactive", action="store_true", help="Prompt user (CLI) on API errors"
     )
     parser.add_argument(
-        "--MiniMax-fallback-default",
+        "--llm-fallback-default",
         type=str,
         default="rules",
         choices=["gemma4", "rules", "stop", "retry"],
@@ -92,23 +90,23 @@ def main() -> int:
     args = parser.parse_args()
 
     rows = load_jsonl(args.input_jsonl)
-    if args.backend in {"MiniMax", "minimax"}:
+    if args.backend in {"anthropic", "minimax", "MiniMax"}:
         mini_extra = {
-            "MiniMax_api_key": args.MiniMax_api_key,
-            "MiniMax_endpoint": args.MiniMax_endpoint,
-            "MiniMax_model": args.MiniMax_model,
-            "MiniMax_max_concurrent": args.MiniMax_max_concurrent,
-            "MiniMax_max_retries": args.MiniMax_max_retries,
-            "MiniMax_thinking_budget_tokens": args.MiniMax_thinking_budget,
-            "MiniMax_enable_thinking": not args.MiniMax_no_thinking,
+            "llm_api_key": args.llm_api_key,
+            "llm_base_url": args.llm_base_url,
+            "llm_model": args.llm_model,
+            "llm_max_concurrent": args.llm_max_concurrent,
+            "llm_max_retries": args.llm_max_retries,
+            "llm_thinking_budget_tokens": args.llm_thinking_budget,
+            "llm_enable_thinking": not args.llm_no_thinking,
         }
-        mini_backend = build_MiniMax_backend_from_env_or_config(mini_extra)
+        mini_backend = build_anthropic_compat_backend(mini_extra)
         # Build the handler for cost reporting; the actual fallback decision
         # in this batch script is made by inspecting the result rows below.
-        _handler = FallbackHandler(default_action=args.MiniMax_fallback_default)
-        if args.MiniMax_interactive:
+        _handler = FallbackHandler(default_action=args.llm_fallback_default)
+        if args.llm_interactive:
             _handler.on_error = cli_fallback_prompt
-        runtime = GemmaRuntime(backend=mini_backend, backend_name="MiniMax")
+        runtime = GemmaRuntime(backend=mini_backend, backend_name="anthropic")
     elif args.backend in {"llamacpp", "llama.cpp", "llama_cpp"}:
         runtime = load_gemma4_llamacpp(
             host=args.llama_host,
@@ -137,24 +135,24 @@ def main() -> int:
         prompt_lang=args.prompt_lang,
     )
 
-    # ----- MiniMax fallback detection (batch path) -----
+    # ----- LLM fallback detection (batch path) -----
     # batch_gemma_postprocess_rows does NOT raise on API errors; it marks the
     # row with gemma_error / gemma_fallback. Here we surface them and (if
-    # --MiniMax-interactive) ask the user what to do.
-    if args.backend in {"MiniMax", "minimax"} and args.MiniMax_interactive:
+    # --LLM-interactive) ask the user what to do.
+    if args.backend in {"anthropic", "minimax", "MiniMax"} and args.llm_interactive:
         err_rows = [r for r in enhanced if r.get("gemma_error") or r.get("gemma_fallback")]
         if err_rows:
             first = err_rows[0]
             err_info = {
                 "error": first.get("gemma_error", "unknown"),
-                "error_type": first.get("gemma_error_type", "MiniMaxAPIError"),
+                "error_type": first.get("gemma_error_type", "LLMAPIError"),
                 "context": f"batch rows_with_errors={len(err_rows)} of {len(enhanced)}",
             }
             try:
                 action = cli_fallback_prompt(err_info)
             except Exception:
-                action = args.MiniMax_fallback_default
-            print(f"[MiniMax fallback] action={action} for {len(err_rows)} failed rows")
+                action = args.llm_fallback_default
+            print(f"[LLM fallback] action={action} for {len(err_rows)} failed rows")
             if action == "stop":
                 save_jsonl(args.output_jsonl, enhanced)  # persist what we have
                 print("STOP requested; partial output saved.")
@@ -162,15 +160,14 @@ def main() -> int:
 
     save_jsonl(args.output_jsonl, enhanced)
     print(f"done input={len(rows)} output={len(enhanced)}")
-    # MiniMax cost summary
+    # LLM usage summary (token accounting only — F17 removed costs)
     try:
         mini_b = getattr(runtime.backend, "cost_summary", None)
         if callable(mini_b):
             summary = mini_b()
             print(
-                f"MiniMax usage: calls={summary['calls']} errors={summary['errors']} "
-                f"in_tok={summary['input_tokens']} out_tok={summary['output_tokens']} "
-                f"cost_cny={summary['total_cost_cny']}"
+                f"LLM usage: calls={summary['calls']} errors={summary['errors']} "
+                f"in_tok={summary['input_tokens']} out_tok={summary['output_tokens']}"
             )
     except Exception:
         pass

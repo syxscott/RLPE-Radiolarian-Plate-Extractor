@@ -8,7 +8,7 @@ inline and asserted on its own copy (tautology).
 
 Override rule (audit 2026-07-31):
   1. Keys that are NOT set in the OS environment are always loaded.
-  2. The project's reserved MiniMax keys (.env wins over an OS env
+  2. The project's reserved LLM keys (.env wins over an OS env
      var) — tools like Claude Code set ``ANTHROPIC_BASE_URL``
      globally; without the override RLPE would silently connect to
      the wrong endpoint.

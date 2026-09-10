@@ -167,7 +167,7 @@ class PanelSegmenter:
     def _preprocess_enhanced(gray: np.ndarray) -> np.ndarray:
         """Morphological pipeline for dense plates with touching specimens.
 
-        Steps (M3-suggested):
+        Steps (LLM-suggested):
           1. Morphological OPEN with 5x5 rect → removes scale bars / labels
           2. Morphological CLOSE with 7x7 ellipse → fills lattice pores
              (reduced from 9x9: the larger kernel merged entire rows of
@@ -459,7 +459,7 @@ class PanelSegmenter:
 
     def _segment_with_opencv(self, image: np.ndarray) -> list[PanelCandidate]:
         """OpenCV panel segmentation. Uses Otsu as the baseline and the
-        M3-suggested morphology+adaptive path as a *supplement* (not a
+        LLM-suggested morphology+adaptive path as a *supplement* (not a
         duplicate). Anything the enhanced path finds that the Otsu path
         missed is added, provided it doesn't overlap an Otsu panel
         (IoU < 0.1) — otherwise we'd double-count the same specimen.

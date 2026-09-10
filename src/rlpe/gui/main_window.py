@@ -367,20 +367,18 @@ class MainWindow(QMainWindow):
             "yolo_model_path": str(self._qsettings.value("yolo_model_path", "")),
             "yolo_conf_threshold": self._qfloat(self._qsettings, "yolo_conf_threshold", 0.25),
             "yolo_iou_threshold": self._qfloat(self._qsettings, "yolo_iou_threshold", 0.45),
-            "llm_backend": self._qsettings.value("llm_backend", "minimax"),
-            "m3_prompt_lang": self._qsettings.value("m3_prompt_lang", "auto"),
-            "m3_model": self._qsettings.value("m3_model", "MiniMax-M3"),
+            "llm_backend": self._qsettings.value("llm_backend", "anthropic"),
+            "llm_prompt_lang": self._qsettings.value("llm_prompt_lang", "auto"),
+            "llm_model": self._qsettings.value("llm_model", ""),
             # BUG-1 (audit 2026-09-04): carry the LLM auth keys into the
             # Run tab's collect_settings() path; without them the worker
             # always resolved data_outbound_policy to local_only.
-            "MiniMax_api_key": str(self._qsettings.value("MiniMax_api_key", "")),
+            "llm_api_key": str(self._qsettings.value("llm_api_key", "")),
             "data_outbound_policy": str(self._qsettings.value("data_outbound_policy", "auto")),
-            "MiniMax_thinking_budget": self._qint(self._qsettings, "MiniMax_thinking_budget", 1024),
-            "MiniMax_max_output_tokens": self._qint(
-                self._qsettings, "MiniMax_max_output_tokens", 2048
-            ),
-            "MiniMax_timeout_sec": self._qint(self._qsettings, "MiniMax_timeout_sec", 60),
-            "MiniMax_max_retries": self._qint(self._qsettings, "MiniMax_max_retries", 3),
+            "llm_thinking_budget": self._qint(self._qsettings, "llm_thinking_budget", 1024),
+            "llm_max_output_tokens": self._qint(self._qsettings, "llm_max_output_tokens", 2048),
+            "llm_timeout_sec": self._qint(self._qsettings, "llm_timeout_sec", 60),
+            "llm_max_retries": self._qint(self._qsettings, "llm_max_retries", 3),
             "use_paleodb": self._qbool(self._qsettings, "use_paleodb", True),
             "paleodb_max_occurrences": self._qint(self._qsettings, "paleodb_max_occurrences", 25),
             "paleodb_endpoint": self._qsettings.value(
@@ -981,7 +979,7 @@ class MainWindow(QMainWindow):
         if not getattr(self, "_batch_pdfs", None):
             # Auto-switch to results tab (single-job mode only)
             self._tabs.setCurrentIndex(TAB_RESULTS)
-        # Phase 54 audit: M3 — advance the serial batch queue. The
+        # Phase 54 audit: LLM — advance the serial batch queue. The
         # previous version declared a batch helper at line 702-719 that
         # started the *first* job and bumped the index, but nothing
         # invoked ``_start_next_batch_job`` on completion. The dangling

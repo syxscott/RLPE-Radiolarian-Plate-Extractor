@@ -152,7 +152,7 @@ def test_geo_coords_rejects_S_as_longitude():
 
 def test_gemma_fallback_uses_double_checked_lock():
     """pipeline.py: the lazy init of ``self._fallback_gemma_runtime``
-    must be under ``self._gemma_lock`` so two concurrent MiniMax-
+    must be under ``self._gemma_lock`` so two concurrent LLM-
     fallback workers don't both build the multi-GB model."""
     pipeline = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
     src = pipeline.read_text(encoding="utf-8")
@@ -163,7 +163,7 @@ def test_gemma_fallback_uses_double_checked_lock():
     window = src[idx : idx + 1200]
     assert "self._gemma_lock" in window, (
         "self._gemma_lock must guard the _fallback_gemma_runtime "
-        "lazy init. Without the lock, two concurrent MiniMax-fallback "
+        "lazy init. Without the lock, two concurrent llm-fallback "
         "workers can both call _build_local_gemma_fallback() and OOM "
         "the box."
     )

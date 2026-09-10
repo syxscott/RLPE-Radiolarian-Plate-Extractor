@@ -1,5 +1,5 @@
 """Refresh ALL papers' species assignments by re-parsing OD JSON
-captions with the latest m3_engine regex (which now handles
+captions with the latest semantic_engine regex (which now handles
 "Genus? species" forms like "Periphaena? duplus", trinomials like
 "Lamptonium fabaeforme fabaeforme", and inline body-text references).
 
@@ -26,8 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 from rlpe.opendataloader_extractor import _find_plate_captions  # noqa: E402
+from rlpe.semantic_engine import _regex_parse_caption  # noqa: E402
 
 PREDICTIONS_IN = ROOT / "work" / "combined_9_v16_FINAL.jsonl"
 PREDICTIONS_OUT = ROOT / "work" / "combined_9_v17_FINAL.jsonl"

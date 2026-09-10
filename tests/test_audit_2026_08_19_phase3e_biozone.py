@@ -17,7 +17,7 @@ Phase 3E ships three biozone-related fixes:
   biostratigraphy without a per-section legend).
 
 These tests exercise all three together with the existing helpers
-and the M3 prompt JSON → dataclass converter
+and the LLM prompt JSON → dataclass converter
 (``_parse_extraction_response``).
 """
 
@@ -225,7 +225,7 @@ def test_biozone_record_zone_type_accepted_values():
 
 
 def test_parse_extraction_response_zone_type():
-    """The M3 JSON → BiozoneRecord parser must populate zone_type
+    """The LLM JSON → BiozoneRecord parser must populate zone_type
     when the JSON includes it."""
     parsed = {
         "biozones": [

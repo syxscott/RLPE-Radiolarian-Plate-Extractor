@@ -5,7 +5,7 @@ Covers:
     exactly once (the previous code listed it twice, the second pass
     hard-coding ``page_diff=0`` for un-referenced files dominated the
     sort key so the right image was never picked).
-  - M16: ``M3Engine`` accepts a ``cancel_event``; the retry-loop
+  - M16: ``SemanticEngine`` accepts a ``cancel_event``; the retry-loop
     back-off returns early when the event is set; default ``None``
     preserves legacy ``time.sleep`` behaviour; the pipeline wires
     its own ``_cancel_event`` into the engine.
@@ -163,9 +163,9 @@ class TestCancelEventPlumbing:
         """When ``self._cancel_event`` is set, ``_call_api`` must bail
         out of its retry back-off on the very first failure rather
         than waiting out the full ``retry_wait``."""
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
-        engine = M3Engine.__new__(M3Engine)
+        engine = SemanticEngine.__new__(SemanticEngine)
         # Minimal init — bypass the real ``__init__`` (which expects
         # a backend and a config) and only set the bits our test
         # exercises.
@@ -205,40 +205,40 @@ class TestCancelEventPlumbing:
         assert elapsed < 1.0, f"event.set() must short-circuit the back-off, took {elapsed:.2f}s"
 
     def test_cancel_event_default_none_preserves_behaviour(self):
-        """Constructing ``M3Engine`` with no ``cancel_event`` must keep
+        """Constructing ``SemanticEngine`` with no ``cancel_event`` must keep
         working — the existing 2-arg signature is the legacy entry
         point and the new parameter must be optional."""
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         class _NullBackend:
             def infer_text(self, system_prompt, user_prompt):
                 return {"raw_text": "ok"}
 
-        engine = M3Engine(backend=_NullBackend(), config={"m3_stage_1": True})
+        engine = SemanticEngine(backend=_NullBackend(), config={"llm_stage_1": True})
         assert engine._cancel_event is None
         # And the engine still answers calls.
         out = engine._call_api("text", system_prompt="x", user_prompt="y")
         assert out == {"raw_text": "ok"}
 
     def test_pipeline_cancel_sets_event(self, pipe):
-        """The pipeline must propagate the cancel event to M3Engine at
+        """The pipeline must propagate the cancel event to SemanticEngine at
         construction time AND set it from the cancel handler so
         in-flight LLM calls can bail."""
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         evt = threading.Event()
         pipe._cancel_event = evt
 
-        # Re-run the M3Engine-construction branch in isolation.
+        # Re-run the SemanticEngine-construction branch in isolation.
         # We can't easily exercise the full ``__init__`` flow because
         # it tries to build a gemma backend; instead assert the wiring
-        # by manually constructing an M3Engine with the same event
+        # by manually constructing an SemanticEngine with the same event
         # and verifying ``is_set()`` flips on cancel.
         class _NullBackend:
             def infer_text(self, system_prompt, user_prompt):
                 return {"raw_text": "ok"}
 
-        engine = M3Engine(backend=_NullBackend(), config={}, cancel_event=pipe._cancel_event)
+        engine = SemanticEngine(backend=_NullBackend(), config={}, cancel_event=pipe._cancel_event)
         assert engine._cancel_event is evt
 
         # Simulate the cancel handler flipping the event (mirrors
@@ -284,7 +284,7 @@ class TestBackendSwitchLock:
             pipeline_mod.RadiolarianPipeline, "_build_local_gemma_fallback", fake_build
         )
 
-        pipe.m3_engine = type(
+        pipe.semantic_engine = type(
             "E",
             (),
             {"backend": object()},

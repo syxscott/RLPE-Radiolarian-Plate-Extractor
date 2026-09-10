@@ -8,7 +8,7 @@ raised a confusing ValidationError. The fix rejects wrong-length
 tuples by passing None for bbox (a missing bbox is already a known
 + tolerated state per audit Bug C elsewhere).
 
-M3: _safe_json_loads() used a regex that only stripped the LAST
+LLM: _safe_json_loads() used a regex that only stripped the LAST
 closing fence. A response like
 ``{...}\n```\nfooter text`` would fail ``json.loads`` on the first
 try. The fallback ``_extract_balanced_json_object`` already extracts
@@ -79,11 +79,11 @@ class TestPanelRecordBboxGuard:
         assert rec.bbox is None
 
 
-# --------------------------------------------------------------------------- M3
+# --------------------------------------------------------------------------- LLM
 
 
 class TestSafeJsonLoadsFallbackForTrailingJunk:
-    """M3: _safe_json_loads() must recover from trailing-fence /
+    """LLM: _safe_json_loads() must recover from trailing-fence /
     trailing-prose content via the balanced-object extractor.
     """
 
@@ -151,12 +151,12 @@ class TestSafeJsonLoadsFallbackForTrailingJunk:
 
 
 class TestThinkingRetryLockScope:
-    """M6 / Round 9 (Bug-M3): the lock scope around the thinking-retry
+    """M6 / Round 9 (Bug-LLM): the lock scope around the thinking-retry
     path in ``_infer_vision``.
 
     Round 6 audit M6 originally asserted the lock was RELEASED before
     ``backend.infer_panel()`` was called, to avoid deadlock with backends
-    that re-enter M3. Round 9 found that pattern introduced a race
+    that re-enter LLM. Round 9 found that pattern introduced a race
     window: another thread could flip ``enable_thinking`` between the
     save/flip and the call, and the first thread's restore would
     overwrite the other thread's setup, corrupting the final state.
@@ -168,7 +168,7 @@ class TestThinkingRetryLockScope:
     """
 
     def test_lock_held_throughout_save_flip_call_restore(self):
-        """Round 9 (Bug-M3): the ``with self._thinking_retry_lock:``
+        """Round 9 (Bug-LLM): the ``with self._thinking_retry_lock:``
         block must wrap the entire save → flip → call → restore
         sequence so the whole retry is atomic from the perspective
         of other workers.
@@ -200,7 +200,7 @@ class TestThinkingRetryLockScope:
         """
         from pathlib import Path as _Path
 
-        path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "m3_engine.py"
+        path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "semantic_engine.py"
         text = path.read_text(encoding="utf-8")
         marker = "def _infer_vision("
         i = text.find(marker)
@@ -234,17 +234,17 @@ class TestThinkingRetryLockScope:
 
     def test_lock_is_reentrant(self):
         """The lock MUST be an RLock so a backend that re-enters
-        ``_infer_vision`` (custom subclass calling M3 inside its
+        ``_infer_vision`` (custom subclass calling LLM inside its
         handler) doesn't deadlock."""
         from pathlib import Path as _Path
 
-        path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "m3_engine.py"
+        path = _Path(__file__).resolve().parents[1] / "src" / "rlpe" / "semantic_engine.py"
         text = path.read_text(encoding="utf-8")
         # The lock is constructed as either ``RLock()`` or
         # ``threading.RLock()``. We accept both spellings.
         assert "RLock" in text, (
             "Round 9 fix: _thinking_retry_lock must be RLock for "
-            "reentrancy; replace ``Lock()`` with ``RLock()`` in m3_engine.py"
+            "reentrancy; replace ``Lock()`` with ``RLock()`` in semantic_engine.py"
         )
         # And specifically the field type, not just any RLock import.
         init_marker = "self._thinking_retry_lock = "

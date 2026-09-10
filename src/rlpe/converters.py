@@ -165,7 +165,7 @@ def _geology_links_from_meta(meta: dict[str, Any]) -> list[GeologyLinkRecord]:
                 ),
                 # Audit 2026-09-05 (tier3-A2): forward the per-entry
                 # link provenance. ``link_source`` (sample_match /
-                # locality_match / m3_inference / geo_vision_point /
+                # locality_match / llm_inference / geo_vision_point /
                 # geo_vision_layer / cross_figure_linker:*) and
                 # ``figure_id`` (source figure of the link) were
                 # written by the geo-vision / cross-figure stages but
@@ -182,9 +182,9 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
     meta = match.metadata or {}
     # Phase 64 Plan B (Task B.5): forward the schematic extraction
     # payload from the match metadata onto the exported PanelMetadata.
-    # We store the value verbatim (the JSON shape comes from the M3
+    # We store the value verbatim (the JSON shape comes from the LLM
     # prompt contract in extract_schematic) so downstream consumers
-    # see the same structure they would see if they called the M3
+    # see the same structure they would see if they called the LLM
     # engine directly.
     schematic_data = meta.get("figure_schematic_data")
     if not isinstance(schematic_data, dict):
@@ -252,7 +252,7 @@ def panel_metadata_from_match(match: MatchResult) -> PanelMetadata:
         caption_pairs_used=bool(meta.get("caption_pairs_used", False)),
         scale_bar=_scale_bar_from_meta(meta),
         geology_links=_geology_links_from_meta(meta),
-        m3_diagnostic=dict(meta.get("m3_diagnostic", {}) or {}),
+        llm_diagnostic=dict(meta.get("llm_diagnostic", {}) or {}),
         extraction_source=str(meta.get("extraction_source", "") or ""),
         extraction_method=str(meta.get("extraction_method", "") or ""),
         needs_review=bool(meta.get("needs_review", False)),
@@ -1511,7 +1511,7 @@ def taxon_records_from_matches(matches: list[MatchResult]) -> list[dict[str, Any
             taxon_remarks=taxon_remarks,
             # Audit 2026-08-02: link to MorphologyRecord entries
             # produced by Stage 6. May be empty when Stage 6 is off,
-            # the species had no anchorable description, or M3
+            # the species had no anchorable description, or LLM
             # returned an empty dict.
             morphology_ids=morph_ids,
         )

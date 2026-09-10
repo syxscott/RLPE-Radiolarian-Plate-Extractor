@@ -1309,15 +1309,15 @@ body {
     letter-spacing: 0.05em;
 }
 
-/* ==================== MiniMax fallback modal ==================== */
+/* ==================== LLM fallback modal ==================== */
 /* Modal that prompts the user to choose retry / rules / gemma4 / stop
-   when a MiniMax M3 call errors. The pipeline blocks waiting for this
+   when a LLM LLM call errors. The pipeline blocks waiting for this
    decision; the previous UI never rendered it and users always timed out. */
-#MiniMax-fallback-modal .modal-content {
+#llm-fallback-modal .modal-content {
     max-width: 560px;
     padding: 1.75rem;
 }
-.MiniMax-fallback-err {
+.llm-fallback-err {
     background: var(--danger-soft);
     border: 1px solid rgba(239, 68, 68, 0.25);
     border-radius: var(--radius);
@@ -1327,18 +1327,18 @@ body {
     line-height: 1.6;
     color: #7f1d1d;
 }
-.MiniMax-fallback-err > div {
+.llm-fallback-err > div {
     margin: 0.15rem 0;
     word-break: break-word;
 }
-.MiniMax-fallback-err code {
+.llm-fallback-err code {
     font-family: var(--font-mono);
     background: rgba(127, 29, 29, 0.08);
     padding: 0.05rem 0.35rem;
     border-radius: 3px;
     font-size: 0.78rem;
 }
-.MiniMax-fallback-actions {
+.llm-fallback-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.5rem;
@@ -1979,7 +1979,7 @@ body {
         max-height: 95vh;
     }
 
-    .MiniMax-fallback-actions {
+    .llm-fallback-actions {
         grid-template-columns: 1fr;
     }
 
@@ -2464,9 +2464,9 @@ body {
 }
 
 /* ====================================================================
-   MiniMax usage panel (settings tab)
+   LLM usage panel (settings tab)
    ==================================================================== */
-.minimax-usage {
+.llm-usage {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 0.75rem;
@@ -2475,27 +2475,27 @@ body {
     border-radius: var(--radius);
 }
 
-.minimax-usage-item {
+.llm-usage-item {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
 }
 
-.minimax-usage-label {
+.llm-usage-label {
     font-size: 0.75rem;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }
 
-.minimax-usage-value {
+.llm-usage-value {
     font-size: 1.25rem;
     font-weight: 600;
     color: var(--primary-color);
     font-family: var(--font-mono);
 }
 
-/* ==================== Toast notifications (Phase F-2 B3/M3) ==================== */
+/* ==================== Toast notifications (Phase F-2 B3/LLM) ==================== */
 #toast-container {
     position: fixed;
     bottom: 24px;

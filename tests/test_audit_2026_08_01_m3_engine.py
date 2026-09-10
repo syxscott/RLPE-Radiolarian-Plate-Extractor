@@ -1,4 +1,4 @@
-"""Regression tests for audit 2026-08-01 batch W5 — m3_engine.py 4 bugs (M8/M9/M10/D2)."""
+"""Regression tests for audit 2026-08-01 batch W5 — semantic_engine.py 4 bugs (M8/M9/M10/D2)."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PIL import Image  # noqa: E402
 
-from rlpe.m3_engine import M3Engine, _redact_enrichment_caption  # noqa: E402
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
+from rlpe.semantic_engine import SemanticEngine, _redact_enrichment_caption  # noqa: E402
+from tests.fakes.fake_llm_backend import FakeM3Backend  # noqa: E402
 
 
-def _engine(raw_text, **config) -> M3Engine:
+def _engine(raw_text, **config) -> SemanticEngine:
     """Engine wired to a fake backend that always answers with ``raw_text``."""
     backend = FakeM3Backend(canned_responses=[{"raw_text": raw_text, "fallback_used": False}])
-    return M3Engine(backend=backend, config=config)
+    return SemanticEngine(backend=backend, config=config)
 
 
 def _plate() -> Image.Image:
@@ -27,7 +27,7 @@ def _plate() -> Image.Image:
     return Image.new("RGB", (256, 256))
 
 
-def _enrich(engine: M3Engine) -> list[dict]:
+def _enrich(engine: SemanticEngine) -> list[dict]:
     return engine.enrich_plate_panels(
         image=_plate(),
         page_caption="Plate 7. Radiolarians from the Upper Jurassic.",
@@ -38,7 +38,7 @@ def _enrich(engine: M3Engine) -> list[dict]:
 
 
 class TestEnrichPlatePanelsErrorPath:
-    """M8: unparseable M3 output must degrade to [], not raise.
+    """M8: unparseable LLM output must degrade to [], not raise.
 
     The four sibling methods (``extract_geology``, ``extract_schematic``,
     ``cross_figure_visual_inference``, ``infer_species_age_formation``)
@@ -56,10 +56,10 @@ class TestEnrichPlatePanelsErrorPath:
     def test_attribute_error_returns_empty(self):
         """A non-string ``raw_text`` hits ``text.strip()`` → AttributeError.
 
-        ``m3_retry_without_thinking`` is off so the value reaches the
+        ``llm_retry_without_thinking`` is off so the value reaches the
         JSON-parse site instead of the retry condition's own ``.strip()``.
         """
-        engine = _engine(12345, m3_retry_without_thinking=False)
+        engine = _engine(12345, llm_retry_without_thinking=False)
         out = _enrich(engine)
         assert out == [], f"non-string raw_text must yield [], got {out!r}"
 
@@ -228,7 +228,7 @@ class TestEnableThinkingThreadSafety:
 
     def test_first_call_reads_thinking_under_lock(self):
         backend = self._RaceBackend()
-        engine = M3Engine(backend=backend, config={"m3_retry_without_thinking": True})
+        engine = SemanticEngine(backend=backend, config={"llm_retry_without_thinking": True})
 
         def retry_worker():
             engine._infer_vision("sys", "slow", None)
@@ -269,7 +269,7 @@ class TestEnableThinkingThreadSafety:
                 return self.infer_panel(user_prompt=user_prompt)
 
         backend = _TextBackend()
-        engine = M3Engine(backend=backend, config={"m3_retry_without_thinking": True})
+        engine = SemanticEngine(backend=backend, config={"llm_retry_without_thinking": True})
 
         threads = [threading.Thread(target=lambda: engine._infer_text("sys", "slow"))]
         threads += [
@@ -293,7 +293,7 @@ class TestEnableThinkingThreadSafety:
     def test_gate_is_reentrant_for_the_writer(self):
         """A backend that re-enters the engine from inside its own retry
         handler must not deadlock (same rationale as the RLock choice)."""
-        engine = M3Engine(backend=None)
+        engine = SemanticEngine(backend=None)
         with engine._thinking_gate.write():
             with engine._thinking_gate.write():
                 with engine._thinking_gate.read():
@@ -302,7 +302,7 @@ class TestEnableThinkingThreadSafety:
     def test_concurrent_reads_are_not_serialised(self):
         """The gate must keep worker concurrency: many first calls at once."""
         barrier = threading.Barrier(4, timeout=5)
-        engine = M3Engine(backend=None)
+        engine = SemanticEngine(backend=None)
         errors: list[BaseException] = []
 
         def worker():

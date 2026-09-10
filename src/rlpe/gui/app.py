@@ -64,7 +64,7 @@ def _load_project_env(env_path: Path | None = None) -> int:
     """Load the project ``.env`` into ``os.environ`` (BUG-4, 2026-09-04).
 
     Only the CLI and the web server loaded the project .env; the desktop
-    GUI never did, so a user who configured their MiniMax key there
+    GUI never did, so a user who configured their LLM key there
     (``ANTHROPIC_API_KEY`` / ``ANTHROPIC_BASE_URL`` /
     ``ANTHROPIC_MODEL`` — or ``MINIMAX_API_KEY``) got an LLM-less,
     local_only GUI run that finished in seconds with 0 rows. Uses the

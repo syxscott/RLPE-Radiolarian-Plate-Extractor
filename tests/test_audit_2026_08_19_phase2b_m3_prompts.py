@@ -1,7 +1,7 @@
-"""Regression tests for audit 2026-08-19 Phase 2b — M3 prompts + geo whitelist + Ma range.
+"""Regression tests for audit 2026-08-19 Phase 2b — LLM prompts + geo whitelist + Ma range.
 
 Bug fixes covered:
-- M-1 (rest): The 4 remaining M3 stage prompts
+- M-1 (rest): The 4 remaining LLM stage prompts
   (``_CLASSIFY_PLATE_SYSTEM``, ``_SEGMENT_PANELS_SYSTEM``,
   ``_MATCH_PANEL_SYSTEM``, ``_CRITIQUE_SYSTEM``) now include
   complete in-context input->output few-shot examples so the
@@ -39,7 +39,7 @@ if str(_SRC) not in sys.path:
 
 
 # ===========================================================================
-# M-1 (rest): few-shot examples in the 4 remaining M3 stage prompts
+# M-1 (rest): few-shot examples in the 4 remaining LLM stage prompts
 # ===========================================================================
 
 
@@ -49,13 +49,13 @@ class TestM1ClassifyPlateFewShot:
     plate/non-plate JSON contract."""
 
     def test_prompt_contains_example_marker(self):
-        from rlpe.m3_engine import _CLASSIFY_PLATE_SYSTEM
+        from rlpe.semantic_engine import _CLASSIFY_PLATE_SYSTEM
 
         assert "Example" in _CLASSIFY_PLATE_SYSTEM
 
     def test_prompt_has_positive_example(self):
         """A radiolarian-plate example showing true + JSON keys."""
-        from rlpe.m3_engine import _CLASSIFY_PLATE_SYSTEM
+        from rlpe.semantic_engine import _CLASSIFY_PLATE_SYSTEM
 
         # The positive example must contain the JSON keys this stage
         # is supposed to emit (audit 2026-08-19: prompt drift guard).
@@ -71,14 +71,14 @@ class TestM1ClassifyPlateFewShot:
 
     def test_prompt_has_negative_example(self):
         """A non-plate (text/column/etc.) example showing false."""
-        from rlpe.m3_engine import _CLASSIFY_PLATE_SYSTEM
+        from rlpe.semantic_engine import _CLASSIFY_PLATE_SYSTEM
 
         # At least one example must show is_radiolarian_plate:false
         assert "false" in _CLASSIFY_PLATE_SYSTEM
 
     def test_prompt_documents_all_image_types(self):
         """The prompt must list all image_type enum values."""
-        from rlpe.m3_engine import _CLASSIFY_PLATE_SYSTEM
+        from rlpe.semantic_engine import _CLASSIFY_PLATE_SYSTEM
 
         for v in ("SEM", "micrograph", "photomicrograph", "diagram", "photo", "other"):
             assert v in _CLASSIFY_PLATE_SYSTEM, (
@@ -92,13 +92,13 @@ class TestM1SegmentPanelsFewShot:
     bbox JSON contract."""
 
     def test_prompt_contains_example_marker(self):
-        from rlpe.m3_engine import _SEGMENT_PANELS_SYSTEM
+        from rlpe.semantic_engine import _SEGMENT_PANELS_SYSTEM
 
         assert "Example" in _SEGMENT_PANELS_SYSTEM
 
     def test_prompt_documents_json_schema(self):
         """The prompt must list all output fields."""
-        from rlpe.m3_engine import _SEGMENT_PANELS_SYSTEM
+        from rlpe.semantic_engine import _SEGMENT_PANELS_SYSTEM
 
         for field_name in (
             "panel_id",
@@ -114,7 +114,7 @@ class TestM1SegmentPanelsFewShot:
     def test_prompt_has_complete_json_array_example(self):
         """At least one Example must show a JSON array ``[...`` with
         realistic bbox coordinates (numeric x,y,w,h values)."""
-        from rlpe.m3_engine import _SEGMENT_PANELS_SYSTEM
+        from rlpe.semantic_engine import _SEGMENT_PANELS_SYSTEM
 
         # Look for the opening ``[`` of a JSON array example.
         assert "[" in _SEGMENT_PANELS_SYSTEM
@@ -131,13 +131,13 @@ class TestM1MatchPanelFewShot:
     test verifies the *example I/O blocks* exist)."""
 
     def test_prompt_contains_example_marker(self):
-        from rlpe.m3_engine import _MATCH_PANEL_SYSTEM
+        from rlpe.semantic_engine import _MATCH_PANEL_SYSTEM
 
         assert "Example" in _MATCH_PANEL_SYSTEM
 
     def test_prompt_documents_open_nomenclature_strength(self):
         """M-1 baseline from Phase 1d: must enumerate the 6 enum values."""
-        from rlpe.m3_engine import _MATCH_PANEL_SYSTEM
+        from rlpe.semantic_engine import _MATCH_PANEL_SYSTEM
 
         for v in ("none", "cf.", "aff.", "ex gr.", "subgen.", "?"):
             assert v in _MATCH_PANEL_SYSTEM, f"_MATCH_PANEL_SYSTEM missing enum value {v!r}"
@@ -145,7 +145,7 @@ class TestM1MatchPanelFewShot:
     def test_prompt_has_complete_example_with_cf_marker(self):
         """At least one Example must demonstrate cf. output with
         the discounted confidence value."""
-        from rlpe.m3_engine import _MATCH_PANEL_SYSTEM
+        from rlpe.semantic_engine import _MATCH_PANEL_SYSTEM
 
         # The cf. example should mention confidence=0.55 (the
         # discount cap applied at parse time).
@@ -156,7 +156,7 @@ class TestM1MatchPanelFewShot:
     def test_prompt_documents_json_schema_fields(self):
         """The prompt must list all output fields so the LLM knows
         what to emit."""
-        from rlpe.m3_engine import _MATCH_PANEL_SYSTEM
+        from rlpe.semantic_engine import _MATCH_PANEL_SYSTEM
 
         for field_name in (
             "label",
@@ -178,27 +178,27 @@ class TestM1CritiqueFewShot:
     verdict JSON contract."""
 
     def test_prompt_contains_example_marker(self):
-        from rlpe.m3_engine import _CRITIQUE_SYSTEM
+        from rlpe.semantic_engine import _CRITIQUE_SYSTEM
 
         assert "Example" in _CRITIQUE_SYSTEM
 
     def test_prompt_documents_all_verdict_values(self):
         """The prompt must enumerate agree / disagree / uncertain."""
-        from rlpe.m3_engine import _CRITIQUE_SYSTEM
+        from rlpe.semantic_engine import _CRITIQUE_SYSTEM
 
         for v in ("agree", "disagree", "uncertain"):
             assert v in _CRITIQUE_SYSTEM, f"_CRITIQUE_SYSTEM missing verdict value {v!r}"
 
     def test_prompt_documents_open_nomenclature_strength(self):
         """M-1 baseline from Phase 1d: must reference the field."""
-        from rlpe.m3_engine import _CRITIQUE_SYSTEM
+        from rlpe.semantic_engine import _CRITIQUE_SYSTEM
 
         assert "open_nomenclature_strength" in _CRITIQUE_SYSTEM
 
     def test_prompt_has_disagree_example(self):
         """At least one Example must show the disagree verdict path
         (the most common correction case in live runs)."""
-        from rlpe.m3_engine import _CRITIQUE_SYSTEM
+        from rlpe.semantic_engine import _CRITIQUE_SYSTEM
 
         # Search for the disagree verdict (case-insensitive search
         # via the source — the prompt capitalizes differently).
@@ -206,7 +206,7 @@ class TestM1CritiqueFewShot:
         assert '"disagree"' in _CRITIQUE_SYSTEM or "disagree" in _CRITIQUE_SYSTEM
 
     def test_prompt_documents_json_schema_fields(self):
-        from rlpe.m3_engine import _CRITIQUE_SYSTEM
+        from rlpe.semantic_engine import _CRITIQUE_SYSTEM
 
         for field_name in (
             "panel_id",
@@ -225,7 +225,7 @@ class TestM1PromptSize:
     pre-Phase-2b size means the few-shot blocks were dropped."""
 
     def test_classify_plate_prompt_grew(self):
-        from rlpe.m3_engine import _CLASSIFY_PLATE_SYSTEM
+        from rlpe.semantic_engine import _CLASSIFY_PLATE_SYSTEM
 
         # Phase 1d baseline ~700 chars; Phase 2b should be >1500 chars
         # because it now has 3 complete examples (radiolarian / text /
@@ -233,20 +233,20 @@ class TestM1PromptSize:
         assert len(_CLASSIFY_PLATE_SYSTEM) > 1500
 
     def test_segment_panels_prompt_grew(self):
-        from rlpe.m3_engine import _SEGMENT_PANELS_SYSTEM
+        from rlpe.semantic_engine import _SEGMENT_PANELS_SYSTEM
 
         # Phase 1d baseline ~700 chars; Phase 2b should have 2
         # examples with JSON bbox arrays.
         assert len(_SEGMENT_PANELS_SYSTEM) > 1500
 
     def test_match_panel_prompt_grew(self):
-        from rlpe.m3_engine import _MATCH_PANEL_SYSTEM
+        from rlpe.semantic_engine import _MATCH_PANEL_SYSTEM
 
         # Phase 1d baseline ~1400 chars; Phase 2b adds 3 examples.
         assert len(_MATCH_PANEL_SYSTEM) > 2500
 
     def test_critique_prompt_grew(self):
-        from rlpe.m3_engine import _CRITIQUE_SYSTEM
+        from rlpe.semantic_engine import _CRITIQUE_SYSTEM
 
         # Phase 1d baseline ~1100 chars; Phase 2b adds 3 examples.
         assert len(_CRITIQUE_SYSTEM) > 2000
@@ -365,7 +365,7 @@ class TestM12ExtractGeologyIntegration:
     hallucinations never reach panel.metadata."""
 
     def _engine_with_geo(self, geo_payload: dict):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         class _FakeBackend:
             backend_name = "fake-llm"
@@ -390,7 +390,7 @@ class TestM12ExtractGeologyIntegration:
                     "raw_text": json.dumps(geo_payload),
                 }
 
-        return M3Engine(_FakeBackend())
+        return SemanticEngine(_FakeBackend())
 
     def test_geo_entry_hallucinated_fields_dropped(self):
         from PIL import Image
@@ -472,7 +472,7 @@ class TestM13MaRangeValidation:
 
     def test_invalid_range_top_greater_than_base(self):
         """ma_top > ma_base violates the younger=smaller convention."""
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         record = {"ma_top": 140, "ma_base": 120}
         out = _validate_ma_range(record)
@@ -480,9 +480,9 @@ class TestM13MaRangeValidation:
         assert out["ma_base"] is None
 
     def test_invalid_range_top_greater_than_base_logged(self, caplog):
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
-        caplog.set_level(logging.WARNING, logger="rlpe.m3_engine")
+        caplog.set_level(logging.WARNING, logger="rlpe.semantic_engine")
         _validate_ma_range({"ma_top": 140, "ma_base": 120})
         warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
         assert any("ma_top=140" in m and "ma_base=120" in m for m in warnings), (
@@ -491,7 +491,7 @@ class TestM13MaRangeValidation:
 
     def test_valid_range_preserved(self):
         """ma_top < ma_base is the younger=smaller convention."""
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         record = {"ma_top": 50, "ma_base": 100}
         out = _validate_ma_range(record)
@@ -501,7 +501,7 @@ class TestM13MaRangeValidation:
     def test_valid_range_equal_preserved(self):
         """Edge: ma_top == ma_base is technically valid (zero-thickness
         range). Don't reject."""
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         record = {"ma_top": 100, "ma_base": 100}
         out = _validate_ma_range(record)
@@ -509,7 +509,7 @@ class TestM13MaRangeValidation:
         assert out["ma_base"] == 100
 
     def test_partial_missing_top_preserved(self):
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         record = {"ma_top": None, "ma_base": 100}
         out = _validate_ma_range(record)
@@ -517,7 +517,7 @@ class TestM13MaRangeValidation:
         assert out["ma_base"] == 100
 
     def test_partial_missing_base_preserved(self):
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         record = {"ma_top": 50, "ma_base": None}
         out = _validate_ma_range(record)
@@ -525,7 +525,7 @@ class TestM13MaRangeValidation:
         assert out["ma_base"] is None
 
     def test_both_none_preserved(self):
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         record = {"ma_top": None, "ma_base": None}
         out = _validate_ma_range(record)
@@ -535,7 +535,7 @@ class TestM13MaRangeValidation:
     def test_string_numeric_values_coerced(self):
         """LLM sometimes emits numbers as strings (``"120"``).
         The validation must coerce before comparing."""
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         # Inverted: "140" > "120" numerically but lexicographically
         # "140" < "120" — make sure we coerce to float first.
@@ -547,7 +547,7 @@ class TestM13MaRangeValidation:
     def test_non_numeric_values_pass_through(self):
         """If the LLM emits non-numeric junk, leave it alone (don't
         silently null valid string captions)."""
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         record = {"ma_top": "younger", "ma_base": "older"}
         out = _validate_ma_range(record)
@@ -558,14 +558,14 @@ class TestM13MaRangeValidation:
     def test_invalid_range_clears_ma_mid(self):
         """ma_mid is meaningless when the range is inverted — drop
         it so callers don't carry a phantom midpoint."""
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         record = {"ma_top": 140, "ma_base": 120, "ma_mid": 130}
         out = _validate_ma_range(record)
         assert "ma_mid" not in out
 
     def test_returns_same_dict_for_chaining(self):
-        from rlpe.m3_engine import _validate_ma_range
+        from rlpe.semantic_engine import _validate_ma_range
 
         record = {"ma_top": 50, "ma_base": 100}
         out = _validate_ma_range(record)
@@ -578,7 +578,7 @@ class TestM13ExtractGeologyIntegration:
     panel.metadata."""
 
     def _engine_with_geo(self, geo_payload: dict):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         class _FakeBackend:
             backend_name = "fake-llm"
@@ -603,7 +603,7 @@ class TestM13ExtractGeologyIntegration:
                     "raw_text": json.dumps(geo_payload),
                 }
 
-        return M3Engine(_FakeBackend())
+        return SemanticEngine(_FakeBackend())
 
     def test_inverted_geo_entry_range_is_swapped(self):
         """Phase 6D NIT-3: the helper ``_normalize_ma_pair`` auto-swaps
@@ -712,34 +712,34 @@ class TestSourceGuards:
         assert isinstance(_GEO_KEY_WHITELIST, (set, frozenset))
 
     def test_llm_backends_source_references_whitelist_in_extract_path(self):
-        """The m3_engine must reference ``_apply_geo_whitelist``
+        """The semantic_engine must reference ``_apply_geo_whitelist``
         inside the extract_geology body so the filter cannot be
         silently bypassed."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        src = Path(m3_engine.__file__).read_text()
+        src = Path(semantic_engine.__file__).read_text()
         assert "_apply_geo_whitelist" in src
 
-    def test_m3_engine_defines_validate_ma_range(self):
-        from rlpe.m3_engine import _validate_ma_range
+    def test_semantic_engine_defines_validate_ma_range(self):
+        from rlpe.semantic_engine import _validate_ma_range
 
         assert callable(_validate_ma_range)
 
-    def test_m3_engine_source_references_ma_validation_in_extract_path(self):
-        """The m3_engine must call ``_validate_ma_range`` inside the
+    def test_semantic_engine_source_references_ma_validation_in_extract_path(self):
+        """The semantic_engine must call ``_validate_ma_range`` inside the
         extract_geology body so the filter cannot be silently bypassed."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        src = Path(m3_engine.__file__).read_text()
+        src = Path(semantic_engine.__file__).read_text()
         assert "_validate_ma_range" in src
 
-    def test_m3_engine_class_structure_intact(self):
+    def test_semantic_engine_class_structure_intact(self):
         """Regression guard: inserting a module-level helper between
-        two M3Engine methods previously broke the class structure
-        (causing ``AttributeError: M3Engine has no attribute
+        two SemanticEngine methods previously broke the class structure
+        (causing ``AttributeError: SemanticEngine has no attribute
         'extract_geology'``). Verify the class still has all the
         expected methods."""
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         for method_name in (
             "parse_caption",
@@ -750,7 +750,7 @@ class TestSourceGuards:
             "extract_geology",
             "extract_schematic",
         ):
-            assert hasattr(M3Engine, method_name), (
-                f"M3Engine lost method {method_name!r} — likely class "
+            assert hasattr(SemanticEngine, method_name), (
+                f"SemanticEngine lost method {method_name!r} — likely class "
                 f"structure broken by a misplaced helper."
             )

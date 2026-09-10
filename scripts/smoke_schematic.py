@@ -1,6 +1,6 @@
 """Phase 64 Plan B (Task B.6): schematic-figure smoke test.
 
-End-to-end test that the new M3 extract_schematic path produces
+End-to-end test that the new LLM extract_schematic path produces
 non-empty figure_schematic_data for representative figures from
 5 real radiolarian papers:
 
@@ -11,7 +11,7 @@ non-empty figure_schematic_data for representative figures from
   * Baumgartner 2008 — IRIS Jurassic–Cretaceous (plate)
 
 The script uses ``FakeM3Backend`` with pre-canned responses so it
-runs in any environment without hitting the real M3 API. It exits
+runs in any environment without hitting the real LLM API. It exits
 non-zero if any paper produces an empty figure_schematic_data —
 catching regressions in the routing / extraction / export chain.
 
@@ -43,10 +43,10 @@ sys.path.insert(0, str(_REPO_ROOT.resolve()))
 
 from PIL import Image  # noqa: E402
 
-from rlpe.m3_engine import M3Engine  # noqa: E402
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
+from rlpe.semantic_engine import SemanticEngine  # noqa: E402
+from tests.fakes.fake_llm_backend import FakeM3Backend  # noqa: E402
 
-# Pre-canned M3 responses. Each paper gets one canned response per
+# Pre-canned LLM responses. Each paper gets one canned response per
 # figure_type it might trigger so the test exercises all four new
 # types AND the legacy types (so a future regression doesn't break
 # the existing classifier output).
@@ -69,7 +69,7 @@ _SCHEMATIC_CANNED = {
     ),
     "fallback_used": False,
     "request_id": "fake-smoke-schematic",
-    "model_version": "MiniMax-M3-fake",
+    "model_version": "fake-model",
     "usage": {"input_tokens": 200, "output_tokens": 100},
     "cost_cny": 0.0014,
 }
@@ -88,7 +88,7 @@ _DIAGRAM_CANNED = {
     ),
     "fallback_used": False,
     "request_id": "fake-smoke-diagram",
-    "model_version": "MiniMax-M3-fake",
+    "model_version": "fake-model",
     "usage": {"input_tokens": 100, "output_tokens": 50},
     "cost_cny": 0.0007,
 }
@@ -107,7 +107,7 @@ _PHYLOGENETIC_CANNED = {
     ),
     "fallback_used": False,
     "request_id": "fake-smoke-phyl",
-    "model_version": "MiniMax-M3-fake",
+    "model_version": "fake-model",
     "usage": {"input_tokens": 200, "output_tokens": 80},
     "cost_cny": 0.0010,
 }
@@ -116,7 +116,7 @@ _PHYLOGENETIC_CANNED = {
 # Per-paper test plan. Each entry says: which paper to test, which
 # caption shape to use (representative of that paper's typical
 # figure), which figure_type the classifier should return, and
-# what M3 canned response to serve.
+# what LLM canned response to serve.
 _PAPER_PLANS = [
     {
         "paper_id": "boughdiri2007",
@@ -151,8 +151,8 @@ _PAPER_PLANS = [
 ]
 
 
-def _make_engine(canned_for_match: dict) -> M3Engine:
-    """Build an M3Engine whose backend serves the given canned
+def _make_engine(canned_for_match: dict) -> SemanticEngine:
+    """Build an SemanticEngine whose backend serves the given canned
     response when the schematic_extract prompt fires.
 
     Audit fix 2026-07-24: the original matcher checked
@@ -170,7 +170,7 @@ def _make_engine(canned_for_match: dict) -> M3Engine:
             }
         ]
     )
-    return M3Engine(backend=backend)
+    return SemanticEngine(backend=backend)
 
 
 def _make_image() -> Image.Image:

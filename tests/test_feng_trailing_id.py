@@ -22,7 +22,7 @@ trailing-ID group. The fix moves the ``?`` into the genus token
 (``(?:\?)?``) so the modifier + trailing-ID path is reached normally.
 """
 
-from rlpe.m3_engine import _regex_parse_caption
+from rlpe.semantic_engine import _regex_parse_caption
 
 
 def test_entactinia_sp_1():

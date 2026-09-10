@@ -27,7 +27,7 @@ def test_classical_hallucination_filter_present():
         "Missing _filter_classical_hallucinations method on RadiolarianPipeline"
     )
     # It must be called from the classical path branch (after
-    # match_panels, before M3 stage 4).
+    # match_panels, before LLM stage 4).
     assert "self._filter_classical_hallucinations(" in src_text, (
         "_filter_classical_hallucinations must be called from the classical path branch"
     )

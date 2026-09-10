@@ -34,9 +34,9 @@ from .constants import (
     DEFAULT_GROBID_TIMEOUT,
     DEFAULT_GROBID_URL,
     DEFAULT_LLM_BACKEND,
-    DEFAULT_M3_PROMPT_LANG,
-    DEFAULT_M3_TIMEOUT,
-    DEFAULT_MINIMAX_MODEL,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_PROMPT_LANG,
+    DEFAULT_LLM_TIMEOUT,
     DEFAULT_OCR_BACKEND,
     DEFAULT_OCR_LANG,
     DEFAULT_PALEO_MAX_OCC,
@@ -48,10 +48,10 @@ from .constants import (
     RANGE_DPI,
     RANGE_GROBID_MAX_RETRIES,
     RANGE_GROBID_TIMEOUT,
-    RANGE_M3_BUDGET,
-    RANGE_M3_MAX_RETRIES,
-    RANGE_M3_OUTPUT_TOKENS,
-    RANGE_M3_TIMEOUT,
+    RANGE_LLM_BUDGET,
+    RANGE_LLM_MAX_RETRIES,
+    RANGE_LLM_OUTPUT_TOKENS,
+    RANGE_LLM_TIMEOUT,
     RANGE_OD_CAPTION_WINDOW,
     RANGE_PALEO_OCC,
 )
@@ -364,47 +364,47 @@ class RunTab(QWidget):
         lbl, w = tr_form_row("runtab.label.llm_backend", self._llm_combo)
         adv_layout.addRow(lbl, w)
 
-        self._m3_lang = QComboBox()
+        self._llm_lang = QComboBox()
         from PySide6.QtWidgets import QSizePolicy
 
-        from .constants import m3_prompt_lang_friendly_options
+        from .constants import llm_prompt_lang_friendly_options
 
-        self._m3_lang.setMinimumHeight(32)
-        self._m3_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._llm_lang.setMinimumHeight(32)
+        self._llm_lang.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         populate_friendly_combo(
-            self._m3_lang,
-            m3_prompt_lang_friendly_options,
-            default_code=DEFAULT_M3_PROMPT_LANG,
+            self._llm_lang,
+            llm_prompt_lang_friendly_options,
+            default_code=DEFAULT_LLM_PROMPT_LANG,
         )
-        lbl, w = tr_form_row("runtab.label.m3_lang", self._m3_lang)
+        lbl, w = tr_form_row("runtab.label.llm_lang", self._llm_lang)
         adv_layout.addRow(lbl, w)
 
-        self._m3_model_edit = QLineEdit(DEFAULT_MINIMAX_MODEL)
-        lbl, w = tr_form_row("runtab.label.m3_model", self._m3_model_edit)
+        self._llm_model_edit = QLineEdit(DEFAULT_LLM_MODEL)
+        lbl, w = tr_form_row("runtab.label.llm_model", self._llm_model_edit)
         adv_layout.addRow(lbl, w)
 
-        self._m3_budget = QSpinBox()
-        self._m3_budget.setRange(*RANGE_M3_BUDGET)
-        self._m3_budget.setValue(1024)
-        lbl, w = tr_form_row("runtab.label.m3_budget", self._m3_budget)
+        self._llm_budget = QSpinBox()
+        self._llm_budget.setRange(*RANGE_LLM_BUDGET)
+        self._llm_budget.setValue(1024)
+        lbl, w = tr_form_row("runtab.label.llm_budget", self._llm_budget)
         adv_layout.addRow(lbl, w)
 
-        self._m3_output = QSpinBox()
-        self._m3_output.setRange(*RANGE_M3_OUTPUT_TOKENS)
-        self._m3_output.setValue(2048)
-        lbl, w = tr_form_row("runtab.label.m3_output", self._m3_output)
+        self._llm_output = QSpinBox()
+        self._llm_output.setRange(*RANGE_LLM_OUTPUT_TOKENS)
+        self._llm_output.setValue(2048)
+        lbl, w = tr_form_row("runtab.label.llm_output", self._llm_output)
         adv_layout.addRow(lbl, w)
 
-        self._m3_timeout = QSpinBox()
-        self._m3_timeout.setRange(*RANGE_M3_TIMEOUT)
-        self._m3_timeout.setValue(DEFAULT_M3_TIMEOUT)
-        lbl, w = tr_form_row("runtab.label.m3_timeout", self._m3_timeout)
+        self._llm_timeout = QSpinBox()
+        self._llm_timeout.setRange(*RANGE_LLM_TIMEOUT)
+        self._llm_timeout.setValue(DEFAULT_LLM_TIMEOUT)
+        lbl, w = tr_form_row("runtab.label.llm_timeout", self._llm_timeout)
         adv_layout.addRow(lbl, w)
 
-        self._m3_max_retries = QSpinBox()
-        self._m3_max_retries.setRange(*RANGE_M3_MAX_RETRIES)
-        self._m3_max_retries.setValue(3)
-        lbl, w = tr_form_row("runtab.label.m3_max_retries", self._m3_max_retries)
+        self._llm_max_retries = QSpinBox()
+        self._llm_max_retries.setRange(*RANGE_LLM_MAX_RETRIES)
+        self._llm_max_retries.setValue(3)
+        lbl, w = tr_form_row("runtab.label.llm_max_retries", self._llm_max_retries)
         adv_layout.addRow(lbl, w)
 
         self._paleodb_check = tr_checkbox("runtab.use_pbdb", checked=True)
@@ -419,11 +419,11 @@ class RunTab(QWidget):
         self._geo_vision = tr_checkbox("runtab.geo_vision", checked=True)
         adv_layout.addRow("", self._geo_vision)
 
-        self._m3_stage3 = tr_checkbox("runtab.m3_stage3", checked=True)
-        adv_layout.addRow("", self._m3_stage3)
+        self._llm_stage3 = tr_checkbox("runtab.llm_stage3", checked=True)
+        adv_layout.addRow("", self._llm_stage3)
 
-        self._m3_multi_plate = tr_checkbox("runtab.m3_multi_plate", checked=True)
-        adv_layout.addRow("", self._m3_multi_plate)
+        self._llm_multi_plate = tr_checkbox("runtab.llm_multi_plate", checked=True)
+        adv_layout.addRow("", self._llm_multi_plate)
 
         self._od_fallback = tr_checkbox("runtab.od_fallback", checked=True)
         adv_layout.addRow("", self._od_fallback)
@@ -544,21 +544,21 @@ class RunTab(QWidget):
             # keys above — the controls live in SettingsTab). Without
             # this the worker never saw a key/policy and always ran
             # local_only, silently disabling the LLM.
-            "MiniMax_api_key": str(self._settings.get("MiniMax_api_key", "") or ""),
+            "llm_api_key": str(self._settings.get("llm_api_key", "") or ""),
             "data_outbound_policy": str(
                 self._settings.get("data_outbound_policy", "auto") or "auto"
             ),
-            "m3_prompt_lang": self._m3_lang.currentData() or self._m3_lang.currentText(),
-            "m3_model": self._m3_model_edit.text().strip() or DEFAULT_MINIMAX_MODEL,
-            "MiniMax_thinking_budget": self._m3_budget.value(),
-            "MiniMax_max_output_tokens": self._m3_output.value(),
-            "MiniMax_timeout_sec": self._m3_timeout.value(),
-            "MiniMax_max_retries": self._m3_max_retries.value(),
+            "llm_prompt_lang": self._llm_lang.currentData() or self._llm_lang.currentText(),
+            "llm_model": self._llm_model_edit.text().strip() or DEFAULT_LLM_MODEL,
+            "llm_thinking_budget": self._llm_budget.value(),
+            "llm_max_output_tokens": self._llm_output.value(),
+            "llm_timeout_sec": self._llm_timeout.value(),
+            "llm_max_retries": self._llm_max_retries.value(),
             "use_paleodb": self._paleodb_check.isChecked(),
             "paleodb_max_occurrences": self._paleodb_occ.value(),
             "use_geo_vision": self._geo_vision.isChecked(),
-            "use_m3_stage3": self._m3_stage3.isChecked(),
-            "m3_multi_plate_enrich": self._m3_multi_plate.isChecked(),
+            "use_llm_stage3": self._llm_stage3.isChecked(),
+            "llm_multi_plate_enrich": self._llm_multi_plate.isChecked(),
             # NOTE: _od_fallback checkbox is "use OD fallback" (positive),
             # but the pipeline config key is "disable_od_fallback" (negative).
             # Invert here; matched by apply_settings below.
@@ -608,29 +608,29 @@ class RunTab(QWidget):
             self._gpu_check.setChecked(bool(s["use_gpu"]))
         if "llm_backend" in s:
             # findData (the ISO code) instead of findText, otherwise
-            # settings saved as e.g. "minimax" don't match the
-            # friendly label "MiniMax-M3 (推荐)".
+            # settings saved with a pre-F17 alias value ("minimax")
+            # don't match the new friendly label mapping below.
             backend = str(s["llm_backend"])
             ix = self._llm_combo.findData(backend)
             if ix < 0:
                 ix = self._llm_combo.findText(backend)
             if ix >= 0:
                 self._llm_combo.setCurrentIndex(ix)
-        if "m3_prompt_lang" in s:
+        if "llm_prompt_lang" in s:
             # uses friendly names in itemText + ISO codes in userData.
-            lang = str(s["m3_prompt_lang"])
-            ix = self._m3_lang.findData(lang)
+            lang = str(s["llm_prompt_lang"])
+            ix = self._llm_lang.findData(lang)
             if ix < 0:
-                ix = self._m3_lang.findText(lang)
+                ix = self._llm_lang.findText(lang)
             if ix >= 0:
-                self._m3_lang.setCurrentIndex(ix)
-        if "m3_model" in s:
-            self._m3_model_edit.setText(str(s["m3_model"]))
+                self._llm_lang.setCurrentIndex(ix)
+        if "llm_model" in s:
+            self._llm_model_edit.setText(str(s["llm_model"]))
         for k, sb in (
-            ("MiniMax_thinking_budget", self._m3_budget),
-            ("MiniMax_max_output_tokens", self._m3_output),
-            ("MiniMax_timeout_sec", self._m3_timeout),
-            ("MiniMax_max_retries", self._m3_max_retries),
+            ("llm_thinking_budget", self._llm_budget),
+            ("llm_max_output_tokens", self._llm_output),
+            ("llm_timeout_sec", self._llm_timeout),
+            ("llm_max_retries", self._llm_max_retries),
             ("paleodb_max_occurrences", self._paleodb_occ),
             ("render_dpi", self._dpi),
         ):
@@ -639,8 +639,8 @@ class RunTab(QWidget):
         for k, cb in (
             ("use_paleodb", self._paleodb_check),
             ("use_geo_vision", self._geo_vision),
-            ("use_m3_stage3", self._m3_stage3),
-            ("m3_multi_plate_enrich", self._m3_multi_plate),
+            ("use_llm_stage3", self._llm_stage3),
+            ("llm_multi_plate_enrich", self._llm_multi_plate),
             ("save_intermediate", self._save_intermediate),
         ):
             if k in s:

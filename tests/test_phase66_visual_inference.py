@@ -1,6 +1,6 @@
-"""Phase 66 Plan C.1 — M3 cross-figure visual inference tests.
+"""Phase 66 Plan C.1 — LLM cross-figure visual inference tests.
 
-The cross_figure_visual prompt asks M3 to look at a plate image AND a
+The cross_figure_visual prompt asks LLM to look at a plate image AND a
 strat-column / paleogeographic-map image together and emit per-panel
 mappings:
 
@@ -23,17 +23,17 @@ from typing import Any
 
 import pytest
 
-from rlpe.m3_engine import PROMPT_REGISTRY, M3Engine
-from tests.fakes.fake_m3_backend import FakeM3Backend
+from rlpe.semantic_engine import PROMPT_REGISTRY, SemanticEngine
+from tests.fakes.fake_llm_backend import FakeM3Backend
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_engine(canned: list[dict[str, Any]]) -> M3Engine:
+def _make_engine(canned: list[dict[str, Any]]) -> SemanticEngine:
     backend = FakeM3Backend(canned_responses=canned)
-    return M3Engine(backend=backend, config={})
+    return SemanticEngine(backend=backend, config={})
 
 
 class _DummyImage:
@@ -144,7 +144,7 @@ class TestCrossFigureVisualInferenceHappyPath:
 
 class TestCrossFigureVisualInferenceFallback:
     def test_backend_none_returns_empty(self):
-        engine = M3Engine(backend=None, config={})
+        engine = SemanticEngine(backend=None, config={})
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),
@@ -155,7 +155,7 @@ class TestCrossFigureVisualInferenceFallback:
 
     def test_backend_fallback_returns_empty(self):
         backend = FakeM3Backend(canned_responses=[{"fallback_used": True, "raw_text": ""}])
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),
@@ -166,7 +166,7 @@ class TestCrossFigureVisualInferenceFallback:
 
     def test_malformed_json_returns_empty(self):
         backend = FakeM3Backend(canned_responses=[{"raw_text": "not json"}])
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),
@@ -177,7 +177,7 @@ class TestCrossFigureVisualInferenceFallback:
 
     def test_non_dict_json_returns_empty(self):
         backend = FakeM3Backend(canned_responses=[{"raw_text": "[1,2,3]"}])
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),
@@ -188,7 +188,7 @@ class TestCrossFigureVisualInferenceFallback:
 
     def test_missing_plate_panels_key_returns_empty(self):
         backend = FakeM3Backend(canned_responses=[{"raw_text": '{"other": "shape"}'}])
-        engine = M3Engine(backend=backend, config={})
+        engine = SemanticEngine(backend=backend, config={})
         result = engine.cross_figure_visual_inference(
             plate_image=_DummyImage(),
             strat_image=_DummyImage(),

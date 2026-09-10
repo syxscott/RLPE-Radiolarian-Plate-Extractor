@@ -405,7 +405,7 @@ class TestApiKeyAuth:
         self, authed_app_module, authed_client, tmp_path: Path
     ) -> None:
         """The /jobs/upload endpoint must also be auth-protected
-        when the env var is set — the operator's paid MiniMax key
+        when the env var is set — the operator's paid LLM key
         is the highest-value target."""
         pdf = tmp_path / "tiny.pdf"
         pdf.write_bytes(b"%PDF-1.4\n%pad\n")

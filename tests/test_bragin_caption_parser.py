@@ -29,7 +29,7 @@ preamble before the inner finditer.
 
 from __future__ import annotations
 
-from rlpe.m3_engine import _regex_parse_caption
+from rlpe.semantic_engine import _regex_parse_caption
 
 BRAGIN_PLATE_I = (
     "Plate I. Characteristic taxa of family Parvicingulidae from the "

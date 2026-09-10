@@ -1,8 +1,8 @@
-"""Regression tests for MiniMax telemetry propagation.
+"""Regression tests for LLM telemetry propagation.
 
 These cover the case where ``apply_gemma_to_matches()`` was previously
-gating cost / request_id / model_version behind the failure branch.
-Successful high-confidence MiniMax calls must still propagate telemetry
+gating request_id / model_version / usage behind the failure branch (F17: cost telemetry removed).
+Successful high-confidence LLM calls must still propagate telemetry
 so /system/llm-status reports non-zero usage and cost.
 """
 
@@ -44,7 +44,7 @@ def _patch_image_open(monkeypatch) -> None:
     monkeypatch.setattr("rlpe.gemma_postprocess.Image", fake_image_module)
 
 
-def test_successful_call_stamps_minimax_telemetry(monkeypatch, tmp_path):
+def test_successful_call_stamps_llm_telemetry(monkeypatch, tmp_path):
     from rlpe.gemma_postprocess import apply_gemma_to_matches
 
     runtime = MagicMock()
@@ -56,8 +56,7 @@ def test_successful_call_stamps_minimax_telemetry(monkeypatch, tmp_path):
         "confidence": 0.92,
         "reasoning": "ok",
         "request_id": "req-success-1",
-        "model_version": "MiniMax-M3",
-        "cost_cny": 0.0123,
+        "model_version": "test-model",
         "usage": {"input_tokens": 1000, "output_tokens": 50},
     }
 
@@ -79,10 +78,10 @@ def test_successful_call_stamps_minimax_telemetry(monkeypatch, tmp_path):
         prompt_lang="en",
     )
 
-    assert m.metadata["MiniMax_request_id"] == "req-success-1"
-    assert m.metadata["MiniMax_cost_cny"] == pytest.approx(0.0123)
-    assert m.metadata["MiniMax_model_version"] == "MiniMax-M3"
-    assert m.metadata["MiniMax_usage"] == {"input_tokens": 1000, "output_tokens": 50}
+    assert m.metadata["llm_request_id"] == "req-success-1"
+    assert m.metadata["llm_model_version"] == "test-model"
+    assert m.metadata["llm_usage"] == {"input_tokens": 1000, "output_tokens": 50}
+    assert "llm_cost_cny" not in m.metadata
     assert m.metadata["gemma_used"] is True
     # No error / error_type keys must have been written on a successful call.
     assert "gemma_error" not in m.metadata
@@ -101,8 +100,7 @@ def test_failed_call_keeps_gemma_error_but_still_records_telemetry(monkeypatch, 
         "confidence": 0.10,
         "reasoning": "fail",
         "request_id": "req-fail-1",
-        "model_version": "MiniMax-M3",
-        "cost_cny": 0.005,
+        "model_version": "test-model",
         "error": "rate limited",
         "error_type": "RateLimit",
     }
@@ -125,8 +123,7 @@ def test_failed_call_keeps_gemma_error_but_still_records_telemetry(monkeypatch, 
         prompt_lang="en",
     )
 
-    assert m.metadata["MiniMax_request_id"] == "req-fail-1"
-    assert m.metadata["MiniMax_cost_cny"] == pytest.approx(0.005)
-    assert m.metadata["MiniMax_model_version"] == "MiniMax-M3"
+    assert m.metadata["llm_request_id"] == "req-fail-1"
+    assert m.metadata["llm_model_version"] == "test-model"
     assert m.metadata["gemma_error"] == "rate limited"
     assert m.metadata["gemma_error_type"] == "RateLimit"

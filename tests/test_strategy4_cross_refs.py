@@ -3,7 +3,7 @@
 Audit 2026-08-16 (fill-gaps): previously ``rlpe.cross_refs.parse_cross_refs``
 had 15+ unit tests in ``test_cross_refs.py`` but no production caller. We
 now invoke it from ``cross_figure_linker._strategy4_cross_refs_match``
-(between Strategy 2 locality match and Strategy 3 M3 inference).
+(between Strategy 2 locality match and Strategy 3 LLM inference).
 
 These tests guard:
   - Strategy 4 fires when the caption mentions a paper-level figure
@@ -12,7 +12,7 @@ These tests guard:
   - Self-references are filtered out by ``current_fig_id``.
   - When Strategy 1 / 2 already match, Strategy 4 is skipped
     (linker uses first-non-None rule).
-  - When no paper figure matches, Strategy 4 falls through to M3/unlinked.
+  - When no paper figure matches, Strategy 4 falls through to LLM/unlinked.
   - Strategy 4 stamps ``metadata.cross_refs`` on the panel via pipeline.
 """
 
@@ -153,14 +153,14 @@ def test_linker_chain_uses_strategy4_after_strategies_1_2_fail():
 
 
 def test_linker_chain_strategy4_before_strategy3():
-    """Strategy 4 has higher confidence than M3 inference, so it should win."""
+    """Strategy 4 has higher confidence than LLM inference, so it should win."""
     panel = _plate_row("A", "fig_2", caption="Compared with Fig. 3.")
 
     def fake_m3(_cap, _ctx):
         return {"figure_id": "strat_3", "confidence": 0.5}
 
     strat = _strat_row("strat_3", num="3")
-    results = link_species_to_geology([panel], [strat], m3_inference_callable=fake_m3)
+    results = link_species_to_geology([panel], [strat], llm_inference_callable=fake_m3)
     assert results[0].source == LINK_SOURCE_CROSS_REF
     assert results[0].confidence == 0.85
 

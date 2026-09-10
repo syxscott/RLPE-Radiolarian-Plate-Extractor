@@ -1,9 +1,9 @@
-"""Regression tests for audit 2026-08-02 — M3 morphology extraction MVP.
+"""Regression tests for audit 2026-08-02 — LLM morphology extraction MVP.
 
-Stage 6 of the RLPE pipeline is an opt-in M3-based morphological-
+Stage 6 of the RLPE pipeline is an opt-in LLM-based morphological-
 description extraction. It emits MorphologyRecord entries (schema
 v1.2.0) per unique (paper, species) pair. These tests cover the
-locator, the M3 engine method, and the pipeline integration helper.
+locator, the LLM engine method, and the pipeline integration helper.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from rlpe.converters import (
     run_output_from_provenance,
     taxon_records_from_matches,
 )
-from rlpe.m3_engine import PROMPT_REGISTRY, M3Engine
 from rlpe.morphology_locator import (
     _normalise_text,
     _strip_authority,
@@ -33,18 +32,19 @@ from rlpe.schema_models import (
     ProvenanceRecord,
     TaxonRecord,
 )
+from rlpe.semantic_engine import PROMPT_REGISTRY, SemanticEngine
 from rlpe.types import MatchResult
-from tests.fakes.fake_m3_backend import FakeM3Backend
+from tests.fakes.fake_llm_backend import FakeM3Backend
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_engine(canned: list[dict[str, Any]]) -> M3Engine:
-    """Build an M3Engine wired to a FakeM3Backend."""
+def _make_engine(canned: list[dict[str, Any]]) -> SemanticEngine:
+    """Build an SemanticEngine wired to a FakeM3Backend."""
     backend = FakeM3Backend(canned_responses=canned)
-    return M3Engine(backend=backend, config={})
+    return SemanticEngine(backend=backend, config={})
 
 
 def _make_prov() -> ProvenanceRecord:
@@ -158,7 +158,7 @@ class TestMorphologyLocator:
 
 
 class TestM3InferMorphology:
-    """M3Engine.infer_morphology() — Stage 6 morphology inference."""
+    """SemanticEngine.infer_morphology() — Stage 6 morphology inference."""
 
     def test_prompt_registered(self) -> None:
         """The morphology_extract prompt must be in PROMPT_REGISTRY."""
@@ -263,7 +263,7 @@ class TestM3InferMorphology:
         assert result == {}
 
     def test_confidence_clamped_to_unit_interval(self) -> None:
-        """Confidence must be clamped to [0.0, 1.0] even if M3 returns 1.5."""
+        """Confidence must be clamped to [0.0, 1.0] even if LLM returns 1.5."""
         engine = _make_engine(
             [
                 {"raw_text": json.dumps({"confidence": 1.5})},
@@ -278,7 +278,7 @@ class TestM3InferMorphology:
 
     def test_backend_none_returns_empty(self) -> None:
         """No backend → empty dict, no crash."""
-        engine = M3Engine(backend=None, config={})
+        engine = SemanticEngine(backend=None, config={})
         result = engine.infer_morphology(
             species_name="Genus species",
             source_text="anything",
@@ -329,7 +329,7 @@ class TestSchemaMorphology:
         assert rec.spines_present is None
 
     def test_morphology_record_rejects_unknown_field(self) -> None:
-        """Strict model (extra='forbid') catches typos in M3 output."""
+        """Strict model (extra='forbid') catches typos in LLM output."""
         with pytest.raises(ValueError):
             MorphologyRecord.model_validate(
                 {
@@ -423,7 +423,7 @@ class TestPipelineIntegration:
     """Pipeline._apply_morphology_enrichment() helper."""
 
     def _build_pipeline(
-        self, *, m3_stage_6: bool, policy: str, fake_canned: list[dict[str, Any]] | None = None
+        self, *, llm_stage_6: bool, policy: str, fake_canned: list[dict[str, Any]] | None = None
     ):
         """Build a minimal RadiolarianPipeline with Stage-6 wired up."""
         from rlpe.config import PipelineConfig
@@ -433,15 +433,15 @@ class TestPipelineIntegration:
             cfg = PipelineConfig(
                 pdf_dir=Path(work_dir) / "pdfs",
                 work_dir=Path(work_dir),
-                m3_stage_6=m3_stage_6,
+                llm_stage_6=llm_stage_6,
             )
             cfg.extra["data_outbound_policy"] = policy
             pipeline = RadiolarianPipeline(cfg)
-            # Always attach an M3 engine so the per-paper tests can
+            # Always attach an LLM engine so the per-paper tests can
             # monkey-patch methods on it (the helper's earlier
             # conditional ``if fake_canned is not None`` skipped
             # engine creation for tests that bypass the backend).
-            pipeline.m3_engine = M3Engine(
+            pipeline.semantic_engine = SemanticEngine(
                 backend=FakeM3Backend(canned_responses=fake_canned or []),
                 config={},
             )
@@ -456,7 +456,7 @@ class TestPipelineIntegration:
         # behaviour we actually want to test (dedup by species) is
         # upstream of the backend.
         pipeline = self._build_pipeline(
-            m3_stage_6=True,
+            llm_stage_6=True,
             policy="api_full",
             fake_canned=None,
         )
@@ -473,7 +473,7 @@ class TestPipelineIntegration:
                 "_source": "caption",
             }
 
-        pipeline.m3_engine.infer_morphology = fake_infer_morphology  # type: ignore[assignment]
+        pipeline.semantic_engine.infer_morphology = fake_infer_morphology  # type: ignore[assignment]
         rows = [
             {
                 "paper_id": "p1",
@@ -521,18 +521,18 @@ class TestPipelineIntegration:
         assert shapes == {"ovoid", "spherical", "campanulate"}
 
     def test_fail_open_on_morphology_error(self) -> None:
-        """If M3 raises, rows are unchanged and no record is added."""
+        """If LLM raises, rows are unchanged and no record is added."""
         pipeline = self._build_pipeline(
-            m3_stage_6=True,
+            llm_stage_6=True,
             policy="api_full",
             fake_canned=[{"raw_text": "{}"}],
         )
 
         # Monkey-patch infer_morphology to raise.
         def boom(**_kw):
-            raise RuntimeError("simulated M3 backend outage")
+            raise RuntimeError("simulated LLM backend outage")
 
-        pipeline.m3_engine.infer_morphology = boom  # type: ignore[assignment]
+        pipeline.semantic_engine.infer_morphology = boom  # type: ignore[assignment]
 
         rows = [
             {
@@ -554,14 +554,14 @@ class TestPipelineIntegration:
 
         We can't easily check the locator wasn't called from a unit
         test without monkeypatching; instead we verify that with no
-        fulltext_sections, the pipeline still calls M3 with
+        fulltext_sections, the pipeline still calls LLM with
         ``source='caption'`` and the resulting record has
         ``source='caption'`` — proving the caption-only path is taken.
         """
-        # When api_redacted + no body sections, M3 should still be
+        # When api_redacted + no body sections, LLM should still be
         # called if the caption is long enough.
         pipeline = self._build_pipeline(
-            m3_stage_6=True,
+            llm_stage_6=True,
             policy="api_redacted",
             fake_canned=[{"raw_text": json.dumps({"test_shape": "ovoid", "confidence": 0.5})}],
         )
@@ -583,9 +583,9 @@ class TestPipelineIntegration:
         assert records[0]["source"] == "caption"
 
     def test_local_only_skips_morphology(self) -> None:
-        """data_outbound_policy='local_only' skips M3 morphology entirely."""
+        """data_outbound_policy='local_only' skips LLM morphology entirely."""
         pipeline = self._build_pipeline(
-            m3_stage_6=True,
+            llm_stage_6=True,
             policy="local_only",
             fake_canned=[{"raw_text": json.dumps({"test_shape": "ovoid", "confidence": 0.5})}],
         )
@@ -602,10 +602,10 @@ class TestPipelineIntegration:
         # No records produced under local_only.
         assert pipeline._paper_morphologies.get("p1") is None
 
-    def test_off_when_m3_stage_6_false(self) -> None:
+    def test_off_when_llm_stage_6_false(self) -> None:
         """Default off — no records produced even if engine exists."""
         pipeline = self._build_pipeline(
-            m3_stage_6=False,
+            llm_stage_6=False,
             policy="api_full",
             fake_canned=[{"raw_text": json.dumps({"test_shape": "ovoid"})}],
         )

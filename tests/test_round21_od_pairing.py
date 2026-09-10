@@ -3,7 +3,7 @@
 User audit (Round 20 sampling) found that Boughdiri 2007's 6 non-plate
 figures (strat column, litholog sections, location map, outcrop photos
 on p2-p7) were silently dropped. The pipeline only created
-``od_plate_p011_pl01`` and the geo_vision M3 routing never fired.
+``od_plate_p011_pl01`` and the geo_vision LLM routing never fired.
 
 Root cause analysis identified 3 layered bugs in
 ``src/rlpe/opendataloader_extractor.py``:

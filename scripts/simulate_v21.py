@@ -25,12 +25,12 @@ sys.path.insert(0, str(REPO / "src"))
 
 from rlpe.evaluation.gold import load_gold  # noqa: E402
 from rlpe.evaluation.metrics import evaluate  # noqa: E402
-from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
 from rlpe.opendataloader_extractor import (  # noqa: E402
     _build_figures_from_plate_captions,
     _collect_images,
     _find_plate_captions,
 )
+from rlpe.semantic_engine import _regex_parse_caption  # noqa: E402
 
 # We rely on the cached bandini OD JSON in /tmp/llm9/ (read-only)
 # and the v19 work_dir output structure for image_file lookups.

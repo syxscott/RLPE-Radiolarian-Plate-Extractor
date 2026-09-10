@@ -9,7 +9,7 @@ literature: panel labels are wrapped in parenthesised form
 "1, 2- Species" (Baumgartner) conventions. The whole plate caption is a
 single chunk with a "Plate I. ...prose..." preamble, so the
 caption-parser fall-through chain had to be extended (see
-``_DANELIAN_CLAUSE_RE`` in ``m3_engine.py`` and the new
+``_DANELIAN_CLAUSE_RE`` in ``semantic_engine.py`` and the new
 ``tests/test_bragin_caption_parser.py``).
 
 Paper_id convention: the other 7 gold files use a content-based SHA1

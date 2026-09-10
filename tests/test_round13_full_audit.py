@@ -51,9 +51,9 @@ def test_redact_api_keys_basic():
 
     # Anthropic-style: ``sk-ant-api03-`` + 48+ alnum
     assert _redact_api_keys("sk-ant-api03-" + "a" * 48) == "[REDACTED]"
-    # Generic: ``sk-`` + 16+ alnum (MiniMax, OpenAI, etc.)
+    # Generic: ``sk-`` + 16+ alnum (LLM, OpenAI, etc.)
     assert _redact_api_keys("sk-" + "a" * 32) == "[REDACTED]"
-    # MiniMax cp-style: ``sk-cp-`` + 16+ alnum
+    # LLM cp-style: ``sk-cp-`` + 16+ alnum
     assert _redact_api_keys("sk-cp-" + "X" * 32) == "[REDACTED]"
     # Non-key text passes through unchanged
     assert _redact_api_keys("API key not valid: 401 Unauthorized") == (
@@ -67,8 +67,8 @@ def test_redact_api_keys_basic():
 
 
 def test_make_error_result_redacts():
-    """``MiniMaxM3Backend._make_error_result`` must never echo raw keys."""
-    from rlpe.llm_backends import MiniMaxM3Backend
+    """``AnthropicCompatBackend._make_error_result`` must never echo raw keys."""
+    from rlpe.llm_backends import AnthropicCompatBackend
 
     # Construct a fake exception that includes an API key (real-shape
     # Anthropic key: 48 alnum chars after ``sk-ant-api03-``).
@@ -80,7 +80,7 @@ def test_make_error_result_redacts():
     # test only exercises ``_make_error_result`` (pure string
     # manipulation), so the SDK is irrelevant. This lets the test run
     # in air-gapped / CI environments that don't install anthropic.
-    backend = MiniMaxM3Backend(api_key="placeholder", data_outbound_policy="local_only")
+    backend = AnthropicCompatBackend(api_key="placeholder", data_outbound_policy="local_only")
     res = backend._make_error_result(FakeAuthError())
     assert "sk-ant-" not in res["error"], f"API key leaked in error: {res['error']!r}"
     assert "sk-ant-" not in res["reasoning"], f"API key leaked in reasoning: {res['reasoning']!r}"
@@ -132,21 +132,21 @@ def test_coerce_bool_strings():
 
 
 def test_build_backend_from_config_rejects_garbage_ints():
-    """The MiniMax backend builder must not crash on a non-numeric
-    ``MiniMax_max_output_tokens`` value."""
-    from rlpe.llm_backends import build_MiniMax_backend_from_env_or_config
+    """The LLM backend builder must not crash on a non-numeric
+    ``llm_max_output_tokens`` value."""
+    from rlpe.llm_backends import build_anthropic_compat_backend
 
     # No API key + local_only policy so we don't actually call the API
     cfg = {
         "data_outbound_policy": "local_only",
-        "MiniMax_max_output_tokens": "not-a-number",
-        "MiniMax_thinking_budget_tokens": "abc",
+        "llm_max_output_tokens": "not-a-number",
+        "llm_thinking_budget_tokens": "abc",
         "gemma_temperature": "extremely-hot",
         "gemma_top_p": "yes",
-        "MiniMax_max_retries": "ten",
-        "MiniMax_max_concurrent": "many",
+        "llm_max_retries": "ten",
+        "llm_max_concurrent": "many",
     }
-    backend = build_MiniMax_backend_from_env_or_config(cfg)
+    backend = build_anthropic_compat_backend(cfg)
     assert backend.max_output_tokens == 2048
     assert backend.thinking_budget_tokens == 1024
     assert backend.temperature == 0.1
@@ -288,7 +288,7 @@ def test_safe_storage_helpers_used():
 
 
 def test_api_app_usage_uses_isinstance():
-    """``/api/MiniMax/test-connection`` must check usage is a dict, not
+    """``/api/LLM/test-connection`` must check usage is a dict, not
     rely on ``or {}`` which treats ``{"input_tokens": 0}`` as falsy."""
     api_app = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "api" / "app.py"
     src = api_app.read_text(encoding="utf-8")

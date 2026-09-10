@@ -192,7 +192,7 @@ def cleanup_authors(authors: list[str] | None) -> list[str]:
 _CROSSREF_CACHE: dict[str, tuple[str | None, float]] = {}
 # Audit 2026-09-01 CR-22: module-level lock for the Crossref cache
 # stampede guard. Acquired once per call site so concurrent
-# cross-figure-linker / M3 enrichment callers don't all hit
+# cross-figure-linker / LLM enrichment callers don't all hit
 # api.crossref.org with the same DOI.
 import threading as _threading
 

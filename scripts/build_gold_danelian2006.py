@@ -36,7 +36,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from rlpe.evaluation import GoldPanel, write_gold  # noqa: E402
-from rlpe.m3_engine import _regex_parse_caption  # noqa: E402
+from rlpe.semantic_engine import _regex_parse_caption  # noqa: E402
 
 # Stable paper_id used by all existing cached predictions and the
 # live LLM-first run. Kept as a string (not SHA1) for backward

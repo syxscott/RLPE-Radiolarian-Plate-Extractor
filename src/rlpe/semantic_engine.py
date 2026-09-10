@@ -1,8 +1,8 @@
-"""M3-Centric Semantic Figure Understanding Engine.
+"""LLM-Centric Semantic Figure Understanding Engine.
 
-This module turns MiniMax M3 (a multimodal LLM with extended thinking) from
+This module turns LLM LLM (a multimodal LLM with extended thinking) from
 "末端匹配器" into the *semantic engine* of the radiolarian plate pipeline.
-The pipeline is decomposed into 5 cascading M3 stages, each producing
+The pipeline is decomposed into 5 cascading LLM stages, each producing
 structured JSON consumed by the next stage.  Any stage can fail gracefully
 and the next-best classical method takes over.
 
@@ -14,10 +14,10 @@ Stages
 4. ``match_panel``           vision+text -> ``PanelMatch``  (per-panel species assignment)
 5. ``critique_matches``      vision+text -> ``Critique[]``  (cross-panel consistency)
 
-The novelty: M3's multimodal extended-thinking is used as a *joint* document
+The novelty: LLM's multimodal extended-thinking is used as a *joint* document
 understanding engine, not a per-panel classifier.  Each stage is small and
 focused, the JSON contract is strict, and stages can be turned on/off via
-``PipelineConfig.extra['m3_stage_<n>'] = True/False`` for ablation.
+``PipelineConfig.extra['llm_stage_<n>'] = True/False`` for ablation.
 
 Cost (rough): ~¥0.10/figure with 10 panels; 4 figures ≈ ¥0.40.
 """
@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 # LLM error classification (Phase 4E Task 1)
 # ---------------------------------------------------------------------------
 #
-# Before Phase 4E, the engine caught every M3 exception in one bucket
+# Before Phase 4E, the engine caught every LLM exception in one bucket
 # (`except Exception`) and only logged "infer_panel failed" — operators
 # had no way to distinguish an auth failure (which requires a key rotation)
 # from a rate-limit (which is transient) from a timeout (which is
@@ -126,7 +126,7 @@ def _safe_json_loads(text: str) -> Any:
     """Parse JSON from text, tolerating ```json fences and preamble.
 
     Tries the whole text first, then a JSON array, then a JSON object. If
-    parsing fails on a top-level array (e.g. M3 produced a syntax error
+    parsing fails on a top-level array (e.g. LLM produced a syntax error
     inside), falls back to extracting *individual* balanced objects from
     the text so we can recover as much structure as possible.
     """
@@ -251,35 +251,28 @@ def _extract_balanced_objects(text: str) -> list[Any]:
 
 
 _TELEMETRY_KEYS = (
-    "MiniMax_request_id",
-    "MiniMax_cost_cny",
-    "MiniMax_model_version",
-    "MiniMax_usage",
+    "llm_request_id",
+    "llm_model_version",
+    "llm_usage",
 )
 
 
 def _telemetry_subset(raw: dict[str, Any] | None) -> dict[str, Any]:
-    """Pick MiniMax telemetry fields from a backend raw result.
+    """Pick LLM telemetry fields from a backend raw result.
 
-    M3 stage callers propagate ``raw`` into ``PanelMatch.raw``; pipeline
-    stage-4 then copies these into MatchResult metadata so /system/llm-
-    status can aggregate cost across all stages.
+    LLM stage callers propagate ``raw`` into ``PanelMatch.raw``; pipeline
+    stage-4 then copies these into MatchResult metadata (request id,
+    model version, token usage — cost accounting was removed in F17).
     """
     if not isinstance(raw, dict):
         return {}
     out: dict[str, Any] = {}
     rid = raw.get("request_id")
     if rid:
-        out["MiniMax_request_id"] = str(rid)
-    cost = raw.get("cost_cny")
-    if cost is not None:
-        try:
-            out["MiniMax_cost_cny"] = float(cost)
-        except (TypeError, ValueError):
-            pass
+        out["llm_request_id"] = str(rid)
     mv = raw.get("model_version")
     if mv:
-        out["MiniMax_model_version"] = str(mv)
+        out["llm_model_version"] = str(mv)
     usage = raw.get("usage")
     if isinstance(usage, dict):
         # M12: whitelist only safe usage fields. The raw ``usage`` dict from
@@ -296,7 +289,7 @@ def _telemetry_subset(raw: dict[str, Any] | None) -> dict[str, Any]:
             if key in usage:
                 safe_usage[key] = usage[key]
         if safe_usage:
-            out["MiniMax_usage"] = safe_usage
+            out["llm_usage"] = safe_usage
     return out
 
 
@@ -305,7 +298,7 @@ def _telemetry_subset(raw: dict[str, Any] | None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 #
 # ``extract_geology()`` below sends a figure image + caption to the
-# MiniMax-M3 backend and asks for structured geology fields (lithology,
+# the LLM backend and asks for structured geology fields (lithology,
 # formation, member, group, country, biozone, Ma range, coordinates).
 # One system prompt per figure_type keeps each prompt ~150 tokens and
 # focused on what to look for. The JSON contract is identical across
@@ -716,7 +709,7 @@ PROMPT_REGISTRY: dict[str, str] = {
     ),
     # Multi-plate enrichment prompt (Round 7). Fires when the
     # OpenDataLoader caption-image pairing missed a plate (e.g. Bandini
-    # 2011 Plate 7-9 were dropped) and we need M3 to look at the plate
+    # 2011 Plate 7-9 were dropped) and we need LLM to look at the plate
     # image + page-level context to recover the panel_id → species list.
     # The output shape is intentionally identical to a multi-panel LLM-
     # first extraction so the caller can reuse ``infer_panel`` results
@@ -768,7 +761,7 @@ PROMPT_REGISTRY: dict[str, str] = {
     # Note on the key name: we deliberately do NOT use the
     # ``schematic_geo`` suffix because the existing
     # ``test_each_prompt_returns_json_shape`` test in
-    # tests/test_m3_geology_extraction.py asserts that every
+    # tests/test_llm_geology_extraction.py asserts that every
     # ``*_geo`` prompt mentions "geo" / "age" / "formation" (the
     # geology-vision contract). Schematic figures have a different
     # JSON shape (text_elements / relationships / extracted_facts)
@@ -821,7 +814,7 @@ PROMPT_REGISTRY: dict[str, str] = {
         "- Return JSON only, no markdown fences, no commentary."
     ),
     # Phase 65 Plan A.3 — cross-figure inference prompt used by the
-    # 3-strategy linker (sample_id -> locality -> m3_inference). The
+    # 3-strategy linker (sample_id -> locality -> llm_inference). The
     # model sees a plate caption + paper-level figure summary and
     # returns the most likely formation / age / locality / figure_id
     # for the plate's species. Confidence is intentionally bounded to
@@ -907,10 +900,10 @@ PROMPT_REGISTRY: dict[str, str] = {
         "  than text-only inference.\n"
         "- Output JSON only, no markdown fences, no commentary."
     ),
-    # Audit 2026-08-02 — morphology_extract prompt. Stage 6 of the M3
-    # pipeline (opt-in via ``m3_stage_6=True``): for each unique
+    # Audit 2026-08-02 — morphology_extract prompt. Stage 6 of the LLM
+    # pipeline (opt-in via ``llm_stage_6=True``): for each unique
     # (paper, species) pair, send the caption or body-text excerpt to
-    # M3 and ask for structured morphological-description fields.
+    # LLM and ask for structured morphological-description fields.
     #
     # Critical rules (the whole point of having a structured prompt):
     # 1. NEVER infer a feature that is not in the source text. If
@@ -1049,7 +1042,7 @@ def _redact_enrichment_caption(
     """Phase 61 Plan 4 (Bug 4.9): selectively redact a page-level caption
     for the enrichment second pass.
 
-    The Round 7 ``enrich_plate_panels`` call needs to send M3 the page
+    The Round 7 ``enrich_plate_panels`` call needs to send LLM the page
     caption (which contains captions for *other* plates on the same
     page) plus the image of just the current plate. The historical
     ``api_redacted`` outbound policy truncated the entire payload to
@@ -1070,7 +1063,7 @@ def _redact_enrichment_caption(
     # audit 2026-08-01 (M9): the helper is called with whatever the OD
     # caption store held, which is not always a ``str`` (None, or a list
     # for multi-block captions). Coerce defensively so a bad caption type
-    # degrades to "no context" instead of raising inside the M3 call path.
+    # degrades to "no context" instead of raising inside the LLM call path.
     if not isinstance(page_caption, str):
         return ""
     if not page_caption:
@@ -1113,7 +1106,7 @@ def _redact_enrichment_caption(
     # Build the redacted payload: matched section + a redacted
     # surrounding context. Cap the total unrelated text to
     # ``unrelated_budget`` characters so a 50k-char page can't blow the
-    # M3 input budget.
+    # LLM input budget.
     before = pc[:start]
     after = pc[end:]
     before_budget = unrelated_budget // 2
@@ -2045,7 +2038,7 @@ class CaptionPair:
     labels: list[str]  # e.g. ["A", "B"] or ["3", "4"]
     species: str  # canonical Latin name
     modifier: str = ""  # "sp.", "cf.", "aff.", "?", "n. sp."
-    confidence: float = 0.9  # M3's self-assessed parse confidence
+    confidence: float = 0.9  # LLM's self-assessed parse confidence
     notes: str = ""  # optional parsing notes
     raw_text: str = ""  # original caption span that produced this pair
 
@@ -2055,7 +2048,7 @@ class CaptionPair:
 
 @dataclass(slots=True)
 class PlateClassification:
-    """M3's view of the entire plate."""
+    """LLM's view of the entire plate."""
 
     is_radiolarian_plate: bool = True
     image_type: str = (
@@ -2073,11 +2066,11 @@ class PlateClassification:
 
 @dataclass(slots=True)
 class PanelBox:
-    """M3's view of an individual panel within the plate."""
+    """LLM's view of an individual panel within the plate."""
 
     panel_id: str
     bbox: tuple[int, int, int, int]  # (x, y, w, h) in plate pixel coordinates
-    visible_label: str | None = None  # e.g. "A" if M3 sees the letter on the panel
+    visible_label: str | None = None  # e.g. "A" if LLM sees the letter on the panel
     morphology: str = ""  # one-line morphology hint
     confidence: float = 0.85
 
@@ -2089,7 +2082,7 @@ class PanelBox:
 
 @dataclass(slots=True)
 class PanelMatch:
-    """M3's per-panel species assignment."""
+    """LLM's per-panel species assignment."""
 
     panel_id: str
     label: str | None
@@ -2106,7 +2099,7 @@ class PanelMatch:
 
 @dataclass(slots=True)
 class Critique:
-    """M3 self-critique of an existing per-panel match."""
+    """LLM self-critique of an existing per-panel match."""
 
     panel_id: str
     verdict: str  # "agree" | "disagree" | "uncertain"
@@ -2119,7 +2112,7 @@ class Critique:
 
 
 # ---------------------------------------------------------------------------
-# Stage prompts (Chinese; designed for extended-thinking M3)
+# Stage prompts (Chinese; designed for extended-thinking LLM)
 # ---------------------------------------------------------------------------
 
 _PARSE_CAPTION_SYSTEM = """你是放射虫古生物学专家，专长是从图版说明（caption）中抽取"图版label-拉丁学名"映射。
@@ -2189,7 +2182,7 @@ Output MUST match the JSON schema exactly. See examples below.
 #
 # Triggered automatically by ``_detect_caption_lang`` when the caption
 # contains Hiragana / Katakana / CJK ideographs, OR explicitly via
-# ``--m3-prompt-lang ja``.
+# ``--llm-prompt-lang ja``.
 _PARSE_CAPTION_SYSTEM_JA = """あなたは放散虫古生物学の専門家で、図版キャプションから「ラベル集合 → ラテン学名」のマッピングを抽出することが専門です。
 
 タスク: 非構造化の図版説明文を受け取り、すべての (label集合 → 種) ペアを出力する。
@@ -2363,7 +2356,7 @@ _MATCH_PANEL_SYSTEM = """你是放射虫古生物学专家，负责为单个 pan
 输入：
 - 图像：一个 panel 标本的裁剪图。
 - 候选配对：从图版说明中解析出的 (label集合 → 物种) 列表（已去重、按字母顺序排好）。
-- 提示标签：M3 之前在图版上看到的可见字母（如 "A"），可能为 null。
+- 提示标签：LLM 之前在图版上看到的可见字母（如 "A"），可能为 null。
 - 完整图说：作为辅助上下文。
 
 输出（严格 JSON）：
@@ -2503,20 +2496,20 @@ Output MUST match the JSON schema exactly. See examples below.
 # The 5 stage system prompts above are the canonical sources of truth
 # for the JSON contract each stage emits. Historically
 # ``gemma_postprocess.py`` re-defined its own copies of the per-panel
-# prompt and would silently drift when M3 prompts were updated — a
-# real bug (audit 2026-08-19 Bug M-10) because after M3 fails the
+# prompt and would silently drift when LLM prompts were updated — a
+# real bug (audit 2026-08-19 Bug M-10) because after LLM fails the
 # Gemma fallback would use a STALE prompt that no longer matches the
-# format M3 actually emits.
+# format LLM actually emits.
 #
 # ``get_prompt_registry()`` aggregates the 5 stage system prompts
 # (plus the Japanese variant of ``parse_caption``) into a single
 # dict keyed by stage name so other modules can pull the canonical
 # prompt instead of re-implementing it. Tests import this function
-# to verify Gemma really uses M3's prompt (audit Bug M-12).
+# to verify Gemma really uses LLM's prompt (audit Bug M-12).
 #
 # Note: callers should treat the returned dict as read-only. We
 # deliberately return a NEW dict each call so a caller can mutate it
-# locally without poisoning the cached prompts inside ``m3_engine``.
+# locally without poisoning the cached prompts inside ``semantic_engine``.
 
 
 # Audit 2026-08-19 Phase 4E (Task 3): version stamp on the prompt
@@ -2532,7 +2525,7 @@ PROMPT_REGISTRY_VERSION: str = "v1.3.0"
 
 
 def get_prompt_registry() -> tuple[dict[str, str], str]:
-    """Return ``(prompt_registry_dict, version)`` for the M3 stage prompts.
+    """Return ``(prompt_registry_dict, version)`` for the LLM stage prompts.
 
     Audit 2026-08-19 Phase 4E: the function now returns a 2-tuple so
     callers can pin a result to a known prompt version. The first
@@ -2567,7 +2560,7 @@ def get_prompt_registry() -> tuple[dict[str, str], str]:
 
 
 def get_prompt_registry_version() -> str:
-    """Return just the version string of the M3 prompt registry.
+    """Return just the version string of the LLM prompt registry.
 
     Convenience accessor so callers (e.g. ``_make_telemetry``) don't
     have to unpack the full tuple when they only need the version.
@@ -2594,8 +2587,8 @@ class _ThinkingFlagGate:
     with thinking disabled purely because worker B happened to be
     inside its retry window: no error, just a quietly degraded answer.
 
-    Serialising every M3 call behind the retry lock would fix that but
-    throw away worker concurrency (M3 vision calls are seconds long).
+    Serialising every LLM call behind the retry lock would fix that but
+    throw away worker concurrency (LLM vision calls are seconds long).
     Instead first attempts take the *read* side — many at a time,
     blocked only while a retry is actually in flight — and the retry
     path takes the *write* side (exclusive). Writers take priority over
@@ -2748,12 +2741,12 @@ def _normalize_ma_pair(record: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
-class M3Engine:
-    """M3-Centric 5-stage engine.
+class SemanticEngine:
+    """LLM-Centric 5-stage engine.
 
     Usage
     -----
-    >>> engine = M3Engine(backend, config={"m3_stage_1": True, ...})
+    >>> engine = SemanticEngine(backend, config={"llm_stage_1": True, ...})
     >>> pairs = engine.parse_caption(caption_text)
     >>> cls = engine.classify_plate(plate_image)
     >>> if not cls.is_radiolarian_plate:
@@ -2794,21 +2787,21 @@ class M3Engine:
         self._sampling_lock = threading.Lock()
         # Stage toggles. Default: all on.
         for i in range(1, 6):
-            self.config.setdefault(f"m3_stage_{i}", True)
+            self.config.setdefault(f"llm_stage_{i}", True)
         # Temperature overrides for stages that need more creative reasoning.
-        self.config.setdefault("m3_temperature", 0.1)
+        self.config.setdefault("llm_temperature", 0.1)
         # Self-consistency: re-sample stage 4 N times and majority-vote.
-        self.config.setdefault("m3_match_samples", 1)
+        self.config.setdefault("llm_match_samples", 1)
         # Thinking budget for vision stages (more thinking for harder visual reasoning).
-        self.config.setdefault("m3_thinking_budget", 1024)
-        # audit 2026-07-31: the m3_temperature / m3_thinking_budget
+        self.config.setdefault("llm_thinking_budget", 1024)
+        # audit 2026-07-31: the llm_temperature / llm_thinking_budget
         # keys were setdefault'd here but never READ anywhere — the
         # user's knobs were dead. Push both onto the backend so the
         # sampling parameters actually reach the API call.
         self._apply_config_sampling_params()
 
     def _apply_config_sampling_params(self) -> None:
-        """Forward ``m3_temperature`` / ``m3_thinking_budget`` from
+        """Forward ``llm_temperature`` / ``llm_thinking_budget`` from
         the config dict onto the backend's sampling attributes.
 
         The backend classes (llm_backends) expose ``temperature``,
@@ -2818,9 +2811,9 @@ class M3Engine:
 
         Audit 2026-09-01 CR-21: the previous implementation wrote
         ``self.backend.temperature = ...`` / ``max_output_tokens = ...``
-        directly on the shared backend instance. The M3Engine is
+        directly on the shared backend instance. The SemanticEngine is
         invoked concurrently from per-panel worker threads (the
-        ``_apply_m3_per_panel_species_id`` enrichment loop), so two
+        ``_apply_llm_per_panel_species_id`` enrichment loop), so two
         panels running side-by-side could each set ``temperature`` to
         different values — the result was nondeterministic sampling
         (one panel would see temperature=0.4, the next would see
@@ -2829,44 +2822,44 @@ class M3Engine:
         backend's sampling attributes is atomic per-call.
         """
         with self._sampling_lock:
-            temp = self.config.get("m3_temperature")
+            temp = self.config.get("llm_temperature")
             if temp is not None and hasattr(self.backend, "temperature"):
                 try:
                     self.backend.temperature = float(temp)
                 except (TypeError, ValueError):
                     pass
-            thinking = self.config.get("m3_thinking_budget")
+            thinking = self.config.get("llm_thinking_budget")
             if thinking is not None and hasattr(self.backend, "thinking_budget_tokens"):
                 try:
                     self.backend.thinking_budget_tokens = int(thinking)
                 except (TypeError, ValueError):
                     pass
-            max_out = self.config.get("m3_max_output_tokens")
+            max_out = self.config.get("llm_max_output_tokens")
             if max_out is not None and hasattr(self.backend, "max_output_tokens"):
                 try:
                     self.backend.max_output_tokens = int(max_out)
                 except (TypeError, ValueError):
                     pass
         # Skip stage-4 per-panel matching if caption parser found zero pairs.
-        # Default True: when no caption pairs were extracted, M3 stage 4 has
+        # Default True: when no caption pairs were extracted, LLM stage 4 has
         # no candidate species list to choose from, so its visual-only mode
         # tends to hallucinate. Skipping is safer. Set this to False to
         # enable visual-only morphology identification (lower confidence).
         # NOTE: this default MUST stay in sync with the read in
-        # ``pipeline._apply_m3_stage4`` (which also defaults to True).
-        self.config.setdefault("m3_skip_match_on_empty_caption", True)
-        # Diagnostic dump: also save M3 raw output to this directory (None = off).
-        self.config.setdefault("m3_diagnostic_dir", None)
+        # ``pipeline._apply_llm_stage4`` (which also defaults to True).
+        self.config.setdefault("llm_skip_match_on_empty_caption", True)
+        # Diagnostic dump: also save LLM raw output to this directory (None = off).
+        self.config.setdefault("llm_diagnostic_dir", None)
         self._diagnostic_counter = 0
         # Lock for the "retry without thinking" path in _infer_text /
         # _infer_vision. The retry mutates ``backend.enable_thinking``
-        # (a MiniMax-specific attribute) before the second call and
+        # (a LLM-specific attribute) before the second call and
         # restores it afterwards. When multiple pipeline workers call
-        # M3 concurrently, one thread's toggle can race another's
+        # LLM concurrently, one thread's toggle can race another's
         # save/restore, leaving ``enable_thinking`` in the wrong state
         # for the first thread's original call.
         #
-        # Round 9 (Bug-M3): use ``RLock`` (reentrant) instead of ``Lock``
+        # Round 9 (Bug-LLM): use ``RLock`` (reentrant) instead of ``Lock``
         # so the save→flip→call→restore sequence can be held inside a
         # single critical section. The previous code released the lock
         # around ``infer_panel()`` (claiming a deadlock risk with
@@ -2926,7 +2919,7 @@ class M3Engine:
         This method exists so the engine owns a hook that the
         ``test_cancel_event_set_short_circuits_retry`` test can
         monkeypatch and observe. The concrete retry semantics for the
-        MiniMax backends (status-code routing, jitter, etc.) live in
+        LLM backends (status-code routing, jitter, etc.) live in
         ``llm_backends._call_api``; here we just want a place where
         ``self._cancel_event`` is honoured on every retry back-off.
         """
@@ -2937,7 +2930,7 @@ class M3Engine:
         elif kind == "vision":
             invoke = getattr(self.backend, "infer_panel", None)
         else:
-            raise ValueError(f"M3Engine._call_api: unknown kind={kind!r}")
+            raise ValueError(f"SemanticEngine._call_api: unknown kind={kind!r}")
         if invoke is None:
             return {"fallback_used": True, "error": f"backend has no {kind} method"}
         attempt = 0
@@ -2990,11 +2983,11 @@ class M3Engine:
         # Configurable: skip the LLM and go straight to the regex parser.
         # Useful for tests and for cost-sensitive runs where the regex is
         # accurate enough for the caption convention at hand.
-        if self.config.get("m3_caption_regex_only", False):
+        if self.config.get("llm_caption_regex_only", False):
             fallback = _regex_parse_caption(caption_text)
             if fallback:
                 logger.info(
-                    "Stage 1 parse_caption -> %d pairs (regex only, m3_caption_regex_only=True)",
+                    "Stage 1 parse_caption -> %d pairs (regex only, llm_caption_regex_only=True)",
                     len(fallback),
                 )
             return fallback
@@ -3178,7 +3171,7 @@ class M3Engine:
                 PanelBox(
                     panel_id=str(item.get("panel_id") or f"P{len(panels) + 1}"),
                     bbox=bbox,
-                    # Phase 38: visible_label may be a list (e.g. M3
+                    # Phase 38: visible_label may be a list (e.g. LLM
                     # returns ["A", "B"] when it sees two labels).
                     # Previously ``str(item.get("visible_label")).strip()``
                     # would produce the Python repr ``"['A', 'B']"``
@@ -3224,8 +3217,8 @@ class M3Engine:
         """Stage 4: panel image + caption pairs -> (label, species, confidence).
 
         Two modes:
-          - With caption pairs: standard M3 matcher with constrained candidates.
-          - Visual-only (no caption): M3 does morphology-based identification
+          - With caption pairs: standard LLM matcher with constrained candidates.
+          - Visual-only (no caption): LLM does morphology-based identification
             with a separate prompt and conservative confidence.
         """
         if not self._stage_enabled(4) or panel_image is None:
@@ -3239,7 +3232,7 @@ class M3Engine:
         visual_only = not caption_pairs
         if visual_only:
             system_prompt = _MATCH_PANEL_SYSTEM_VISUAL_ONLY
-            hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
+            hint = f"\n提示标签（来自 LLM 阶段 3）：{suggested_label}\n" if suggested_label else ""
             caption_block = (
                 f"\n[完整图说（仅供参考，可能为空）]\n{caption_text.strip()}\n"
                 if caption_text
@@ -3256,7 +3249,7 @@ class M3Engine:
             pairs_json = json.dumps(
                 [p.to_dict() for p in caption_pairs], ensure_ascii=False, indent=2
             )
-            hint = f"\n提示标签（来自 M3 阶段 3）：{suggested_label}\n" if suggested_label else ""
+            hint = f"\n提示标签（来自 LLM 阶段 3）：{suggested_label}\n" if suggested_label else ""
             caption_block = f"\n[完整图说]\n{caption_text.strip()}\n" if caption_text else ""
             prompt = (
                 "[候选配对（caption 解析）]\n"
@@ -3266,7 +3259,7 @@ class M3Engine:
                 "请为该 panel 选出最可能的 label + 物种，严格输出 JSON。"
             )
         # Optional self-consistency: sample N times at higher temperature and vote.
-        n_samples = max(1, int(self.config.get("m3_match_samples", 1)))
+        n_samples = max(1, int(self.config.get("llm_match_samples", 1)))
         results: list[dict[str, Any]] = []
         last_error: str | None = None
         last_raw_kept: dict[str, Any] | None = None
@@ -3274,7 +3267,7 @@ class M3Engine:
             raw = self._infer_vision(system_prompt, prompt, panel_image)
             if not raw or raw.get("fallback_used"):
                 # Capture the backend error so we can distinguish a real API
-                # failure from "M3 said this isn't a radiolarian". The pipeline
+                # failure from "LLM said this isn't a radiolarian". The pipeline
                 # uses raw["error"] to route through the FallbackHandler.
                 if raw and raw.get("error"):
                     last_error = str(raw.get("error"))
@@ -3286,14 +3279,13 @@ class M3Engine:
             if isinstance(data, dict):
                 results.append(data)
                 # Accumulate backend telemetry across all self-consistency
-                # samples so the winning PanelMatch reports the *total* cost
-                # and merged token usage, not just the last sample's worth
-                # (M13: previously ``last_raw_kept`` only took the final
-                # sample, undercounting actual spend in ``/system/llm-
-                # status`` for multi-sample self-consistency). ``cost_cny``
-                # is summed (each call is a separate request); ``usage``
-                # is merged with int fields summed and list fields
-                # concatenated so per-call breakdowns are preserved.
+                # samples so the winning PanelMatch reports merged token
+                # usage, not just the last sample's worth (M13: previously
+                # ``last_raw_kept`` only took the final sample,
+                # undercounting actual token spend for multi-sample
+                # self-consistency). ``usage`` is merged with int fields
+                # summed and list fields concatenated so per-call
+                # breakdowns are preserved.
                 if last_raw_kept is None:
                     last_raw_kept = dict(raw)
                 else:
@@ -3303,16 +3295,6 @@ class M3Engine:
                     # the new sample writes a list, or vice-versa. We now check
                     # both existing and new types before merging, and overwrite
                     # rather than crash when types mismatch.
-                    try:
-                        old_cost = last_raw_kept.get("cost_cny")
-                        new_cost = raw.get("cost_cny")
-                        last_raw_kept["cost_cny"] = (
-                            float(old_cost) if old_cost is not None else 0.0
-                        ) + (float(new_cost) if new_cost is not None else 0.0)
-                    except (TypeError, ValueError):
-                        # One side is not numeric — give up on accumulating cost.
-                        # Don't silently overwrite with 0 which would hide the field.
-                        pass
                     prev_usage = last_raw_kept.get("usage")
                     new_usage = raw.get("usage")
                     if isinstance(prev_usage, dict) and isinstance(new_usage, dict):
@@ -3347,13 +3329,13 @@ class M3Engine:
             # differently. The previous code conflated them by setting
             # ``is_radiolarian=False`` for both:
             #   1. ``last_error`` is set → real API / runtime failure
-            #      (network blip, M3 rejected the image, quota exceeded,
+            #      (network blip, LLM rejected the image, quota exceeded,
             #      ...). Pipeline routes this through the FallbackHandler
             #      so the user can retry or pick a local fallback.
-            #   2. ``last_error`` is None → M3 returned a response but
+            #   2. ``last_error`` is None → LLM returned a response but
             #      nothing parseable survived ``_safe_json_loads`` across
             #      N self-consistency samples. This is NOT the same as
-            #      "M3 said this isn't a radiolarian" — M3 may simply
+            #      "LLM said this isn't a radiolarian" — LLM may simply
             #      have produced malformed JSON. Leaving
             #      ``is_radiolarian=True`` (the PanelMatch default) plus
             #      a ``raw["unparseable"]`` flag lets the pipeline treat
@@ -3365,7 +3347,7 @@ class M3Engine:
                     label=None,
                     species=None,
                     confidence=0.0,
-                    reasoning=f"M3 error: {last_error}",
+                    reasoning=f"LLM error: {last_error}",
                     is_radiolarian=False,
                     raw={"error": last_error},
                 )
@@ -3374,7 +3356,7 @@ class M3Engine:
                 label=None,
                 species=None,
                 confidence=0.0,
-                reasoning="M3 returned no parseable output",
+                reasoning="LLM returned no parseable output",
                 is_radiolarian=True,
                 raw={"unparseable": True},
             )
@@ -3571,7 +3553,7 @@ class M3Engine:
 
     # ------------------------------------------------------------------ helpers
     def _stage_enabled(self, n: int) -> bool:
-        return bool(self.config.get(f"m3_stage_{n}", True))
+        return bool(self.config.get(f"llm_stage_{n}", True))
 
     def _make_telemetry(
         self,
@@ -3579,9 +3561,9 @@ class M3Engine:
         start: float,
         llm_error: str | None = None,
     ) -> dict[str, Any]:
-        """Build the ``_telemetry`` dict for an M3 call result.
+        """Build the ``_telemetry`` dict for an LLM call result.
 
-        Phase 4E Task 2 (audit 2026-08-19): every M3 result now carries
+        Phase 4E Task 2 (audit 2026-08-19): every LLM result now carries
         a ``_telemetry`` sub-dict with:
 
         * ``model``         - ``backend.model`` string (the model that
@@ -3686,7 +3668,7 @@ class M3Engine:
                     "_telemetry": self._make_telemetry(start=start, llm_error="parse"),
                 }
             except Exception as exc:
-                logger.exception("M3 text inference failed")
+                logger.exception("LLM text inference failed")
                 return {
                     "fallback_used": True,
                     "error": str(exc),
@@ -3699,11 +3681,11 @@ class M3Engine:
         res["_telemetry"] = self._make_telemetry(start=start)
         # Retry without thinking if the response is empty.
         if (
-            self.config.get("m3_retry_without_thinking", True)
+            self.config.get("llm_retry_without_thinking", True)
             and (res.get("fallback_used") or not (res.get("raw_text") or "").strip())
             and enable_thinking_snapshot
         ):
-            logger.info("M3 text returned empty; retrying with thinking disabled")
+            logger.info("LLM text returned empty; retrying with thinking disabled")
             with self._thinking_retry_lock, self._thinking_gate.write():
                 saved = self.backend.enable_thinking
                 try:
@@ -3713,7 +3695,7 @@ class M3Engine:
                         user_prompt=user_prompt,
                     )
                 except Exception as exc:
-                    logger.warning("M3 text retry failed: %s", exc)
+                    logger.warning("LLM text retry failed: %s", exc)
                     res2 = res
                 finally:
                     self.backend.enable_thinking = saved
@@ -3743,7 +3725,7 @@ class M3Engine:
             Audit M-14: optional SECOND image (e.g. strat column /
             paleogeographic map). Forwarded to ``backend.infer_panel``
             via the ``extra_image`` keyword argument. Backends that
-            support multi-image (e.g. ``MiniMaxM3Backend``) receive
+            support multi-image (e.g. ``AnthropicCompatBackend``) receive
             BOTH images as separate content blocks; single-image
             backends (e.g. ``LlamaCppGemmaBackend``) silently drop the
             second image after recording an explanatory prompt note.
@@ -3815,7 +3797,7 @@ class M3Engine:
                     "_telemetry": self._make_telemetry(start=start, llm_error="parse"),
                 }
             except Exception as exc:
-                logger.exception("M3 vision inference failed")
+                logger.exception("LLM vision inference failed")
                 return {
                     "fallback_used": True,
                     "error": str(exc),
@@ -3828,21 +3810,21 @@ class M3Engine:
         res["_telemetry"] = self._make_telemetry(start=start)
         self._maybe_dump_diagnostic(image, system_prompt, user_prompt, res)
         # Retry without thinking if the first attempt produced no text
-        # (known M3 issue when thinking exhausts the output budget).
+        # (known LLM issue when thinking exhausts the output budget).
         # P2-10 fix: skip retry if thinking block has content — the valid
         # structured output may be in the thinking block and should not be
         # discarded by retrying without thinking.
         if (
-            self.config.get("m3_retry_without_thinking", True)
+            self.config.get("llm_retry_without_thinking", True)
             and (res.get("fallback_used") or not (res.get("raw_text") or "").strip())
             and enable_thinking_snapshot
             and not (res.get("thinking") or "").strip()
         ):
-            logger.info("M3 returned empty text; retrying with thinking disabled")
-            # Round 9 (Bug-M3): hold the RLock for the entire
+            logger.info("LLM returned empty text; retrying with thinking disabled")
+            # Round 9 (Bug-LLM): hold the RLock for the entire
             # save → flip → call → restore sequence. RLock is reentrant
             # so a backend that re-enters ``_infer_vision`` (e.g. a
-            # custom subclass that calls M3 again inside its handler)
+            # custom subclass that calls LLM again inside its handler)
             # won't deadlock — the same thread can re-acquire the
             # lock cleanly. The whole retry is now atomic from the
             # perspective of other workers: no other thread can flip
@@ -3863,7 +3845,7 @@ class M3Engine:
                         extra_image=extra_image,
                     )
                 except Exception as exc:
-                    logger.warning("M3 retry without thinking failed: %s", exc)
+                    logger.warning("LLM retry without thinking failed: %s", exc)
                     res2 = res
                 finally:
                     self.backend.enable_thinking = saved
@@ -3884,7 +3866,7 @@ class M3Engine:
         paper_id: str,
         figure_id: str,
     ) -> list[dict[str, Any]]:
-        """Run multi-modal MiniMax-M3 vision extraction on a figure image.
+        """Run multi-modal the vision LLM extraction on a figure image.
 
         Returns a list of dicts shaped like ``GeologyLinkRecord`` so the
         caller can append them straight into ``panel.metadata.geology_links``.
@@ -3915,7 +3897,7 @@ class M3Engine:
         prompt_key = f"{figure_type}_geo"
         if prompt_key not in PROMPT_REGISTRY:
             return []
-        # Skip tiny images — MiniMax-M3 vision on a 16×16 thumbnail is
+        # Skip tiny images — the vision LLM on a 16×16 thumbnail is
         # pure noise and burns cost without producing real signal.
         # Audit Bug 10: narrow the except to AttributeError/TypeError so
         # unrelated exceptions in the size check are not silently
@@ -4092,7 +4074,7 @@ class M3Engine:
         paper_id: str,
         figure_id: str,
     ) -> dict[str, Any] | None:
-        """Run MiniMax-M3 vision extraction on a CONCEPTUAL figure.
+        """Run the vision LLM extraction on a CONCEPTUAL figure.
 
         Used for schematic / diagram / reconstruction / phylogenetic
         figures (Phase 64 Plan B Task B.3). The output JSON matches the
@@ -4201,7 +4183,7 @@ class M3Engine:
 
         Given a plate's caption snippet and a paper-level summary of
         every non-plate figure (strat column / litholog / paleogeographic
-        map / range chart), ask MiniMax-M3 to infer which formation /
+        map / range chart), ask the LLM to infer which formation /
         age / locality the plate's species most likely came from.
 
         Parameters
@@ -4229,8 +4211,8 @@ class M3Engine:
               }``
 
             Empty / fallback dict (``{"confidence": 0.0, ...}``) on
-            backend failure so the caller can distinguish "M3 said no"
-            from "M3 didn't run".
+            backend failure so the caller can distinguish "LLM said no"
+            from "LLM didn't run".
 
         Notes
         -----
@@ -4256,7 +4238,7 @@ class M3Engine:
         figures = paper_context.get("figures") or []
         # Truncate each caption so the prompt stays within budget.
         # ~5 figures × 200 chars + plate caption (~400 chars) ≈ 1.4KB,
-        # well within M3's text window.
+        # well within LLM's text window.
         figure_lines: list[str] = []
         for fig in figures[:8]:  # cap at 8 to keep prompt small
             fid = str(fig.get("figure_id") or "?")
@@ -4360,11 +4342,11 @@ class M3Engine:
         """Stage 6: per-species morphological-description extraction.
 
         For a single species and a caption or body-text excerpt, ask
-        MiniMax-M3 to emit a structured morphological-description
+        the LLM to emit a structured morphological-description
         record. This is the audit-2026-08-02 Stage-6 MVP: opt-in via
-        ``m3_stage_6=True``, never modifies existing species/panel
+        ``llm_stage_6=True``, never modifies existing species/panel
         fields, and never raises (any failure → ``{}`` so the caller
-        can distinguish "M3 said no" from "M3 didn't run").
+        can distinguish "LLM said no" from "LLM didn't run").
 
         Parameters
         ----------
@@ -4383,7 +4365,7 @@ class M3Engine:
             Provenance label forwarded into the returned dict so
             callers can round-trip the source kind without reading
             ``evidence_text``. One of ``"caption"``, ``"body_text"``,
-            ``"m3_vision"``. Default ``"body_text"``.
+            ``"llm_vision"``. Default ``"body_text"``.
         paper_id : str, optional
             For logging only — does not affect the prompt.
         max_chars : int
@@ -4397,7 +4379,7 @@ class M3Engine:
             ``PROMPT_REGISTRY["morphology_extract"]``. Any failure
             (no backend, empty response, malformed JSON) yields
             ``{}`` and emits a warning. Empty dict lets the caller
-            distinguish "M3 ran but extracted nothing" from "M3 did
+            distinguish "LLM ran but extracted nothing" from "LLM did
             not run".
 
         Notes
@@ -4481,7 +4463,7 @@ class M3Engine:
 
         Given an SEM plate image AND a strat column / paleogeographic
         map / litholog column image (with their captions), ask
-        MiniMax-M3 to identify which plate panels correspond to which
+        the LLM to identify which plate panels correspond to which
         strat layers / formations / ages. This is the precision-
         refinement counterpart to ``infer_species_age_formation``
         (text-only, confidence 0.3-0.6): vision grounding is
@@ -4540,14 +4522,14 @@ class M3Engine:
             Returns ``{"plate_panels": []}`` (NOT raises) on any
             failure path: no backend, fallback_used, malformed JSON,
             tiny images, or any exception during inference. This lets
-            the caller treat "M3 said nothing" identically to "M3
+            the caller treat "LLM said nothing" identically to "LLM
             didn't run".
 
         Notes
         -----
         * The BOTH images (``plate_image`` AND the selected
           secondary) are forwarded to the backend when the backend
-          supports it. The Anthropic-backed ``MiniMaxM3Backend``
+          supports it. The Anthropic-backed ``AnthropicCompatBackend``
           accepts multiple image blocks in a single Messages API call
           — it receives both images as separate content blocks so
           the model can ground plate panels against strat-column
@@ -4699,7 +4681,7 @@ class M3Engine:
         figure_id: str,
         expected_plate_label: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Round 7 multi-plate enrichment: ask MiniMax-M3 to extract the full
+        """Round 7 multi-plate enrichment: ask the LLM to extract the full
         panel list from a plate image + page-level caption context.
 
         Used as a SECOND PASS when the first-pass extraction (OD caption-
@@ -4717,7 +4699,7 @@ class M3Engine:
         or ``[]`` when the model returns nothing usable (fallback_used,
         tiny image, malformed JSON, etc.).
 
-        Cost: one M3 vision call (~¥0.01-0.02 per plate). Callers should
+        Cost: one LLM vision call (~¥0.01-0.02 per plate). Callers should
         gate this on observed panel-count loss to avoid wasted spend.
         """
         try:
@@ -4740,17 +4722,17 @@ class M3Engine:
         res = self._infer_vision(system_prompt, user_prompt, image)
         if res.get("fallback_used") or res.get("error"):
             logger.debug(
-                "enrich_plate_panels %s/%s: M3 returned fallback/error",
+                "enrich_plate_panels %s/%s: LLM returned fallback/error",
                 paper_id,
                 figure_id,
             )
             return []
 
-        # Parse JSON response. M3 sometimes wraps in ```json fences;
+        # Parse JSON response. LLM sometimes wraps in ```json fences;
         # _safe_json_loads handles that, and we accept either {"panels": [...]}
         # at top level (model contract) or a bare list (lenient fallback).
         raw = res.get("raw_text") or ""
-        # audit 2026-08-01 (M8): every sibling M3 method
+        # audit 2026-08-01 (M8): every sibling LLM method
         # (``extract_geology``, ``extract_schematic``,
         # ``cross_figure_visual_inference``, ``infer_species_age_formation``)
         # wraps this call and returns ``[]`` on unparseable output. This one
@@ -4760,7 +4742,7 @@ class M3Engine:
             parsed = _safe_json_loads(raw)
         except (ValueError, AttributeError):
             logger.warning(
-                "enrich_plate_panels %s/%s: could not parse M3 JSON response",
+                "enrich_plate_panels %s/%s: could not parse LLM JSON response",
                 paper_id,
                 figure_id,
             )
@@ -4821,7 +4803,7 @@ class M3Engine:
         user_prompt: str,
         result: dict[str, Any],
     ) -> None:
-        out_dir = self.config.get("m3_diagnostic_dir")
+        out_dir = self.config.get("llm_diagnostic_dir")
         if not out_dir:
             return
         try:
@@ -4898,7 +4880,7 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
     """Parse a numeric confidence the LLM may have emitted as a string
     ("0.8") or as a non-numeric label ("high"). Returns ``default`` on
     anything unparseable (audit 2026-07-31: a bare ``float()`` here
-    crashed match_panel and voided the paid M3 judgement)."""
+    crashed match_panel and voided the paid LLM judgement)."""
     if isinstance(v, (int, float)):
         return float(v)
     if v is None:
@@ -4912,7 +4894,7 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 def _safe_bool(v: Any, default: bool = False) -> bool:
     """Parse a JSON boolean that the LLM may have emitted as a STRING.
 
-    audit 2026-07-31: ``bool("false")`` is True in Python — M3
+    audit 2026-07-31: ``bool("false")`` is True in Python — LLM
     returning ``"is_radiolarian_plate": "false"`` used to pass the
     stage-2 gate as a real radiolarian plate (and vice versa). Accepts
     real bools and the common string spellings.
@@ -4930,7 +4912,7 @@ def _safe_bool(v: Any, default: bool = False) -> bool:
 
 
 def _coerce_label(value: Any) -> str | None:
-    """Phase 38: M3 sometimes returns visible_label as a list (e.g.
+    """Phase 38: LLM sometimes returns visible_label as a list (e.g.
     ``["A", "B"]``) when it sees two labels on the same panel. The
     old code did ``str(value).strip()`` which produced the Python
     repr ``"['A', 'B']"`` and broke downstream panel_id assignment.
@@ -4953,11 +4935,11 @@ def _coerce_label(value: Any) -> str | None:
 
 
 def _coerce_bbox(v: Any, img_w: int, img_h: int) -> tuple[int, int, int, int] | None:
-    """Coerce M3 bbox output (often normalized 0-1) to absolute pixel coords.
+    """Coerce LLM bbox output (often normalized 0-1) to absolute pixel coords.
 
     Detection rule: ``max(nums) <= 1.01`` (1.0 + 0.01 float tolerance) means
     normalized, regardless of image size. The previous code additionally
-    required ``img_w > 100 or img_h > 100`` — when M3 returned normalized
+    required ``img_w > 100 or img_h > 100`` — when LLM returned normalized
     coordinates for a thumbnail-sized figure (e.g. a 80x80 plate image),
     the size guard silently routed the bbox through the pixel path, which
     truncated the four values to ``(0, 0, 1, 1)`` and broke Stage 3 /

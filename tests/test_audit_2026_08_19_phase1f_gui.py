@@ -19,7 +19,7 @@ Four fixes from the 2026-08-19 multi-agent audit, all in the GUI / pipeline
      b. a JSONL parse running on a :class:`_DiskScanWorker` ``QThread``.
 
 3. **M-1 (MAJOR)** — three ``except Exception: pass`` handlers in
-   ``pipeline.py`` (per-panel OCR, label-region OCR, M3 concurrency
+   ``pipeline.py`` (per-panel OCR, label-region OCR, LLM concurrency
    config read) silently swallowed every backend failure. The fix logs
    the exception at DEBUG so it's visible in the troubleshooting log.
 
@@ -301,8 +301,8 @@ class TestOCRErrorLogging:
 
     def test_minimax_concurrency_failure_is_logged(self):
         src = _read("src/rlpe/pipeline.py")
-        assert "MiniMax_max_concurrent read failed" in src, (
-            "M-1 fix: pipeline.py must log MiniMax_max_concurrent read failures"
+        assert "llm_max_concurrent read failed" in src, (
+            "M-1 fix: pipeline.py must log llm_max_concurrent read failures"
         )
 
     def test_no_silent_pass_in_per_panel_ocr_block(self):

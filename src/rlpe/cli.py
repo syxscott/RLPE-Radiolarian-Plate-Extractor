@@ -37,11 +37,11 @@ if sys.platform == "win32":
             # decide. The argparse / user-facing error path still works.
             pass
 
-# Load .env from the project root so MiniMax API keys, model names, etc.
+# Load .env from the project root so LLM API keys, model names, etc.
 # are available without exporting manually.  No-op if python-dotenv is
 # not installed or the file is missing.
 #
-# Precedence policy: for the project's MiniMax-related keys
+# Precedence policy: for the project's LLM-related keys
 # (ANTHROPIC_*, MiniMax_*) the .env file wins over any pre-existing OS
 # env var. This matters because tools like Claude Code set
 # ``ANTHROPIC_BASE_URL`` globally for their own backend (e.g.
@@ -229,7 +229,7 @@ EXAMPLE_CONFIG_BODY = json.dumps(
             # default with the web/API default (``api_redacted``) so
             # the same paper run via either entry point has the same
             # privacy posture. Previously the CLI sent full payloads
-            # (including redacted-secrets rule) to the M3 API while
+            # (including redacted-secrets rule) to the LLM API while
             # the web UI redacted — meaning a CLI user running the
             # same paper saw different F1 numbers from the same
             # paper depending on the entry point (data_outbound_policy
@@ -325,7 +325,7 @@ def apply_log_level(quiet: bool, verbose: bool) -> None:
     INFO/DEBUG — so both flags were no-ops while the interesting traces
     (pipeline stages, OCR, LLM calls) live on the ``rlpe`` package
     loggers. Apply the level to the ``rlpe`` package logger so
-    ``--verbose`` actually surfaces pipeline/m3_engine/llm_backends
+    ``--verbose`` actually surfaces pipeline/semantic_engine/llm_backends
     DEBUG traces and ``--quiet`` silences WARNING chatter.
     """
 
@@ -604,10 +604,16 @@ def build_parser() -> argparse.ArgumentParser:
             "llamacpp",
             "llama.cpp",
             "llama_cpp",
-            "MiniMax",
-            "MiniMax-m3",
+            "anthropic",
+            # legacy vendor aliases (F17 rename) — treated as "anthropic"
             "minimax",
+            "minimax-m3",
+            "minimax_api",
         ],
+        help="LLM backend. 'anthropic' = any Anthropic-compatible cloud "
+        "API (configured via --llm-api-key/--llm-base-url/--llm-model, "
+        "the saved API settings, or ANTHROPIC_* env). The pre-F17 "
+        "vendor aliases still work and map to 'anthropic'.",
     )
     p.add_argument("--gemma-model-path", type=str, default=None)
     p.add_argument("--llama-model", type=str, default=None)
@@ -618,47 +624,106 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gemma-timeout-sec", type=int, default=120)
     p.add_argument("--gemma-conf-threshold", type=float, default=0.70)
     p.add_argument("--gemma-prompt-lang", type=str, default="zh", choices=["zh", "en"])
-    # Phase 27: pin the M3 parse_caption system-prompt language. Default
+    # Phase 27: pin the LLM parse_caption system-prompt language. Default
     # ``auto`` lets the engine detect Hiragana / Katakana / CJK chars and
     # dispatch to the JA prompt when needed. Set explicitly to ``zh`` /
     # ``en`` / ``ja`` to override auto-detection.
     p.add_argument(
-        "--m3-prompt-lang",
+        "--llm-prompt-lang",
         type=str,
         default="auto",
         choices=["auto", "zh", "en", "ja"],
-        help="Force the M3 parse_caption system-prompt language. "
+        help="Force the LLM parse_caption system-prompt language. "
         "Default 'auto' = detect from caption text. JA dispatches to a "
         "Japanese system prompt; otherwise the existing ZH prompt.",
     )
     p.add_argument("--gemma-no-4bit", action="store_true")
     p.add_argument("--gemma-no-bfloat16", action="store_true")
-    # MiniMax M3 API parameters
+    # Anthropic-compatible cloud API parameters. Every flag keeps its
+    # pre-F17 vendor-branded spelling as a hidden alias so existing
+    # command lines keep working (F17).
     p.add_argument(
+        "--llm-api-key",
         "--MiniMax-api-key",
+        dest="llm_api_key",
         type=str,
         default=None,
-        help="MiniMax subscription key (or set ANTHROPIC_API_KEY env)",
+        help="Cloud API subscription key. Resolution order: this flag > "
+        "saved API settings (~/.rlpe/llm_api.json) > ANTHROPIC_API_KEY env.",
     )
-    p.add_argument("--MiniMax-endpoint", type=str, default="https://api.minimaxi.com/anthropic")
-    p.add_argument("--MiniMax-model", type=str, default="MiniMax-M3")
-    p.add_argument("--MiniMax-max-concurrent", type=int, default=8)
-    p.add_argument("--MiniMax-timeout-sec", type=int, default=120)
-    p.add_argument("--MiniMax-max-retries", type=int, default=3)
     p.add_argument(
-        "--MiniMax-no-thinking", action="store_true", help="Disable extended thinking (default: ON)"
+        "--llm-base-url",
+        "--MiniMax-endpoint",
+        dest="llm_base_url",
+        type=str,
+        default=None,
+        help="Anthropic-compatible API endpoint (no vendor default; "
+        "resolution: flag > saved settings > ANTHROPIC_BASE_URL env).",
     )
-    p.add_argument("--MiniMax-thinking-budget", type=int, default=1024)
-    p.add_argument("--MiniMax-max-output-tokens", type=int, default=2048)
     p.add_argument(
+        "--llm-model",
+        "--MiniMax-model",
+        dest="llm_model",
+        type=str,
+        default=None,
+        help="Model name, e.g. the vendor's model string (resolution: "
+        "flag > saved settings > ANTHROPIC_MODEL env).",
+    )
+    p.add_argument(
+        "--llm-max-concurrent",
+        "--MiniMax-max-concurrent",
+        dest="llm_max_concurrent",
+        type=int,
+        default=8,
+    )
+    p.add_argument(
+        "--llm-timeout-sec",
+        "--MiniMax-timeout-sec",
+        dest="llm_timeout_sec",
+        type=int,
+        default=120,
+    )
+    p.add_argument(
+        "--llm-max-retries",
+        "--MiniMax-max-retries",
+        dest="llm_max_retries",
+        type=int,
+        default=3,
+    )
+    p.add_argument(
+        "--llm-no-thinking",
+        "--MiniMax-no-thinking",
+        dest="llm_no_thinking",
+        action="store_true",
+        help="Disable extended thinking (default: OFF)",
+    )
+    p.add_argument(
+        "--llm-thinking-budget",
+        "--MiniMax-thinking-budget",
+        dest="llm_thinking_budget",
+        type=int,
+        default=1024,
+    )
+    p.add_argument(
+        "--llm-max-output-tokens",
+        "--MiniMax-max-output-tokens",
+        dest="llm_max_output_tokens",
+        type=int,
+        default=2048,
+    )
+    p.add_argument(
+        "--llm-fallback-default",
         "--MiniMax-fallback-default",
+        dest="llm_fallback_default",
         type=str,
         default="rules",
         choices=["gemma4", "rules", "stop", "retry"],
         help="Headless fallback when --no-interactive",
     )
     p.add_argument(
+        "--llm-interactive",
         "--MiniMax-interactive",
+        dest="llm_interactive",
         action="store_true",
         help="Enable interactive popup prompt on API error (CLI)",
     )
@@ -678,7 +743,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     # Audit 2026-09-03 (BLOCKER-#2): default flipped to ``api_redacted``.
     # Use ``--data-outbound-policy=api_full --i-understand-data-leaves-my-machine``
-    # to opt in to sending full PDF / panel / caption to MiniMax.
+    # to opt in to sending full PDF / panel / caption to LLM.
     p.add_argument(
         "--data-outbound-policy",
         type=str,
@@ -699,7 +764,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required opt-in flag when --data-outbound-policy=api_full. "
         "Acknowledges that full panel images, full captions, OCR text, "
-        "and GROBID paragraphs will be sent to the MiniMax cloud. Sets "
+        "and GROBID paragraphs will be sent to the LLM cloud. Sets "
         "RLPE_DATA_OUTBOUND_OPT_IN=1 for the duration of the run.",
     )
     p.add_argument("--use-geology-llm", action="store_true")
@@ -709,7 +774,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable multi-modal MiniMax-M3 vision extraction of "
         "geology fields (lithology, formation, country, Ma, biozone) "
         "from stratigraphic column / litholog / paleogeographic-map "
-        "/ range-chart figures. Off by default (avoids M3 API cost).",
+        "/ range-chart figures. Off by default (avoids LLM API cost).",
     )
     p.add_argument(
         "--geo-vision-figure-types",
@@ -719,38 +784,38 @@ def build_parser() -> argparse.ArgumentParser:
         "Use e.g. 'range_chart' alone to focus on species distribution.",
     )
     p.add_argument(
-        "--use-m3-stage3",
+        "--use-llm-stage3",
         action="store_true",
-        help="Enable M3 Stage 3 panel bbox detection + crop enrichment. "
-        "Off by default; requires MiniMax API access.",
+        help="Enable LLM Stage 3 panel bbox detection + crop enrichment. "
+        "Off by default; requires LLM API access.",
     )
     p.add_argument(
-        "--m3-multi-plate-enrich",
+        "--llm-multi-plate-enrich",
         action="store_true",
-        help="Round 7 second-pass M3 multi-plate enrichment. Fires when "
+        help="Round 7 second-pass LLM multi-plate enrichment. Fires when "
         "OD dropped a plate's caption-image pairing (e.g. Bandini 2011 "
-        "Plate 7-9): asks M3 to extract the panel list from the plate "
-        "image + page-level caption. Off by default (avoids M3 API cost).",
+        "Plate 7-9): asks LLM to extract the panel list from the plate "
+        "image + page-level caption. Off by default (avoids LLM API cost).",
     )
     p.add_argument(
-        "--m3-stage-6",
-        "--no-m3-stage-6",
-        dest="m3_stage_6",
+        "--llm-stage-6",
+        "--no-llm-stage-6",
+        dest="llm_stage_6",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Audit 2026-08-02: enable Stage 6 M3 morphology extraction. "
+        help="Audit 2026-08-02: enable Stage 6 LLM morphology extraction. "
         "When set, the pipeline sends each unique (paper, species) "
-        "caption or Description-section excerpt to M3 and emits a "
+        "caption or Description-section excerpt to LLM and emits a "
         "MorphologyRecord (test shape, segments, pores, spines, "
         "diagnostic features). Off by default (opt-in due to API "
-        "cost). Use --no-m3-stage-6 to explicitly disable.",
+        "cost). Use --no-llm-stage-6 to explicitly disable.",
     )
     p.add_argument(
-        "--m3-morphology-max-species-per-paper",
+        "--llm-morphology-max-species-per-paper",
         type=int,
         default=None,
         help="Audit 2026-08-02: cap how many species per paper Stage 6 "
-        "calls M3 for (default 100). Lower to control API cost on "
+        "calls LLM for (default 100). Lower to control API cost on "
         "papers with many panels.",
     )
     # ---- OpenDataLoader PDF parser (replaces GROBID) -----------------------
@@ -760,86 +825,86 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use OpenDataLoader-pdf for figure/caption extraction "
         "(no GROBID server needed). Default off.",
     )
-    # ---- M3 5-stage engine -------------------------------------------------
+    # ---- LLM 5-stage engine -------------------------------------------------
     p.add_argument(
-        "--m3-enhanced-mode",
+        "--llm-enhanced-mode",
         action="store_true",
         default=None,
-        help="Enable M3 5-stage semantic engine (default: ON for MiniMax backend)",
+        help="Enable LLM 5-stage semantic engine (default: ON for LLM backend)",
     )
     p.add_argument(
-        "--m3-disable-stage",
+        "--llm-disable-stage",
         type=int,
         action="append",
         default=[],
         choices=[1, 2, 3, 4, 5],
-        help="Disable a specific M3 stage (1=caption, 2=classify, 3=segment, 4=match, 5=critique). "
+        help="Disable a specific LLM stage (1=caption, 2=classify, 3=segment, 4=match, 5=critique). "
         "Can be passed multiple times.",
     )
     p.add_argument(
-        "--m3-match-samples",
+        "--llm-match-samples",
         type=int,
         default=1,
         help="Number of self-consistency samples for stage 4 (default 1)",
     )
-    # ---- Stage 4.5: per-panel M3 vision species ID (opt-in) ----------------
+    # ---- Stage 4.5: per-panel LLM vision species ID (opt-in) ----------------
     # Threshold / cap defaults mirror the PipelineConfig defaults so the
     # CLI and the YAML/GUI paths agree when no flag is passed.
     p.add_argument(
-        "--m3-per-panel",
-        dest="m3_per_panel",
+        "--llm-per-panel",
+        dest="llm_per_panel",
         action="store_true",
         default=False,
-        help="Enable Stage 4.5: per-panel M3 vision species ID (default off).",
+        help="Enable Stage 4.5: per-panel LLM vision species ID (default off).",
     )
     p.add_argument(
-        "--no-m3-per-panel",
-        dest="m3_per_panel",
+        "--no-llm-per-panel",
+        dest="llm_per_panel",
         action="store_false",
         help="Disable Stage 4.5 (explicit opt-out).",
     )
     p.add_argument(
-        "--m3-per-panel-min-conf",
+        "--llm-per-panel-min-conf",
         type=float,
         default=0.55,
-        help="Minimum M3 confidence to overwrite regex species (default 0.55).",
+        help="Minimum LLM confidence to overwrite regex species (default 0.55).",
     )
     p.add_argument(
-        "--m3-per-panel-max-per-figure",
+        "--llm-per-panel-max-per-figure",
         type=int,
         default=20,
         help="Cap Stage 4.5 calls per figure (default 20).",
     )
     p.add_argument(
-        "--m3-per-panel-max-per-paper",
+        "--llm-per-panel-max-per-paper",
         type=int,
         default=200,
         help="Cap Stage 4.5 calls per paper (default 200).",
     )
     p.add_argument(
-        "--m3-diagnostic-dir",
+        "--llm-diagnostic-dir",
         type=str,
         default=None,
-        help="Dump every M3 call (system prompt + image + result) to this directory for debugging.",
+        help="Dump every LLM call (system prompt + image + result) to this directory for debugging.",
     )
     p.add_argument(
-        "--m3-retry-without-thinking",
-        dest="m3_retry_without_thinking",
+        "--llm-retry-without-thinking",
+        dest="llm_retry_without_thinking",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="If a M3 call returns empty, retry once with extended "
+        help="If a LLM call returns empty, retry once with extended "
         "thinking disabled (default: ON). Disable on slow or "
         "constrained backends where the second call is too "
         "expensive to be worth the chance of recovery.",
     )
     p.add_argument(
-        "--m3-skip-match-on-empty-caption",
-        dest="m3_skip_match_on_empty_caption",
+        "--llm-skip-match-on-empty-caption",
+        dest="llm_skip_match_on_empty_caption",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Skip M3 stage 4 (panel matching) when the caption "
+        help="Skip LLM stage 4 (panel matching) when the caption "
         "parser returned no (label->species) pairs (default: "
-        "ON). Disable if you want M3 to attempt visual-only "
+        "ON). Disable if you want LLM to attempt visual-only "
         "matching for figures with no caption parseable "
         "structure.",
     )
@@ -1081,7 +1146,7 @@ def _run_dry(args: argparse.Namespace) -> None:
     ``--od-caption-window``, ``--use-opendataloader``, ``--min-panel-score``,
     ``--render-dpi``, ``--yolo-conf``, ``--yolo-iou``, ``--use-yolo-figures``,
     ``--save-intermediate``, ``--taxon-model``, ``--grobid-url``, and the
-    MiniMax options). A CI smoke test that grep'd for one of those
+    LLM options). A CI smoke test that grep'd for one of those
     flags would get a false-negative "not configured" result. The
     full list is now echoed below so the dry-run output mirrors the
     pipeline's effective config.
@@ -1095,7 +1160,7 @@ def _run_dry(args: argparse.Namespace) -> None:
     _flush_print(f"  --use-gpu     : {args.use_gpu}")
     _flush_print(f"  --ocr-backend : {args.ocr_backend}")
     _flush_print(f"  --ocr-lang    : {args.ocr_lang}")
-    _flush_print(f"  --m3-prompt-lang: {args.m3_prompt_lang}")
+    _flush_print(f"  --llm-prompt-lang: {args.llm_prompt_lang}")
     _flush_print(f"  --llm-backend : {args.llm_backend}")
     _flush_print(f"  --deterministic: {args.deterministic}")
     _flush_print(f"  --data-outbound-policy: {args.data_outbound_policy}")
@@ -1131,14 +1196,14 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     """
     # Audit 2026-09-03 (BLOCKER-#2): if the user passed the explicit
     # ``--i-understand-data-leaves-my-machine`` flag, translate it into
-    # the env var that ``MiniMaxM3Backend.__post_init__`` checks BEFORE
-    # constructing the PipelineConfig (which instantiates MiniMaxM3Backend).
+    # the env var that ``AnthropicCompatBackend.__post_init__`` checks BEFORE
+    # constructing the PipelineConfig (which instantiates AnthropicCompatBackend).
     # Without this, the opt-in flag would be silently ignored.
     if getattr(args, "data_outbound_opt_in", False):
         os.environ["RLPE_DATA_OUTBOUND_OPT_IN"] = "1"
         _flush_print(
             "[opt-in] data_outbound_policy=api_full has been confirmed "
-            "(full payload will be sent to the MiniMax API)."
+            "(full payload will be sent to the LLM API)."
         )
 
     # Clamp --num-workers to a sane range. ThreadPoolExecutor requires
@@ -1192,26 +1257,26 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         # legacy behaviour.
         caption_window=args.caption_window if args.caption_window is not None else 2,
         od_caption_window=(args.od_caption_window if args.od_caption_window is not None else 5),
-        # Phase 2026-08-17 (Stage 4.5): per-panel M3 vision species ID.
+        # Phase 2026-08-17 (Stage 4.5): per-panel LLM vision species ID.
         # Passed as real PipelineConfig fields (not ``extra``) because
-        # ``_apply_m3_per_panel_species_id`` reads the typed attributes
+        # ``_apply_llm_per_panel_species_id`` reads the typed attributes
         # for its guard, threshold and caps -- and routing them through
         # the constructor gets the ``__post_init__`` range validation
         # (min_conf in [0,1], caps >= 1) for free.
-        m3_per_panel_enabled=args.m3_per_panel,
-        m3_per_panel_min_conf=args.m3_per_panel_min_conf,
-        m3_per_panel_max_per_figure=args.m3_per_panel_max_per_figure,
-        m3_per_panel_max_per_paper=args.m3_per_panel_max_per_paper,
+        llm_per_panel_enabled=args.llm_per_panel,
+        llm_per_panel_min_conf=args.llm_per_panel_min_conf,
+        llm_per_panel_max_per_figure=args.llm_per_panel_max_per_figure,
+        llm_per_panel_max_per_paper=args.llm_per_panel_max_per_paper,
         # Audit 2026-08-17: Stage 3 bbox/crop enrichment + Round 7
         # multi-plate enrichment were previously read from
         # ``config.extra`` while the CLI set them under different key
-        # names (``use_m3_stage3`` / ``m3_multi_plate_enrich``), so the
+        # names (``use_llm_stage3`` / ``llm_multi_plate_enrich``), so the
         # gates never fired. Promote both to typed attributes so the
         # pipeline gates read what the CLI sets. GUI keeps using the
         # extra keys (separate code path) -- see
         # ``gui/pipeline_worker.py`` / ``gui/run_tab.py``.
-        m3_stage3_enabled=bool(args.use_m3_stage3),
-        m3_multi_plate_enrich_enabled=bool(args.m3_multi_plate_enrich),
+        llm_stage3_enabled=bool(args.use_llm_stage3),
+        llm_multi_plate_enrich_enabled=bool(args.llm_multi_plate_enrich),
         extra={
             # Audit 2026-08-19 Phase 6C (NIT-2): seed extra with any
             # keys loaded from the JSON config file. CLI flags below
@@ -1248,39 +1313,39 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             "gemma_timeout_sec": args.gemma_timeout_sec,
             "gemma_conf_threshold": args.gemma_conf_threshold,
             "gemma_prompt_lang": args.gemma_prompt_lang,
-            # Phase 27: pass OCR + M3 prompt language to the pipeline.
+            # Phase 27: pass OCR + LLM prompt language to the pipeline.
             # ``ocr_lang`` is forwarded to ``OCRBackend`` (default ``"en"``)
-            # and ``m3_prompt_lang`` to the parse_caption prompt selector
+            # and ``llm_prompt_lang`` to the parse_caption prompt selector
             # (default ``"auto"`` → detector picks ja/zh).
             "ocr_lang": args.ocr_lang,
-            "m3_prompt_lang": args.m3_prompt_lang,
+            "llm_prompt_lang": args.llm_prompt_lang,
             "gemma_use_4bit": not args.gemma_no_4bit,
             "gemma_bfloat16": not args.gemma_no_bfloat16,
             "gemma_device_map": "auto",
-            "MiniMax_api_key": args.MiniMax_api_key,
-            "MiniMax_endpoint": args.MiniMax_endpoint,
-            "MiniMax_model": args.MiniMax_model,
-            "MiniMax_max_concurrent": args.MiniMax_max_concurrent,
-            "MiniMax_timeout_sec": args.MiniMax_timeout_sec,
-            "MiniMax_max_retries": args.MiniMax_max_retries,
-            "MiniMax_enable_thinking": not args.MiniMax_no_thinking,
-            "MiniMax_thinking_budget_tokens": args.MiniMax_thinking_budget,
-            "MiniMax_max_output_tokens": args.MiniMax_max_output_tokens,
-            "MiniMax_fallback_default": args.MiniMax_fallback_default,
-            "MiniMax_interactive": args.MiniMax_interactive,
+            "llm_api_key": args.llm_api_key,
+            "llm_base_url": args.llm_base_url,
+            "llm_model": args.llm_model,
+            "llm_max_concurrent": args.llm_max_concurrent,
+            "llm_timeout_sec": args.llm_timeout_sec,
+            "llm_max_retries": args.llm_max_retries,
+            "llm_enable_thinking": not args.llm_no_thinking,
+            "llm_thinking_budget_tokens": args.llm_thinking_budget,
+            "llm_max_output_tokens": args.llm_max_output_tokens,
+            "llm_fallback_default": args.llm_fallback_default,
+            "llm_interactive": args.llm_interactive,
             "data_outbound_policy": args.data_outbound_policy,
             # Phase 61 Plan 4 (Bug 4.3): deterministic / reproducibility knob.
             "deterministic": args.deterministic,
             "deterministic_seed": args.deterministic_seed,
             "use_geology_llm": args.use_geology_llm,
             "use_geo_vision": args.use_geo_vision,
-            # Audit 2026-08-17: ``use_m3_stage3`` / ``m3_multi_plate_enrich``
+            # Audit 2026-08-17: ``use_llm_stage3`` / ``llm_multi_plate_enrich``
             # are no longer mirrored into ``extra`` because the pipeline
-            # gates now read the typed attributes ``m3_stage3_enabled`` /
-            # ``m3_multi_plate_enrich_enabled`` (set as kwargs above). The
+            # gates now read the typed attributes ``llm_stage3_enabled`` /
+            # ``llm_multi_plate_enrich_enabled`` (set as kwargs above). The
             # legacy ``extra`` keys are still kept in ``_KNOWN_EXTRA_KEYS``
             # because the GUI pipeline worker uses them.
-            "m3_stage_6": args.m3_stage_6,
+            "llm_stage_6": args.llm_stage_6,
             "geo_vision_figure_types": (
                 [t.strip() for t in args.geo_vision_figure_types.split(",") if t.strip()]
                 if args.geo_vision_figure_types
@@ -1302,33 +1367,33 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             "fallback_llm_backend": args.fallback_llm_backend,
         },
     )
-    # Inject M3 engine config. We only set ``m3_enhanced_mode`` if the user
+    # Inject LLM engine config. We only set ``llm_enhanced_mode`` if the user
     # passed the flag explicitly; default-ON behavior lives in pipeline.py.
-    if args.m3_enhanced_mode is not None:
-        cfg.extra["m3_enhanced_mode"] = bool(args.m3_enhanced_mode)
-    # Audit 2026-08-17: ``--m3-per-panel`` / ``--use-m3-stage-3`` /
-    # ``--m3-multi-plate-enrich`` all depend on ``self.m3_engine`` being
-    # built. The engine is constructed only when ``m3_enhanced_mode=True``,
+    if args.llm_enhanced_mode is not None:
+        cfg.extra["llm_enhanced_mode"] = bool(args.llm_enhanced_mode)
+    # Audit 2026-08-17: ``--llm-per-panel`` / ``--use-llm-stage-3`` /
+    # ``--llm-multi-plate-enrich`` all depend on ``self.semantic_engine`` being
+    # built. The engine is constructed only when ``llm_enhanced_mode=True``,
     # which defaults to False. Without this auto-enable, the per-panel
     # flag wiring fix is moot — every gate short-circuits on
-    # ``m3_engine is None``. Implicit opt-in for these three flags
-    # keeps the user-facing semantics simple: enabling any M3 vision
-    # path implies the engine. Users who want to disable ``m3_enhanced_mode``
-    # entirely can set ``--no-m3-enhanced-mode`` after their M3 flag and
+    # ``semantic_engine is None``. Implicit opt-in for these three flags
+    # keeps the user-facing semantics simple: enabling any LLM vision
+    # path implies the engine. Users who want to disable ``llm_enhanced_mode``
+    # entirely can set ``--no-llm-enhanced-mode`` after their LLM flag and
     # the explicit value wins (later assignment below).
-    # Audit 2026-09-05 (tier3-D1): ``--m3-stage-6`` (morphology) and
+    # Audit 2026-09-05 (tier3-D1): ``--llm-stage-6`` (morphology) and
     # ``--use-geo-vision`` (geology vision) also require the engine.
-    # Pre-fix, passing either flag alone left ``m3_engine = None`` and
+    # Pre-fix, passing either flag alone left ``semantic_engine = None`` and
     # the feature silently produced nothing (Stage 6: debug log only;
     # geo vision: gate short-circuit).
     elif (
-        args.m3_per_panel
-        or args.use_m3_stage3
-        or args.m3_multi_plate_enrich
-        or args.m3_stage_6
+        args.llm_per_panel
+        or args.use_llm_stage3
+        or args.llm_multi_plate_enrich
+        or args.llm_stage_6
         or args.use_geo_vision
     ):
-        cfg.extra["m3_enhanced_mode"] = True
+        cfg.extra["llm_enhanced_mode"] = True
     # F7 (audit 2026-09-07): panel-detector selection for the OD path.
     if args.od_panel_detector is not None:
         cfg.extra["od_panel_detector"] = args.od_panel_detector
@@ -1336,32 +1401,32 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     # packaged radiolarian weights) rather than the weak OpenCV fallback.
     if args.use_yolo_figures and args.od_panel_detector is None:
         cfg.extra.setdefault("od_panel_detector", "yolo")
-    for n in args.m3_disable_stage or []:
-        cfg.extra[f"m3_stage_{n}"] = False
-    if args.m3_match_samples:
-        cfg.extra["m3_match_samples"] = int(args.m3_match_samples)
+    for n in args.llm_disable_stage or []:
+        cfg.extra[f"llm_stage_{n}"] = False
+    if args.llm_match_samples:
+        cfg.extra["llm_match_samples"] = int(args.llm_match_samples)
     # Audit 2026-08-17: the pipeline's Stage 4.5 / Stage 3 / multi-plate
     # enrichment gates now read the typed attributes
-    # (``cfg.m3_per_panel_enabled`` / ``cfg.m3_stage3_enabled`` /
-    # ``cfg.m3_multi_plate_enrich_enabled``), so we no longer need to
+    # (``cfg.llm_per_panel_enabled`` / ``cfg.llm_stage3_enabled`` /
+    # ``cfg.llm_multi_plate_enrich_enabled``), so we no longer need to
     # mirror them into ``extra``. The earlier mirror hack (cloned at the
     # end of c9940e2) was a workaround for the mis-wired gates; both the
     # gates and the wiring now use the typed attributes consistently.
-    if args.m3_diagnostic_dir:
-        cfg.extra["m3_diagnostic_dir"] = str(args.m3_diagnostic_dir)
-    if args.m3_retry_without_thinking is not None:
-        cfg.extra["m3_retry_without_thinking"] = bool(args.m3_retry_without_thinking)
-    if args.m3_skip_match_on_empty_caption is not None:
-        cfg.extra["m3_skip_match_on_empty_caption"] = bool(args.m3_skip_match_on_empty_caption)
-    # Audit 2026-08-02: Stage-6 morphology knobs. ``--m3-stage-6`` is
-    # opt-in (default None → off); ``--m3-morphology-max-species-per-
+    if args.llm_diagnostic_dir:
+        cfg.extra["llm_diagnostic_dir"] = str(args.llm_diagnostic_dir)
+    if args.llm_retry_without_thinking is not None:
+        cfg.extra["llm_retry_without_thinking"] = bool(args.llm_retry_without_thinking)
+    if args.llm_skip_match_on_empty_caption is not None:
+        cfg.extra["llm_skip_match_on_empty_caption"] = bool(args.llm_skip_match_on_empty_caption)
+    # Audit 2026-08-02: Stage-6 morphology knobs. ``--llm-stage-6`` is
+    # opt-in (default None → off); ``--llm-morphology-max-species-per-
     # paper`` overrides the PipelineConfig default.
     # Sweep 6 (audit 2026-08-02 C4): write to the typed attr directly
-    # (cfg.m3_stage_6 is a real PipelineConfig field), not cfg.extra.
-    if args.m3_stage_6 is not None:
-        cfg.m3_stage_6 = bool(args.m3_stage_6)
-    if args.m3_morphology_max_species_per_paper is not None:
-        cfg.m3_morphology_max_species_per_paper = int(args.m3_morphology_max_species_per_paper)
+    # (cfg.llm_stage_6 is a real PipelineConfig field), not cfg.extra.
+    if args.llm_stage_6 is not None:
+        cfg.llm_stage_6 = bool(args.llm_stage_6)
+    if args.llm_morphology_max_species_per_paper is not None:
+        cfg.llm_morphology_max_species_per_paper = int(args.llm_morphology_max_species_per_paper)
     ensure_dir(cfg.work_dir)
     pipeline = RadiolarianPipeline(cfg)
     rows = pipeline.run()

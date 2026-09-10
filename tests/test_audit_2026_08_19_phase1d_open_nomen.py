@@ -1,12 +1,12 @@
 """Regression tests for audit 2026-08-19 Phase 1d — open-nomenclature (B-7/B-8/M-1).
 
 Bug fixes covered:
-- B-7: M3/LLM path that emits ICZN open-nomenclature markers
+- B-7: LLM/LLM path that emits ICZN open-nomenclature markers
   (cf./aff./?/ex gr.) previously kept the LLM's high confidence.
   Adding ``_apply_open_nomen_discount`` post-filter in
   ``llm_backends._normalize_panel_dict`` caps confidence at 0.55
   (cf./aff./?) or 0.50 (ex gr.).
-- B-8: ``m3_engine.parse_caption`` LLM path did not run
+- B-8: ``semantic_engine.parse_caption`` LLM path did not run
   ``_normalize_species`` on the species/modifier string, so LLM
   outputs like ``Triactoma cf kamoense`` (no trailing period) and
   ``Archaeodictyomitra (?) sp.`` were emitted verbatim. The regex
@@ -63,7 +63,7 @@ class TestB7OpenNomenDiscount:
 
     def test_question_marker_discounts_to_055(self):
         """The ``?`` literal in the species string is the
-        caption ``(?)`` uncertainty marker (after M3
+        caption ``(?)`` uncertainty marker (after LLM
         normalization the ``(`` ``)`` are stripped but ``?``
         may remain in raw LLM output)."""
         from rlpe.llm_backends import _normalize_panel_dict
@@ -149,7 +149,7 @@ class TestB8ParseCaptionNormalizes:
     on both species and modifier, matching the regex fallback behaviour."""
 
     def _engine_with_llm(self, raw_text: str):
-        from rlpe.m3_engine import M3Engine
+        from rlpe.semantic_engine import SemanticEngine
 
         class _FakeBackend:
             backend_name = "fake-llm"
@@ -158,7 +158,7 @@ class TestB8ParseCaptionNormalizes:
             def infer_text(self, system_prompt, user_prompt):
                 return {"fallback_used": False, "raw_text": raw_text}
 
-        return M3Engine(_FakeBackend())
+        return SemanticEngine(_FakeBackend())
 
     def test_llm_cf_no_period_passes_through_normalize(self):
         """LLM emits ``Triactoma cf kamoense`` (no period on cf).
@@ -166,8 +166,8 @@ class TestB8ParseCaptionNormalizes:
         ``cf`` token even if the period is not auto-inserted
         (we only check that the call site was wired up; the
         actual period-restoration behaviour is covered by the
-        per-corpus test in test_m3_engine.py)."""
-        from rlpe.m3_engine import _normalize_species
+        per-corpus test in test_semantic_engine.py)."""
+        from rlpe.semantic_engine import _normalize_species
 
         payload = json.dumps(
             [
@@ -238,7 +238,7 @@ class TestB8ParseCaptionNormalizes:
         """Edge case: if ``_normalize_species`` returns ``None``
         (e.g. input is empty/whitespace), the original species
         string is preserved so we don't silently drop a pair."""
-        from rlpe.m3_engine import _normalize_species
+        from rlpe.semantic_engine import _normalize_species
 
         # Pre-condition check: _normalize_species("") returns None
         assert _normalize_species("") is None
@@ -272,14 +272,14 @@ class TestM1ParseCaptionFewShot:
     """
 
     def test_prompt_contains_open_nomenclature_strength_field(self):
-        from rlpe.m3_engine import _PARSE_CAPTION_SYSTEM
+        from rlpe.semantic_engine import _PARSE_CAPTION_SYSTEM
 
         assert "open_nomenclature_strength" in _PARSE_CAPTION_SYSTEM
 
     def test_prompt_documents_cf_aff_question_ex_gr_values(self):
         """The prompt must list all 6 enum values so the LLM knows
         the vocabulary."""
-        from rlpe.m3_engine import _PARSE_CAPTION_SYSTEM
+        from rlpe.semantic_engine import _PARSE_CAPTION_SYSTEM
 
         for value in ("none", "cf.", "aff.", "ex gr.", "subgen.", "?"):
             assert value in _PARSE_CAPTION_SYSTEM, (
@@ -289,7 +289,7 @@ class TestM1ParseCaptionFewShot:
     def test_prompt_contains_complete_few_shot_example(self):
         """A single-shot example covering cf. and (?) species with
         the new field populated."""
-        from rlpe.m3_engine import _PARSE_CAPTION_SYSTEM
+        from rlpe.semantic_engine import _PARSE_CAPTION_SYSTEM
 
         # The example caption must mention cf. and (?) species.
         assert "Triactoma kamoensis" in _PARSE_CAPTION_SYSTEM
@@ -305,7 +305,7 @@ class TestM1ParseCaptionFewShot:
     def test_match_panel_prompt_documents_open_nomenclature_strength(self):
         """The match_panel prompt must also document the new field
         so the LLM emits it on per-panel species assignments."""
-        from rlpe.m3_engine import _MATCH_PANEL_SYSTEM
+        from rlpe.semantic_engine import _MATCH_PANEL_SYSTEM
 
         assert "open_nomenclature_strength" in _MATCH_PANEL_SYSTEM
         # All 6 enum values must appear.
@@ -316,7 +316,7 @@ class TestM1ParseCaptionFewShot:
         """The critique prompt must document the new field too,
         so the critique stage can echo open-nomen strength on
         suggested_species corrections."""
-        from rlpe.m3_engine import _CRITIQUE_SYSTEM
+        from rlpe.semantic_engine import _CRITIQUE_SYSTEM
 
         assert "open_nomenclature_strength" in _CRITIQUE_SYSTEM
 
@@ -349,13 +349,13 @@ class TestSourceGuards:
         # (approximate — the helper is referenced at least once).
         assert "_apply_open_nomen_discount" in src
 
-    def test_m3_engine_parse_caption_calls_normalize_species(self):
+    def test_semantic_engine_parse_caption_calls_normalize_species(self):
         """Static check: ``parse_caption`` source must reference
         ``_normalize_species`` so the LLM path normalisation
         cannot be silently removed."""
-        from rlpe import m3_engine
+        from rlpe import semantic_engine
 
-        src = Path(m3_engine.__file__).read_text()
+        src = Path(semantic_engine.__file__).read_text()
         # Locate the parse_caption function (it contains
         # ``_normalize_species`` call) — we just check the file
         # overall has the call.

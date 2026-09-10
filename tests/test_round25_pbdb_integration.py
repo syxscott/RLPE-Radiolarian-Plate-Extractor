@@ -304,7 +304,7 @@ def test_isotope_pattern_end_to_end():
 
 # --- WS-R25-D: live PBDB occurrence field aliasing -----------------------
 #
-# Bug discovered during the M3 + PBDB live integration (2026-07-09):
+# Bug discovered during the LLM + PBDB live integration (2026-07-09):
 # the PBDB ``occs/list.json`` endpoint returns records with SHORT
 # FIELD CODES (``oei``, ``eag``, ``lag``, ``cc2``, ``lng``, ``lat``,
 # ``sfm``, ``cnm``) rather than the long names (``early_interval``,

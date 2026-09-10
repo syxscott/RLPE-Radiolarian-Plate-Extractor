@@ -1,7 +1,7 @@
 """Phase 66 Plan C.7 — 20-paper visual-linker precision smoke test.
 
 AUDIT CAVEAT (2026-07-24, audit Agent C):
-The reported "precision" is computed against canned M3 responses
+The reported "precision" is computed against canned LLM responses
 that tautologically agree with Phase A. The 2/2 "100% precision"
 in the original run included only the determinable subset;
 panels where ``lr.figure_id is None`` were silently dropped from
@@ -21,7 +21,7 @@ synthetic paper scenarios. For each paper we:
   2. Run ``link_species_to_geology`` (Phase A) to get a baseline
      link source per panel.
   3. For every panel whose Phase A used Strategy 2 (locality_match)
-     or Strategy 3 (m3_inference) or unlinked, run
+     or Strategy 3 (llm_inference) or unlinked, run
      ``link_visual_coordinates`` (Phase C).
   4. Check whether the visual link's target_figure_id matches
      Phase A's link_figure_id. "Agreed" counts as a precision hit;
@@ -31,7 +31,7 @@ Usage::
 
     python scripts/smoke_visual_linker.py
 
-The script does NOT require a live M3 backend — it uses the same
+The script does NOT require a live LLM backend — it uses the same
 ``FakeM3Backend`` as the unit tests, with a deterministic canned
 response that echoes back a single plate_panels entry. This is a
 STRUCTURAL precision test ("does the linker's wiring agree with its
@@ -56,16 +56,16 @@ from rlpe.cross_figure_linker import (  # noqa: E402
     link_species_to_geology,
     link_visual_coordinates,
 )
-from rlpe.m3_engine import M3Engine  # noqa: E402
-from tests.fakes.fake_m3_backend import FakeM3Backend  # noqa: E402
+from rlpe.semantic_engine import SemanticEngine  # noqa: E402
+from tests.fakes.fake_llm_backend import FakeM3Backend  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Canned M3 response — deterministic for structural precision check
+# Canned LLM response — deterministic for structural precision check
 # ---------------------------------------------------------------------------
 
 
-def _make_m3_engine() -> M3Engine:
-    """Build an M3Engine whose cross_figure_visual_inference echoes
+def _make_semantic_engine() -> SemanticEngine:
+    """Build an SemanticEngine whose cross_figure_visual_inference echoes
     back a single entry tied to the first anchor figure.
 
     Smoke-test only: link_visual_coordinates passes None for the
@@ -95,7 +95,7 @@ def _make_m3_engine() -> M3Engine:
             },
         ]
     )
-    engine = M3Engine(backend=backend, config={})
+    engine = SemanticEngine(backend=backend, config={})
     # Replace the visual method with a variant that accepts None images
     # by delegating to a minimal-image stub. This keeps the smoke
     # test's wiring equivalent to the real pipeline while skipping
@@ -190,12 +190,12 @@ def _run_one_paper(
     panels: list[dict[str, Any]],
     paper_figures: list[dict[str, Any]],
 ) -> PaperRun:
-    m3 = _make_m3_engine()
+    llm = _make_semantic_engine()
 
     phase_a_results = link_species_to_geology(
         panels=panels,
         paper_figures=paper_figures,
-        m3_engine=m3,
+        semantic_engine=llm,
     )
     by_panel_id: dict[str, Any] = {}
     for pv, lr in zip(panels, phase_a_results):
@@ -218,7 +218,7 @@ def _run_one_paper(
     phase_c_per_panel = link_visual_coordinates(
         panels=panel_views,
         paper_figures=paper_figures,
-        m3_engine=m3,
+        semantic_engine=llm,
     )
 
     run = PaperRun(
@@ -913,7 +913,7 @@ def main() -> int:
     print(f"{verdict} — Phase C visual-linker aggregate precision: {agg_precision_str}")
     print(
         f"  (panels considered for Phase C: {total_unlinked}, "
-        f"M3 returned links for: {total_visual_links})"
+        f"LLM returned links for: {total_visual_links})"
     )
     return 0
 

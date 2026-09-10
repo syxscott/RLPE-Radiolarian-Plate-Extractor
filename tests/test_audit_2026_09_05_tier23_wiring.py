@@ -20,8 +20,8 @@ Covers the fixes for the extractor-coverage review:
   engine-less Stage 6.
 * tier3-C — ``RunOutput.knowledge_graphs`` / ``range_charts`` drained
   from the paper-level captures (schema 1.3.0).
-* tier3-D1/D2 — ``--m3-stage-6`` / ``--use-geo-vision`` implicitly
-  enable ``m3_enhanced_mode`` on the CLI and the web extra builder.
+* tier3-D1/D2 — ``--llm-stage-6`` / ``--use-geo-vision`` implicitly
+  enable ``llm_enhanced_mode`` on the CLI and the web extra builder.
 * tier3-D3 — paper-level PBDB attach works on plain dict rows.
 * tier3-D4 — ``enrich_geology_record`` is idempotent and wired into
   ``_finalize_rows`` (both paths).
@@ -57,7 +57,7 @@ def pipe(tmp_path):
 
     cfg = PipelineConfig(pdf_dir=tmp_path, work_dir=tmp_path / "work")
     p = RadiolarianPipeline(cfg)
-    p.m3_engine = None
+    p.semantic_engine = None
     return p
 
 
@@ -322,12 +322,12 @@ class TestRunLevelWarnings:
         drain_warnings()  # clear slate
         # Force the no-key branch on BOTH sources: the pipeline
         # constructor may have already pulled the real ANTHROPIC_API_KEY
-        # from .env into ``config.extra["MiniMax_api_key"]`` (audit-fixes
+        # from .env into ``config.extra["llm_api_key"]`` (audit-fixes
         # tests load .env into os.environ globally), so deleting the env
         # var alone is not enough — forgetting this made the test fire a
-        # REAL MiniMax API call during the full-suite run.
+        # REAL LLM API call during the full-suite run.
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.setitem(pipe.config.extra, "MiniMax_api_key", None)
+        monkeypatch.setitem(pipe.config.extra, "llm_api_key", None)
         stubs = pipe._process_range_chart(
             paper_id="p1",
             figure_id="figRC",
@@ -342,12 +342,12 @@ class TestRunLevelWarnings:
         from rlpe.utils import drain_warnings
 
         drain_warnings()  # clear slate
-        pipe.config.m3_stage_6 = True
-        pipe.m3_engine = None
+        pipe.config.llm_stage_6 = True
+        pipe.semantic_engine = None
         out = pipe._apply_morphology_enrichment([_plate_row()], "p1", None)
         assert out  # rows untouched
         labels = [w["label"] for w in drain_warnings()]
-        assert "m3_stage6_no_engine" in labels
+        assert "llm_stage6_no_engine" in labels
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +408,7 @@ class TestRunOutputPaperLevelViews:
             return _FakeChart()
 
         monkeypatch.setattr("rlpe.pipeline.extract_range_chart", _fake_extract)
-        pipe.config.extra["MiniMax_api_key"] = "test-key"
+        pipe.config.extra["llm_api_key"] = "test-key"
         out = pipe._process_range_chart(
             paper_id="p1",
             figure_id="figRC",
@@ -421,26 +421,26 @@ class TestRunOutputPaperLevelViews:
 
 
 # ---------------------------------------------------------------------------
-# tier3-D1/D2 — implicit m3_enhanced_mode
+# tier3-D1/D2 — implicit llm_enhanced_mode
 # ---------------------------------------------------------------------------
 
 
 class TestImplicitEnhancedMode:
     def test_cli_auto_enable_includes_stage6_and_geo_vision(self):
         src = _read("cli.py")
-        assert "or args.m3_stage_6" in src, (
-            "CLI must implicitly enable m3_enhanced_mode for --m3-stage-6."
+        assert "or args.llm_stage_6" in src, (
+            "CLI must implicitly enable llm_enhanced_mode for --llm-stage-6."
         )
         assert "or args.use_geo_vision" in src, (
-            "CLI must implicitly enable m3_enhanced_mode for --use-geo-vision."
+            "CLI must implicitly enable llm_enhanced_mode for --use-geo-vision."
         )
 
     def test_web_extra_builder_auto_enables(self):
         src = _read("api/app.py")
-        assert 'extra.setdefault("m3_enhanced_mode", True)' in src, (
-            "The web extra builder must mirror the CLI's implicit m3_enhanced_mode opt-in."
+        assert 'extra.setdefault("llm_enhanced_mode", True)' in src, (
+            "The web extra builder must mirror the CLI's implicit llm_enhanced_mode opt-in."
         )
-        assert 'options.get("use_geo_vision") or options.get("m3_stage_6")' in src
+        assert 'options.get("use_geo_vision") or options.get("llm_stage_6")' in src
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 """Single-PDF driver that runs the full RadiolarianPipeline with
-MiniMax M3 as the LLM backend, bypassing the multi-file batch scan.
+LLM LLM as the LLM backend, bypassing the multi-file batch scan.
 
 Used by Round 10 live smoke tests: we don't want to re-scan the
 whole 100+ PDF corpus; we want to point the pipeline at ONE specific
@@ -69,11 +69,11 @@ def run_one(pdf: Path, work_root: Path, *, with_llm: bool) -> dict:
         extra={
             "use_opendataloader": True,
             "use_gemma4": with_llm,
-            "llm_backend": "minimax" if with_llm else "transformers",
+            "llm_backend": "anthropic" if with_llm else "transformers",
             "gemma_conf_threshold": 0.7,
-            "MiniMax_enable_thinking": True,
-            "MiniMax_thinking_budget_tokens": 1024,
-            "MiniMax_fallback_default": "rules",
+            "llm_enable_thinking": True,
+            "llm_thinking_budget_tokens": 1024,
+            "llm_fallback_default": "rules",
         },
     )
 

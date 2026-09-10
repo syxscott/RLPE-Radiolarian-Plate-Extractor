@@ -7,7 +7,7 @@ bodies, etc.). These tests assert the safe pattern
 ``if (resp.ok) { ... await resp.json() ... } else { ... await resp.json().catch(...) ... }``
 is present at the three call sites flagged in the 2026-07-03 audit:
 ``confirmDelete`` (single-delete path), ``cancelJob``, and
-``submitMiniMaxFallback``.
+``submitLlmFallback``.
 
 The frontend has no jsdom test harness, so these are grep-based
 static assertions on the served JS file.
@@ -117,17 +117,17 @@ class TestCancelJobChecksOkBeforeJson:
         assert json_pos > ok_pos, "cancelJob: response.json() must come AFTER response.ok check"
 
 
-class TestSubmitMiniMaxFallbackChecksOkBeforeJson:
-    """H3: submitMiniMaxFallback must check r.ok BEFORE calling r.json()."""
+class TestSubmitLlmFallbackChecksOkBeforeJson:
+    """H3: submitLlmFallback must check r.ok BEFORE calling r.json()."""
 
     def test_submit_uses_ok_guard(self, js: str) -> None:
-        body = _function_body(js, "submitMiniMaxFallback")
+        body = _function_body(js, "submitLlmFallback")
         assert "if (!r.ok)" in body, (
-            "submitMiniMaxFallback must check r.ok before r.json() (2026-07-03 audit H3)"
+            "submitLlmFallback must check r.ok before r.json() (2026-07-03 audit H3)"
         )
         ok_pos = body.find("if (!r.ok)")
         json_pos = body.find("r.json()", ok_pos)
-        assert json_pos > ok_pos, "submitMiniMaxFallback: r.json() must come AFTER r.ok check"
+        assert json_pos > ok_pos, "submitLlmFallback: r.json() must come AFTER r.ok check"
 
 
 class TestCorpusPathValidation:

@@ -11,9 +11,8 @@ PDF in turn, and writes a per-paper JSONL summary that captures:
   - error                repr(exc) when ok=False; else None
   - row_count            number of MatchResult rows the pipeline emitted
   - range_chart_detected_count  number of figures classified as range_chart
-  - geo_vision_calls     MiniMax-M3 calls made for geo vision (proxy:
+  - geo_vision_calls     cloud-LLM calls made for geo vision (proxy:
                          backend.cost_summary()["calls"] after the run)
-  - geo_vision_cost_cny  cost accumulated during this PDF
   - run_output_path      absolute path of run_output.json if written
   - llm_usage_path       absolute path of llm_usage.json if written
 
@@ -21,7 +20,7 @@ Usage
 -----
 ::
 
-    # local-only mode — no MiniMax API calls
+    # local-only mode — no LLM API calls
     python scripts/smoke_oa_corpus.py \\
         --corpus 放射虫论文_OA_download \\
         --out    work/oa_smoke_results.jsonl \\
@@ -36,7 +35,7 @@ Usage
 
 Constraints
 -----------
-* Never imports ``requests`` (asserted by test). All outbound MiniMax
+* Never imports ``requests`` (asserted by test). All outbound LLM
   traffic must go through the real backend; the smoke driver is
   intentionally network-free unless the caller provides API creds.
 * Always writes per-paper ``ok`` row, even on pipeline exception —
@@ -115,7 +114,6 @@ class SmokeRow:
     row_count: int
     range_chart_detected_count: int = 0
     geo_vision_calls: int = 0
-    geo_vision_cost_cny: float = 0.0
     run_output_path: str | None = None
     llm_usage_path: str | None = None
 
@@ -125,7 +123,6 @@ class SmokeSummary:
     ok_count: int = 0
     fail_count: int = 0
     mean_elapsed_s: float = 0.0
-    total_cost_cny: float = 0.0
     total_rows: int = 0
     range_chart_total: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)
@@ -143,7 +140,6 @@ def summarize_results(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         ok_count=len(ok_rows),
         fail_count=len(fail_rows),
         mean_elapsed_s=(sum(r.get("elapsed_s", 0.0) for r in rows) / len(rows)),
-        total_cost_cny=sum(r.get("geo_vision_cost_cny", 0.0) for r in rows),
         total_rows=sum(r.get("row_count", 0) for r in rows),
         range_chart_total=sum(r.get("range_chart_detected_count", 0) for r in rows),
         errors=[
@@ -172,7 +168,7 @@ def _sha256_short(path: Path, *, hex_chars: int = 16) -> str:
 def _make_pipeline(work_dir: Path, pdf_dir: Path, *, with_mock_llm: bool):
     """Construct a RadiolarianPipeline.
 
-    Kept narrow: the smoke driver never overrides M3 cost/retry; it
+    Kept narrow: the smoke driver never overrides LLM cost/retry; it
     relies on whatever the user has configured via env / config.extra.
     ``with_mock_llm=True`` patches ``gemma_runtime.backend`` to a
     FakeM3Backend so cost counters increment deterministically without
@@ -202,11 +198,11 @@ def _make_pipeline(work_dir: Path, pdf_dir: Path, *, with_mock_llm: bool):
         "use_geology_llm": False,
     }
     if with_mock_llm:
-        from tests.fakes.fake_m3_backend import FakeM3Backend
+        from tests.fakes.fake_llm_backend import FakeM3Backend
 
-        extra["MiniMax_api_key"] = "mock"
-        extra["MiniMax_endpoint"] = "http://mock/"
-        extra["MiniMax_model"] = "MiniMax-M3-mock"
+        extra["llm_api_key"] = "mock"
+        extra["llm_base_url"] = "http://mock/"
+        extra["llm_model"] = "mock-model"
 
     cfg = PipelineConfig(
         pdf_dir=pdf_dir,
@@ -221,7 +217,7 @@ def _make_pipeline(work_dir: Path, pdf_dir: Path, *, with_mock_llm: bool):
         pipeline.gemma_runtime.backend = FakeM3Backend(
             api_key="mock",
             base_url="http://mock/",
-            model="MiniMax-M3-mock",
+            model="mock-model",
         )
     return pipeline
 
@@ -281,14 +277,12 @@ def _run_one(
     )
 
     geo_calls = 0
-    geo_cost = 0.0
     if pipeline.gemma_runtime is not None:
         backend = getattr(pipeline.gemma_runtime, "backend", None)
         if backend is not None:
             try:
-                cost = backend.cost_summary()  # type: ignore[attr-defined]
-                geo_calls = int(cost.get("calls", 0))
-                geo_cost = float(cost.get("total_cost_cny", 0.0))
+                usage = backend.cost_summary()  # type: ignore[attr-defined]
+                geo_calls = int(usage.get("calls", 0))
             except Exception:
                 pass
 
@@ -301,7 +295,6 @@ def _run_one(
         row_count=len(result_rows),
         range_chart_detected_count=range_chart_count,
         geo_vision_calls=geo_calls,
-        geo_vision_cost_cny=geo_cost,
         run_output_path=str(run_output_path) if run_output_path.exists() else None,
         llm_usage_path=str(llm_usage_path) if llm_usage_path.exists() else None,
     )
@@ -326,7 +319,7 @@ def run_smoke(
         Where to write the per-paper rows. Created if missing.
     with_mock_llm : bool
         If True, swap ``gemma_runtime.backend`` for ``FakeM3Backend``
-        so M3 vision calls return canned JSON instead of HTTP I/O.
+        so LLM vision calls return canned JSON instead of HTTP I/O.
     limit : int
         Maximum number of PDFs to run.
     seed : int
@@ -352,12 +345,11 @@ def run_smoke(
         with out_jsonl.open("a") as f:
             f.write(json.dumps(rows[-1]) + "\n")
         logger.info(
-            "smoke: %s ok=%s rows=%d elapsed=%.1fs cost=%.4f",
+            "smoke: %s ok=%s rows=%d elapsed=%.1fs",
             pdf.name,
             row.ok,
             row.row_count,
             row.elapsed_s,
-            row.geo_vision_cost_cny,
         )
     return summarize_results(rows)
 

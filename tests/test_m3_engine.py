@@ -1,4 +1,4 @@
-"""Smoke test for M3Engine parsing helpers (no API calls)."""
+"""Smoke test for SemanticEngine parsing helpers (no API calls)."""
 
 from __future__ import annotations
 
@@ -7,15 +7,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rlpe.m3_engine import (  # noqa: E402
+from rlpe.semantic_engine import (  # noqa: E402
     _CLASSIFY_PLATE_SYSTEM,
     _CRITIQUE_SYSTEM,
     _MATCH_PANEL_SYSTEM,
     _PARSE_CAPTION_SYSTEM,
     _SEGMENT_PANELS_SYSTEM,
     Critique,
-    M3Engine,
     PanelMatch,
+    SemanticEngine,
     _coerce_bbox,
     _expand_label_range,
     _normalize_caption_text,
@@ -66,7 +66,7 @@ def test_safe_json_loads_mixed_chooses_first():
 
 
 def test_safe_json_loads_recovers_from_missing_comma():
-    # Best-effort recovery: M3 sometimes drops the comma between array items.
+    # Best-effort recovery: LLM sometimes drops the comma between array items.
     text = '[{"a": 1}\n{"a": 2}]'
     out = _safe_json_loads(text)
     assert isinstance(out, list)
@@ -122,7 +122,7 @@ def test_engine_constructs_with_minimal_config():
     class FakeBackend:
         backend_name = "fake"
 
-    engine = M3Engine(FakeBackend())
+    engine = SemanticEngine(FakeBackend())
     assert engine._stage_enabled(1) is True
     assert engine._stage_enabled(5) is True
 
@@ -131,13 +131,13 @@ def test_engine_stage_toggle():
     class FakeBackend:
         backend_name = "fake"
 
-    engine = M3Engine(FakeBackend(), {"m3_stage_4": False})
+    engine = SemanticEngine(FakeBackend(), {"llm_stage_4": False})
     assert engine._stage_enabled(4) is False
     assert engine._stage_enabled(3) is True
 
 
 def test_engine_with_no_backend_returns_fallback():
-    engine = M3Engine(None)
+    engine = SemanticEngine(None)
     pairs = engine.parse_caption("Fig. 3. A: X; B: Y")
     assert pairs == []  # no backend -> empty
     from PIL import Image
@@ -151,7 +151,7 @@ def test_engine_with_no_backend_returns_fallback():
 def test_apply_critiques_agree_no_change():
     matches = [PanelMatch(panel_id="P1", label="A", species="X", confidence=0.8, reasoning="ok")]
     critiques = [Critique(panel_id="P1", verdict="agree", confidence=0.9, reasoning="good")]
-    out = M3Engine.apply_critiques(matches, critiques)
+    out = SemanticEngine.apply_critiques(matches, critiques)
     assert out[0].species == "X"
     assert out[0].raw["critique"]["verdict"] == "agree"
 
@@ -167,7 +167,7 @@ def test_apply_critiques_disagree_overrides():
             reasoning="actually looks like Y",
         )
     ]
-    out = M3Engine.apply_critiques(matches, critiques)
+    out = SemanticEngine.apply_critiques(matches, critiques)
     assert out[0].species == "Y"
     assert out[0].raw["critique"]["from"] == "X"
     assert out[0].raw["critique"]["to"] == "Y"
@@ -184,7 +184,7 @@ def test_apply_critiques_low_confidence_no_override():
             reasoning="maybe",
         )
     ]
-    out = M3Engine.apply_critiques(matches, critiques)
+    out = SemanticEngine.apply_critiques(matches, critiques)
     assert out[0].species == "X"  # not overridden
 
 
@@ -193,22 +193,23 @@ def test_apply_critiques_unknown_panel_no_effect():
     critiques = [
         Critique(panel_id="P99", verdict="disagree", suggested_species="Y", confidence=0.9)
     ]
-    out = M3Engine.apply_critiques(matches, critiques)
+    out = SemanticEngine.apply_critiques(matches, critiques)
     assert out[0].species == "X"
     assert "critique" not in out[0].raw
 
 
-def test_match_panel_carries_MiniMax_telemetry_in_raw():
-    """Backend cost/request_id/usage/model_version set on PanelMatch.raw so
-    pipeline._apply_m3_stage4 can copy them into MatchResult.metadata.
-    Without this plumbing, M3 stage-4 calls never reach /system/llm-status.
+def test_match_panel_carries_llm_telemetry_in_raw():
+    """Backend request_id/usage/model_version set on PanelMatch.raw so
+    pipeline._apply_llm_stage4 can copy them into MatchResult.metadata.
+    Without this plumbing, LLM stage-4 calls never reach /system/llm-status.
+    F17: cost telemetry was removed (token usage only).
     """
 
     import json as _json
 
     from PIL import Image
 
-    from rlpe.m3_engine import CaptionPair
+    from rlpe.semantic_engine import CaptionPair
 
     captured: dict[str, object] = {}
 
@@ -223,7 +224,7 @@ def test_match_panel_carries_MiniMax_telemetry_in_raw():
     )
 
     class FakeBackend:
-        backend_name = "MiniMax"
+        backend_name = "anthropic"
 
         def infer_panel(
             self,
@@ -244,13 +245,12 @@ def test_match_panel_carries_MiniMax_telemetry_in_raw():
                 "reasoning": "ok",
                 "fallback_used": False,
                 "raw_text": raw_text,
-                "request_id": "req-m3-stage4-1",
-                "model_version": "MiniMax-M3",
-                "cost_cny": 0.045,
+                "request_id": "req-llm-stage4-1",
+                "model_version": "test-model",
                 "usage": {"input_tokens": 2000, "output_tokens": 80},
             }
 
-    engine = M3Engine(FakeBackend(), {"m3_match_samples": 1})
+    engine = SemanticEngine(FakeBackend(), {"llm_match_samples": 1})
     pairs = [
         CaptionPair(
             labels=["1"],
@@ -265,10 +265,9 @@ def test_match_panel_carries_MiniMax_telemetry_in_raw():
     )
     assert captured.get("called") is True
     raw = out.raw or {}
-    assert raw.get("MiniMax_request_id") == "req-m3-stage4-1"
-    assert abs(float(raw.get("MiniMax_cost_cny", 0)) - 0.045) < 1e-9
-    assert raw.get("MiniMax_model_version") == "MiniMax-M3"
-    assert raw.get("MiniMax_usage") == {"input_tokens": 2000, "output_tokens": 80}
+    assert raw.get("llm_request_id") == "req-llm-stage4-1"
+    assert raw.get("llm_model_version") == "test-model"
+    assert raw.get("llm_usage") == {"input_tokens": 2000, "output_tokens": 80}
     # Existing self-consistency keys must still be present.
     assert "votes" in raw and "agreement" in raw
 
@@ -295,9 +294,9 @@ class TestMatchPanelErrorPropagation:
             enable_thinking = False
 
             def infer_panel(self, **_):
-                return {"fallback_used": True, "error": "MiniMax API timeout"}
+                return {"fallback_used": True, "error": "LLM API timeout"}
 
-        return M3Engine(_FailingBackend())
+        return SemanticEngine(_FailingBackend())
 
     def test_match_panel_propagates_error_in_raw(self):
         from PIL import Image
@@ -306,8 +305,8 @@ class TestMatchPanelErrorPropagation:
         panel = Image.new("RGB", (64, 64))
         result = engine.match_panel(panel_image=panel, caption_pairs=[], caption_text="")
         assert result.is_radiolarian is False
-        assert result.raw.get("error") == "MiniMax API timeout"
-        assert "MiniMax API timeout" in result.reasoning
+        assert result.raw.get("error") == "LLM API timeout"
+        assert "LLM API timeout" in result.reasoning
 
     def test_match_panel_no_error_when_results_present(self):
         from PIL import Image
@@ -322,7 +321,7 @@ class TestMatchPanelErrorPropagation:
                     "raw_text": '{"label": "A", "species": "Foo", "confidence": 0.8, "reasoning": "r"}',
                 }
 
-        engine = M3Engine(_OkBackend())
+        engine = SemanticEngine(_OkBackend())
         panel = Image.new("RGB", (64, 64))
         result = engine.match_panel(panel_image=panel, caption_pairs=[], caption_text="")
         # Success path: no error in raw

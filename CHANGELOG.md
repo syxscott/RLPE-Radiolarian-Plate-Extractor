@@ -5,6 +5,77 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 19] - 2026-09-08 — F17: vendor-agnostic LLM API (settings persistence, de-branding, cost removal)
+
+The cloud LLM backend is no longer MiniMax-specific. Any provider that
+speaks the Anthropic wire protocol (MiniMax, DeepSeek, Kimi,
+OpenRouter's /anthropic route, Claude relays, ...) can be configured
+from the Web settings tab, the desktop GUI, the CLI, .env — with the
+last-used configuration persisted and shared across all three frontends.
+
+### Added
+- `llm_settings.py` — persisted API settings at `~/.rlpe/llm_api.json`
+  (chmod 0600, atomic tempfile+replace writes, corrupt-file tolerant).
+  Holds the single current `{base_url, api_key, model}`; multi-provider
+  presets are deliberately deferred.
+- `api/app.py` — `GET/POST /system/llm-config`: read and save the
+  persisted configuration. The raw key is never returned (masked
+  preview only); an absent `api_key` field leaves the saved key
+  untouched so the model/endpoint can be edited without re-typing it.
+  Saving requires a base_url before a key is accepted.
+- `web/index.html` + `web/js/app.js` — settings-tab "LLM API 配置"
+  card: base URL / key / model fields, save + test-connection buttons,
+  masked-key status line, password visibility toggle.
+- GUI settings tab — API base URL field (previously impossible to set
+  from the GUI), one-time migration of the legacy QSettings keys
+  (`MiniMax_api_key`, `m3_model`) into the new key names and the shared
+  settings file.
+
+### Changed
+- Resolution chain everywhere (backend builder, key/endpoint/model
+  resolvers, `/system/llm-status`, `/system/test-llm`):
+  per-run explicit option > `~/.rlpe/llm_api.json` > env
+  (`ANTHROPIC_*`; legacy `MiniMax_*`/`MINIMAX_*` env names remain
+  read-only fallbacks). The precedence between `ANTHROPIC_API_KEY` and
+  legacy vendor env names flipped so the canonical pair stays
+  self-consistent with `ANTHROPIC_BASE_URL`.
+- Vendor-neutral naming (mechanical sweep, ~210 files):
+  `MiniMaxM3Backend`→`AnthropicCompatBackend`,
+  `build_MiniMax_backend_from_env_or_config`→`build_anthropic_compat_backend`,
+  `resolve_minimax_api_key`→`resolve_llm_api_key` (+ new
+  `resolve_llm_base_url`/`resolve_llm_model`),
+  `m3_engine.py`→`semantic_engine.py` (`M3Engine`→`SemanticEngine`),
+  all `MiniMax_*`/`m3_*` config & metadata keys → `llm_*`,
+  provenance link sources `m3_inference/m3_vision/m3_visual`→
+  `llm_inference/llm_vision/llm_visual` (schema fields are free-form
+  strings, so existing artifacts still load), telemetry
+  `MiniMax_request_id/usage/model_version`→`llm_*`.
+  Backend select value `minimax`→`anthropic` (legacy values accepted
+  as aliases by the CLI, API validator, pipeline heuristic and GUI
+  loader; legacy CLI flag spellings `--MiniMax-*` remain as hidden
+  aliases; legacy `/jobs/{id}/MiniMax-fallback` route kept as a
+  deprecated alias).
+- No hard-coded vendor defaults: `base_url` and `model` are now
+  required (clear error listing every configuration source). The
+  vendor endpoint/model in the user's `.env` (ANTHROPIC_*) keeps
+  zero-config runs working.
+
+### Removed
+- Cost accounting (user request): `MiniMax_PRICE_*` constants, per-call
+  `cost_cny`, `cost_summary()['total_cost_cny']`,
+  `/system/llm-status` `total_cost_cny`/`approx_cny_per_call`,
+  `/system/test-llm` `cost_cny`, the web "¥" usage rows and per-upload
+  cost-estimate strip, GUI cost row, and smoke-script cost prints.
+  Call counts and input/output token counters are kept (now surfaced
+  in `/system/llm-status` as `total_input_tokens`/`total_output_tokens`).
+
+### Tests
+- New: `tests/test_llm_settings_2026_09_08.py` (persistence,
+  permissions, atomicity, corruption tolerance),
+  `tests/test_f16_paper_short_name_2026_09_08.py` panel-image naming
+  (from Unreleased 18), llm-config endpoint round-trip coverage.
+- Updated for the rename + no-default backend construction.
+
 ## [Unreleased 18] - 2026-09-08 — panel-image naming: paper short name + sanitised species
 
 ### Fixed (F16)

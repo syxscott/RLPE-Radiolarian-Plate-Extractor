@@ -45,8 +45,8 @@ def matches_have_fallback_error(matches: list) -> bool:
 
     The metadata fields carry three distinct signals:
       - ``gemma_error``: a real API or runtime failure
-      - ``gemma_fallback``: M3 returned a low-confidence verdict
-      - ``m3_rejected_non_radiolarian``: a normal "this isn't a specimen"
+      - ``gemma_fallback``: LLM returned a low-confidence verdict
+      - ``llm_rejected_non_radiolarian``: a normal "this isn't a specimen"
         answer, which is *not* an error
 
     The original method lived on ``RadiolarianPipeline`` and was tested
@@ -55,8 +55,8 @@ def matches_have_fallback_error(matches: list) -> bool:
     the import graph shallow.
 
     NOTE: a real ``gemma_error`` ALWAYS triggers the fallback, even when
-    ``m3_rejected_non_radiolarian`` is also set. The previous
-    ``... and not m3_rejected_non_radiolarian`` guard masked real API
+    ``llm_rejected_non_radiolarian`` is also set. The previous
+    ``... and not llm_rejected_non_radiolarian`` guard masked real API
     failures whenever the response payload also said "not a specimen",
     which silently swallowed transient network / 5xx errors that the
     operator should have been told about.
@@ -67,10 +67,10 @@ def matches_have_fallback_error(matches: list) -> bool:
         if md.get("gemma_error"):
             return True
         # Low-confidence fallback signal → trigger UNLESS the same panel
-        # was also rejected by M3 as "not a specimen" (in which case the
+        # was also rejected by LLM as "not a specimen" (in which case the
         # fallback flag is a benign side effect of stage 4's threshold,
         # not a real failure the operator can act on).
-        if md.get("gemma_fallback") and not md.get("m3_rejected_non_radiolarian"):
+        if md.get("gemma_fallback") and not md.get("llm_rejected_non_radiolarian"):
             return True
     return False
 
@@ -80,7 +80,7 @@ def looks_like_placeholder_caption(caption_text: str) -> bool:
 
     The OpenDataLoader extractor sometimes picks up page headers, running
     titles, or auto-generated watermarks as a "figure" with a short caption.
-    Sending those to M3 wastes API calls and produces confusing "not a
+    Sending those to LLM wastes API calls and produces confusing "not a
     specimen" responses that get surfaced as fallback errors.
 
     Empty / whitespace-only captions are also treated as placeholders:

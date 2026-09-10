@@ -3,7 +3,7 @@
 The user requested all remaining audit fixes be applied. This
 test file pins the 8 fixes in the "Round 23" pass:
 
-  - F-4: geo_vision emits a stub record EVEN when M3 returns 0 geo
+  - F-4: geo_vision emits a stub record EVEN when LLM returns 0 geo
     links (previously the figure was silently dropped).
   - /results pagination: ``?limit=N&offset=M`` query params.
   - Audit-9: frontend search now covers formation / locality / age
@@ -34,7 +34,7 @@ def _read(rel: str) -> str:
 
 def test_geo_vision_path_emits_stub_even_when_empty():
     """Source guard: the geo_vision route must append the stub record
-    unconditionally, not behind ``if geo_links:``. Otherwise M3
+    unconditionally, not behind ``if geo_links:``. Otherwise LLM
     failures silently drop the figure from ``results``."""
     src = _read("src/rlpe/pipeline.py")
     # The previous guard was ``if geo_links:`` followed by the
