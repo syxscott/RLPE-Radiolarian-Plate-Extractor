@@ -82,6 +82,9 @@ _KNOWN_EXTRA_KEYS = {
     "llm_interactive",
     "data_outbound_policy",
     "_llm_external_handler",  # injected by web/API layer
+    # F19: batch subprocess isolation
+    "batch_isolation",
+    "batch_worker_timeout_sec",
     # Legacy vendor-branded aliases of the llm_* keys above (F17
     # rename). Kept listed so old configs load without typo warnings;
     # the backend builders read them as fallbacks.

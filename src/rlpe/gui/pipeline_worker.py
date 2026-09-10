@@ -313,6 +313,9 @@ class PipelineWorker(QThread):
             # from the shared settings file, so switching providers in
             # the API tab takes effect on the next run.
             "llm_enable_thinking": bool(s.get("llm_enable_thinking", False)),
+            # F19: per-paper subprocess isolation — a native crash
+            # (PaddleOCR SIGSEGV) must not take down the whole GUI.
+            "batch_isolation": "subprocess",
             "grobid_max_retries": grobid_max_retries,
             "grobid_timeout": grobid_timeout,
             "disable_od_fallback": bool(s.get("disable_od_fallback", False)),

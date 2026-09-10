@@ -5,6 +5,54 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 21] - 2026-09-11 — F19: subprocess-isolated batch runner + resume merge + journal fix
+
+Live validation (random-20 corpus, MiniMax M3 through the F18 preset
+system) exposed a pre-existing failure mode end to end: a PaddleOCR
+native SIGSEGV killed the whole 4-worker batch, and every `--resume`
+attempt rewrote the aggregate artifacts with only its own papers —
+the final run_output.json held 17/20 papers and matches.jsonl just
+one paper's rows. Attribution experiment (same paper, pre-F17
+worktree vs current code) confirmed the crash itself predates F17/F18;
+the fixes below address the blast radius and the data loss.
+
+### Added
+- `worker.py` — single-paper batch worker (`python -m rlpe.worker
+  --config … --pdf … --out …`). The parent serialises the full run
+  config (including resolved LLM credentials that `save_config`
+  strips — re-injected by `config_io.dump_worker_config`, mode 0600)
+  and hands it to the child.
+- `pipeline.run()` `batch_isolation="subprocess"` (CLI default via
+  `--batch-isolation`; GUI worker opts in; web `JobOptions` opt-in):
+  each PDF runs in its own worker process. A native crash now kills
+  at most ONE paper — recorded as an `_ingestion_worker_crash` stub
+  row (ingestion_warning, stderr tail) so it stays visible in the UI
+  and warnings — and the batch continues. Hung workers are killed
+  after `--batch-worker-timeout-sec` (default 3600).
+- Resume merge: on `--resume`, the aggregate now carries prior papers'
+  rows (canonical matches.jsonl + the per-paper worker journal,
+  keep-last per paper_id) instead of overwriting them. Verified live:
+  the rebuilt random-20 aggregate covers 20/20 papers / 133 rows
+  (was 17 papers / 35 rows).
+
+### Fixed
+- Per-paper incremental matches write was a REPLACE, not the append
+  its comment claimed — concurrent batch workers clobbered each
+  other's journal entries. Now a true line-append journal, and the
+  resume merge recovers it.
+- `taxon.py` — English non-taxon first words from the OCR page-rescue
+  path ("Portrait of", "New", "Report of the collection", ...) are
+  rejected as species.
+
+### Tests
+- New: batch isolation suite (worker round-trip incl. secret handoff,
+  crash/timeout stubs, resume merge, journal recovery, 0600 config).
+- Forced-runtime GUI triage: stale Phase-53/Phase-5d expectations
+  updated for the F17/F18 vendor-neutral backend; policy-resolution
+  tests now neutralize the presets file (a saved preset legitimately
+  counts as a key); pre-existing jobs_tab QMessageBox i18n violation
+  fixed; missing zh string `menu.view.api` added.
+
 ## [Unreleased 20] - 2026-09-11 — F18: multi-provider API presets (cc-switch model) + API tab + 128K ceilings
 
 The single saved API configuration became a named-preset list with an

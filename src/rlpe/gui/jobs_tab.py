@@ -1487,7 +1487,7 @@ class JobsTab(QWidget):
         # is still i18n'd.)
         confirm = QMessageBox.question(
             self,
-            "Delete permanently",
+            i18n._tr("jobstab.delete_permanently"),
             msg,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,

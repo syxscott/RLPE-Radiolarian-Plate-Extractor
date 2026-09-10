@@ -658,6 +658,24 @@ def build_parser() -> argparse.ArgumentParser:
         "Default 'auto' = detect from caption text. JA dispatches to a "
         "Japanese system prompt; otherwise the existing ZH prompt.",
     )
+    p.add_argument(
+        "--batch-isolation",
+        dest="batch_isolation",
+        type=str,
+        default="subprocess",
+        choices=["subprocess", "inprocess"],
+        help="F19: 'subprocess' (default) processes each PDF in a "
+        "dedicated worker process, so a native crash (PaddleOCR SIGSEGV) "
+        "kills at most one paper instead of the whole batch and resume "
+        "aggregates stay complete. 'inprocess' is the legacy behaviour.",
+    )
+    p.add_argument(
+        "--batch-worker-timeout-sec",
+        dest="batch_worker_timeout_sec",
+        type=int,
+        default=3600,
+        help="Kill a hung batch worker subprocess after this many seconds.",
+    )
     p.add_argument("--gemma-no-4bit", action="store_true")
     p.add_argument("--gemma-no-bfloat16", action="store_true")
     # Anthropic-compatible cloud API parameters. Every flag keeps its
@@ -1378,6 +1396,9 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             "llm_fallback_default": args.llm_fallback_default,
             "llm_interactive": args.llm_interactive,
             "data_outbound_policy": args.data_outbound_policy,
+            # F19: per-paper subprocess isolation (see --batch-isolation).
+            "batch_isolation": args.batch_isolation,
+            "batch_worker_timeout_sec": args.batch_worker_timeout_sec,
             # F18: --llm-profile materializes a saved preset into this
             # run's config (below, post-build) without touching the
             # saved active-preset pointer.

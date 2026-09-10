@@ -118,6 +118,7 @@ STRINGS = {
     "menu.view": "视图(&V)",
     "menu.view.jobs": "任务选项卡(&J)",
     "menu.view.results": "结果选项卡(&E)",
+    "menu.view.api": "&API 配置页",
     "menu.view.run": "运行选项卡(&R)",
     "menu.view.settings": "设置选项卡(&S)",
     "preview.actual": "1:1",

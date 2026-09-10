@@ -187,6 +187,11 @@ class TestBuildConfigPolicy:
         monkeypatch.delenv("MiniMax_API_KEY", raising=False)
         monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        # F19: neutralize the presets file too (a saved preset counts
+        # as a key; this test pins the no-key-at-all posture).
+        from rlpe.llm_settings import LLMApiSettings
+
+        monkeypatch.setattr("rlpe.llm_backends.load_llm_settings", lambda: LLMApiSettings())
         worker = _make_worker({"use_gpu": False}, tmp_path)
         cfg = worker._build_config()
         assert cfg.extra["data_outbound_policy"] == "local_only"

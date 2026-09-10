@@ -317,6 +317,7 @@ class JobOptions(BaseModel):
     llm_api_key: str | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None
+    batch_isolation: str | None = None  # "subprocess" | "inprocess" (F19)
     llm_enable_thinking: bool = False  # default OFF to avoid surprise API cost
     llm_thinking_budget_tokens: int = 1024
     llm_max_output_tokens: int | None = None
@@ -456,6 +457,15 @@ class JobOptions(BaseModel):
         # 0.0 means "always trust LLM"; 1.0 means "never trust LLM"
         if not (0.0 <= v <= 1.0):
             raise ValueError(f"gemma_conf_threshold must be in [0.0, 1.0], got {v!r}")
+        return v
+
+    @field_validator("batch_isolation")
+    @classmethod
+    def _validate_batch_isolation(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if v not in {"subprocess", "inprocess"}:
+            raise ValueError(f"batch_isolation must be 'subprocess' or 'inprocess', got {v!r}")
         return v
 
     @field_validator("llm_thinking_budget_tokens")
@@ -3349,6 +3359,7 @@ def _run_job(job_id: str, pdf_path: Path, options: dict[str, Any] | None = None)
             "llm_api_key",
             "llm_base_url",
             "llm_model",
+            "batch_isolation",
             "llm_enable_thinking",
             "llm_thinking_budget_tokens",
             "llm_max_output_tokens",

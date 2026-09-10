@@ -146,6 +146,24 @@ def _short_sha256_file(path: Path) -> str:
 _sha256_file = _short_sha256_file  # noqa: F811  (legacy alias for backward compat)
 
 
+def _append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    """True line-append for the per-paper incremental matches file.
+
+    Concurrent batch workers may append simultaneously; single
+    ``write()`` calls of complete lines are atomic enough on POSIX for
+    this crash-resume journal (the canonical aggregate is written by
+    the parent via ``write_jsonl``).
+    """
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    import json as _json
+
+    with open(path, "a", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(_json.dumps(r, ensure_ascii=False) + "\n")
+
+
 class RadiolarianPipeline:
     def __init__(
         self,
@@ -596,7 +614,20 @@ class RadiolarianPipeline:
             if not pending_pdfs:
                 logger.info("run: all PDFs already checkpointed; nothing to do")
                 return []
-            futures = {pool.submit(self._process_one_pdf, p): p for p in pending_pdfs}
+            # F19: batch isolation. "subprocess" runs each paper in a
+            # dedicated ``python -m rlpe.worker`` process so a native
+            # crash (the recurring PaddleOCR SIGSEGV) kills at most ONE
+            # paper instead of the whole batch; the parent collects rows
+            # from every paper and writes the aggregate once.
+            isolation = str(self.config.extra.get("batch_isolation", "inprocess"))
+            if isolation == "subprocess":
+                worker_config_path = self._dump_worker_config()
+                submit_fn = lambda p: self._process_one_pdf_in_subprocess(  # noqa: E731
+                    p, worker_config_path
+                )
+            else:
+                submit_fn = self._process_one_pdf
+            futures = {pool.submit(submit_fn, p): p for p in pending_pdfs}
             try:
                 # Phase 42: also check cancel_event at the top of the
                 # loop so a Cancel that arrives BEFORE any PDF
@@ -622,6 +653,9 @@ class RadiolarianPipeline:
                         # this return path.
                         cancelled_fast = True
                         pool.shutdown(wait=False, cancel_futures=True)
+                        rows = self._merge_resume_rows(
+                            self.config.manifests_dir() / "matches.jsonl", rows
+                        )
                         write_jsonl(self.config.manifests_dir() / "matches.jsonl", rows)
                         return rows
                     pdf = futures[fut]
@@ -674,6 +708,10 @@ class RadiolarianPipeline:
                 pass
 
         manifest_path = self.config.manifests_dir() / "matches.jsonl"
+        # F19: resume merge FIRST so the aggregate (matches.jsonl AND
+        # run_output.json, built from ``rows`` below) carries prior
+        # attempts' papers too.
+        rows = self._merge_resume_rows(manifest_path, rows)
         write_jsonl(manifest_path, rows)
         # Canonical data package (matches.jsonl is raw per-row; run_output.json
         # is the validated, deduped, schema-shaped bundle that downstream
@@ -1005,21 +1043,19 @@ class RadiolarianPipeline:
 
         self._emit_progress(1, 1, f"Finished {pdf_path.name} ({len(rows)} matches)")
         # Audit 2026-09-01 (P0 A3 / architectural P0 #4 follow-up):
-        # append this paper's rows to ``matches.jsonl`` IMMEDIATELY
-        # so a crashed batch (SIGKILL / OOM / Ctrl-C) preserves the
-        # work done so far. The previous code only wrote
-        # ``matches.jsonl`` once, at the end of ``run()``, so a
-        # failure at PDF 150/200 lost all 150 papers' results.
-        # Append mode is line-atomic on POSIX filesystems, so a
-        # reader sees either the pre-existing content or the new
-        # line — never a torn write. Re-running the same batch
-        # produces duplicated lines, which the eval / dedup
-        # pipelines already tolerate via paper_id grouping.
+        # append this paper's rows to the incremental matches file
+        # IMMEDIATELY so a crashed batch (SIGKILL / OOM / Ctrl-C)
+        # preserves the work done so far. F19 review: this MUST be a
+        # true append — the previous implementation called
+        # ``write_jsonl`` (atomic REPLACE) here, so with concurrent
+        # batch workers each paper's write clobbered the previous
+        # one and the "incremental" file only ever held the last
+        # paper's rows. True line-append is atomic on POSIX and
+        # duplicated lines (re-runs) are tolerated downstream via
+        # paper_id grouping + keep-last dedup in the resume merge.
         try:
-            from .utils import write_jsonl as _write_jsonl
-
             _matches_path = Path(self.config.work_dir) / "manifests" / "matches.jsonl"
-            _write_jsonl(_matches_path, rows)
+            _append_jsonl(_matches_path, rows)
             logger.debug(
                 "_process_one_pdf: appended %d rows for %s to matches.jsonl "
                 "(per-paper incremental persistence)",
@@ -2442,6 +2478,174 @@ class RadiolarianPipeline:
         # Round 11: dedup + drop stub rows + drop empty/invalid rows.
         # See ``_finalize_rows`` for the bug fixes this addresses.
         return self._finalize_rows(results, pdf_path=pdf_path)
+
+    # ----- F19: batch subprocess isolation ---------------------------------
+
+    def _dump_worker_config(self) -> Path:
+        """Serialise this run's full config for the worker subprocesses.
+
+        Written once per batch into the work dir with mode 0600; includes
+        the resolved LLM credentials that ``save_config`` would strip
+        (see ``config_io.dump_worker_config``).
+        """
+        from .config_io import dump_worker_config
+
+        path = self.config.work_dir / "manifests" / ".batch_worker_config.json"
+        self.config.work_dir.mkdir(parents=True, exist_ok=True)
+        self.config.manifests_dir().mkdir(parents=True, exist_ok=True)
+        dump_worker_config(self.config, path)
+        return path
+
+    def _process_one_pdf_in_subprocess(
+        self, pdf_path: Path, worker_config_path: Path
+    ) -> list[dict[str, Any]]:
+        """Process one PDF in a dedicated worker subprocess.
+
+        A native crash (PaddleOCR SIGSEGV, CUDA abort, ...) takes down
+        only this paper: the parent records an
+        ``_ingestion_worker_crash`` stub row (visible in the web UI and
+        warnings) and the batch continues. A slow/hung worker is killed
+        after ``extra["batch_worker_timeout_sec"]`` (default 3600s).
+        """
+        import json as _json
+        import subprocess as _subprocess
+
+        from .utils import stable_id as _stable_id
+
+        stem = _stable_id(pdf_path)
+        out_path = self.config.work_dir / "manifests" / f".worker_rows_{stem}.json"
+        cmd = [
+            sys.executable,
+            "-m",
+            "rlpe.worker",
+            "--config",
+            str(worker_config_path),
+            "--pdf",
+            str(pdf_path),
+            "--out",
+            str(out_path),
+        ]
+        env = os.environ.copy()
+        # Make the CURRENT rlpe importable in the child (dev checkouts
+        # run from src/ without an installed package).
+        rlpe_parent = str(Path(__file__).resolve().parents[1])
+        env["PYTHONPATH"] = rlpe_parent + os.pathsep + env.get("PYTHONPATH", "")
+        timeout = int(self.config.extra.get("batch_worker_timeout_sec", 3600))
+        try:
+            proc = _subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                cwd=str(Path(__file__).resolve().parents[2]),
+            )
+        except _subprocess.TimeoutExpired:
+            logger.error(
+                "worker subprocess timed out after %ss for %s — recording crash stub",
+                timeout,
+                pdf_path.name,
+            )
+            return self._worker_crash_stub(pdf_path, stem, f"timeout after {timeout}s")
+        if proc.returncode != 0 or not out_path.exists():
+            tail = (proc.stderr or proc.stdout or "")[-400:]
+            logger.error(
+                "worker subprocess crashed (exit=%s) for %s — recording crash stub; stderr tail: %s",
+                proc.returncode,
+                pdf_path.name,
+                tail,
+            )
+            return self._worker_crash_stub(pdf_path, stem, f"worker exit={proc.returncode}")
+        try:
+            rows = _json.loads(out_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.error("worker rows unreadable for %s: %s", pdf_path.name, exc)
+            return self._worker_crash_stub(pdf_path, stem, f"unreadable rows: {exc}")
+        finally:
+            out_path.unlink(missing_ok=True)
+        logger.info("worker subprocess OK for %s (%s rows)", pdf_path.name, len(rows))
+        return rows
+
+    @staticmethod
+    def _worker_crash_stub(pdf_path: Path, stem: str, reason: str) -> list[dict[str, Any]]:
+        """Ingestion-style stub so a subprocess-crashed paper stays
+        visible in matches.jsonl / warnings instead of vanishing."""
+        return [
+            {
+                "paper_id": stem,
+                "figure_id": "_ingestion_worker_crash",
+                "panel_id": "_WORKER_CRASH",
+                "species": None,
+                "panel_path": None,
+                "bbox": None,
+                "confidence": 0.0,
+                "label_text": None,
+                "caption_snippet": None,
+                "metadata": {
+                    "ingestion_warning": True,
+                    "ingestion_error": (
+                        f"worker subprocess crashed while processing {pdf_path.name}: "
+                        f"{reason} (native-layer instability — re-run this paper)"
+                    ),
+                },
+            }
+        ]
+
+    def _load_prior_rows(self, manifest_path: Path) -> list[dict[str, Any]]:
+        """Load rows from a previous run's matches.jsonl (resume merge)."""
+        import json as _json
+
+        if not manifest_path.exists():
+            return []
+        try:
+            prior = _json.loads(
+                "["
+                + manifest_path.read_text(encoding="utf-8").replace("}\n", "},\n").rstrip(",\n")
+                + "]"
+            )
+        except (OSError, ValueError):
+            logger.warning("run: could not parse prior matches.jsonl for resume merge")
+            return []
+        return prior if isinstance(prior, list) else []
+
+    def _merge_resume_rows(
+        self, manifest_path: Path, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """F19: carry prior-run rows for papers NOT reprocessed this run.
+
+        Without this, a crash + ``--resume`` chain loses every earlier
+        attempt's rows from the aggregate (each attempt rewrote
+        matches.jsonl with only its own papers).
+        """
+        if not bool(self.config.extra.get("resume", False)):
+            return rows
+        prior = self._load_prior_rows(manifest_path)
+        # F19: also recover the per-paper incremental journal the
+        # workers append to — it survives a parent crash between
+        # papers, which the canonical file (written once, at the end
+        # of a full run) does not. Keep-last per paper_id.
+        incremental = self._load_prior_rows(
+            Path(self.config.work_dir) / "manifests" / "matches.jsonl"
+        )
+        if incremental:
+            latest: dict[str, dict[str, Any]] = {}
+            for r in incremental:
+                latest[r.get("paper_id")] = r
+            seen_pids = {r.get("paper_id") for r in prior}
+            prior = prior + [r for r in latest.values() if r.get("paper_id") not in seen_pids]
+        if not prior:
+            return rows
+        current_pids = {r.get("paper_id") for r in rows}
+        carried = [r for r in prior if r.get("paper_id") not in current_pids]
+        if carried:
+            carried_papers = len({r.get("paper_id") for r in carried})
+            logger.info(
+                "run: resume merge — carrying %d prior rows (%d papers) into the aggregate",
+                len(carried),
+                carried_papers,
+            )
+            rows = carried + rows
+        return rows
 
     def _apply_stage3_bbox_crops(
         self,

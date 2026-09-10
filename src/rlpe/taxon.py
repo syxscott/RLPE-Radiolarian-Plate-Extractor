@@ -237,6 +237,39 @@ def _is_valid_species(species: str | None) -> bool:
             return False
         if len(words) > 6:
             return False
+    # F19 review: English non-taxon first words seen leaking through
+    # the OCR page-rescue path ("Portrait of", "New", "Report of the
+    # collection"). A real genus never starts with these common words —
+    # check BEFORE the >40-char function-word rule, which these short
+    # fragments slip past.
+    _non_taxon_first_words = {
+        "portrait",
+        "portraits",
+        "new",
+        "report",
+        "reports",
+        "figure",
+        "figures",
+        "fig",
+        "figs",
+        "plate",
+        "plates",
+        "collection",
+        "cover",
+        "contents",
+        "note",
+        "notes",
+        "observation",
+        "observations",
+        "list",
+        "sketch",
+        "map",
+        "table",
+    }
+    first_word = s.split(maxsplit=1)[0].lower().rstrip(".,;:?!")
+    if first_word in _non_taxon_first_words:
+        return False
+
     # Cheap placeholder-token guard. The LLM sometimes emits these
     # when it cannot determine the species from the image alone.
     placeholder_tokens = {

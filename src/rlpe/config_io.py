@@ -200,3 +200,54 @@ def load_config(path: Path) -> PipelineConfig:
         yolo_device=_coerce("yolo_device", payload.get("yolo_device", "auto"), "auto"),
         extra=payload.get("extra", {}) or {},
     )
+
+
+# ---------------------------------------------------------------------------
+# F19: worker subprocess config handoff (batch_isolation="subprocess")
+# ---------------------------------------------------------------------------
+
+# Secret keys save_config strips but the worker subprocess needs to
+# build the identical backend.
+_WORKER_SECRET_KEYS = ("llm_api_key", "MiniMax_api_key", "MiniMax_endpoint", "MiniMax_model")
+
+
+def dump_worker_config(config: PipelineConfig, path: Path) -> Path:
+    """Write the FULL worker configuration to *path* (mode 0600).
+
+    ``save_config`` deliberately strips credential keys; the worker
+    subprocess must build the exact same backend as the parent, so the
+    resolved secrets are re-injected here. The non-serialisable
+    ``_llm_external_handler`` callback stays excluded (a subprocess
+    cannot share the parent's FallbackHandler; the worker falls back to
+    the configured default action).
+    """
+    save_config(config, path)
+    payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    extra = payload.get("extra") or {}
+    for key in _WORKER_SECRET_KEYS:
+        value = (config.extra or {}).get(key)
+        if value:
+            extra[key] = value
+    payload["extra"] = extra
+
+    import os as _os
+    import tempfile as _tempfile
+
+    fd, tmp_name = _tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        _os.chmod(tmp_name, 0o600)
+        _os.replace(tmp_name, path)
+    except Exception:
+        try:
+            _os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def load_worker_config(path: Path) -> PipelineConfig:
+    """Load a worker config written by :func:`dump_worker_config`."""
+    return load_config(path)

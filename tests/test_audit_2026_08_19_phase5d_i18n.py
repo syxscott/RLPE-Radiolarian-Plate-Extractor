@@ -73,7 +73,7 @@ def test_main_window_tabs_have_object_names():
     from rlpe.gui.main_window import MainWindow
 
     src = inspect.getsource(MainWindow)
-    assert '("tab.run", "tab.jobs", "tab.results", "tab.settings")' in src, (
+    assert '("tab.run", "tab.jobs", "tab.results", "tab.api", "tab.settings")' in src, (
         "MainWindow._refresh_texts missing the tab-key tuple — "
         "tab labels won't translate on language switch."
     )

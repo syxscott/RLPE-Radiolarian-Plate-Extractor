@@ -196,7 +196,7 @@ def test_status_bar_running_uses_i18n():
 
     w = MainWindow()
     i18n.set_language("zh_CN")
-    w._on_job_started("abc123", "/tmp/x")
+    w._on_job_started("abc123", "/tmp/x", "/tmp/out")
     text = w._status_perm.text()
     # ZH should contain "任务" (job) and the id
     assert "任务" in text and "abc123" in text, (

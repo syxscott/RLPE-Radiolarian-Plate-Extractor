@@ -246,3 +246,35 @@ def _reset_gemma_prompt_cache():
     except Exception:
         # Never let a fixture error mask a real test failure.
         pass
+
+
+# --------------------------------------------------------------
+# F19: isolate the persisted LLM presets file per-test.
+# --------------------------------------------------------------
+# ``~/.rlpe/llm_api.json`` is part of the F17/F18 resolution chain
+# (per-run option > saved presets > env). Any developer machine that
+# has saved a preset therefore has "a key", which silently flips every
+# test that asserts a no-key posture (worker policy resolution,
+# llm-status, backend-init guards). Redirect the presets store into the
+# test's tmp dir by default; tests that need specific presets write
+# them through ``rlpe.llm_settings`` and keep working (the patched
+# binding below delegates to the real loader with the redirected path,
+# and late-binding call sites see test-level patches too).
+@pytest.fixture(autouse=True)
+def _isolate_llm_presets(monkeypatch, tmp_path):
+    import rlpe.llm_backends as _lb
+    import rlpe.llm_settings as _ls
+
+    target = tmp_path / "llm_api.json"
+    monkeypatch.setattr(_ls, "settings_path", lambda home=None: target)
+    # llm_backends binds ``load_llm_settings`` at import time; rebind it
+    # to the REAL loader (captured before any test-level patch) resolved
+    # against the redirected path, so an empty store is the default and
+    # the binding stays argument-compatible with the real function.
+    _real_load = _ls.load_llm_settings
+
+    def _load_redirected():
+        return _real_load(target)
+
+    monkeypatch.setattr(_lb, "load_llm_settings", _load_redirected)
+    yield

@@ -225,18 +225,18 @@ def test_extract_column_page_index_handles_missing_metadata():
 # MAJOR-1: apply_settings uses findData not findText
 # ============================================================
 def test_run_tab_apply_settings_restores_llm_backend_by_iso_code():
-    """Phase 53 MAJOR-1 fix: apply_settings must use findData for the
-    LLM backend combo (ISO code "minimax-m3" in userData). Before
-    the fix, findText("minimax-m3") failed to match the friendly
-    label "MiniMax-M3 (备用接入点)"."""
+    """Phase 53 MAJOR-1 (findData) still applies; F17/F18 update the
+    expectation: the vendor alias code "minimax-m3" is no longer a
+    combo option, so apply_settings must fall back to the canonical
+    cloud backend "anthropic" instead of keeping a stale selection."""
     from rlpe.gui.run_tab import RunTab
 
     rt = RunTab({})
     rt.apply_settings({"llm_backend": "minimax-m3"})
     settings = rt.collect_settings()
-    assert settings["llm_backend"] == "minimax-m3", (
-        f"apply_settings should restore llm_backend='minimax-m3' by ISO code, "
-        f"got {settings['llm_backend']!r} (MAJOR-1 bug: findText vs findData)"
+    assert settings["llm_backend"] == "anthropic", (
+        f"apply_settings on a legacy alias code must resolve to "
+        f"'anthropic', got {settings['llm_backend']!r}"
     )
 
 
