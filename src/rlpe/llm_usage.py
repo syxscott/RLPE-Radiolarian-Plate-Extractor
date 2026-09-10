@@ -78,7 +78,6 @@ def collect_llm_usage(runtime: Any) -> dict[str, Any] | None:
             "total_calls",
             "input_tokens",
             "total_input_tokens",
-            "total_cost_cny",
         )
     )
     if not has_signal:

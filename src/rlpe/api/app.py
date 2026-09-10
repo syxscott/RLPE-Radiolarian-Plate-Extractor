@@ -2706,14 +2706,18 @@ def llm_status() -> dict[str, Any]:
             rows = job.get("result") or []
             for r in rows:
                 md = (r or {}).get("metadata") or {}
-                req_id = md.get("llm_request_id")
+                # F17 compat: rows produced before the rename carry the
+                # vendor-branded key; reading both keeps the call counter
+                # honest for old artifacts (one batch call = one count,
+                # not one count per panel row).
+                req_id = md.get("llm_request_id") or md.get("MiniMax_request_id")
                 if not req_id:
                     no_id_count += 1
                     continue
                 if req_id in seen_requests:
                     continue
                 seen_requests.add(req_id)
-                usage = md.get("llm_usage")
+                usage = md.get("llm_usage") or md.get("MiniMax_usage")  # F17 legacy fallback
                 if isinstance(usage, dict):
                     try:
                         total_input_tokens += int(usage.get("input_tokens") or 0)

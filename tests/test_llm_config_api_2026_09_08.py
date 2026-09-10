@@ -22,12 +22,16 @@ def api(monkeypatch, tmp_path: Path):
     TestClient = pytest.importorskip("fastapi.testclient").TestClient
     # Deterministic auth + redirect the settings file into tmp_path.
     monkeypatch.delenv("RLPE_API_KEY", raising=False)
-    monkeypatch.setenv("RLPE_SETTINGS_HOME", str(tmp_path))
     import rlpe.llm_settings as ls
 
-    monkeypatch.setattr(ls, "settings_path", lambda home=None: tmp_path / "llm_api.json")
+    target = tmp_path / "llm_api.json"
+    monkeypatch.setattr(ls, "settings_path", lambda home=None: target)
     from rlpe.api import app as api_app
 
+    # api/app.py binds ``settings_path`` at import time via from-import;
+    # patch that binding too so the fixture stays hermetic regardless of
+    # whether another test module imported rlpe.api.app first.
+    monkeypatch.setattr(api_app, "llm_settings_path", lambda: target, raising=False)
     return TestClient(api_app.app)
 
 

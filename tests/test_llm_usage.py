@@ -133,13 +133,15 @@ def test_cost_summary_exception_does_not_crash():
     assert out["total_output_tokens"] == 50
 
 
-def test_total_cost_cny_alone_is_sufficient_signal():
-    """A run that only saw cost_cny (no call counter) still emits a sidecar."""
+def test_cost_only_summary_is_not_a_usage_signal():
+    """F17 removed cost accounting: a backend whose cost_summary carries
+    ONLY the (now never-produced) total_cost_cny key must NOT emit a
+    sidecar — call/token counters are the usage signal now. Renamed from
+    the pre-F17 inverse assertion (cost alone WAS a sufficient signal)."""
     backend = _Backend(cost_summary_payload={"total_cost_cny": 0.001})
     runtime = _Runtime(backend)
     out = collect_llm_usage(runtime)
-    assert out is not None
-    assert out["total_cost_cny"] == 0.001
+    assert out is None
 
 
 def test_returns_none_when_all_counters_are_zero():

@@ -898,15 +898,28 @@ class SettingsTab(QWidget):
             self._llm_backend.setCurrentIndex(ix)
         # F17 migration: pre-F17 GUI stored the model under "m3_model"
         # and never had an endpoint field; migrate them once.
+        # F17 load order: the SHARED settings file (~/.rlpe/llm_api.json,
+        # also written by the Web settings tab) wins per-field; QSettings
+        # (and its pre-F17 legacy keys) fill in whatever the file does
+        # not have. Without the file-first read, a config saved from the
+        # Web UI would be invisible here AND clobbered by Save.
         legacy_model = str(self._qsettings.value("m3_model", "") or "")
-        model_val = str(self._qsettings.value("llm_model", "") or "") or legacy_model
-        self._llm_model.setText(model_val or DEFAULT_LLM_MODEL)
-        # BUG-1 (audit 2026-09-04): restore the LLM key + outbound
-        # policy. Missing policy → "auto" (the new worker-side resolver
-        # picks api_redacted/local_only from key availability).
+        qs_model = str(self._qsettings.value("llm_model", "") or "") or legacy_model
+        qs_base_url = str(self._qsettings.value("llm_base_url", "") or "")
         legacy_key = str(self._qsettings.value("MiniMax_api_key", "") or "")
-        key_val = str(self._qsettings.value("llm_api_key", "") or "") or legacy_key
-        self._llm_api_key.setText(key_val)
+        qs_key = str(self._qsettings.value("llm_api_key", "") or "") or legacy_key
+        try:
+            from ..llm_settings import load_llm_settings
+
+            _saved = load_llm_settings()
+        except Exception:
+            _saved = None
+        saved_base_url = _saved.base_url if _saved else ""
+        saved_key = _saved.api_key if _saved else ""
+        saved_model = _saved.model if _saved else ""
+        self._llm_base_url.setText(saved_base_url or qs_base_url)
+        self._llm_api_key.setText(saved_key or qs_key)
+        self._llm_model.setText(saved_model or qs_model or DEFAULT_LLM_MODEL)
         outbound = self._qsettings.value("data_outbound_policy", "auto")
         outbound_ix = self._data_outbound.findData(outbound)
         if outbound_ix >= 0:

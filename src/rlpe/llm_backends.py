@@ -1671,7 +1671,10 @@ class AnthropicCompatBackend(BaseLLMBackend):
         # Skip the check for ``local_only`` because the backend never makes
         # an outbound call in that mode.
         if self.data_outbound_policy != "local_only":
-            self.base_url = _validate_llm_host(self.base_url)
+            # Empty check MUST come before the SSRF guard: otherwise the
+            # unconfigured case surfaces as a confusing
+            # "host must use http or https scheme, got ''" instead of
+            # the actionable message below (F17 review fix).
             if not self.base_url:
                 raise ValueError(
                     "base_url is required (no vendor default exists). Provide one via:\n"
@@ -1681,6 +1684,7 @@ class AnthropicCompatBackend(BaseLLMBackend):
                     "  - environment variable ANTHROPIC_BASE_URL\n"
                     "  - .env file (see .env.example)"
                 )
+            self.base_url = _validate_llm_host(self.base_url)
         if not self.api_key and self.data_outbound_policy != "local_only":
             raise ValueError(
                 "api_key is required (set ANTHROPIC_API_KEY env, save a key in the "

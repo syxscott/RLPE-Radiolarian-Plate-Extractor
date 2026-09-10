@@ -609,6 +609,9 @@ def build_parser() -> argparse.ArgumentParser:
             "minimax",
             "minimax-m3",
             "minimax_api",
+            "MiniMax",
+            "MiniMax-m3",
+            "MiniMax_api",
         ],
         help="LLM backend. 'anthropic' = any Anthropic-compatible cloud "
         "API (configured via --llm-api-key/--llm-base-url/--llm-model, "

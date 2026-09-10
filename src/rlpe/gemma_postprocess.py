@@ -487,8 +487,6 @@ def apply_gemma_to_matches(
         # regression guard).
         if out.get("request_id"):
             match.metadata["llm_request_id"] = str(out.get("request_id"))
-        if out.get("cost_cny") is not None:
-            match.metadata["@@COST_DELETE@@"] = float(out.get("cost_cny"))
         if out.get("model_version"):
             match.metadata["llm_model_version"] = str(out.get("model_version"))
         if isinstance(out.get("usage"), dict):
@@ -600,8 +598,6 @@ def batch_gemma_postprocess_rows(
             new_row["gemma_error_type"] = str(result.get("error_type"))
         if result.get("request_id"):
             new_row["llm_request_id"] = str(result.get("request_id"))
-        if result.get("cost_cny") is not None:
-            new_row["@@COST_DELETE@@"] = float(result.get("cost_cny"))
         if result.get("model_version"):
             new_row["llm_model_version"] = str(result.get("model_version"))
         # M22: propagate per-call ``usage`` token accounting into the

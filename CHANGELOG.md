@@ -69,6 +69,25 @@ last-used configuration persisted and shared across all three frontends.
   Call counts and input/output token counters are kept (now surfaced
   in `/system/llm-status` as `total_input_tokens`/`total_output_tokens`).
 
+### Fixed (F17 self-review pass, same day)
+- `llm_backends.py` — empty `base_url` hit the SSRF guard before the
+  friendly "base_url is required" check, so the unconfigured case
+  surfaced as "host must use http or https scheme, got ''" instead of
+  the actionable guidance. Reordered.
+- `gui/settings_tab.py` — `_load` never read the shared settings file:
+  a config saved from the Web UI was invisible in the GUI AND would be
+  clobbered by a GUI save. The file now wins per-field with QSettings
+  (incl. legacy keys) as fallback.
+- `api/app.py` — llm-status usage aggregation now also reads the
+  legacy `MiniMax_request_id`/`MiniMax_usage` metadata keys, so
+  pre-F17 artifacts dedup correctly (one batch call = one count)
+  instead of inflating `total_calls` per panel row.
+- `gemma_postprocess.py` — removed two leftover cost-propagation
+  blocks that the sweep had reduced to `@@...@@` placeholder keys.
+- `cli.py` — capitalised legacy backend values (`MiniMax`, `MiniMax-m3`,
+  `MiniMax_api`) re-added to `--llm-backend` choices so old command
+  lines keep working.
+
 ### Tests
 - New: `tests/test_llm_settings_2026_09_08.py` (persistence,
   permissions, atomicity, corruption tolerance),
