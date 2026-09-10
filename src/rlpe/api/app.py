@@ -463,8 +463,8 @@ class JobOptions(BaseModel):
     def _validate_thinking_budget(cls, v: int) -> int:
         if v < 0:
             raise ValueError(f"llm_thinking_budget_tokens must be >= 0, got {v!r}")
-        if v > 32_000:
-            raise ValueError(f"llm_thinking_budget_tokens must be <= 32000, got {v!r}")
+        if v > 131_072:
+            raise ValueError(f"llm_thinking_budget_tokens must be <= 131072 (128K), got {v!r}")
         return v
 
     @field_validator(
@@ -2735,6 +2735,7 @@ def llm_status() -> dict[str, Any]:
     probe_extra: dict[str, Any] = {}
     active_endpoint = resolve_llm_base_url(probe_extra)
     active_model = resolve_llm_model(probe_extra)
+    saved_view = load_llm_settings()
 
     return {
         "key_configured": key_configured,
@@ -2742,6 +2743,7 @@ def llm_status() -> dict[str, Any]:
         "key_source": key_source,
         "active_endpoint": active_endpoint,
         "active_model": active_model,
+        "active_profile": saved_view.profile_name,
         "base_url_configured": bool(active_endpoint),
         "model_configured": bool(active_model),
         "total_calls": total_calls,
@@ -2828,6 +2830,119 @@ def post_llm_config(
         )
     save_llm_settings(saved)
     return get_llm_config()
+
+
+class LLMProviderRequest(BaseModel):
+    """Body for POST /system/llm-providers (F18 multi-provider presets).
+
+    - With ``id``: update that preset in place. Without: create one.
+    - ``api_key``: ``None`` = keep the stored key on update (required on
+      create); ``""`` = explicitly clear it; non-empty = replace.
+    - ``name`` / ``base_url`` / ``model`` overwrite when provided.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    id: str | None = None
+    name: str = ""
+    base_url: str = ""
+    api_key: str | None = None
+    model: str = ""
+
+
+def _provider_entry(p: Any, *, is_current: bool) -> dict[str, Any]:
+    """Serialise a ProviderConfig for the API — the raw key NEVER leaves
+    the process; only a masked preview and a boolean."""
+    return {
+        "id": p.id,
+        "name": p.name,
+        "base_url": p.base_url,
+        "model": p.model,
+        "api_key_set": bool(p.api_key),
+        "api_key_preview": _mask_api_key(p.api_key) if p.api_key else None,
+        "updated_at": p.updated_at,
+        "current": is_current,
+    }
+
+
+@app.get("/system/llm-providers")
+def list_llm_providers(
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
+    """List all saved provider presets with the active one flagged."""
+    from ..llm_settings import current_provider_id, list_providers
+
+    providers = list_providers()
+    current = current_provider_id()
+    return {
+        "current": current,
+        "providers": [_provider_entry(p, is_current=(p.id == current)) for p in providers],
+    }
+
+
+@app.post("/system/llm-providers")
+def save_llm_provider(
+    req: LLMProviderRequest,
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Create or update a provider preset (F18).
+
+    Update semantics: fields overwrite; an absent (None) ``api_key``
+    keeps the stored key so the model/address can be edited without
+    re-typing the secret. Creating the first preset auto-activates it.
+    """
+    from ..llm_settings import ProviderConfig, get_provider, upsert_provider
+
+    existing = get_provider(req.id) if req.id else None
+    if req.id and existing is None:
+        raise HTTPException(status_code=404, detail=f"Unknown provider id: {req.id}")
+    api_key = existing.api_key if req.api_key is None else req.api_key.strip()
+    if req.api_key and not (req.base_url.strip() or (existing and existing.base_url)):
+        raise HTTPException(
+            status_code=400,
+            detail="base_url is required when saving an api_key "
+            "(no vendor default exists — fill in the API address first).",
+        )
+    stored = upsert_provider(
+        ProviderConfig(
+            name=req.name.strip() or (existing.name if existing else ""),
+            base_url=req.base_url.strip() or (existing.base_url if existing else ""),
+            api_key=api_key,
+            model=req.model.strip() or (existing.model if existing else ""),
+            id=req.id or "",
+        ),
+        activate=False,
+    )
+    from ..llm_settings import current_provider_id
+
+    entry = _provider_entry(stored, is_current=(stored.id == current_provider_id()))
+    return entry
+
+
+@app.post("/system/llm-providers/{provider_id}/activate")
+def activate_llm_provider(
+    provider_id: str,
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Switch the active provider preset (F18 "随时切换")."""
+    from ..llm_settings import set_current_provider
+
+    if not set_current_provider(provider_id):
+        raise HTTPException(status_code=404, detail=f"Unknown provider id: {provider_id}")
+    return {"current": provider_id, "ok": True}
+
+
+@app.delete("/system/llm-providers/{provider_id}")
+def delete_llm_provider(
+    provider_id: str,
+    _auth: None = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Remove a preset; deleting the active one promotes the first
+    remaining preset (or leaves the file empty)."""
+    from ..llm_settings import delete_provider
+
+    if not delete_provider(provider_id):
+        raise HTTPException(status_code=404, detail=f"Unknown provider id: {provider_id}")
+    return {"deleted": provider_id, "ok": True}
 
 
 class TestLLMRequest(BaseModel):

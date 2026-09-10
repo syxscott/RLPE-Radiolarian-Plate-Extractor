@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QProgressBar,
     QScrollArea,
@@ -34,7 +33,6 @@ from .constants import (
     DEFAULT_GROBID_TIMEOUT,
     DEFAULT_GROBID_URL,
     DEFAULT_LLM_BACKEND,
-    DEFAULT_LLM_MODEL,
     DEFAULT_LLM_PROMPT_LANG,
     DEFAULT_LLM_TIMEOUT,
     DEFAULT_OCR_BACKEND,
@@ -379,9 +377,9 @@ class RunTab(QWidget):
         lbl, w = tr_form_row("runtab.label.llm_lang", self._llm_lang)
         adv_layout.addRow(lbl, w)
 
-        self._llm_model_edit = QLineEdit(DEFAULT_LLM_MODEL)
-        lbl, w = tr_form_row("runtab.label.llm_model", self._llm_model_edit)
-        adv_layout.addRow(lbl, w)
+        # F18: the model name lives in the provider preset (API tab),
+        # not here — removing the field avoids a stale cached model
+        # overriding a provider switch.
 
         self._llm_budget = QSpinBox()
         self._llm_budget.setRange(*RANGE_LLM_BUDGET)
@@ -539,17 +537,15 @@ class RunTab(QWidget):
             "min_panel_score": self._panel_score.value(),
             "use_gpu": self._gpu_check.isChecked(),
             "llm_backend": self._llm_combo.currentData() or self._llm_combo.currentText(),
-            # BUG-1 (audit 2026-09-04): forward the LLM auth keys from
-            # the shared Settings-tab dict (same pattern as the YOLO
-            # keys above — the controls live in SettingsTab). Without
-            # this the worker never saw a key/policy and always ran
-            # local_only, silently disabling the LLM.
-            "llm_api_key": str(self._settings.get("llm_api_key", "") or ""),
+            # F18: the API key / base URL / model are NOT collected
+            # here any more — runs resolve the ACTIVE provider preset
+            # from ~/.rlpe/llm_api.json at pipeline-build time (managed
+            # in the API tab), so a provider switch is never shadowed by
+            # a stale cached key. The outbound policy still rides along.
             "data_outbound_policy": str(
                 self._settings.get("data_outbound_policy", "auto") or "auto"
             ),
             "llm_prompt_lang": self._llm_lang.currentData() or self._llm_lang.currentText(),
-            "llm_model": self._llm_model_edit.text().strip() or DEFAULT_LLM_MODEL,
             "llm_thinking_budget": self._llm_budget.value(),
             "llm_max_output_tokens": self._llm_output.value(),
             "llm_timeout_sec": self._llm_timeout.value(),
@@ -624,8 +620,6 @@ class RunTab(QWidget):
                 ix = self._llm_lang.findText(lang)
             if ix >= 0:
                 self._llm_lang.setCurrentIndex(ix)
-        if "llm_model" in s:
-            self._llm_model_edit.setText(str(s["llm_model"]))
         for k, sb in (
             ("llm_thinking_budget", self._llm_budget),
             ("llm_max_output_tokens", self._llm_output),

@@ -5,6 +5,68 @@ All notable changes to RLPE are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased 20] - 2026-09-11 — F18: multi-provider API presets (cc-switch model) + API tab + 128K ceilings
+
+The single saved API configuration became a named-preset list with an
+active pointer: save several Anthropic-compatible providers (MiniMax,
+DeepSeek, Kimi, ...) and switch between them instantly. The API
+configuration also moved out of "Settings" into a dedicated first-class
+tab in both the Web UI and the desktop GUI.
+
+### Added
+- `llm_settings.py` v2 storage — `~/.rlpe/llm_api.json` now holds
+  `{version, current, providers: [{id, name, base_url, api_key, model,
+  updated_at}]}`. `load_llm_settings()` still returns the ACTIVE
+  preset's flat `{base_url, api_key, model}`, so the F17 resolution
+  chain (backend builder, CLI, Web, GUI) is unchanged — switching is
+  just a pointer flip. A pre-F18 flat file auto-migrates into a single
+  preset named "默认" with a content-derived stable id.
+- New preset operations: `list_providers / get_provider / upsert_provider
+  / delete_provider / set_current_provider / current_provider_id`.
+- Web API: `GET|POST /system/llm-providers`,
+  `POST /system/llm-providers/{id}/activate`,
+  `DELETE /system/llm-providers/{id}` (all under `require_api_key`).
+  Raw keys never leave the process — masked previews only; an absent
+  `api_key` on update keeps the stored secret. `/system/llm-status`
+  now reports `active_profile` (the active preset's name).
+- Web UI — new top-level 「API 配置」 tab (2nd position, after 上传):
+  preset cards (name / address / model / masked key / 使用中 badge)
+  with 启用 / 编辑 / 删除 actions, a create-and-edit form, and a
+  connection test against the active preset. The old settings-tab card
+  was removed; the upload tab's llm-status card links to the new tab
+  and shows the active preset name.
+- GUI — new `gui/api_tab.py` tab (「API 配置」, index 3, before
+  Settings): preset list, editor form with password echo + show toggle,
+  启用/编辑/删除/测试连接, i18n (en + zh_CN). `TAB_API` inserted into
+  the tab constants and the View menu.
+- CLI — `--llm-profile <name>`: materializes a saved preset into the
+  run's extra (per-run only; the saved active pointer is untouched).
+  Unknown names error with the list of saved presets.
+
+### Changed
+- Token ceilings raised 32000 → 131072 (128K) for thinking budget and
+  max output tokens: GUI `RANGE_LLM_*`, Web thinking-budget input max,
+  the `JobOptions` validator, and the SPA-side validation message.
+  (Providers with lower limits still reject at request time.)
+- GUI decoupling: the settings tab no longer stores/forwards
+  `llm_api_key` / `llm_base_url` / `llm_model` (fields removed from
+  settings and the Run tab's advanced view; the shared-cache forward
+  path in `run_tab.collect_settings` / `pipeline_worker._build_config`
+  dropped). Runs resolve the ACTIVE preset from the shared file at
+  pipeline-build time, so switching providers in the API tab takes
+  effect on the next run and can never be shadowed by a stale cached
+  key. The settings tab also no longer writes the presets file (a flat
+  write would corrupt the v2 layout).
+
+### Tests
+- New: multi-preset storage suite (v1→v2 migration, upsert/activate/
+  delete-current-promotes-first, stable migrated ids, compat-save
+  keeps the preset name), provider-endpoint suite (CRUD + activate +
+  masked keys + 404s + ceiling boundary).
+- Updated: GUI policy guards now pin the F18 architecture (provider
+  fields live in `api_tab.py`, settings must not touch the presets
+  file, run collection must not carry credentials).
+
 ## [Unreleased 19] - 2026-09-08 — F17: vendor-agnostic LLM API (settings persistence, de-branding, cost removal)
 
 The cloud LLM backend is no longer MiniMax-specific. Any provider that

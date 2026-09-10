@@ -641,8 +641,8 @@ function _buildLLMOptions() {
         if (thinkingRaw === '' || isNaN(thinkingBudget) || thinkingBudget < 0) {
             throw new Error(`思考 Token 预算必须是非负整数，当前值: "${thinkingRaw}"`);
         }
-        if (thinkingBudget > 32_000) {
-            throw new Error(`思考 Token 预算不能超过 32000，当前值: ${thinkingBudget}`);
+        if (thinkingBudget > 131_072) {
+            throw new Error(`思考 Token 预算不能超过 131072 (128K)，当前值: ${thinkingBudget}`);
         }
         // If enable_thinking is true, budget must be > 0
         if (options.llm_enable_thinking && thinkingBudget === 0) {
@@ -2842,7 +2842,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('llm-test-btn')?.addEventListener('click', testLLMConnection);
     // 7) Wire up the cost estimate update on file change
     initCostEstimate();
-    initLlmConfigCard();
+    initProviderManager();
     // 8) Show LLM usage in settings tab
     refreshLlmUsage();
     // 9) Wire up the results-tab batch delete + one-click delete (Round 16)
@@ -3138,6 +3138,11 @@ function _renderOutboundConsent(data) {
 // LLM status card — polls /system/llm-status to render
 //   ✅ Key configured  /  ⚠️ Key missing  /  ❌ Test failed
 // ====================================================================
+function _gotoApiTab() {
+    document.querySelector('.tab-btn[data-tab="api"]')?.click();
+    return false;
+}
+
 async function refreshLLMStatus() {
     const iconEl = document.getElementById('llm-status-icon');
     const bodyEl = document.getElementById('llm-status-body');
@@ -3156,6 +3161,7 @@ async function refreshLLMStatus() {
         // ``default_model`` aliases. Prefer the new names if present.
         const endpoint = data.active_endpoint || '—';
         const model = data.active_model || '（未配置）';
+        const profile = data.active_profile ? `（预设：${data.active_profile}）` : '';
         const totalCalls = Number(data.total_calls) || 0;
         if (data.key_configured) {
             if (iconEl) iconEl.textContent = '✅';
@@ -3168,11 +3174,12 @@ async function refreshLLMStatus() {
                 </span>
                 <span class="llm-status-detail">
                     来源：${escapeHtml(data.key_source || 'unknown')}
-                    · 当前模型：${escapeHtml(model)}
+                    · 当前模型：${escapeHtml(model)}${escapeHtml(profile)}
                     · Endpoint：${escapeHtml(endpoint)}
                 </span>
                 <span class="llm-status-detail">
-                    累计 ${totalCalls} 次调用
+                    累计 ${totalCalls} 次调用 ·
+                    <a href="#" onclick="return _gotoApiTab();">管理 API 预设</a>
                 </span>
             `;
         } else {
@@ -3182,10 +3189,13 @@ async function refreshLLMStatus() {
                     未检测到 LLM API Key
                 </span>
                 <span class="llm-status-detail">
-                    前往「设置」页的「LLM API 配置」填入任意 Anthropic 兼容服务的
-                    地址 / Key / 模型名（保存到 ~/.rlpe/llm_api.json，推荐）；
-                    或在项目根目录 <code>.env</code> 中写入
-                    <code>ANTHROPIC_API_KEY</code> 后重启服务。
+                    前往「API 配置」页保存任意 Anthropic 兼容服务的预设
+                    （MiniMax / DeepSeek / Kimi…，随时一键切换，保存到
+                    ~/.rlpe/llm_api.json）；或在项目根目录 <code>.env</code> 中
+                    写入 <code>ANTHROPIC_API_KEY</code> 后重启服务。
+                </span>
+                <span class="llm-status-detail">
+                    <a href="#" onclick="return _gotoApiTab();">→ 前往 API 配置</a>
                 </span>
             `;
         }
@@ -3353,86 +3363,176 @@ async function refreshLlmUsage() {
 }
 
 // ====================================================================
-// LLM API settings card (settings tab, F17). Loads the persisted
-// configuration (GET /system/llm-config), saves edits
-// (POST /system/llm-config) and runs the connection test against the
-// SAVED config. The raw key is never round-tripped: the server only
-// returns a masked preview, and an empty key field means "keep the
-// saved key".
+// LLM API provider presets (API tab, F18 — cc-switch style).
+// Multiple named presets (MiniMax / DeepSeek / Kimi / ...) stored in
+// ~/.rlpe/llm_api.json with an "active" pointer; switching is instant
+// because the backend resolve chain reads the active preset. Raw keys
+// are never round-tripped: the API only returns masked previews, and
+// an empty key field means "keep the stored key".
 // ====================================================================
-async function refreshLlmConfigCard() {
-    const statusEl = document.getElementById('llmcfg-status');
-    if (!statusEl) return;
+let _editingProviderId = null; // null = the form creates a new preset
+
+function _escapeAttr(v) {
+    return escapeHtml(String(v ?? ''));
+}
+
+async function loadProviders() {
+    const listEl = document.getElementById('provider-list');
+    if (!listEl) return;
     try {
-        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-config`);
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-providers`);
         if (!resp.ok) {
-            statusEl.innerHTML = `<span style="color: var(--text-muted);">未加载（HTTP ${resp.status}）</span>`;
+            listEl.innerHTML = `<p style="color: var(--danger-color);">读取预设失败（HTTP ${resp.status}）</p>`;
             return;
         }
         const data = await resp.json();
-        document.getElementById('llmcfg-base-url').value = data.base_url || '';
-        document.getElementById('llmcfg-model').value = data.model || '';
-        document.getElementById('llmcfg-api-key').value = '';
-        document.getElementById('llmcfg-api-key').placeholder = data.api_key_set
-            ? `已保存（${data.api_key_preview}）— 留空不修改`
-            : '留空 = 不修改已保存的 Key';
-        const bits = [];
-        bits.push(data.api_key_set ? 'Key 已保存' : 'Key 未保存');
-        bits.push(data.base_url ? `地址 ${data.base_url}` : '地址未配置');
-        bits.push(data.model ? `模型 ${data.model}` : '模型未配置');
-        if (data.updated_at) bits.push(`更新于 ${data.updated_at}`);
-        statusEl.innerHTML = `<span style="color: var(--text-muted);">${bits.join(' · ')}</span>`;
+        renderProviderList(data.providers || []);
     } catch (err) {
-        statusEl.innerHTML = `<span style="color: var(--danger-color);">读取失败：${escapeHtml(err.message || String(err))}</span>`;
+        listEl.innerHTML = `<p style="color: var(--danger-color);">读取失败：${escapeHtml(err.message || String(err))}</p>`;
     }
 }
 
-async function saveLlmConfig() {
-    const btn = document.getElementById('llmcfg-save-btn');
-    const statusEl = document.getElementById('llmcfg-status');
-    if (!btn || !statusEl) return;
-    const originalHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '保存中…';
+function renderProviderList(providers) {
+    const listEl = document.getElementById('provider-list');
+    if (!listEl) return;
+    if (!providers.length) {
+        listEl.innerHTML = '<p style="color: var(--text-muted);">还没有预设 — 点击下方「＋ 新增预设」创建第一套配置。</p>';
+        return;
+    }
+    listEl.innerHTML = providers.map(p => `
+        <div class="provider-card${p.current ? ' provider-card-active' : ''}" data-id="${_escapeAttr(p.id)}">
+            <div class="provider-card-main">
+                <div class="provider-card-title">
+                    <strong>${escapeHtml(p.name || '(未命名)')}</strong>
+                    ${p.current ? '<span class="badge badge-recommended">使用中</span>' : ''}
+                </div>
+                <div class="llm-status-detail">
+                    ${escapeHtml(p.base_url || '(地址未配置)')}
+                    · 模型 ${escapeHtml(p.model || '(未配置)')}
+                    · Key ${p.api_key_set ? escapeHtml(p.api_key_preview || '已保存') : '未设置'}
+                </div>
+            </div>
+            <div class="provider-card-actions">
+                ${p.current ? '' : `<button class="btn btn-small btn-secondary" type="button" onclick="activateProvider('${_escapeAttr(p.id)}')">启用</button>`}
+                <button class="btn btn-small btn-secondary" type="button" onclick="editProvider('${_escapeAttr(p.id)}')">编辑</button>
+                <button class="btn btn-small btn-danger" type="button" onclick="deleteProvider('${_escapeAttr(p.id)}')">删除</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function resetProviderForm() {
+    _editingProviderId = null;
+    document.getElementById('provider-form-title').textContent = '新增预设';
+    document.getElementById('provider-name').value = '';
+    document.getElementById('provider-base-url').value = '';
+    document.getElementById('provider-api-key').value = '';
+    document.getElementById('provider-api-key').placeholder = '服务商的 API Key';
+    document.getElementById('provider-model').value = '';
+    const statusEl = document.getElementById('provider-form-status');
+    if (statusEl) statusEl.innerHTML = '';
+}
+
+function editProvider(id) {
+    _editingProviderId = id;
+    const card = document.querySelector(`.provider-card[data-id="${CSS.escape(id)}"]`);
+    // Pull the full entry from the last listing via a fresh fetch so we
+    // always edit current server state (the raw key stays server-side).
+    fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-providers`)
+        .then(r => r.json())
+        .then(data => {
+            const p = (data.providers || []).find(x => x.id === id);
+            if (!p) return;
+            document.getElementById('provider-form-title').textContent = `编辑预设：${p.name || '(未命名)'}`;
+            document.getElementById('provider-name').value = p.name || '';
+            document.getElementById('provider-base-url').value = p.base_url || '';
+            document.getElementById('provider-api-key').value = '';
+            document.getElementById('provider-api-key').placeholder = p.api_key_set
+                ? `已保存（${p.api_key_preview}）— 留空不修改`
+                : '服务商的 API Key';
+            document.getElementById('provider-model').value = p.model || '';
+            document.getElementById('provider-form-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        })
+        .catch(err => showNotification(`读取预设失败：${err.message || String(err)}`, 'error'));
+}
+
+async function saveProvider() {
+    const statusEl = document.getElementById('provider-form-status');
+    const body = {
+        name: document.getElementById('provider-name')?.value?.trim() ?? '',
+        base_url: document.getElementById('provider-base-url')?.value?.trim() ?? '',
+        model: document.getElementById('provider-model')?.value?.trim() ?? '',
+    };
+    const keyVal = document.getElementById('provider-api-key')?.value?.trim() ?? '';
+    if (keyVal) body.api_key = keyVal;
+    if (_editingProviderId) body.id = _editingProviderId;
+    if (!body.base_url) {
+        statusEl.innerHTML = '<span style="color: var(--danger-color);">API 地址不能为空</span>';
+        return;
+    }
     try {
-        const body = {
-            base_url: document.getElementById('llmcfg-base-url')?.value?.trim() ?? '',
-            model: document.getElementById('llmcfg-model')?.value?.trim() ?? '',
-        };
-        const keyVal = document.getElementById('llmcfg-api-key')?.value?.trim() ?? '';
-        // Empty key field = keep the saved key (server semantics: absent
-        // = unchanged). Only send a non-empty key.
-        if (keyVal) body.api_key = keyVal;
-        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-config`, {
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-providers`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            showNotification(`保存失败：${data.detail || `HTTP ${resp.status}`}`, 'error');
-        } else {
-            showNotification('✅ API 配置已保存（~/.rlpe/llm_api.json）', 'success');
-            refreshLlmConfigCard();
-            refreshLLMStatus();
+            statusEl.innerHTML = `<span style="color: var(--danger-color);">保存失败：${escapeHtml(data.detail || `HTTP ${resp.status}`)}</span>`;
+            return;
         }
+        showNotification('✅ 预设已保存', 'success');
+        resetProviderForm();
+        loadProviders();
+        refreshLLMStatus();
     } catch (err) {
-        showNotification(`保存失败：${err.message || String(err)}`, 'error');
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = originalHtml;
+        statusEl.innerHTML = `<span style="color: var(--danger-color);">保存失败：${escapeHtml(err.message || String(err))}</span>`;
     }
 }
 
-async function testSavedLlmConfig() {
-    const btn = document.getElementById('llmcfg-test-btn');
+async function activateProvider(id) {
+    try {
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-providers/${encodeURIComponent(id)}/activate`, { method: 'POST' });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            showNotification(`切换失败：${data.detail || `HTTP ${resp.status}`}`, 'error');
+            return;
+        }
+        showNotification('✅ 已切换启用的预设', 'success');
+        loadProviders();
+        refreshLLMStatus();
+    } catch (err) {
+        showNotification(`切换失败：${err.message || String(err)}`, 'error');
+    }
+}
+
+async function deleteProvider(id) {
+    if (!window.confirm('确定删除这套预设？其保存的 API Key 将一并删除。')) return;
+    try {
+        const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/llm-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            showNotification(`删除失败：${data.detail || `HTTP ${resp.status}`}`, 'error');
+            return;
+        }
+        if (_editingProviderId === id) resetProviderForm();
+        showNotification('已删除预设', 'success');
+        loadProviders();
+        refreshLLMStatus();
+    } catch (err) {
+        showNotification(`删除失败：${err.message || String(err)}`, 'error');
+    }
+}
+
+async function testActiveProvider() {
+    const btn = document.getElementById('provider-test-btn');
     if (!btn) return;
     const originalHtml = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = '测试中…';
     try {
         // Empty body: the server resolves key/endpoint/model from the
-        // saved settings + env chain — exactly what a normal run uses.
+        // ACTIVE preset + env chain — exactly what a normal run uses.
         const resp = await fetchWithTimeout(`${CONFIG.apiBaseUrl}/system/test-llm`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -3452,13 +3552,16 @@ async function testSavedLlmConfig() {
     }
 }
 
-function initLlmConfigCard() {
-    document.getElementById('llmcfg-save-btn')?.addEventListener('click', saveLlmConfig);
-    document.getElementById('llmcfg-test-btn')?.addEventListener('click', testSavedLlmConfig);
-    // Password visibility toggle (mirrors the upload-tab key toggle).
-    const keyInput = document.getElementById('llmcfg-api-key');
-    const toggleBtn = document.getElementById('llmcfg-key-toggle');
-    toggleBtn?.addEventListener('click', () => {
+function initProviderManager() {
+    document.getElementById('provider-new-btn')?.addEventListener('click', () => {
+        resetProviderForm();
+        document.getElementById('provider-form-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    document.getElementById('provider-save-btn')?.addEventListener('click', saveProvider);
+    document.getElementById('provider-cancel-btn')?.addEventListener('click', resetProviderForm);
+    document.getElementById('provider-test-btn')?.addEventListener('click', testActiveProvider);
+    const keyInput = document.getElementById('provider-api-key');
+    document.getElementById('provider-key-toggle')?.addEventListener('click', () => {
         if (!keyInput) return;
         keyInput.type = keyInput.type === 'password' ? 'text' : 'password';
     });
@@ -3473,9 +3576,13 @@ function initLlmConfigCard() {
 // listener fired on ANY click that bubbled to ``document`` and
 // matched ``[data-tab="settings"]`` — including bubbled clicks from
 // child elements that don't actually trigger a tab change.
+document.querySelectorAll('.tab-btn[data-tab="api"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+        loadProviders();
+    });
+});
 document.querySelectorAll('.tab-btn[data-tab="settings"]').forEach(btn => {
     btn.addEventListener('click', () => {
-        refreshLlmConfigCard();
         refreshLLMStatus();
         refreshLlmUsage();
     });

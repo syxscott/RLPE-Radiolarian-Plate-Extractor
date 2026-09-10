@@ -47,7 +47,6 @@ from .constants import (
     DEFAULT_LLM_BACKEND,
     DEFAULT_LLM_BUDGET,
     DEFAULT_LLM_MAX_RETRIES,
-    DEFAULT_LLM_MODEL,
     DEFAULT_LLM_PROMPT_LANG,
     DEFAULT_LLM_TIMEOUT,
     DEFAULT_OCR_LANG,
@@ -77,7 +76,6 @@ from .constants import (
     THEME_LIGHT,
     THEME_SYSTEM,
 )
-from .i18n import _tr as tr
 from .i18n_widgets import (
     _ensure_size_hint,
     tr_button,
@@ -430,23 +428,11 @@ class SettingsTab(QWidget):
         populate_friendly_combo(self._llm_backend, llm_backend_friendly_options)
         llayout.addRow(tr_label("settab.llm.backend"), self._llm_backend)
 
-        # BUG-1 (audit 2026-09-04): the GUI had no way to enter a
-        # LLM API key or choose the data-outbound policy, so the
-        # worker always ran local_only and the LLM was silently
-        # disabled. Password echo keeps the key out of shoulder-surf
-        # and out of screen recordings.
-        # F17: the endpoint is editable too; key/endpoint/model are
-        # persisted to the shared ~/.rlpe/llm_api.json (see _save) so
-        # the Web UI and CLI resolve the same configuration.
-        self._llm_base_url = QLineEdit()
-        self._llm_base_url.setPlaceholderText(tr("settab.llm.base_url_hint"))
-        llayout.addRow(tr_label("settab.llm.base_url"), self._llm_base_url)
-
-        self._llm_api_key = QLineEdit()
-        self._llm_api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._llm_api_key.setPlaceholderText(tr("settab.llm.api_key_hint"))
-        llayout.addRow(tr_label("settab.llm.api_key"), self._llm_api_key)
-
+        # F18: the provider presets (base URL / API key / model) moved
+        # to the dedicated API tab (gui/api_tab.py); the shared
+        # ~/.rlpe/llm_api.json is the single source of truth. This tab
+        # keeps the run-level knobs (backend choice, outbound policy,
+        # prompt language, budget, ...).
         self._data_outbound = QComboBox()
         self._data_outbound.setMinimumHeight(32)
         self._data_outbound.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
@@ -454,9 +440,6 @@ class SettingsTab(QWidget):
 
         populate_friendly_combo(self._data_outbound, data_outbound_friendly_options)
         llayout.addRow(tr_label("settab.llm.outbound"), self._data_outbound)
-
-        self._llm_model = QLineEdit(DEFAULT_LLM_MODEL)
-        llayout.addRow(tr_label("settab.llm.model"), self._llm_model)
 
         self._llm_prompt_lang = QComboBox()
         self._llm_prompt_lang.setMinimumHeight(32)
@@ -898,28 +881,8 @@ class SettingsTab(QWidget):
             self._llm_backend.setCurrentIndex(ix)
         # F17 migration: pre-F17 GUI stored the model under "m3_model"
         # and never had an endpoint field; migrate them once.
-        # F17 load order: the SHARED settings file (~/.rlpe/llm_api.json,
-        # also written by the Web settings tab) wins per-field; QSettings
-        # (and its pre-F17 legacy keys) fill in whatever the file does
-        # not have. Without the file-first read, a config saved from the
-        # Web UI would be invisible here AND clobbered by Save.
-        legacy_model = str(self._qsettings.value("m3_model", "") or "")
-        qs_model = str(self._qsettings.value("llm_model", "") or "") or legacy_model
-        qs_base_url = str(self._qsettings.value("llm_base_url", "") or "")
-        legacy_key = str(self._qsettings.value("MiniMax_api_key", "") or "")
-        qs_key = str(self._qsettings.value("llm_api_key", "") or "") or legacy_key
-        try:
-            from ..llm_settings import load_llm_settings
-
-            _saved = load_llm_settings()
-        except Exception:
-            _saved = None
-        saved_base_url = _saved.base_url if _saved else ""
-        saved_key = _saved.api_key if _saved else ""
-        saved_model = _saved.model if _saved else ""
-        self._llm_base_url.setText(saved_base_url or qs_base_url)
-        self._llm_api_key.setText(saved_key or qs_key)
-        self._llm_model.setText(saved_model or qs_model or DEFAULT_LLM_MODEL)
+        # F18: provider presets (base URL / key / model) live in the API
+        # tab and the shared ~/.rlpe/llm_api.json — nothing to load here.
         outbound = self._qsettings.value("data_outbound_policy", "auto")
         outbound_ix = self._data_outbound.findData(outbound)
         if outbound_ix >= 0:
@@ -1088,14 +1051,9 @@ class SettingsTab(QWidget):
         self._qsettings.setValue("caption_window", self._caption_window.value())
         self._qsettings.setValue("od_caption_window", self._od_caption_window.value())
 
-        # LLM
+        # LLM (provider presets live in the API tab / shared file, F18)
         llm_backend_code = self._llm_backend.currentData() or self._llm_backend.currentText()
         self._qsettings.setValue("llm_backend", llm_backend_code)
-        self._qsettings.setValue("llm_model", self._llm_model.text())
-        # BUG-1 (audit 2026-09-04): persist the LLM key + outbound
-        # policy so the worker's _resolve_outbound_policy sees them.
-        self._qsettings.setValue("llm_api_key", self._llm_api_key.text())
-        self._qsettings.setValue("llm_base_url", self._llm_base_url.text())
         outbound_code = self._data_outbound.currentData() or self._data_outbound.currentText()
         self._qsettings.setValue("data_outbound_policy", outbound_code)
         llm_lang_code = self._llm_prompt_lang.currentData() or self._llm_prompt_lang.currentText()
@@ -1128,20 +1086,10 @@ class SettingsTab(QWidget):
 
         self._qsettings.sync()
 
-        # F17: persist key/endpoint/model to the shared settings file so
-        # the Web UI and the CLI resolve the same provider config.
-        try:
-            from ..llm_settings import LLMApiSettings, save_llm_settings
-
-            save_llm_settings(
-                LLMApiSettings(
-                    base_url=self._llm_base_url.text().strip(),
-                    api_key=self._llm_api_key.text().strip(),
-                    model=self._llm_model.text().strip(),
-                )
-            )
-        except Exception:
-            get_gui_logger().debug("llm_settings save failed", exc_info=True)
+        # F18: provider presets are owned by the API tab (which writes
+        # ~/.rlpe/llm_api.json in the multi-preset layout). Settings no
+        # longer touch that file — writing the F17 flat shape here would
+        # corrupt the preset list.
 
         # Phase 37 audit fix: refresh in-memory cache so Run tab
         # picks up the saved values immediately (was: cache stale
@@ -1325,13 +1273,10 @@ class SettingsTab(QWidget):
                 "llm_backend": self._llm_backend.currentData() or self._llm_backend.currentText(),
                 "llm_prompt_lang": self._llm_prompt_lang.currentData()
                 or self._llm_prompt_lang.currentText(),
-                "llm_model": self._llm_model.text()
-                if self._llm_model.text()
-                else DEFAULT_LLM_MODEL,
-                # BUG-1 (audit 2026-09-04): forward the LLM auth keys to
-                # the Run tab's collect_settings() via this shared dict.
-                "llm_api_key": self._llm_api_key.text(),
-                "llm_base_url": self._llm_base_url.text(),
+                # F18: llm_model / llm_api_key / llm_base_url are no
+                # longer cached here — runs resolve the ACTIVE preset
+                # from the shared file at pipeline-build time, so a
+                # provider switch is never shadowed by a stale key.
                 "data_outbound_policy": self._data_outbound.currentData()
                 or self._data_outbound.currentText(),
                 "llm_thinking_budget": self._llm_budget.value(),

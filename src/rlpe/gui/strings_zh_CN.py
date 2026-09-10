@@ -349,6 +349,7 @@ STRINGS = {
     "tab.jobs": "📋  任务",
     "tab.results": "📊  结果",
     "tab.run": "▶  运行",
+    "tab.api": "🗄️  API 配置",
     "tab.settings": "⚙️  设置",
     "toolbar.about": "ℹ️  关于",
     "toolbar.batch": "📚  批处理…",
@@ -389,6 +390,44 @@ STRINGS = {
     # Jobs tab summary
     "jobstab.summary.count": "{total} 个任务 · 运行中 {running} · 已完成 {done} · 失败 {failed}",
     "jobstab.summary.count_label": "{total} 个任务  ·  运行中 {running}  ·  已完成 {done}  ·  失败 {failed}",
+    # ============================================================
+    # F18: API tab (multi-provider presets)
+    # ============================================================
+    "apitab.hint": (
+        "保存多套 Anthropic 兼容服务的预设（MiniMax、DeepSeek、Kimi……），随时一键切换。"
+        "配置保存在 ~/.rlpe/llm_api.json，Web / 桌面端 / 命令行共用；"
+        "编辑预设时 Key 留空表示保留已保存的 Key。"
+    ),
+    "apitab.list_group": "我的预设",
+    "apitab.activate": "启用",
+    "apitab.edit": "编辑",
+    "apitab.delete": "删除",
+    "apitab.test": "测试连接",
+    "apitab.form_group": "预设编辑",
+    "apitab.form.new": "新增预设",
+    "apitab.form.edit": "编辑预设",
+    "apitab.name": "名称：",
+    "apitab.name.hint": "例如：MiniMax / DeepSeek / Kimi",
+    "apitab.base_url": "API 地址：",
+    "apitab.base_url.hint": "https://<供应商>/anthropic",
+    "apitab.key": "API Key：",
+    "apitab.key.hint": "服务商的 API Key",
+    "apitab.key.show": "显示 Key",
+    "apitab.key.saved_hint": "（已保存 — 留空不修改）",
+    "apitab.key.saved": "Key 已保存",
+    "apitab.key.missing": "未设置",
+    "apitab.model": "模型名：",
+    "apitab.model.hint": "服务商的模型名",
+    "apitab.save": "💾 保存预设",
+    "apitab.new": "新增预设",
+    "apitab.default_name": "默认",
+    "apitab.active_marker": "【使用中】",
+    "apitab.current": "当前使用",
+    "apitab.error.base_url": "API 地址不能为空。",
+    "apitab.delete.confirm": "确定删除这套预设？其保存的 API Key 将一并删除。",
+    "apitab.test.no_key": "未配置 API Key。请先保存预设（或设置 ANTHROPIC_API_KEY）。",
+    "apitab.test.no_config": "地址/模型未配置 — 请先填写预设。",
+    "apitab.test.ok": "✅ 连接成功\n\n模型：{model}\n输入 tokens：{tokens}",
 }
 
 

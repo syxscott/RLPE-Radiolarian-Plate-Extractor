@@ -31,7 +31,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from ..config import PipelineConfig
 from ..pipeline import RadiolarianPipeline
 from ..utils import stable_id
-from .constants import DEFAULT_LLM_BACKEND, DEFAULT_LLM_MODEL
+from .constants import DEFAULT_LLM_BACKEND
 from .utils import get_gui_logger
 
 
@@ -308,10 +308,11 @@ class PipelineWorker(QThread):
             # path (cli.py:418) sets ``extra["llm_backend"]`` explicitly;
             # the GUI path missed it.
             "llm_backend": str(s.get("llm_backend", DEFAULT_LLM_BACKEND)),
-            "llm_model": str(s.get("llm_model", DEFAULT_LLM_MODEL)),
+            # F18: llm_model / llm_api_key / llm_base_url intentionally
+            # omitted — the backend builder resolves the ACTIVE preset
+            # from the shared settings file, so switching providers in
+            # the API tab takes effect on the next run.
             "llm_enable_thinking": bool(s.get("llm_enable_thinking", False)),
-            "llm_api_key": s.get("llm_api_key") or None,
-            "llm_base_url": s.get("llm_base_url") or None,
             "grobid_max_retries": grobid_max_retries,
             "grobid_timeout": grobid_timeout,
             "disable_od_fallback": bool(s.get("disable_od_fallback", False)),

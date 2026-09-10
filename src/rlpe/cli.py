@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+from typing import Any
 
 # -----------------------------------------------------------------------
 # Audit 2026-08-19 Phase 5C (M-7): UTF-8 stdout/stderr on Windows.
@@ -355,6 +356,23 @@ def apply_log_level(quiet: bool, verbose: bool) -> None:
         pkg_logger.propagate = False
 
 
+def _apply_llm_profile_to_extra(extra: dict[str, Any], profile: Any) -> None:
+    """Materialize a saved preset into *extra* (F18 ``--llm-profile``).
+
+    Per-field: an explicitly provided flag value wins; everything the
+    user did not set (present-but-None) is filled from the preset.
+    NOTE: ``dict.setdefault`` is wrong here — the keys always exist
+    (None-valued when the flags are absent) and setdefault only fills
+    MISSING keys, which silently no-oped the whole feature.
+    """
+    if extra.get("llm_base_url") is None:
+        extra["llm_base_url"] = profile.base_url or None
+    if extra.get("llm_api_key") is None:
+        extra["llm_api_key"] = profile.api_key or None
+    if extra.get("llm_model") is None:
+        extra["llm_model"] = profile.model or None
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="rlpe",
@@ -671,6 +689,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Model name, e.g. the vendor's model string (resolution: "
         "flag > saved settings > ANTHROPIC_MODEL env).",
+    )
+    p.add_argument(
+        "--llm-profile",
+        dest="llm_profile",
+        type=str,
+        default=None,
+        help="Activate a named provider preset saved in the API settings "
+        "(~/.rlpe/llm_api.json, managed in the Web/GUI API tab) for this "
+        "run without changing the saved active preset. The preset's "
+        "base_url/api_key/model are applied for this run only.",
     )
     p.add_argument(
         "--llm-max-concurrent",
@@ -1095,6 +1123,19 @@ def _prepare_run(args: argparse.Namespace) -> int | None:
     _validate_args(args)
     # Audit 2026-08-19 Phase 6C (NIT-3): dry-run short-circuits
     # *after* validation but *before* the pipeline is built, so
+    # F18: validate --llm-profile early so a typo surfaces even under
+    # --dry-run (materialization happens later, after cfg is built).
+    if getattr(args, "llm_profile", None):
+        from .llm_settings import list_providers
+
+        names = [pr.name for pr in list_providers()]
+        if args.llm_profile.strip() not in names:
+            available = ", ".join(names) or "(none saved)"
+            _flush_print(
+                f"ERROR: --llm-profile {args.llm_profile!r} not found. Saved presets: {available}"
+            )
+            return 2
+
     # CI smoke tests still exercise the parser, path expansion,
     # and config-loading code paths.
     if getattr(args, "dry_run", False):
@@ -1337,6 +1378,9 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             "llm_fallback_default": args.llm_fallback_default,
             "llm_interactive": args.llm_interactive,
             "data_outbound_policy": args.data_outbound_policy,
+            # F18: --llm-profile materializes a saved preset into this
+            # run's config (below, post-build) without touching the
+            # saved active-preset pointer.
             # Phase 61 Plan 4 (Bug 4.3): deterministic / reproducibility knob.
             "deterministic": args.deterministic,
             "deterministic_seed": args.deterministic_seed,
@@ -1370,6 +1414,25 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             "fallback_llm_backend": args.fallback_llm_backend,
         },
     )
+    # F18: --llm-profile materializes a saved preset into this run's
+    # extra WITHOUT mutating the saved active-preset pointer. Explicit
+    # --llm-api-key/--llm-base-url/--llm-model flags win per-field.
+    if getattr(args, "llm_profile", None):
+        from .llm_settings import list_providers
+
+        profile = next(
+            (pr for pr in list_providers() if pr.name == args.llm_profile.strip()),
+            None,
+        )
+        if profile is None:
+            available = ", ".join(pr.name for pr in list_providers()) or "(none saved)"
+            _flush_print(
+                f"ERROR: --llm-profile {args.llm_profile!r} not found. Saved presets: {available}"
+            )
+            return 2
+        _apply_llm_profile_to_extra(cfg.extra, profile)
+        _flush_print(f"  --llm-profile  : {profile.name} ({profile.model or '?'})")
+
     # Inject LLM engine config. We only set ``llm_enhanced_mode`` if the user
     # passed the flag explicitly; default-ON behavior lives in pipeline.py.
     if args.llm_enhanced_mode is not None:

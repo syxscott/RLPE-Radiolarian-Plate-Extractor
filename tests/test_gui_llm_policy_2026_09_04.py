@@ -191,13 +191,19 @@ class TestBuildConfigPolicy:
         cfg = worker._build_config()
         assert cfg.extra["data_outbound_policy"] == "local_only"
 
-    def test_settings_key_forwarded_and_policy_redacted(self, monkeypatch, tmp_path):
+    def test_settings_key_not_forwarded_f18(self, monkeypatch, tmp_path):
+        """F18: the cached settings key is NOT copied into extra any
+        more — the backend builder resolves the ACTIVE preset from the
+        shared settings file, so a provider switch is never shadowed by
+        a stale key. Policy resolution falls through to the shared
+        chain (file/env)."""
         monkeypatch.delenv("MiniMax_API_KEY", raising=False)
         monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         worker = _make_worker({"use_gpu": False, "llm_api_key": "sk-abc"}, tmp_path)
         cfg = worker._build_config()
-        assert cfg.extra["llm_api_key"] == "sk-abc"
-        assert cfg.extra["data_outbound_policy"] == "api_redacted"
+        assert "llm_api_key" not in cfg.extra or not cfg.extra["llm_api_key"]
+        assert cfg.extra["llm_backend"]
 
     def test_explicit_local_only_kept_even_with_key(self, monkeypatch, tmp_path):
         monkeypatch.setenv("MINIMAX_API_KEY", "sk-test-env")
@@ -229,45 +235,62 @@ class TestBuildConfigPolicy:
 # ----------------------------------------------------------------------
 # collect_settings forwarding
 # ----------------------------------------------------------------------
-class TestCollectSettingsForwardsLlmAuth:
-    def test_api_key_and_policy_forwarded(self):
+class TestCollectSettingsDoesNotForwardAuth:
+    """F18: provider credentials live in the API tab / shared file;
+    collect_settings deliberately omits them (stale cached keys would
+    shadow a provider switch)."""
+
+    def test_api_key_not_collected_policy_is(self):
         tab = _make_run_tab({"llm_api_key": "sk-run", "data_outbound_policy": "auto"})
         s = tab.collect_settings()
-        assert s["llm_api_key"] == "sk-run"
+        assert "llm_api_key" not in s
         assert s["data_outbound_policy"] == "auto"
 
-    def test_missing_keys_default_empty(self):
-        tab = _make_run_tab({})
+    def test_model_not_collected(self):
+        tab = _make_run_tab({"llm_model": "m"})
         s = tab.collect_settings()
-        assert s["llm_api_key"] == ""
-        assert s["data_outbound_policy"] == "auto"  # default, resolved worker-side
+        assert "llm_model" not in s
 
 
 # ----------------------------------------------------------------------
 # Settings tab controls + persistence (source guards — no QApplication)
 # ----------------------------------------------------------------------
 _SETTINGS_TAB_SRC = (_SRC / "rlpe" / "gui" / "settings_tab.py").read_text(encoding="utf-8")
+_API_TAB_SRC = (_SRC / "rlpe" / "gui" / "api_tab.py").read_text(encoding="utf-8")
 
 
 class TestSettingsTabControls:
-    def test_api_key_widget_exists(self):
-        assert "_llm_api_key" in _SETTINGS_TAB_SRC
-        assert "EchoMode.Password" in _SETTINGS_TAB_SRC
+    """F18: provider credentials moved to the dedicated API tab."""
+
+    def test_api_key_widget_lives_in_api_tab(self):
+        assert "_key_edit" in _API_TAB_SRC
+        assert "EchoMode.Password" in _API_TAB_SRC
+        # ...and must NOT be in the settings tab any more.
+        assert "_llm_api_key" not in _SETTINGS_TAB_SRC
+        assert "_llm_base_url" not in _SETTINGS_TAB_SRC
+
+    def test_settings_tab_does_not_touch_presets_file(self):
+        """A settings save must never clobber the multi-preset file."""
+        assert "save_llm_settings" not in _SETTINGS_TAB_SRC
+        assert "upsert_provider" not in _SETTINGS_TAB_SRC
 
     def test_policy_combo_widget_exists(self):
         assert "_data_outbound" in _SETTINGS_TAB_SRC
 
-    def test_save_persists_both_keys(self):
-        assert '_qsettings.setValue("llm_api_key"' in _SETTINGS_TAB_SRC
+    def test_save_persists_outbound_policy(self):
         assert '_qsettings.setValue("data_outbound_policy"' in _SETTINGS_TAB_SRC
 
-    def test_load_restores_both_keys(self):
-        assert 'self._qsettings.value("llm_api_key"' in _SETTINGS_TAB_SRC
+    def test_load_restores_outbound_policy(self):
         assert 'self._qsettings.value("data_outbound_policy"' in _SETTINGS_TAB_SRC
 
-    def test_apply_to_run_settings_carries_both(self):
-        assert '"llm_api_key"' in _SETTINGS_TAB_SRC
+    def test_apply_to_run_settings_carries_policy_only(self):
+        assert '"llm_api_key"' not in _SETTINGS_TAB_SRC
         assert '"data_outbound_policy"' in _SETTINGS_TAB_SRC
+
+    def test_api_tab_persists_through_shared_file(self):
+        assert "upsert_provider" in _API_TAB_SRC
+        assert "set_current_provider" in _API_TAB_SRC
+        assert "delete_provider" in _API_TAB_SRC
 
 
 # ----------------------------------------------------------------------

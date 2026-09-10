@@ -89,7 +89,10 @@ python -m rlpe \
 
 - `--use-gemma4 --llm-backend anthropic` + `.env` 中的
   `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` / `ANTHROPIC_MODEL`
-  （或在 Web/GUI 设置页保存 API 配置，写入 `~/.rlpe/llm_api.json`）
+  （或在 Web/GUI 的「API 配置」页保存多套供应商预设并随时切换——
+  MiniMax、DeepSeek、Kimi 等各存一套，写入 `~/.rlpe/llm_api.json`，
+  Web / 桌面端 / 命令行三端共用；CLI 可用 `--llm-profile 名称`
+  单次启用某套预设）
   即启用云端 LLM——任意 Anthropic 兼容服务商均可（MiniMax、DeepSeek、
   Kimi、OpenRouter 等）；无 key 时自动退化为正则抽取（质量大幅下降）。
 - `--llm-enhanced-mode` 启用 LLM 五阶段引擎；`--use-geo-vision`

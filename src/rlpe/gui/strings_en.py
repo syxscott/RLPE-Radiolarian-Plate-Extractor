@@ -42,6 +42,7 @@ STRINGS = {
     "menu.view.run": "&Run tab",
     "menu.view.jobs": "&Jobs tab",
     "menu.view.results": "&Results tab",
+    "menu.view.api": "&API tab",
     "menu.view.settings": "&Settings tab",
     "toolbar.title": "Main toolbar",
     "toolbar.open": "📂  Open PDF",
@@ -57,6 +58,7 @@ STRINGS = {
     "tab.run": "▶  Run",
     "tab.jobs": "📋  Jobs",
     "tab.results": "📊  Results",
+    "tab.api": "🗄️  API",
     "tab.settings": "⚙️  Settings",
     # ============================================================
     # Run tab
@@ -452,6 +454,45 @@ STRINGS = {
     "settab.lang": "Language:",
     "app.name": "RLPE - Radiolarian Plate Extractor",
     "app.version": "0.1.0",
+    # ============================================================
+    # F18: API tab (multi-provider presets)
+    # ============================================================
+    "apitab.hint": (
+        "Save multiple Anthropic-compatible provider presets (MiniMax, "
+        "DeepSeek, Kimi, ...) and switch the active one at any time. Stored "
+        "in ~/.rlpe/llm_api.json — shared by the Web UI, this GUI and the "
+        "CLI. Leave the key field empty when editing to keep the stored key."
+    ),
+    "apitab.list_group": "Provider presets",
+    "apitab.activate": "Activate",
+    "apitab.edit": "Edit",
+    "apitab.delete": "Delete",
+    "apitab.test": "Test connection",
+    "apitab.form_group": "Preset editor",
+    "apitab.form.new": "New preset",
+    "apitab.form.edit": "Edit preset",
+    "apitab.name": "Name:",
+    "apitab.name.hint": "e.g. MiniMax / DeepSeek / Kimi",
+    "apitab.base_url": "API base URL:",
+    "apitab.base_url.hint": "https://<provider>/anthropic",
+    "apitab.key": "API key:",
+    "apitab.key.hint": "Provider API key",
+    "apitab.key.show": "Show key",
+    "apitab.key.saved_hint": "(saved — leave empty to keep)",
+    "apitab.key.saved": "key saved",
+    "apitab.key.missing": "no key",
+    "apitab.model": "Model:",
+    "apitab.model.hint": "The provider's model name",
+    "apitab.save": "💾 Save preset",
+    "apitab.new": "New preset",
+    "apitab.default_name": "默认",
+    "apitab.active_marker": "[ACTIVE]",
+    "apitab.current": "Active",
+    "apitab.error.base_url": "API base URL is required.",
+    "apitab.delete.confirm": "Delete this preset? Its stored API key is removed too.",
+    "apitab.test.no_key": "No API key configured. Save a preset (or set ANTHROPIC_API_KEY) first.",
+    "apitab.test.no_config": "Endpoint/model not configured — fill in the preset first.",
+    "apitab.test.ok": "✅ Connection OK\n\nModel: {model}\nInput tokens: {tokens}",
 }
 
 

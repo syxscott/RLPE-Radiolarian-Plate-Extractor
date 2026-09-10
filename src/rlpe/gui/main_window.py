@@ -80,6 +80,7 @@ def _make_app_icon() -> QIcon:
     return QIcon(pm)
 
 
+from .api_tab import ApiTab
 from .constants import (
     APP_AUTHOR,
     APP_NAME,
@@ -94,6 +95,7 @@ from .constants import (
     STATUS_DONE,
     STATUS_QUEUED,
     STATUS_RUNNING,
+    TAB_API,
     TAB_JOBS,
     TAB_RESULTS,
     TAB_RUN,
@@ -420,7 +422,11 @@ class MainWindow(QMainWindow):
         self._results_tab = ResultsTab()
         self._tabs.addTab(self._results_tab, "📊  Results")
 
-        # Tab 3: Settings
+        # Tab 3: API 配置 (F18 — multi-provider presets)
+        self._api_tab = ApiTab(self._settings)
+        self._tabs.addTab(self._api_tab, "🗄️  API")
+
+        # Tab 4: Settings
         self._settings_tab = SettingsTab(self._settings)
         self._tabs.addTab(self._settings_tab, "⚙️  Settings")
 
@@ -481,6 +487,7 @@ class MainWindow(QMainWindow):
             ("menu.view.run", TAB_RUN),
             ("menu.view.jobs", TAB_JOBS),
             ("menu.view.results", TAB_RESULTS),
+            ("menu.view.api", TAB_API),
             ("menu.view.settings", TAB_SETTINGS),
         ):
             act = tr_action(key, parent=self)
@@ -1253,7 +1260,7 @@ class MainWindow(QMainWindow):
     def _refresh_texts(self) -> None:
         """Re-apply all menu / tab labels after a language switch."""
         for i in range(self._tabs.count()):
-            key = ("tab.run", "tab.jobs", "tab.results", "tab.settings")[i]
+            key = ("tab.run", "tab.jobs", "tab.results", "tab.api", "tab.settings")[i]
             self._tabs.setTabText(i, i18n._tr(key))
         self.setWindowTitle(f"{i18n._tr('app.title')}  v{APP_VERSION}")
 

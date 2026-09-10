@@ -43,7 +43,8 @@ BATCH_DIALOG_DEFAULT_SIZE: Final[tuple[int, int]] = (900, 600)
 TAB_RUN: Final[int] = 0
 TAB_JOBS: Final[int] = 1
 TAB_RESULTS: Final[int] = 2
-TAB_SETTINGS: Final[int] = 3
+TAB_API: Final[int] = 3
+TAB_SETTINGS: Final[int] = 4
 
 
 # Result columns shown in the results table
