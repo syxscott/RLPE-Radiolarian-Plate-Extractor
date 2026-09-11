@@ -93,3 +93,21 @@ class TestSpeciesSanitisation:
 
     def test_cf_marker_preserved(self, pipe: RadiolarianPipeline):
         assert self._sanitise(pipe, "Lithocampe cf. exigua") == "Lithocampe_cf._exigua"
+
+
+class TestDottedInitialAuthor:
+    """2026-09-11: a leading dotted-initial author word ("M." in
+    "M. Afanasieva") must yield the SURNAME, not the initial —
+    "M._2020_..." panel names were unusable and ambiguous."""
+
+    def test_initial_then_surname_prefers_surname(self, pipe: RadiolarianPipeline):
+        pm = {"authors": ["M. Afanasieva"], "year": 2020}
+        assert pipe._paper_short_name(pm, None) == "Afanasieva_2020"
+
+    def test_multi_initial_then_surname(self, pipe: RadiolarianPipeline):
+        pm = {"authors": ["M.S. Afanasieva"], "year": 2020}
+        assert pipe._paper_short_name(pm, None) == "Afanasieva_2020"
+
+    def test_surname_first_style_unchanged(self, pipe: RadiolarianPipeline):
+        pm = {"authors": ["Bandini, A.", "Jones, B."], "year": 2011}
+        assert pipe._paper_short_name(pm, None) == "Bandini_2011"

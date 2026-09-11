@@ -5729,7 +5729,14 @@ class RadiolarianPipeline:
 
         authors = pm.get("authors") or []
         if authors and isinstance(authors, list) and authors[0]:
-            first = str(authors[0]).split()[0].rstrip(",").strip()
+            words = str(authors[0]).split()
+            first = words[0].rstrip(",").strip() if words else ""
+            # 2026-09-11: a leading dotted-initial word ("M." in
+            # "M. Afanasieva", "M.S." in "M.S. Afanasieva") is not a
+            # usable filename token — prefer the surname that follows
+            # it ("Afanasieva_2020", not "M._2020").
+            if len(words) > 1 and re.fullmatch(r"(?:[^\W\d_]\.)+", first, re.UNICODE):
+                first = words[1].rstrip(",").strip()
             if self._plausible_name_token(first):
                 return f"{first}_{year_s}" if year_s else first
 
@@ -5905,8 +5912,12 @@ Rules:
         # swallowed it at DEBUG level, silently reducing the entire
         # LLM-first path to dead code. Delegate through
         # ``.backend.infer_panel`` exactly like
-        # ``gemma_postprocess.gemma_match_panel`` does.
+        # ``gemma_postprocess.gemma_match_panel`` does. A runtime-shaped
+        # object that itself carries ``infer_panel`` (legacy test/caller
+        # shape) is accepted via duck typing.
         backend = getattr(self.gemma_runtime, "backend", None)
+        if backend is None and hasattr(self.gemma_runtime, "infer_panel"):
+            backend = self.gemma_runtime
         if backend is None:
             return None
 
