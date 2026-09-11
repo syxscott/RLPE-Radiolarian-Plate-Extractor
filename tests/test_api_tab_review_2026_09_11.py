@@ -17,6 +17,7 @@ never touched.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -272,3 +273,84 @@ class TestInteractionPolish:
         assert tab._activate_btn.isEnabled()
         assert tab._edit_btn.isEnabled()
         assert tab._delete_btn.isEnabled()
+
+
+class TestJobsElapsedDisplay:
+    """F19 UI review: the Jobs tab showed "00:00:00" for every
+    disk-loaded job because matches.jsonl carries no timing and the
+    loader set started_at == finished_at (file mtime)."""
+
+    def _make_record(self, tmp_path: Path, meta: str | None):
+        import time as _time
+
+        from rlpe.gui.jobs_tab import JobRecord
+
+        rec = JobRecord(job_id="j", pdf_path="p.pdf", output_dir="out")
+        rec.duration_sec = 189.0 if meta == "meta" else None
+        if meta == "legacy":
+            # Mirror the new disk loader: legacy jobs (no meta) get
+            # started_at=0 so elapsed reports None (the old loader set
+            # started==finished==mtime, which rendered as 00:00:00).
+            rec.started_at = 0.0
+            rec.finished_at = _time.time()
+        return rec
+
+    def test_duration_override_wins(self, tmp_path):
+        rec = self._make_record(tmp_path, "meta")
+        assert rec.elapsed == 189.0
+
+    def test_legacy_job_reports_none_not_zero(self, tmp_path):
+        rec = self._make_record(tmp_path, "legacy")
+        assert rec.elapsed is None
+        from rlpe.gui.utils import fmt_duration
+
+        assert fmt_duration(rec.elapsed) == "—"
+
+    def test_running_job_ticks_live(self, tmp_path):
+        import time as _time
+
+        from rlpe.gui.jobs_tab import JobRecord
+
+        rec = JobRecord(job_id="j", pdf_path="p", output_dir="o")
+        rec.started_at = _time.time() - 65.0
+        rec.finished_at = 0.0
+        got = rec.elapsed
+        assert got is not None and 60 <= got <= 70
+
+    def test_pipeline_writes_job_meta(self, tmp_path: Path):
+        """The pipeline persists wall-clock timing next to matches.jsonl."""
+        from rlpe.pipeline import RadiolarianPipeline
+
+        manifests = tmp_path / "manifests"
+        RadiolarianPipeline._write_job_meta(manifests, started_at=100.0)
+        meta = json.loads((manifests / "job_meta.json").read_text())
+        assert meta["started_at"] == 100.0
+        assert meta["elapsed_sec"] >= 0
+
+    def test_disk_loader_reads_job_meta(self, qt_app, isolated_stores, monkeypatch, tmp_path):
+        """End-to-end through the disk scan: a job with job_meta.json
+        gets the persisted duration; one without shows —."""
+        import logging
+
+        from rlpe.gui.jobs_tab import _DiskScanWorker, _PendingDiskScan
+
+        worker = _DiskScanWorker.__new__(_DiskScanWorker)
+        worker._log = logging.getLogger("t")
+
+        def make_job(name: str, with_meta: bool):
+            root = tmp_path / name
+            mp = root / "output" / "manifests" / "matches.jsonl"
+            mp.parent.mkdir(parents=True, exist_ok=True)
+            mp.write_text('{"paper_id": "p"}\n', encoding="utf-8")
+            flag = root / "output" / "manifests" / "complete.flag"
+            flag.write_text("", encoding="utf-8")
+            if with_meta:
+                (mp.parent / "job_meta.json").write_text(
+                    json.dumps({"elapsed_sec": 42}), encoding="utf-8"
+                )
+            return _PendingDiskScan(jid=name, root=root, matches_path=mp, complete_flag=flag)
+
+        rec_with = worker._parse_one(make_job("with_meta", True))
+        rec_without = worker._parse_one(make_job("no_meta", False))
+        assert rec_with is not None and rec_with.elapsed == 42.0
+        assert rec_without is not None and rec_without.elapsed is None

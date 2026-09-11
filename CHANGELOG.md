@@ -59,6 +59,19 @@ the fixes below address the blast radius and the data loss.
   save/delete-while-editing, key-preservation on edit, duplicate
   names, i18n live-switch, button state machine.
 
+### Fixed (F19 UI review — Jobs tab "00:00:00" elapsed)
+- The GUI Jobs tab showed "00:00:00" for EVERY disk-loaded job:
+  matches.jsonl carries no timing, and the loader set
+  started_at == finished_at == the file's mtime, so elapsed was
+  always 0. Fixes, both ends:
+  - `pipeline.run()` now persists wall-clock timing to
+    `output/manifests/job_meta.json` (started_at / finished_at /
+    elapsed_sec) on completion AND on cancel; the GUI disk loader and
+    the API's disk seeding prefer it, so historical jobs show their
+    real duration.
+  - Jobs without persisted timing (all pre-existing runs) now display
+    "—" instead of a fabricated 00:00:00.
+
 ### Tests
 - New: batch isolation suite (worker round-trip incl. secret handoff,
   crash/timeout stubs, resume merge, journal recovery, 0600 config).

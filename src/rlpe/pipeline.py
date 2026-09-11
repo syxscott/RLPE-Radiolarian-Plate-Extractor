@@ -573,6 +573,9 @@ class RadiolarianPipeline:
         rows: list[dict[str, Any]] = []
         total = len(pdf_files)
         completed = 0
+        # F19: wall-clock timing for job_meta.json (the GUI / web job
+        # lists read this to show the real duration of historical runs).
+        run_started_at = time.time()
         # Fire one initial tick so the UI can show "started" before the first
         # PDF actually finishes.
         self._emit_progress(0, total, f"Starting pipeline ({total} PDF(s))")
@@ -657,6 +660,7 @@ class RadiolarianPipeline:
                             self.config.manifests_dir() / "matches.jsonl", rows
                         )
                         write_jsonl(self.config.manifests_dir() / "matches.jsonl", rows)
+                        self._write_job_meta(self.config.manifests_dir(), run_started_at)
                         return rows
                     pdf = futures[fut]
                     if fut.cancelled():
@@ -713,6 +717,7 @@ class RadiolarianPipeline:
         # attempts' papers too.
         rows = self._merge_resume_rows(manifest_path, rows)
         write_jsonl(manifest_path, rows)
+        self._write_job_meta(manifest_path.parent, run_started_at)
         # Canonical data package (matches.jsonl is raw per-row; run_output.json
         # is the validated, deduped, schema-shaped bundle that downstream
         # consumers — web UI, CSV/DwC-A exporters, ML splits — read from).
@@ -2478,6 +2483,33 @@ class RadiolarianPipeline:
         # Round 11: dedup + drop stub rows + drop empty/invalid rows.
         # See ``_finalize_rows`` for the bug fixes this addresses.
         return self._finalize_rows(results, pdf_path=pdf_path)
+
+    # ----- F19: job timing metadata -----------------------------------------
+
+    @staticmethod
+    def _write_job_meta(manifests_dir: Path, started_at: float) -> None:
+        """Persist wall-clock timing next to matches.jsonl.
+
+        The GUI / web job lists read ``job_meta.json`` to show the real
+        duration of historical runs (matches.jsonl itself carries no
+        timing). Best-effort: a failure here must never fail the run.
+        """
+        try:
+            import json as _json
+            import time as _time
+
+            finished = _time.time()
+            manifests_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "started_at": started_at,
+                "finished_at": finished,
+                "elapsed_sec": round(max(0.0, finished - started_at), 1),
+            }
+            (manifests_dir / "job_meta.json").write_text(
+                _json.dumps(payload, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            logger.debug("job_meta.json write failed", exc_info=True)
 
     # ----- F19: batch subprocess isolation ---------------------------------
 

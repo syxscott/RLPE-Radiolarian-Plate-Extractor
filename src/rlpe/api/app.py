@@ -1029,6 +1029,19 @@ def _load_existing_jobs_from_disk() -> int:
             ts = _dt.fromtimestamp(matches_path.stat().st_mtime).isoformat()
         except Exception:
             ts = _dt.now().isoformat()
+        # F19: prefer the persisted duration (job_meta.json) so the web
+        # UI shows the real elapsed time for disk-loaded jobs instead
+        # of 0.
+        elapsed_from_meta: int | None = None
+        try:
+            meta_path = matches_path.parent / "job_meta.json"
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                value = meta.get("elapsed_sec")
+                if isinstance(value, (int, float)) and value >= 0:
+                    elapsed_from_meta = int(value)
+        except (OSError, ValueError):
+            elapsed_from_meta = None
         RESULT_CACHE[jid] = {
             "status": "done" if completed_flag.exists() else "partial",
             "result": rows,
@@ -1037,6 +1050,7 @@ def _load_existing_jobs_from_disk() -> int:
             "created_at": ts,
             "filename": pdf_name,
             "progress": 100,
+            "elapsed_sec": elapsed_from_meta,
             "_root": str(root.resolve()),
         }
         # Rewrite absolute panel_path to a URL the browser can fetch

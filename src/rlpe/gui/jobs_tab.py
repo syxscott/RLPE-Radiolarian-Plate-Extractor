@@ -272,6 +272,18 @@ class _DiskScanWorker(QThread):
             finished_at = mp.stat().st_mtime
         except OSError:
             finished_at = time.time()
+        # F19: prefer the persisted duration (job_meta.json, written by
+        # the pipeline at the end of a run) over the mtime-derived 0.
+        duration_sec: float | None = None
+        try:
+            meta_path = mp.parent / "job_meta.json"
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                value = meta.get("elapsed_sec")
+                if isinstance(value, (int, float)) and value >= 0:
+                    duration_sec = float(value)
+        except (OSError, ValueError):
+            duration_sec = None
         # audit 2026-08-17 (jobs_tab C1): disk-scan honesty. A
         # matches.jsonl that exists but lacks the API's
         # ``complete.flag`` is a PARTIAL run — the pipeline was
@@ -316,8 +328,12 @@ class _DiskScanWorker(QThread):
             progress_total=1,
             progress_msg=progress_msg,
             rows=rows,
-            started_at=finished_at,
+            # No persisted duration (legacy job) → started_at=0 so
+            # ``elapsed`` reports None and the UI shows "—" instead of
+            # a fake "00:00:00" (mtime - mtime == 0).
+            started_at=finished_at if duration_sec is not None else 0.0,
             finished_at=finished_at,
+            duration_sec=duration_sec,
         )
 
 
@@ -408,9 +424,19 @@ class JobRecord:
     started_at: float = field(default_factory=time.time)
     finished_at: float = 0.0
     settings: dict[str, Any] = field(default_factory=dict)
+    # F19: persisted duration from ``job_meta.json`` (written by the
+    # pipeline at the end of a run). Disk-loaded jobs have no wall-clock
+    # start/finish pair — their started_at/finished_at both come from
+    # the file mtime — so without this override they displayed a fake
+    # "00:00:00".
+    duration_sec: float | None = None
 
     @property
-    def elapsed(self) -> float:
+    def elapsed(self) -> float | None:
+        if self.duration_sec is not None:
+            return self.duration_sec
+        if self.started_at <= 0:
+            return None
         end = self.finished_at if self.finished_at > 0 else time.time()
         return max(0.0, end - self.started_at)
 
