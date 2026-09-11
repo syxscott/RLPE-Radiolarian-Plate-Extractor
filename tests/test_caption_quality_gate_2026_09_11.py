@@ -77,3 +77,36 @@ class TestPouillePositiveSurvives:
             "tetraspinosa" in (p.species or "") and "Spinodeflandrella" in (p.species or "")
             for p in pairs
         )
+
+
+class TestEntityExtractionGeologicGate:
+    """2026-09-12: the position-fallback entity scan read
+    "Sakmarian radiolarians" (stage name + common noun) out of the
+    Kondurovka caption as a species candidate. The phrase-level
+    geologic gate must reject it upstream, and _is_valid_species must
+    reject it downstream."""
+
+    PROSE_CAPTION = (
+        "Fig. 2. Asselian and Sakmarian radiolarians of the Lower Permian "
+        "South Urals in the Kondurovka (1\u20133)"
+    )
+
+    def test_entity_scan_rejects_stage_phrase(self):
+        from rlpe.association import extract_taxa_from_caption
+
+        taxa = extract_taxa_from_caption(self.PROSE_CAPTION)
+        assert "Sakmarian radiolarians" not in taxa
+        assert "Asselian and" not in taxa
+
+    def test_is_valid_species_rejects_stage_phrase(self):
+        from rlpe.taxon import _is_valid_species
+
+        assert _is_valid_species("Sakmarian radiolarians") is False
+
+    def test_real_binomial_still_extracted(self):
+        from rlpe.association import extract_taxa_from_caption
+
+        taxa = extract_taxa_from_caption(
+            "Plate 3. Spinodeflandrella tetraspinosa (pl. 3, figs. 1)"
+        )
+        assert any("tetraspinosa" in t for t in taxa)

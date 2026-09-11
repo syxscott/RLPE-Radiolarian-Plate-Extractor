@@ -429,6 +429,25 @@ def extract_taxa_from_caption(caption_text: str) -> list[str]:
             continue
         if len(words) > 1 and words[1].lower().rstrip(".,;:?!") in _TAXON_STOP_WORDS:
             continue
+        # 2026-09-12 phrase-level geologic-time rejection: prose captions
+        # open with stage/epoch names ("Asselian and Sakmarian
+        # radiolarians of the Lower Permian South Urals ...") and
+        # TAXON_LIKE_PATTERN happily reads "Sakmarian radiolarians" as
+        # genus+epithet. A real genus is never a bare ICS stage/epoch
+        # name — classify_age_string pins "Asselian"/"Sakmarian" at 0.95
+        # confidence as rank=age.
+        try:
+            from .stratigraphy import classify_age_string
+
+            cls = classify_age_string(words[0].rstrip(".,;:?!"))
+            if (
+                cls is not None
+                and cls.rank in {"age", "epoch", "period", "era", "eon"}
+                and cls.confidence > 0
+            ):
+                continue
+        except Exception:  # stratigraphy unavailable → skip that guard
+            pass
         if tax and tax not in taxa:
             taxa.append(tax)
     # Phase 60 Plan 3 (Bug 3.1): also surface trailing cf./aff.
@@ -1035,7 +1054,27 @@ def match_panels(
         # onto taxa[0]. Any panel beyond the available species list gets
         # None (so the caller can see it's unassigned) rather than a wrong
         # first-species tag.
-        assigned_species = [taxa[i] if i < len(taxa) else None for i in range(len(panels))]
+        # 2026-09-12: validate fallback candidates with the same binomial
+        # gate as the strict path — the taxa list comes from a prose
+        # entity scan and used to carry fragments like
+        # "Sakmarian radiolarians".
+        assigned_species = []
+        for i in range(len(panels)):
+            cand = taxa[i] if i < len(taxa) else None
+            if cand:
+                try:
+                    from .taxon import _is_valid_species
+
+                    if not _is_valid_species(cand):
+                        logger.debug(
+                            "match_panels: position-fallback species candidate "
+                            "rejected (not a plausible binomial): %r",
+                            cand,
+                        )
+                        cand = None
+                except Exception:  # validator unavailable → keep candidate
+                    pass
+            assigned_species.append(cand)
 
     # 2) 可选神经图匹配。未训练权重或缺少checkpoint时跳过。
     matcher_used = False
