@@ -398,6 +398,13 @@ class RadiolarianPipeline:
                         # limit. Default 5 on PipelineConfig; CLI
                         # overrides via ``--od-caption-window``.
                         caption_window=self.config.od_caption_window,
+                        # 2026-09-12: the rescue's full-page OCR is the
+                        # native-crash hotspot on multi-DLL Windows
+                        # processes (torch/easyocr access violation);
+                        # operators can disable it via this extra key.
+                        rescue_ocr=bool(
+                            self.config.extra.get("od_orphan_rescue_ocr", True)
+                        ),
                     )
         return self._od_extractor
 

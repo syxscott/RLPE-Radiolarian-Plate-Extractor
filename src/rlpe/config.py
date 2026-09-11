@@ -105,6 +105,10 @@ _KNOWN_EXTRA_KEYS = {
     "od_use_ocr",
     "od_ocr_lang",
     "od_merge_gap_pt",
+    # 2026-09-12: disable the orphan-page rescue's full-page OCR — the
+    # native-crash hotspot in multi-DLL Windows processes (EasyOCR/torch
+    # access violation). Default True preserves upstream behaviour.
+    "od_orphan_rescue_ocr",
     # Phase 27: multilingual OCR + caption language selection
     "ocr_lang",
     "llm_prompt_lang",

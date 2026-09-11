@@ -101,10 +101,14 @@ class OpenDataLoaderExtractor:
         image_format: str = "png",
         merge_gap_pt: float = 72.0,
         caption_window: int = 5,
+        rescue_ocr: bool = True,
     ) -> None:
         self.use_ocr = use_ocr
         self.ocr_lang = ocr_lang
         self.image_format = image_format
+        # 2026-09-12: the rescue's full-page OCR is the native-crash
+        # hotspot in multi-DLL processes (see _rescue_orphan_plate_pages).
+        self.rescue_ocr = bool(rescue_ocr)
         # Audit 2026-09-01 (architectural P1 #19): enforce a hard
         # upper bound on ``merge_gap_pt``. The previous code accepted
         # any non-negative float — a value like ``10000`` merged the
@@ -392,6 +396,13 @@ class OpenDataLoaderExtractor:
         """Promote image-bearing pages that NO figure pair covers into
         figures, using OCR on the page's caption band.
 
+        2026-09-12: the rescue's full-page OCR is the native-crash
+        hotspot on this machine (EasyOCR CRAFT + torch conv access
+        violation inside the multi-DLL pipeline process — see the
+        faulthandler stack). ``rescue_ocr=False`` (extra key
+        ``od_orphan_rescue_ocr``) skips the OCR-based rescue entirely;
+        orphan pages then stay unrescued but the run survives.
+
         Audit 2026-09-05 (completeness test, Soeka_2019 incident): the
         standard paths all depend on the PDF text layer —
         ``_find_plate_captions`` regex-matches "Plate N" text, and the
@@ -426,6 +437,12 @@ class OpenDataLoaderExtractor:
         """
         # Bail out early on missing optional deps, mirroring
         # _ocr_missing_captions' conservative dependency handling.
+        if not self.rescue_ocr:
+            logger.info(
+                "orphan-page rescue OCR disabled (od_orphan_rescue_ocr=false); "
+                "skipping the native-crash-prone full-page OCR"
+            )
+            return figures
         try:
             import easyocr  # noqa: F401
             import fitz  # PyMuPDF
