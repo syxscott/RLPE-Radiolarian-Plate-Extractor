@@ -330,11 +330,28 @@ class RadiolarianPipeline:
         # (F17: resolve_llm_api_key also checks the saved settings file
         # and the legacy MiniMax_* env names, so this injection is only
         # a convenience for code that reads extra directly.)
-        if not self.config.extra.get("llm_api_key") and os.environ.get("ANTHROPIC_API_KEY"):
-            self.config.extra["llm_api_key"] = os.environ.get("ANTHROPIC_API_KEY")
-            logger.info(
-                "Pipeline: using ANTHROPIC_API_KEY as llm_api_key (Anthropic env-var fallback)"
-            )
+        # 2026-09-11 priority fix: the documented resolution order is
+        # per-run explicit option > ~/.rlpe/llm_api.json active preset >
+        # environment. The previous unconditional injection let a stale
+        # .env ANTHROPIC_API_KEY shadow the GUI-saved preset key
+        # (resolve_llm_api_key sees extra set and skips the preset).
+        # Now the env var is injected ONLY when the active preset
+        # carries no key of its own.
+        if not self.config.extra.get("llm_api_key"):
+            _env_key = os.environ.get("ANTHROPIC_API_KEY")
+            if _env_key:
+                _preset_key = ""
+                try:
+                    from .llm_settings import load_llm_settings
+
+                    _preset_key = load_llm_settings().api_key
+                except Exception:  # settings file corrupt/missing → env wins
+                    _preset_key = ""
+                if not _preset_key:
+                    self.config.extra["llm_api_key"] = _env_key
+                    logger.info(
+                        "Pipeline: using ANTHROPIC_API_KEY as llm_api_key (Anthropic env-var fallback)"
+                    )
         # Audit 2026-09-06 (truthfulness audit, fake-flag A1/A2): wire
         # ``--deterministic`` / ``--deterministic-seed``. The helper
         # ``llm_backends.resolve_deterministic_kwargs`` was fully
