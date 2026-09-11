@@ -241,6 +241,7 @@ class RadiolarianPipeline:
             backend=config.ocr_backend,
             use_gpu=config.use_gpu,
             lang=config.extra.get("ocr_lang", "en"),
+            ocr_max_side_px=int(config.extra.get("ocr_max_side_px", 2000)),
         )
         self.taxon = TaxonRecognizer(
             model=config.taxon_model,

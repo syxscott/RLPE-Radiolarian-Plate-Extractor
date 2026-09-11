@@ -108,6 +108,12 @@ _KNOWN_EXTRA_KEYS = {
     # Phase 27: multilingual OCR + caption language selection
     "ocr_lang",
     "llm_prompt_lang",
+    # 2026-09-12: oversized scans made EasyOCR attempt 1.3 GB conv
+    # tensors (RuntimeError on torch 2.14, segfault on 2.8), killing
+    # caption OCR for whole plates. Inputs with a side longer than this
+    # are downscaled before inference (0 disables). Read by
+    # pipeline.py at the OCRBackend construction site.
+    "ocr_max_side_px",
     # Phase 29: GROBID retry + OD-fallback knobs. ``grobid_max_retries``
     # is the total HTTP attempts; ``grobid_timeout`` is the per-attempt
     # request timeout. ``disable_od_fallback`` is an escape hatch for

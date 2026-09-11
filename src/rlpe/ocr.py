@@ -75,10 +75,18 @@ class OCRBackend:
         backend: str = "paddleocr",
         use_gpu: bool = True,
         lang: str | list[str] = "en",
+        ocr_max_side_px: int = 2000,
     ) -> None:
         self.backend = backend.lower()
         self.use_gpu = use_gpu
         self.lang: list[str] = self._normalise_lang(lang)
+        # 2026-09-12: oversized scans (2700×2010+ plate renders) made
+        # EasyOCR's CRAFT detector attempt a 1.3 GB conv tensor —
+        # RuntimeError on torch 2.14, hard segfault on 2.8 — which
+        # silently killed caption OCR for the whole plate. Inputs with a
+        # side longer than this are downscaled before inference and the
+        # token bboxes are scaled back to source coordinates.
+        self.ocr_max_side_px = max(0, int(ocr_max_side_px))
         self._engine = None
         self._lock = threading.Lock()
 
@@ -206,6 +214,37 @@ class OCRBackend:
     def _ocr_array(self, image: np.ndarray) -> list[OCRToken]:
         engine = self._engine  # guaranteed non-None by caller
         tokens: list[OCRToken] = []
+        # 2026-09-12: downscale oversized scans before inference (see
+        # the ocr_max_side_px comment in __init__). Token bboxes come
+        # back in downscaled coordinates and are multiplied by
+        # ``inv_scale`` so callers still see source-image coordinates.
+        inv_scale = 1.0
+        try:
+            if image.ndim >= 2 and self.ocr_max_side_px > 0:
+                h, w = image.shape[:2]
+                max_side = max(h, w)
+                if max_side > self.ocr_max_side_px:
+                    inv_scale = max_side / self.ocr_max_side_px
+                    import cv2
+
+                    new_size = (
+                        max(1, int(round(w / inv_scale))),
+                        max(1, int(round(h / inv_scale))),
+                    )
+                    logger.info(
+                        "OCR input %dx%d exceeds ocr_max_side_px=%d; "
+                        "downscaling to %dx%d before inference",
+                        w,
+                        h,
+                        self.ocr_max_side_px,
+                        new_size[0],
+                        new_size[1],
+                    )
+                    image = cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+        except Exception:
+            # A resize failure must never disable OCR — fall back to
+            # full-size inference and let the backend raise if it will.
+            inv_scale = 1.0
         try:
             if self.backend == "paddleocr":
                 # Audit 2026-09-01 (live test): PaddleOCR 3.x removed
@@ -241,6 +280,9 @@ class OCRBackend:
                     y = min(p[1] for p in box)
                     w = max(p[0] for p in box) - x
                     h = max(p[1] for p in box) - y
+                    if inv_scale != 1.0:
+                        x, y = x * inv_scale, y * inv_scale
+                        w, h = w * inv_scale, h * inv_scale
                     tokens.append(
                         OCRToken(
                             text=text, confidence=float(conf), bbox=(int(x), int(y), int(w), int(h))
@@ -253,6 +295,9 @@ class OCRBackend:
                     y = min(p[1] for p in box)
                     w = max(p[0] for p in box) - x
                     h = max(p[1] for p in box) - y
+                    if inv_scale != 1.0:
+                        x, y = x * inv_scale, y * inv_scale
+                        w, h = w * inv_scale, h * inv_scale
                     tokens.append(
                         OCRToken(
                             text=text, confidence=float(conf), bbox=(int(x), int(y), int(w), int(h))
