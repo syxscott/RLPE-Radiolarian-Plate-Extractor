@@ -5643,6 +5643,12 @@ class RadiolarianPipeline:
         for r in kept:
             sp = (r.get("species") or "").strip()
             pp = r.get("panel_path")
+            # 2026-09-11 None-string guard: a literal "None"/"null" from
+            # an LLM response is NOT a species — renaming the panel to
+            # "..._None_panel_01.png" (observed on afanasieva2020c) makes
+            # the file unusable and misleading.
+            if sp.lower() in {"none", "null", "unknown", "n/a", "na"}:
+                continue
             if not sp or not pp:
                 continue
             old = Path(pp)
@@ -6093,6 +6099,20 @@ Rules:
             if not label:
                 continue
             panel_id = _normalize_panel_label(label) or label
+            # 2026-09-11 None-string guard: cloud backends sometimes
+            # return the literal string "None"/"null" for panels they
+            # cannot identify. A non-empty string is truthy, so
+            # ``species if species else None`` let it through and it
+            # ended up in matches.jsonl AND panel image file names
+            # ("S._2020_None_panel_01.png"). Normalise here.
+            if species is not None and str(species).strip().lower() in {
+                "none",
+                "null",
+                "unknown",
+                "n/a",
+                "na",
+            }:
+                species = None
             m = MatchResult(
                 paper_id=paper_id,
                 figure_id=str(figure_id),
