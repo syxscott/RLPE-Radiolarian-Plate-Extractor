@@ -77,7 +77,12 @@ class TestLLMFirstExtract:
     def test_returns_none_for_placeholder_caption(self):
         """Placeholder captions should be skipped."""
         mock_backend = MagicMock()
-        self.pipe.gemma_runtime = mock_backend
+        # 2026-09-11: _llm_first_extract now delegates through
+        # gemma_runtime.backend (the GemmaRuntime dataclass itself has
+        # no infer_panel; see pipeline.py LLM-first revival fix).
+        runtime = MagicMock()
+        runtime.backend = mock_backend
+        self.pipe.gemma_runtime = runtime
         result = self.pipe._llm_first_extract(
             paper_id="p",
             figure_id="f",
@@ -91,7 +96,9 @@ class TestLLMFirstExtract:
 
     def _run_with_mock_backend(self, backend):
         """Helper: set backend and run with PIL/cv2 mocked."""
-        self.pipe.gemma_runtime = backend
+        runtime = MagicMock()
+        runtime.backend = backend
+        self.pipe.gemma_runtime = runtime
         mock_img = MagicMock()
         with patch("rlpe.pipeline.cv2") as mock_cv2, patch("PIL.Image") as mock_pil:
             mock_cv2.cvtColor.return_value = MagicMock()

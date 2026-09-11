@@ -5881,7 +5881,15 @@ Rules:
         On success, the caller should use these results directly and skip
         the classical segmentation→OCR→matching pipeline.
         """
-        backend = self.gemma_runtime
+        # 2026-09-11 (LLM-first revival): ``self.gemma_runtime`` is a
+        # bare ``GemmaRuntime`` dataclass that has NEVER carried an
+        # ``infer_panel`` method — the previous call raised
+        # AttributeError on every invocation and the except below
+        # swallowed it at DEBUG level, silently reducing the entire
+        # LLM-first path to dead code. Delegate through
+        # ``.backend.infer_panel`` exactly like
+        # ``gemma_postprocess.gemma_match_panel`` does.
+        backend = getattr(self.gemma_runtime, "backend", None)
         if backend is None:
             return None
 
