@@ -1479,6 +1479,32 @@ def _bbox_top(el: dict[str, Any]) -> float:
 # ---- caption OCR fallback --------------------------------------------------
 
 
+_OCR_MAX_SIDE_PX = 2000
+
+
+def _downscale_for_ocr(img_bgr: Any) -> Any:
+    """Cap the longest side of *img_bgr* before EasyOCR inference.
+
+    EasyOCR's CRAFT detector allocates feature tensors that scale with
+    the input area: a 3x-zoom caption band on a scanned plate (~2700 px
+    wide) attempted a 1.3 GB conv allocation and crashed the worker
+    (RuntimeError on torch 2.14, hard segfault on 2.8). 2000 px on the
+    long side keeps caption text legible while bounding the allocation.
+    """
+    try:
+        h, w = img_bgr.shape[:2]
+        max_side = max(h, w)
+        if max_side <= _OCR_MAX_SIDE_PX:
+            return img_bgr
+        scale = _OCR_MAX_SIDE_PX / max_side
+        import cv2
+
+        new_size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
+        return cv2.resize(img_bgr, new_size, interpolation=cv2.INTER_AREA)
+    except Exception:
+        return img_bgr
+
+
 def _ocr_full_page(
     doc: Any,
     page_index: int,
@@ -1504,6 +1530,7 @@ def _ocr_full_page(
         import cv2
 
         img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        img_bgr = _downscale_for_ocr(img_bgr)
         try:
             results = ocr_engine.readtext(img_bgr)
         except Exception:
@@ -1579,6 +1606,7 @@ def _ocr_caption_band(
         import cv2
 
         img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        img_bgr = _downscale_for_ocr(img_bgr)
         try:
             results = ocr_engine.readtext(img_bgr)
         except Exception:
