@@ -110,3 +110,26 @@ class TestEntityExtractionGeologicGate:
             "Plate 3. Spinodeflandrella tetraspinosa (pl. 3, figs. 1)"
         )
         assert any("tetraspinosa" in t for t in taxa)
+
+
+class TestCleanLlmSpecies:
+    """2026-09-12: deepseek-flash answers the literal string "None" for
+    panels it cannot identify; bare str() kept it as a truthy species
+    and it propagated into matches.jsonl and panel image file names."""
+
+    def test_none_string_collapses_to_none(self):
+        from rlpe.semantic_engine import _clean_llm_species
+
+        assert _clean_llm_species("None") is None
+        assert _clean_llm_species("null") is None
+        assert _clean_llm_species("unknown") is None
+        assert _clean_llm_species("N/A") is None
+        assert _clean_llm_species("") is None
+        assert _clean_llm_species(None) is None
+
+    def test_real_species_kept(self):
+        from rlpe.semantic_engine import _clean_llm_species
+
+        assert _clean_llm_species("Spinodeflandrella tetraspinosa") == (
+            "Spinodeflandrella tetraspinosa"
+        )

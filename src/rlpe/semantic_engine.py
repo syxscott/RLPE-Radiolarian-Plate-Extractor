@@ -1699,6 +1699,23 @@ def _reject_non_taxon_pairs(pairs: list[CaptionPair]) -> list[CaptionPair]:
     return kept
 
 
+def _clean_llm_species(value: Any) -> str | None:
+    """Normalise an LLM-returned species field.
+
+    Cloud models sometimes answer the literal string ``"None"`` /
+    ``"unknown"`` for panels they cannot identify (observed on
+    deepseek-flash, afanasieva2020c Plate 4: 13 rows). A bare
+    ``str(value).strip()`` keeps that as a truthy "species", which then
+    propagates into matches.jsonl and panel image file names
+    ("..._None_panel_01.png"). Empty and placeholder spellings collapse
+    to ``None``.
+    """
+    s = str(value or "").strip()
+    if not s or s.lower() in {"none", "null", "unknown", "n/a", "na"}:
+        return None
+    return s
+
+
 def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     """Regex-only caption parser used as a fallback when the LLM is unavailable.
 
@@ -3104,7 +3121,7 @@ class SemanticEngine:
             if not isinstance(item, dict):
                 continue
             labels = item.get("labels") or []
-            species = str(item.get("species") or "").strip()
+            species = _clean_llm_species(item.get("species")) or ""
             if not labels or not species:
                 continue
             if isinstance(labels, str):
@@ -3496,7 +3513,7 @@ class SemanticEngine:
         return PanelMatch(
             panel_id="?",
             label=(str(best.get("label") or "").strip() or None),
-            species=(str(best.get("species") or "").strip() or None),
+            species=_clean_llm_species(best.get("species")),
             confidence=max(0.0, min(1.0, conf)),
             reasoning=str(best.get("reasoning") or "").strip(),
             alternative=runner_up,
@@ -4863,7 +4880,7 @@ class SemanticEngine:
             if not isinstance(p, dict):
                 continue
             label = str(p.get("label", "")).strip()
-            species = p.get("species")
+            species = _clean_llm_species(p.get("species"))
             conf = p.get("confidence")
             try:
                 conf_f = float(conf) if conf is not None else 0.7
