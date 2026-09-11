@@ -5610,6 +5610,20 @@ class RadiolarianPipeline:
                 conf = float(r.get("confidence") or 0.0)
             except (TypeError, ValueError):
                 conf = 0.0
+            # 2026-09-12 observability: a row with no caption text at all
+            # (e.g. caption-band OCR died on an oversized scan) can never
+            # carry a species — mark it so the gap is visible in exports
+            # instead of a silent "species: null".
+            has_caption_text = bool(
+                (r.get("caption_snippet") or "").strip()
+            ) or bool((r.get("ocr_text") or "").strip())
+            if not has_caption_text:
+                md = r.setdefault("metadata", {})
+                md.setdefault("needs_review", True)
+                reasons = list(md.get("review_reasons") or [])
+                if "missing_caption_text" not in reasons:
+                    reasons.append("missing_caption_text")
+                md["review_reasons"] = reasons
             if 0.0 < conf < 0.5:
                 md = r.setdefault("metadata", {})
                 md.setdefault("needs_review", True)

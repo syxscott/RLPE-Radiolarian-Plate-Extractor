@@ -133,3 +133,47 @@ class TestCleanLlmSpecies:
         assert _clean_llm_species("Spinodeflandrella tetraspinosa") == (
             "Spinodeflandrella tetraspinosa"
         )
+
+
+class TestRunningHeaderFilter:
+    """2026-09-12: the afanasieva2020c page header '1452 AFANASIEVA
+    Plate 4 10 PALEONTOLOGICAL JOURNAL Vol. 54 No. 12 2020' contains
+    "Plate 4" and shadowed the real plate caption — 13 rows were built
+    from header text with zero species signal."""
+
+    def test_journal_header_detected(self):
+        from rlpe.opendataloader_extractor import _is_running_header_footer
+
+        assert _is_running_header_footer(
+            "1452 AFANASIEVA Plate 4 10 PALEONTOLOGICAL JOURNAL Vol. 54 No. 12 2020"
+        ) is True
+
+    def test_real_plate_caption_not_flagged(self):
+        from rlpe.opendataloader_extractor import _is_running_header_footer
+
+        assert _is_running_header_footer(
+            "Plate 3. (Reconstructed from systematic descriptions) "
+            "Spinodeflandrella tetraspinosa (pl. 3, figs. 1)"
+        ) is False
+
+    def test_find_plate_captions_drops_header(self):
+        from rlpe.opendataloader_extractor import _find_plate_captions
+
+        kids = [
+            {
+                "type": "heading",
+                "content": "1452 AFANASIEVA Plate 4 10 PALEONTOLOGICAL JOURNAL Vol. 54 No. 12 2020",
+                "page_number": 10,
+                "children": [],
+            },
+            {
+                "type": "caption",
+                "content": "Plate 3. Spinodeflandrella tetraspinosa (pl. 3, figs. 1)",
+                "page_number": 6,
+                "children": [],
+            },
+        ]
+        caps = _find_plate_captions(kids, caption_window=1)
+        plate_numbers = [c["plate_number"] for c in caps]
+        assert 4 not in plate_numbers
+        assert 3 in plate_numbers

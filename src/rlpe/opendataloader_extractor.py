@@ -1930,6 +1930,27 @@ def _collect_following_text(
     return "\n\n".join(parts)
 
 
+def _is_running_header_footer(text: str) -> bool:
+    """True when *text* looks like a journal running header / footer.
+
+    Observed on afanasieva2020c Plate 4: the page header
+    ``'1452 AFANASIEVA Plate 4 10 PALEONTOLOGICAL JOURNAL Vol. 54
+    No. 12 2020'`` merely CONTAINS "Plate 4" and matched
+    ``_PLATE_CAPTION_RE`` via the heading-expansion path. With the real
+    plate caption shadowed, the plate's rows were built from header
+    text — no species signal, 13 ``species="None"`` rows. A genuine
+    plate caption never cites volume/issue numbers, so the combined
+    ``Vol. N`` + ``No. N`` signature (optionally + year) is a safe
+    rejection test.
+    """
+    if not text:
+        return False
+    return bool(
+        re.search(r"\bVol\.\s*\d+\b", text, re.IGNORECASE)
+        and re.search(r"\bNo\.\s*\d+\b", text, re.IGNORECASE)
+    )
+
+
 def _find_plate_captions(
     kids: list[dict[str, Any]],
     caption_window: int = 5,
@@ -2193,7 +2214,18 @@ def _find_plate_captions(
             }
         )
     found.sort(key=lambda d: (d["plate_number"], d["page_number"]))
-    return found
+    # 2026-09-12: drop journal running-header/footer "captions" (see
+    # _is_running_header_footer). Log at DEBUG so a shadowed plate stays
+    # diagnosable.
+    real_found = [d for d in found if not _is_running_header_footer(d.get("content", ""))]
+    if len(real_found) != len(found):
+        dropped = {d["plate_number"] for d in found} - {d["plate_number"] for d in real_found}
+        logger.debug(
+            "_find_plate_captions: dropped running-header/footer caption(s) "
+            "for plate(s) %s",
+            sorted(dropped),
+        )
+    return real_found
 
 
 def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tuple[str, str, int]]]:
