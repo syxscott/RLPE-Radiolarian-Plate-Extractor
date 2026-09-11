@@ -78,6 +78,20 @@ def save_config(config: PipelineConfig, path: Path) -> None:
         "yolo_model_path": config.yolo_model_path,
         "yolo_conf_threshold": config.yolo_conf_threshold,
         "yolo_iou_threshold": config.yolo_iou_threshold,
+        # 2026-09-11: persist the typed LLM stage flags so they survive
+        # the worker-subprocess handoff. The CLI sets these as typed
+        # attributes AFTER construction, and the previous payload never
+        # included them — every ``python -m rlpe.worker`` child saw the
+        # dataclass defaults, so Stage-3 crops, Stage-4.5 per-panel and
+        # multi-plate enrich silently never ran under the default
+        # batch_isolation="subprocess" even when the flags were passed.
+        "llm_stage3_enabled": config.llm_stage3_enabled,
+        "llm_per_panel_enabled": config.llm_per_panel_enabled,
+        "llm_per_panel_min_conf": config.llm_per_panel_min_conf,
+        "llm_per_panel_max_per_figure": config.llm_per_panel_max_per_figure,
+        "llm_per_panel_max_per_paper": config.llm_per_panel_max_per_paper,
+        "llm_multi_plate_enrich_enabled": config.llm_multi_plate_enrich_enabled,
+        "llm_stage_6": config.llm_stage_6,
         "extra": sanitized_extra,
     }
     fd, tmp_path = _tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
@@ -198,6 +212,31 @@ def load_config(path: Path) -> PipelineConfig:
             "yolo_iou_threshold", payload.get("yolo_iou_threshold", 0.45), 0.45
         ),
         yolo_device=_coerce("yolo_device", payload.get("yolo_device", "auto"), "auto"),
+        # 2026-09-11: round-trip the typed LLM stage flags (see the
+        # matching comment in save_config — without this the worker
+        # children never saw the CLI's --use-llm-stage3 / --llm-per-panel
+        # / --llm-multi-plate-enrich intent).
+        llm_stage3_enabled=_coerce(
+            "llm_stage3_enabled", payload.get("llm_stage3_enabled", False), False
+        ),
+        llm_per_panel_enabled=_coerce(
+            "llm_per_panel_enabled", payload.get("llm_per_panel_enabled", False), False
+        ),
+        llm_per_panel_min_conf=_coerce(
+            "llm_per_panel_min_conf", payload.get("llm_per_panel_min_conf", 0.55), 0.55
+        ),
+        llm_per_panel_max_per_figure=_coerce(
+            "llm_per_panel_max_per_figure", payload.get("llm_per_panel_max_per_figure", 20), 20
+        ),
+        llm_per_panel_max_per_paper=_coerce(
+            "llm_per_panel_max_per_paper", payload.get("llm_per_panel_max_per_paper", 200), 200
+        ),
+        llm_multi_plate_enrich_enabled=_coerce(
+            "llm_multi_plate_enrich_enabled",
+            payload.get("llm_multi_plate_enrich_enabled", False),
+            False,
+        ),
+        llm_stage_6=_coerce("llm_stage_6", payload.get("llm_stage_6", False), False),
         extra=payload.get("extra", {}) or {},
     )
 

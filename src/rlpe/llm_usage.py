@@ -70,16 +70,55 @@ def collect_llm_usage(runtime: Any) -> dict[str, Any] | None:
             summary[alt] = int(val)
     # Surface the sidecar only when at least one real usage signal is
     # present, so rules-only / local-only runs do not pollute the
-    # output dir with an empty bundle.
+    # output dir with an empty bundle. A key whose value is 0 does NOT
+    # count as signal: ``cost_summary()`` always emits zero-valued
+    # ``calls``/``errors`` keys for a fresh backend, and the previous
+    # key-presence check turned that into a misleading all-zeros
+    # ``llm_usage.json`` for runs whose LLM calls happened in worker
+    # subprocesses (F19 batch isolation).
     has_signal = any(
-        k in summary
+        isinstance(summary.get(k), (int, float)) and summary[k] > 0
         for k in (
             "calls",
             "total_calls",
             "input_tokens",
             "total_input_tokens",
+            "output_tokens",
+            "total_output_tokens",
         )
     )
     if not has_signal:
         return None
     return summary
+
+
+_COUNTER_KEYS = ("calls", "errors", "input_tokens", "output_tokens")
+
+
+def merge_llm_usage(summaries: list[dict[str, Any] | None]) -> dict[str, Any] | None:
+    """Merge several per-worker usage summaries into one run summary.
+
+    With ``batch_isolation="subprocess"`` the LLM calls happen inside
+    ``python -m rlpe.worker`` children whose counters die with the
+    process; the parent aggregates the per-paper sidecars through this
+    helper so ``llm_usage.json`` reflects the true run totals.
+
+    Numeric counter keys are summed; ``backend`` / ``model`` strings are
+    taken from the first summary that carries them (workers share the
+    same preset, so they agree). Returns None when every input is None
+    or carries no positive counter.
+    """
+    merged: dict[str, Any] = {}
+    for s in summaries:
+        if not s:
+            continue
+        for key in _COUNTER_KEYS:
+            val = s.get(key)
+            if isinstance(val, (int, float)):
+                merged[key] = merged.get(key, 0) + val
+        for key in ("backend", "model"):
+            if key not in merged and s.get(key):
+                merged[key] = s[key]
+    if not any(isinstance(merged.get(k), (int, float)) and merged[k] > 0 for k in _COUNTER_KEYS):
+        return None
+    return merged

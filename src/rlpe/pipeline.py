@@ -764,7 +764,18 @@ class RadiolarianPipeline:
             # propagation lands. Failures here must NEVER invalidate
             # matches.jsonl / run_output.json.
             try:
+                from .llm_usage import merge_llm_usage
+
                 summary = self._collect_llm_usage()
+                # 2026-09-11 usage-reporting fix: under
+                # batch_isolation="subprocess" the real LLM calls (and
+                # their counters) live in the worker children; merge the
+                # per-paper sidecars the parent collected so the
+                # sidecar reflects the true run totals instead of an
+                # all-zeros record from the parent's untouched backend.
+                worker_usages = getattr(self, "_worker_llm_usages", None) or []
+                if worker_usages:
+                    summary = merge_llm_usage([summary, *worker_usages])
                 if summary:
                     sys.modules[__name__].__dict__["_safe_write_json"](
                         manifest_path.parent / "llm_usage.json", summary
@@ -2568,6 +2579,8 @@ class RadiolarianPipeline:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 env=env,
                 cwd=str(Path(__file__).resolve().parents[2]),
@@ -2594,6 +2607,24 @@ class RadiolarianPipeline:
             logger.error("worker rows unreadable for %s: %s", pdf_path.name, exc)
             return self._worker_crash_stub(pdf_path, stem, f"unreadable rows: {exc}")
         finally:
+            # 2026-09-11 usage-reporting fix: the worker persists THIS
+            # paper's LLM counters to a sidecar next to the rows file.
+            # Merge it into the run-level accumulator so llm_usage.json
+            # reflects the calls that actually happened in the child —
+            # the parent's own backend is never called under
+            # batch_isolation="subprocess".
+            try:
+                usage_path = out_path.with_suffix(".llm_usage.json")
+                if usage_path.exists():
+                    usage = _json.loads(usage_path.read_text(encoding="utf-8"))
+                    usages = getattr(self, "_worker_llm_usages", None)
+                    if usages is None:
+                        usages = self._worker_llm_usages = []
+                    if isinstance(usage, dict):
+                        usages.append(usage)
+                    usage_path.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                logger.debug("worker llm-usage sidecar unreadable for %s", pdf_path.name)
             out_path.unlink(missing_ok=True)
         logger.info("worker subprocess OK for %s (%s rows)", pdf_path.name, len(rows))
         return rows

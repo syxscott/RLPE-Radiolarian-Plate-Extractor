@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     from rlpe.config_io import load_worker_config
+    from rlpe.llm_usage import collect_llm_usage, merge_llm_usage
     from rlpe.pipeline import RadiolarianPipeline
 
     config = load_worker_config(Path(args.config))
@@ -52,6 +53,29 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+
+    # 2026-09-11 usage-reporting fix: with batch_isolation="subprocess"
+    # every LLM call happens inside THIS worker process, and the
+    # counters die with it — the parent's own backend stays untouched
+    # and used to write an all-zeros llm_usage.json. Persist this
+    # paper's usage to a sidecar next to the rows file; the parent
+    # aggregates the sidecars (see
+    # RadiolarianPipeline._process_one_pdf_in_subprocess).
+    try:
+        summaries = [collect_llm_usage(getattr(pipe, "gemma_runtime", None))]
+        engine = getattr(pipe, "semantic_engine", None)
+        if engine is not None:
+            summaries.append(collect_llm_usage(engine))
+        usage = merge_llm_usage(summaries)
+        if usage:
+            usage_path = out_path.with_suffix(".llm_usage.json")
+            usage_path.write_text(json.dumps(usage, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # usage reporting must never fail the worker
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "worker llm-usage sidecar write failed", exc_info=True
+        )
     return 0
 
 
