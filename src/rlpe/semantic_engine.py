@@ -1766,6 +1766,26 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         labels = _regex_expand_label_list(labels_raw)
         if not labels:
             continue
+        # 2026-09-11 header-number fix: a SINGULAR "Fig. N." anchor makes
+        # N the figure header number, not a panel label — using it as the
+        # pair key collided with panel ids derived from the same header
+        # (od_plate_..._p003_pl02 keyed by "2") and mis-tagged panels.
+        # When the caption carries an in-text panel enumeration
+        # ("... in the Kondurovka (1–3)"), those are the real labels.
+        # Plural anchors ("figs 1-3") and bare numbered lists keep the
+        # existing behaviour — there the numbers ARE panel labels. A
+        # singular caption with no enumeration keeps the header number:
+        # single-panel figures legitimately key their only panel by it
+        # ("Fig. 1. Entactinia itsukichiensis: ..." pinned test).
+        prefix_match = re.match(r"^[Ff]ig(?:ure)?\.", m.group(0))
+        if prefix_match and len(labels) == 1:
+            enum_match = re.search(
+                r"\((\d+[a-z]?(?:\s*[,\-–—]\s*\d+[a-z]?)+)\)", text
+            )
+            if enum_match:
+                enum_labels = _regex_expand_label_list(enum_match.group(1))
+                if enum_labels:
+                    labels = enum_labels
         # Phase 64 audit: skip labels already assigned to a previous
         # species, but KEEP the non-conflicting ones so the partial
         # overlap case (e.g. "1,2" followed by "2,3") doesn't silently
