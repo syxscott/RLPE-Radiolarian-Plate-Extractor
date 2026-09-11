@@ -1638,6 +1638,67 @@ def _regex_expand_label_list(s: str) -> list[str]:
     return result
 
 
+def _species_candidate_rejected(species: str) -> str | None:
+    """Return a rejection reason when a regex-captured "species" candidate
+    is not plausible binomial nomenclature, else ``None``.
+
+    2026-09-11 caption-pairing quality fix: ``_CAPTION_CLAUSE_RE``'s genus
+    branch matches any Capitalised word and its epithet branch any
+    lowercase word (minus open-nomenclature keywords), so prose captions
+    like ``"Fig. 2. Asselian and Sakmarian radiolarians of the Lower
+    Permian South Urals ..."`` produced the non-species ``"Asselian and"``
+    — which then propagated into ``matches.jsonl`` and the panel image
+    file names. Two cheap guards kill it:
+
+    * **stopword tokens** — ``association._TAXON_STOP_WORDS`` (which
+      contains "and") is already applied on the taxon-entity paths but
+      was never applied to the clause-regex candidates;
+    * **geologic-time genus** — "Asselian" / "Sakmarian" are ICS stage
+      names; ``stratigraphy.classify_age_string`` identifies them at
+      0.95 confidence, and no legitimate genus is a bare stage name.
+    """
+    tokens = (species or "").split()
+    if not tokens:
+        return "empty"
+    lowered = [t.lower().strip(".,;:()") for t in tokens]
+    try:
+        from .association import _TAXON_STOP_WORDS
+
+        if any(t in _TAXON_STOP_WORDS for t in lowered):
+            return "stopword_token"
+    except Exception:  # stopword set unavailable → skip that guard
+        pass
+    try:
+        from .stratigraphy import classify_age_string
+
+        cls = classify_age_string(tokens[0])
+        if cls is not None and cls.rank in {"age", "epoch", "period", "era", "eon"} and cls.confidence > 0:
+            return "geologic_time_term"
+    except Exception:  # stratigraphy unavailable → skip that guard
+        pass
+    return None
+
+
+def _reject_non_taxon_pairs(pairs: list[CaptionPair]) -> list[CaptionPair]:
+    """Filter regex-parsed caption pairs whose species candidate fails the
+    plausibility gate (:func:`_species_candidate_rejected`). Rejections are
+    logged at DEBUG so the remaining gaps stay auditable."""
+    kept: list[CaptionPair] = []
+    for p in pairs:
+        reason = _species_candidate_rejected(p.species)
+        if reason:
+            logger.debug(
+                "regex caption pair rejected (%s): labels=%s species=%r raw=%r",
+                reason,
+                p.labels,
+                p.species,
+                p.raw_text[:80] if p.raw_text else "",
+            )
+            continue
+        kept.append(p)
+    return kept
+
+
 def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     """Regex-only caption parser used as a fallback when the LLM is unavailable.
 
@@ -2023,7 +2084,10 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
             normalized.append(p2)
         else:
             normalized.append(p)
-    return normalized
+    # 2026-09-11 caption-quality gate: drop regex pairs whose "species"
+    # is prose (stopword tokens) or a geologic time term mis-read as a
+    # genus — see _species_candidate_rejected.
+    return _reject_non_taxon_pairs(normalized)
 
 
 # ---------------------------------------------------------------------------

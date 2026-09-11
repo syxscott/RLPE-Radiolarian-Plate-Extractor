@@ -1009,7 +1009,27 @@ def match_panels(
         assigned_species: list[str | None] = []
         for panel_id in assigned_labels:
             matched_key = _label_in_pair_lookup(panel_id, pair_lookup)
-            assigned_species.append(pair_lookup[matched_key] if matched_key else None)
+            candidate = pair_lookup[matched_key] if matched_key else None
+            # 2026-09-11 caption-quality gate: validate heuristic
+            # candidates the same way the LLM-first hybrid path does
+            # (pipeline._llm_first hybrid fill). "Asselian and"-style
+            # prose fragments die here instead of reaching
+            # matches.jsonl / panel file names.
+            if candidate:
+                try:
+                    from .taxon import _is_valid_species
+
+                    if not _is_valid_species(candidate):
+                        logger.debug(
+                            "match_panels: heuristic species candidate rejected "
+                            "(not a plausible binomial): %r (panel %s)",
+                            candidate,
+                            panel_id,
+                        )
+                        candidate = None
+                except Exception:  # validator unavailable → keep candidate
+                    pass
+            assigned_species.append(candidate)
     else:
         # Last-resort fallback: position-based, but DO NOT collapse the tail
         # onto taxa[0]. Any panel beyond the available species list gets

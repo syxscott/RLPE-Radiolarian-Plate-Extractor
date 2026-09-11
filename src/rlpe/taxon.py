@@ -297,6 +297,31 @@ def _is_valid_species(species: str | None) -> bool:
     if bare.lower() in _KNOWN_AUTHOR_SURNAMES:
         return False
 
+    # 2026-09-11 caption-quality gate: reject candidates whose genus
+    # token is a geologic time term ("Asselian", "Sakmarian", ...) —
+    # prose captions like "Fig. 2. Asselian and Sakmarian radiolarians"
+    # used to yield the non-species "Asselian and". Also reject when a
+    # function/stop word appears as ANY token: real binomials never
+    # contain them, and the previous >40-char length gate let short
+    # prose fragments like "Asselian and" slip through.
+    try:
+        from .stratigraphy import classify_age_string
+
+        cls = classify_age_string(bare)
+        if (
+            cls is not None
+            and cls.rank in {"age", "epoch", "period", "era", "eon"}
+            and cls.confidence > 0
+        ):
+            return False
+    except Exception:  # stratigraphy unavailable → skip that guard
+        pass
+    _function_words = {"and", "or", "of", "the", "in", "on", "at", "to", "from", "with", "for"}
+    if any(
+        t.lower().rstrip(".,;:?!") in _function_words for t in s.split()
+    ):
+        return False
+
     # Shape check: must decompose to a real-looking taxon. We reuse
     # ``_taxon_parts`` (Phase 60) for consistency with the data-package
     # view. A bare single token (no epithet) and no recognised
