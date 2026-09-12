@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import json
 import logging
+import os
 import re
 import sys
 import threading
@@ -103,6 +104,7 @@ class OpenDataLoaderExtractor:
         caption_window: int = 5,
         rescue_ocr: bool = True,
         cross_page_captions: bool = True,
+        rescue_ocr_inprocess: bool = False,
     ) -> None:
         self.use_ocr = use_ocr
         self.ocr_lang = ocr_lang
@@ -110,6 +112,10 @@ class OpenDataLoaderExtractor:
         # 2026-09-12: journal-style cross-page caption binding
         # (multi-evidence gated; see _bind_journal_cross_page_captions).
         self.cross_page_captions = bool(cross_page_captions)
+        # 2026-09-12: rescue OCR runs in an isolated worker subprocess
+        # by default (native-crash containment); in-process only for
+        # tests via this flag.
+        self.rescue_ocr_inprocess = bool(rescue_ocr_inprocess)
         # 2026-09-12: the rescue's full-page OCR is the native-crash
         # hotspot in multi-DLL processes (see _rescue_orphan_plate_pages).
         self.rescue_ocr = bool(rescue_ocr)
@@ -485,34 +491,77 @@ class OpenDataLoaderExtractor:
             logger.warning("PyMuPDF could not open %s; orphan-page rescue disabled", pdf_path)
             return figures
 
-        try:
-            for page in sorted(by_page):
-                page_images = by_page[page]
-                page_index = page - 1
-                if page_index >= len(doc):
+        # 2026-09-12 (subprocess isolation): phase 1 — collect OCR jobs
+        # WITHOUT running any OCR. The grouping / coverage decisions are
+        # pure geometry, safe in-process; the crash-prone part is only
+        # the EasyOCR inference, which phase 2 runs in an isolated worker
+        # (one model load for the whole batch; a native crash kills at
+        # most the rescue, never the pipeline).
+        ocr_jobs: list[dict[str, Any]] = []
+        job_meta: list[tuple[int, int, list[dict[str, Any]]]] = []
+        for page in sorted(by_page):
+            page_images = by_page[page]
+            page_index = page - 1
+            if page_index >= len(doc):
+                continue
+            # Skip small decorations: a group must cover >= 15% of
+            # the page area to be worth an OCR call.
+            groups = _merge_nearby_images(page_images, gap_pt=self.merge_gap_pt)
+            page_area = float(doc[page_index].rect.width) * float(doc[page_index].rect.height)
+            for group_idx, group in enumerate(groups, start=1):
+                bbox = _union_bbox(group)
+                if bbox is None:
                     continue
-                # Skip small decorations: a group must cover >= 15% of
-                # the page area to be worth an OCR call.
-                groups = _merge_nearby_images(page_images, gap_pt=self.merge_gap_pt)
-                page_area = float(doc[page_index].rect.width) * float(doc[page_index].rect.height)
-                for group_idx, group in enumerate(groups, start=1):
-                    bbox = _union_bbox(group)
-                    if bbox is None:
-                        continue
-                    left, bottom, right, top = bbox
-                    if (right - left) * (top - bottom) < 0.15 * page_area:
-                        continue
-                    # F1 (audit 2026-09-06): full-page scanned plates —
-                    # when the image group covers >60% of the page there
-                    # is no caption band "below" the figure; the caption
-                    # is printed ON the plate itself. OCR the whole page.
-                    coverage = (right - left) * (top - bottom) / page_area
-                    if coverage > 0.6:
-                        recovered = _ocr_full_page(doc, page_index, ocr_engine, np)
+                left, bottom, right, top = bbox
+                if (right - left) * (top - bottom) < 0.15 * page_area:
+                    continue
+                # F1 (audit 2026-09-06): full-page scanned plates —
+                # when the image group covers >60% of the page there
+                # is no caption band "below" the figure; the caption
+                # is printed ON the plate itself. OCR the whole page.
+                coverage = (right - left) * (top - bottom) / page_area
+                mode = "full" if coverage > 0.6 else "band"
+                ocr_jobs.append(
+                    {"page_index": page_index, "mode": mode, "bbox": list(bbox)}
+                )
+                job_meta.append((page, group_idx, group))
+
+        # Phase 2 — batch OCR. Default: isolated worker subprocess
+        # (native-crash containment). In-process fallback only when the
+        # operator explicitly opts in (used by tests).
+        inprocess = bool(self.rescue_ocr_inprocess)
+        if inprocess:
+            texts = []
+            for job in ocr_jobs:
+                try:
+                    if job["mode"] == "full":
+                        texts.append(_ocr_full_page(doc, job["page_index"], ocr_engine, np))
                     else:
-                        recovered = _ocr_caption_band(doc, page_index, bbox, ocr_engine, np)
-                    if not recovered:
-                        continue
+                        texts.append(
+                            _ocr_caption_band(doc, job["page_index"], job["bbox"], ocr_engine, np)
+                        )
+                except Exception:
+                    texts.append(None)
+        else:
+            texts = _run_rescue_ocr_batch(
+                pdf_path, ocr_jobs, self.ocr_lang, output_dir
+            )
+        if not texts or all(t is None for t in texts):
+            if ocr_jobs:
+                logger.info(
+                    "orphan-page rescue: %d OCR job(s) yielded no text; "
+                    "rescue degraded (worker crash or no caption markers)",
+                    len(ocr_jobs),
+                )
+            return figures
+
+        # Phase 3 — promotion checks (marker / dedup / id assignment),
+        # unchanged from the original single-loop implementation.
+        recovered_by_job = list(zip(job_meta, texts))
+        for (page, group_idx, group), recovered in recovered_by_job:
+            if not recovered:
+                continue
+            if True:
                     ok, probe = _rescue_orphan_plate_pages_marker_check(recovered)
                     if not ok:
                         logger.debug(
@@ -584,8 +633,7 @@ class OpenDataLoaderExtractor:
                         figure_id,
                         len(recovered),
                     )
-        finally:
-            doc.close()
+        doc.close()
         if rescued:
             logger.info(
                 "orphan-page rescue recovered %d figure(s) for paper=%s",
@@ -3370,3 +3418,161 @@ def _extract_paper_metadata_from_json(
     else:
         meta.confidence = min(0.85, 0.3 + 0.1 * filled)
     return meta
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-12: rescue-OCR subprocess isolation.
+#
+# The orphan-page rescue's full-page OCR (EasyOCR CRAFT + torch conv)
+# access-violates nondeterministically inside the multi-DLL pipeline
+# process (observed on Arrow Lake: torch 2.8 segfault, torch 2.14 clean
+# RuntimeError — same call site, _ocr_full_page). In-process hardening
+# is not viable, so the rescue runs its OCR in a SHORT-LIVED WORKER
+# PROCESS: one model load serves a batch of jobs, and a native crash
+# kills at most the rescue OCR — the pipeline survives.
+# ---------------------------------------------------------------------------
+
+
+def _rescue_ocr_worker_cli(argv: list[str]) -> int:
+    """Worker entry: read a task JSON, render + OCR each job, write
+    results. Usage:
+
+        python -m rlpe.opendataloader_extractor --rescue-ocr-worker \
+            tasks.json results.json
+
+    Task JSON: {"pdf": str, "lang": [..], "jobs": [{"page_index": int,
+    "mode": "full"|"band", "bbox": [l, b, r, t] | null}, ...]}
+    Result JSON: {"texts": [str | null, ...]}  (one entry per job)
+    """
+    # `-m` invocation passes the flag itself as argv[0] — filter it
+    # BEFORE the arity check.
+    argv = [a for a in argv if a != "--rescue-ocr-worker"]
+    if len(argv) != 2:
+        print("usage: --rescue-ocr-worker tasks.json results.json", file=sys.stderr)
+        return 2
+    tasks = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
+    # Arrow Lake mitigation: the CRAFT encoder's quantized LSTM crashes
+    # at model init when torch's thread pool fans out across this
+    # CPU's hybrid cores. The env var alone does not cover the init
+    # window; set the runtime limit explicitly BEFORE easyocr loads.
+    try:
+        import torch
+
+        torch.set_num_threads(1)
+    except Exception:
+        pass
+    import cv2
+    import easyocr
+    import fitz
+    import numpy as np
+
+    reader = easyocr.Reader(
+        _normalise_ocr_lang(tasks.get("lang") or "en"), gpu=False, verbose=False
+    )
+    doc = fitz.open(tasks["pdf"])
+    texts: list[str | None] = []
+    for job in tasks.get("jobs", []):
+        page_index = int(job["page_index"])
+        try:
+            if job.get("mode") == "full":
+                text = _ocr_full_page(doc, page_index, reader, np)
+            else:
+                text = _ocr_caption_band(
+                    doc, page_index, job.get("bbox"), reader, np
+                )
+            texts.append(text)
+        except Exception:
+            # A single bad job must not sink the batch.
+            logger.debug("rescue-ocr worker: job failed: %s", job, exc_info=True)
+            texts.append(None)
+    out_path = Path(argv[1])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps({"texts": texts}, ensure_ascii=False), encoding="utf-8"
+    )
+    return 0
+
+
+def _run_rescue_ocr_batch(
+    pdf_path: Path,
+    jobs: list[dict[str, Any]],
+    ocr_lang: str,
+    scratch_dir: Path,
+) -> list[str | None]:
+    """Run the rescue OCR jobs in an isolated worker process.
+
+    Returns one text (or None) per job. A worker crash / timeout /
+    unreadable result yields all-None — the rescue silently degrades
+    to no-op and the pipeline continues. Batched so EasyOCR's model
+    load (~seconds) happens once for the whole paper.
+    """
+    import subprocess
+    import tempfile
+
+    if not jobs:
+        return []
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    tasks_path = scratch_dir / ".rescue_ocr_tasks.json"
+    results_path = scratch_dir / ".rescue_ocr_results.json"
+    tasks = {
+        "pdf": str(pdf_path),
+        "lang": ocr_lang,
+        "jobs": [
+            {"page_index": j["page_index"], "mode": j["mode"], "bbox": j.get("bbox")}
+            for j in jobs
+        ],
+    }
+    tasks_path.write_text(json.dumps(tasks, ensure_ascii=False), encoding="utf-8")
+    timeout = max(180.0, 90.0 * len(jobs))
+    module_parent = str(Path(__file__).resolve().parents[1])
+    env = dict(os.environ)
+    env["PYTHONPATH"] = module_parent + os.pathsep + env.get("PYTHONPATH", "")
+    if "OMP_NUM_THREADS" not in env:
+        env["OMP_NUM_THREADS"] = "1"
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "rlpe.opendataloader_extractor",
+                "--rescue-ocr-worker",
+                str(tasks_path),
+                str(results_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "rescue-ocr worker timed out after %.0fs (%d jobs); rescue degraded",
+            timeout,
+            len(jobs),
+        )
+        return [None] * len(jobs)
+    results: list[str | None] = [None] * len(jobs)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "")[-300:]
+        logger.warning(
+            "rescue-ocr worker crashed (exit=%s): %s; rescue degraded",
+            proc.returncode,
+            tail,
+        )
+    else:
+        try:
+            results = json.loads(results_path.read_text(encoding="utf-8")).get(
+                "texts"
+            ) or [None] * len(jobs)
+        except (OSError, ValueError):
+            logger.warning("rescue-ocr results unreadable; rescue degraded")
+    for p in (tasks_path, results_path):
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return results
+
+
+if __name__ == "__main__":  # pragma: no cover - manual worker entry
+    raise SystemExit(_rescue_ocr_worker_cli(sys.argv[1:]))

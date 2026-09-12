@@ -116,7 +116,9 @@ class TestOrphanPlatePageRescue:
         # OD finds no figures (no text layer at all → no captions).
         figures: list = []
         data, od_dir = self._make_data_with_source(tmp_path)
-        ex = OpenDataLoaderExtractor(use_ocr=True)
+        # 2026-09-12: the fake easyocr is monkeypatched in-process;
+        # the default subprocess worker cannot see it.
+        ex = OpenDataLoaderExtractor(use_ocr=True, rescue_ocr_inprocess=True)
         out = ex._rescue_orphan_plate_pages(pdf, figures, data, od_dir, "p1")
         assert len(out) == 1, "the orphan plate page should be promoted"
         fig = out[0]
@@ -131,7 +133,9 @@ class TestOrphanPlatePageRescue:
         _inject_fake_easyocr(monkeypatch, "Sample location map of the region")
         pdf = _make_plate_pdf(tmp_path)
         data, od_dir = self._make_data_with_source(tmp_path)
-        ex = OpenDataLoaderExtractor(use_ocr=True)
+        # 2026-09-12: the fake easyocr is monkeypatched in-process;
+        # the default subprocess worker cannot see it.
+        ex = OpenDataLoaderExtractor(use_ocr=True, rescue_ocr_inprocess=True)
         out = ex._rescue_orphan_plate_pages(pdf, [], data, od_dir, "p1")
         assert out == []
 
@@ -158,7 +162,9 @@ class TestOrphanPlatePageRescue:
             )
         ]
         data, od_dir = self._make_data_with_source(tmp_path)
-        ex = OpenDataLoaderExtractor(use_ocr=True)
+        # 2026-09-12: the fake easyocr is monkeypatched in-process;
+        # the default subprocess worker cannot see it.
+        ex = OpenDataLoaderExtractor(use_ocr=True, rescue_ocr_inprocess=True)
         out = ex._rescue_orphan_plate_pages(pdf, existing, data, od_dir, "p1")
         # The method returns ``figures + rescued``; a suppressed rescue
         # means NO new entries beyond the input list.
@@ -179,7 +185,9 @@ class TestOrphanPlatePageRescue:
                 }
             ]
         }
-        ex = OpenDataLoaderExtractor(use_ocr=True)
+        # 2026-09-12: the fake easyocr is monkeypatched in-process;
+        # the default subprocess worker cannot see it.
+        ex = OpenDataLoaderExtractor(use_ocr=True, rescue_ocr_inprocess=True)
         out = ex._rescue_orphan_plate_pages(pdf, [], data, tmp_path, "p1")
         assert out == []
 
@@ -194,7 +202,9 @@ class TestOrphanPlatePageRescue:
     def test_real_soeka_plates_rescued(self, tmp_path):
         """The direct incident sentinel: Soeka's two obfuscated-caption
         plate pages (p9, p10) must be recovered by the rescue pass."""
-        ex = OpenDataLoaderExtractor(use_ocr=True)
+        # 2026-09-12: the fake easyocr is monkeypatched in-process;
+        # the default subprocess worker cannot see it.
+        ex = OpenDataLoaderExtractor(use_ocr=True, rescue_ocr_inprocess=True)
         res = ex.extract(_SOEKA, tmp_path / "od")
         assert res.success
         rescued = [
