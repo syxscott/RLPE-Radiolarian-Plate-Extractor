@@ -5986,7 +5986,11 @@ class RadiolarianPipeline:
         tokens starting with an opening bracket (Soeka 2019's
         GROBID-parsed subtitle "(Spesies Baru ...)" → token "(Spesies"),
         tokens containing digits (page numbers, "Input2" author
-        markers), and degenerate lengths.
+        markers), and degenerate lengths. 2026-09-12: also rejects
+        STRUCTURAL section names that OD metadata extraction sometimes
+        leaks into the author field ("Abstract" → "Abstract_2020_..."
+        panel prefixes on Thassanapak) — these are generic heading
+        words no journal uses as author names.
         """
         raw = token.strip().strip(",;")
         if raw.startswith(("(", "[", "{")):
@@ -5995,6 +5999,17 @@ class RadiolarianPipeline:
         if not (2 <= len(t) <= 40):
             return False
         if any(ch.isdigit() for ch in t):
+            return False
+        if t.lower() in {
+            "abstract",
+            "highlights",
+            "keywords",
+            "contents",
+            "graphical",
+            "introduction",
+            "conclusion",
+            "conclusions",
+        }:
             return False
         # Allow internal separators between letters only.
         core = re.sub(r"[.\-'’]", "", t)

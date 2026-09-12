@@ -98,3 +98,14 @@ class TestSpeciesPanelDedup:
         md = out[0]["metadata"]
         assert md.get("needs_review") is True
         assert "low_confidence" in md.get("review_reasons", [])
+
+
+class TestPaperShortNameStructuralGuard:
+    def test_abstract_heading_rejected_as_author(self):
+        from rlpe.pipeline import RadiolarianPipeline
+
+        pipe = RadiolarianPipeline.__new__(RadiolarianPipeline)
+        pm = {"authors": ["Abstract"], "year": 2020}
+        result = pipe._paper_short_name(pm, None)
+        assert result != "Abstract_2020"
+        assert "Abstract" not in result

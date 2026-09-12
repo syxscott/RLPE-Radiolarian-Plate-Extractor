@@ -255,6 +255,13 @@ def _is_valid_species(species: str | None) -> bool:
     _non_taxon_first_words = {
         "portrait",
         "portraits",
+        # 2026-09-12: SEM-plate caption head words ("Fig. 7. Scanning
+        # electron micrographs of ...") — generic instrument prose, not
+        # genus names.
+        "scanning",
+        "electron",
+        "micrograph",
+        "micrographs",
         "new",
         "report",
         "reports",
