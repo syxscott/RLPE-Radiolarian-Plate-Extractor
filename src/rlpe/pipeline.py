@@ -405,6 +405,11 @@ class RadiolarianPipeline:
                         rescue_ocr=bool(
                             self.config.extra.get("od_orphan_rescue_ocr", True)
                         ),
+                        # 2026-09-12: journal-style cross-page caption
+                        # binding (multi-evidence gated, default on).
+                        cross_page_captions=bool(
+                            self.config.extra.get("od_cross_page_captions", True)
+                        ),
                     )
         return self._od_extractor
 

@@ -102,10 +102,14 @@ class OpenDataLoaderExtractor:
         merge_gap_pt: float = 72.0,
         caption_window: int = 5,
         rescue_ocr: bool = True,
+        cross_page_captions: bool = True,
     ) -> None:
         self.use_ocr = use_ocr
         self.ocr_lang = ocr_lang
         self.image_format = image_format
+        # 2026-09-12: journal-style cross-page caption binding
+        # (multi-evidence gated; see _bind_journal_cross_page_captions).
+        self.cross_page_captions = bool(cross_page_captions)
         # 2026-09-12: the rescue's full-page OCR is the native-crash
         # hotspot in multi-DLL processes (see _rescue_orphan_plate_pages).
         self.rescue_ocr = bool(rescue_ocr)
@@ -982,7 +986,11 @@ class OpenDataLoaderExtractor:
         # Most OA radiolarian papers use this convention; OpenDataLoader does not
         # link captions to images reliably, so we do the plate association here
         # by anchoring the figure_id to the plate number.
-        plate_captions = _find_plate_captions(kids, caption_window=self.caption_window)
+        plate_captions = _find_plate_captions(
+            kids,
+            caption_window=self.caption_window,
+            cross_page=self.cross_page_captions,
+        )
         if plate_captions:
             plate_pairs, claimed_image_ids = _build_figures_from_plate_captions(
                 plate_captions,
@@ -1721,6 +1729,27 @@ _FIG_CAPTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 2026-09-12 (journal cross-page strategy): the PLURAL "Figs. 1–3."
+# / "Figs. 12, 13." caption form. _FIG_CAPTION_RE cannot match it
+# ("Figs" has an intervening "s" before the digit) and journals in the
+# Paleontological-Journal house style print plate captions as body
+# paragraphs in exactly this shape on the page AFTER the plate:
+#   "Figs. 1–3. Albaillella tetraspinosa (Kozur, 1981): (1) specimen ..."
+#   "Figs. 12, 13. Holdsworthella perforata Kozur, 1981, specimen ..."
+_FIGS_CAPTION_RE = re.compile(
+    r"^\s*Figs\.?\s*((?:\d+[a-z]?)(?:\s*[,–—-]\s*(?:\d+[a-z]?))*)\s*[.:]?\s*([A-Z])"
+)
+
+# Binomial-shaped clause ("Genus epithet") used as the species-density
+# evidence signal for the cross-page strategy.
+_BINOMIAL_CLAUSE_RE = re.compile(r"\b[A-Z][a-z]{3,}\s+[a-z]{4,}\b")
+
+# A bare "Plate N" reference (capital P, no comma-fig tail) inside the
+# caption page's text — the journal's own linkage between the caption
+# block and the plate it explains. Lowercase "pl. 1, fig. 2" citations
+# to OTHER papers do not match (capital-P anchored).
+_PLATE_REF_RE = re.compile(r"\bPlate\s+(\d+)\b")
+
 # Audit 2026-09-05 (orphan-page rescue): lenient caption-marker probe.
 # Unlike the anchored regexes above, this is SEARCHED (not matched) in
 # the first ~120 chars of band OCR text because OCR ordering often
@@ -1996,9 +2025,179 @@ def _is_running_header_footer(text: str) -> bool:
     )
 
 
+def _page_text_by_number(kids: list[dict[str, Any]]) -> dict[int, str]:
+    """Concatenate every text-bearing element's content per page number.
+
+    Used by the cross-page caption strategy for evidence checks over the
+    whole page ("does this page reference Plate N?").
+    """
+    texts: dict[int, list[str]] = {}
+    for el in _iter_all_elements(kids):
+        if not isinstance(el, dict):
+            continue
+        c = el.get("content") or el.get("text") or ""
+        if not isinstance(c, str) or not c:
+            continue
+        pg = int(el.get("page number", 0) or 0)
+        if pg:
+            texts.setdefault(pg, []).append(c)
+    return {pg: "\n".join(lines) for pg, lines in texts.items()}
+
+
+def _strip_running_header_lines(content: str) -> str:
+    """Drop lines carrying the Vol.+No. running-header signature so a
+    synthesized caption survives the _is_running_header_footer filter."""
+    kept = [
+        line
+        for line in content.splitlines()
+        if not (
+            re.search(r"\bVol\.\s*\d+\b", line, re.IGNORECASE)
+            and re.search(r"\bNo\.\s*\d+\b", line, re.IGNORECASE)
+        )
+    ]
+    return "\n".join(kept).strip()
+
+
+def _bind_journal_cross_page_captions(
+    kids: list[dict[str, Any]],
+    found: list[dict[str, Any]],
+    seen_plates: set[int],
+    seen_plates_with_kind: set[tuple[int, str]],
+    images_by_page: set[int],
+    caption_window: int,
+) -> None:
+    """Strategy 4 (2026-09-12): bind journal-style captions printed as
+    body paragraphs on the page AFTER a full-bleed plate.
+
+    Layout (Paleontological Journal house style, afanasieva2020c): the
+    plate page carries only a bare "Plate N" title + running header +
+    panel numbers; the species caption ("Figs. 1–3. Genus species
+    (Author): (1) specimen ...") is a body paragraph on the NEXT page,
+    whose text also cites "Plate N".
+
+    EVIDENCE GATES — every one must hold; any failure leaves the page
+    unbound (this strategy never overrides an existing caption):
+
+    G1 paragraph opens with the PLURAL "Figs. X–Y." / "Figs. X, Y."
+       form (singular "Fig." paragraphs belong to the existing paths);
+    G2 the caption page's text contains a bare "Plate N" reference
+       (capital-P anchored, so lowercase "pl. N" citations to other
+       papers don't fire), with exactly ONE distinct plate number —
+       two+ numbers is too ambiguous to bind;
+    G3 the preceding page carries images AND every caption already
+       claiming that page is species-free (the bare-title signature);
+       a real species-bearing caption there means the figure is
+       already handled;
+    G4 the plate number is not already claimed with a species-bearing
+       caption (dedup vs seen_plates_with_kind / seen_plates);
+    G5 the caption paragraph itself is not a running header/footer.
+
+    On success the caption text is MERGED into the existing bare-title
+    entry for that plate when one exists (enriching "Plate 3" with the
+    real species list), or appended as a new plate-kind caption
+    otherwise. ``recovered_via`` is stamped on the dict; the pair
+    builder propagates it into pair.metadata. The dict's page_number
+    stays on the IMAGE page so the existing forward window in
+    ``_build_figures_from_plate_captions`` claims the plate images
+    unchanged.
+    """
+    if not kids or not images_by_page:
+        return
+    page_texts = _page_text_by_number(kids)
+    # Collect ALL plural-form caption paragraphs per page (a plate's
+    # explanation may span several "Figs." paragraphs, e.g.
+    # "Figs. 1–11. ..." + "Figs. 12, 13. ...").
+    caption_blocks: dict[int, list[tuple[str, dict[str, Any]]]] = {}
+    for el in _iter_all_elements(kids):
+        if not isinstance(el, dict) or el.get("type") != "paragraph":
+            continue
+        content = (el.get("content") or "").strip()
+        if not content or not _FIGS_CAPTION_RE.match(content):
+            continue
+        if _is_running_header_footer(content):
+            continue
+        pg = int(el.get("page number", 0) or 0)
+        if pg:
+            caption_blocks.setdefault(pg, []).append((content, el))
+
+    for cap_page, blocks in caption_blocks.items():
+        # G2: exactly one distinct plate number referenced on this page.
+        refs = set(_PLATE_REF_RE.findall(page_texts.get(cap_page, "")))
+        if len(refs) != 1:
+            logger.debug(
+                "cross-page strategy: page %s skipped (%d distinct Plate refs)",
+                cap_page,
+                len(refs),
+            )
+            continue
+        plate_number = int(next(iter(refs)))
+        image_page = cap_page - 1
+        # G3: preceding page has images and no species-bearing caption.
+        if image_page not in images_by_page:
+            continue
+        claims_bare_only = True
+        for d in found:
+            if d.get("page_number") != image_page:
+                continue
+            if _BINOMIAL_CLAUSE_RE.search(d.get("content", "")):
+                claims_bare_only = False
+                break
+        if not claims_bare_only:
+            continue
+        # G4: plate number already claimed with species-bearing caption?
+        already_rich = any(
+            d.get("plate_number") == plate_number
+            and _BINOMIAL_CLAUSE_RE.search(d.get("content", ""))
+            for d in found
+        )
+        if already_rich:
+            continue
+        content = _strip_running_header_lines(
+            "\n".join(text for text, _ in blocks)
+        )
+        if not content or not _BINOMIAL_CLAUSE_RE.search(content):
+            continue
+        merged = False
+        for d in found:
+            if (
+                d.get("plate_number") == plate_number
+                and d.get("page_number") == image_page
+                and not _BINOMIAL_CLAUSE_RE.search(d.get("content", ""))
+            ):
+                # Merge into the existing bare-title caption ("Plate 3"
+                # -> "Plate 3\nFigs. 1–3. Albaillella ...").
+                d["content"] = f"{d.get('content', '').strip()}\n{content}".strip()
+                d["recovered_via"] = "journal_cross_page"
+                merged = True
+                break
+        if not merged:
+            found.append(
+                {
+                    "plate_number": plate_number,
+                    "page_number": image_page,
+                    "content": content,
+                    "element": blocks[0][1],
+                    "kind": "plate",
+                    "recovered_via": "journal_cross_page",
+                }
+            )
+            seen_plates.add(plate_number)
+            seen_plates_with_kind.add((plate_number, "plate"))
+        logger.info(
+            "cross-page strategy: bound %d caption block(s) on page %s to "
+            "plate %s (image page %s)",
+            len(blocks),
+            cap_page,
+            plate_number,
+            image_page,
+        )
+    _ = caption_window  # reserved: future backward-window variants
+
+
 def _find_plate_captions(
     kids: list[dict[str, Any]],
     caption_window: int = 5,
+    cross_page: bool = True,
 ) -> list[dict[str, Any]]:
     """Return elements whose text starts with ``Plate N`` /
     ``Explanation of Plate N``.
@@ -2257,6 +2456,18 @@ def _find_plate_captions(
                 "content": "\n".join(lines),
                 "element": None,
             }
+        )
+    # 2026-09-12 strategy 4: journal-style cross-page captions (body
+    # paragraphs "Figs. X–Y. Species ..." on the page after a full-bleed
+    # plate). Multi-evidence gated — see _bind_journal_cross_page_captions.
+    if cross_page:
+        _bind_journal_cross_page_captions(
+            kids=kids,
+            found=found,
+            seen_plates=seen_plates,
+            seen_plates_with_kind=seen_plates_with_kind,
+            images_by_page=images_by_page,
+            caption_window=caption_window,
         )
     found.sort(key=lambda d: (d["plate_number"], d["page_number"]))
     # 2026-09-12: drop journal running-header/footer "captions" (see
@@ -2584,7 +2795,18 @@ def _build_figures_from_plate_captions(
                 image_paths=image_paths,
                 caption_text=cap["content"],
                 merged_bbox=merged_bbox,
-                metadata={"plate_number": cap["plate_number"]},
+                metadata={
+                    "plate_number": cap["plate_number"],
+                    # 2026-09-12: propagate the caption-strategy tag
+                    # (e.g. "journal_cross_page") so downstream stages
+                    # get the same fig_type protection as the OCR
+                    # rescue paths (pipeline reads this key).
+                    **(
+                        {"caption_recovered_via": cap["recovered_via"], "caption_recovered_confidence": 0.65}
+                        if cap.get("recovered_via")
+                        else {}
+                    ),
+                },
             )
         )
     return pairs, claimed_image_ids

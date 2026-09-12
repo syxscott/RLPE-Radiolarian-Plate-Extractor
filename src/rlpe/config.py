@@ -109,6 +109,12 @@ _KNOWN_EXTRA_KEYS = {
     # native-crash hotspot in multi-DLL Windows processes (EasyOCR/torch
     # access violation). Default True preserves upstream behaviour.
     "od_orphan_rescue_ocr",
+    # 2026-09-12: journal-style cross-page caption binding — bind body
+    # paragraphs "Figs. X–Y. Species ..." (on the page after a full-bleed
+    # plate) to that plate when ALL evidence gates hold (bare-Plate-ref
+    # on the caption page, image page species-free, plate unclaimed).
+    # Default True; multi-strategy caption resolution, strategy 4.
+    "od_cross_page_captions",
     # Phase 27: multilingual OCR + caption language selection
     "ocr_lang",
     "llm_prompt_lang",
