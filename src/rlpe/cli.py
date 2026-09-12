@@ -1019,6 +1019,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Never make network calls to PBDB (cache-only).",
     )
     p.add_argument("--export-csv", type=ExpandUserPath, default=None)
+    # 2026-09-12: flat species×geology×image summary table — the
+    # operator-facing deliverable (one row per panel, geology flattened).
+    p.add_argument(
+        "--export-summary",
+        type=ExpandUserPath,
+        default=None,
+        help="Flat summary table (.csv or .xlsx): one row per species "
+        "panel with age/locality/country/coordinates columns joined from "
+        "the geology dims.",
+    )
     p.add_argument("--export-json", type=ExpandUserPath, default=None)
     p.add_argument("--export-jsonl", type=ExpandUserPath, default=None)
     return p
@@ -1522,6 +1532,14 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         from .export import export_csv
 
         export_csv(rows, args.export_csv)
+    if getattr(args, "export_summary", None):
+        from .export import export_summary_csv, export_summary_xlsx
+
+        _sum_path = args.export_summary
+        if _sum_path.suffix.lower() == ".xlsx":
+            export_summary_xlsx(rows, _sum_path)
+        else:
+            export_summary_csv(rows, _sum_path)
     if args.export_json:
         from .export import export_json
 

@@ -346,3 +346,118 @@ def copy_assets(
                 new_row[key] = str(dst_path)
         copied.append(new_row)
     return copied
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-12: flat species×geology×image summary table.
+# One row per matches.jsonl result row, with the geology fields flattened
+# from metadata.geology_summary (best geology link per row, stamped by
+# _finalize_rows) plus the stable join ids. This is the operator-facing
+# deliverable: a species-panel table that can go straight into a
+# database, without opening run_output.json.
+# ---------------------------------------------------------------------------
+
+_SUMMARY_COLUMNS: tuple[str, ...] = (
+    "paper_id",
+    "figure_id",
+    "panel_id",
+    "species",
+    "confidence",
+    "label_text",
+    "figure_type",
+    "image_path",
+    "page_index",
+    # geology (from metadata.geology_summary)
+    "age",
+    "chronostratigraphy",
+    "ma_top",
+    "ma_base",
+    "formation",
+    "member",
+    "group",
+    "lithology",
+    "locality",
+    "country",
+    "region",
+    "modern_latitude",
+    "modern_longitude",
+    "paleo_latitude",
+    "paleo_longitude",
+    "plate_id",
+    "coord_source",
+    "reconstruction_model",
+    "biozone",
+    # join ids
+    "locality_id",
+    "geology_context_id",
+    "sample_id",
+)
+
+
+def build_summary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten matches rows into the summary-table shape (see
+    ``_SUMMARY_COLUMNS``). Rows without a geology summary still appear —
+    their geology columns are simply empty, so the table shows the
+    coverage gap instead of hiding it."""
+    out: list[dict[str, Any]] = []
+    for r in rows or []:
+        md = r.get("metadata") or {}
+        gs = md.get("geology_summary") or {}
+        rec: dict[str, Any] = {
+            "paper_id": r.get("paper_id"),
+            "figure_id": r.get("figure_id"),
+            "panel_id": r.get("panel_id"),
+            "species": r.get("species"),
+            "confidence": r.get("confidence"),
+            "label_text": r.get("label_text"),
+            "figure_type": md.get("figure_type"),
+            "image_path": r.get("panel_path"),
+            "page_index": md.get("page_index"),
+            "locality_id": md.get("locality_id"),
+            "geology_context_id": md.get("geology_context_id"),
+            "sample_id": md.get("sample_id"),
+        }
+        for k in _SUMMARY_COLUMNS:
+            if k not in rec:
+                rec[k] = gs.get(k)
+        out.append(rec)
+    return out
+
+
+def export_summary_csv(rows: list[dict[str, Any]], path: Path) -> None:
+    """Write the flat summary table as CSV (utf-8-sig, atomic write)."""
+    ensure_dir(path.parent)
+    flat = build_summary_rows(rows)
+    import io
+
+    buf = io.StringIO(newline="")
+    writer = csv.DictWriter(buf, fieldnames=list(_SUMMARY_COLUMNS), extrasaction="ignore")
+    writer.writeheader()
+    for row in flat:
+        writer.writerow({k: _csv_cell(row.get(k)) for k in _SUMMARY_COLUMNS})
+    _atomic_write_text(path, buf.getvalue(), encoding="utf-8-sig")
+
+
+def export_summary_xlsx(rows: list[dict[str, Any]], path: Path) -> None:
+    """Write the flat summary table as XLSX (openpyxl, atomic tmp+replace)."""
+    ensure_dir(path.parent)
+    from openpyxl import Workbook
+
+    flat = build_summary_rows(rows)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "species_geology_summary"
+    ws.append(list(_SUMMARY_COLUMNS))
+    for row in flat:
+        ws.append([row.get(k) for k in _SUMMARY_COLUMNS])
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    os.close(fd)  # Windows: the open fd blocks the final os.replace
+    try:
+        wb.save(tmp_path)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise

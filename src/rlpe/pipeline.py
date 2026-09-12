@@ -888,6 +888,42 @@ class RadiolarianPipeline:
                 # self-describing for audit purposes.
                 "git_commit": getattr(self, "_git_commit", None),
             }
+            # 2026-09-12 (data inventory): count EVERY output dimension,
+            # not just matches rows — a run whose matches.jsonl is thin
+            # may still have produced taxa / geology contexts /
+            # localities / paleo coordinates / knowledge-graph edges /
+            # range charts. Previously "how much data did I get" could
+            # only be answered by opening run_output.json and counting
+            # by hand.
+            try:
+                _ro = locals().get("run_output_dict")
+                if not isinstance(_ro, dict):
+                    _ro = {}
+                _inv = {
+                    "matches_rows": len(rows),
+                    "panels": len(_ro.get("panels") or []),
+                    "figures": len(_ro.get("figures") or []),
+                    "taxa": len(_ro.get("taxa") or []),
+                    "samples": len(_ro.get("samples") or []),
+                    "geology_contexts": len(_ro.get("geology_contexts") or []),
+                    "localities": len(_ro.get("localities") or []),
+                    "paleo_coordinates": len(_ro.get("paleo_coordinates") or []),
+                    "morphologies": len(_ro.get("morphologies") or []),
+                    "range_charts": len(_ro.get("range_charts") or []),
+                    "knowledge_graph_nodes": sum(
+                        len(kg.get("nodes") or []) for kg in (_ro.get("knowledge_graphs") or [])
+                    ),
+                    "knowledge_graph_edges": sum(
+                        len(kg.get("edges") or []) for kg in (_ro.get("knowledge_graphs") or [])
+                    ),
+                }
+                _manifest["data_inventory"] = _inv
+                _flush_print(
+                    "data_inventory: "
+                    + ", ".join(f"{k}={v}" for k, v in _inv.items() if v)
+                )
+            except Exception:
+                logger.debug("data_inventory build failed", exc_info=True)
             sys.modules[__name__].__dict__["_safe_write_json"](
                 manifest_path.parent / "manifest.json", _manifest
             )
