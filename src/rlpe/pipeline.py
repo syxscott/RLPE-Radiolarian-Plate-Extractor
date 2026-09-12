@@ -197,6 +197,23 @@ class RadiolarianPipeline:
         # instead of raising KeyboardInterrupt. This lets the GUI
         # show a clean "cancelled" state and free the worker thread.
         self._cancel_event = cancel_event
+        # 2026-09-12 (Arrow Lake): clamp torch's intra-op thread pool to
+        # ONE thread BEFORE any OCR backend initialises. The hybrid
+        # hybrid-core CPU (Intel Ultra 225H) segfaults inside torch's
+        # conv kernels when the default thread pool fans out across
+        # P-cores and E-cores (EasyOCR CRAFT + quantized LSTM were the
+        # observed victims). The same clamp demonstrably fixed the
+        # rescue-OCR worker; the env var (OMP_NUM_THREADS) set via
+        # .env does NOT cover the init window because dotenv loads
+        # after torch. Off via extra["clamp_torch_threads"]=False.
+        if self.config.extra.get("clamp_torch_threads", True):
+            try:
+                import torch as _torch
+
+                _torch.set_num_threads(1)
+                logger.info("torch intra-op threads clamped to 1 (Arrow Lake conv stability)")
+            except Exception:  # torch absent / clamp refused — proceed
+                pass
         # Phase 29: forward retry + timeout knobs from the config
         # ``extra`` dict. Defaults match legacy behaviour (3 retries,
         # 300s timeout) — only operators who pass ``--grobid-max-retries``
@@ -2660,13 +2677,58 @@ class RadiolarianPipeline:
             return self._worker_crash_stub(pdf_path, stem, f"timeout after {timeout}s")
         if proc.returncode != 0 or not out_path.exists():
             tail = (proc.stderr or proc.stdout or "")[-400:]
-            logger.error(
-                "worker subprocess crashed (exit=%s) for %s — recording crash stub; stderr tail: %s",
-                proc.returncode,
-                pdf_path.name,
-                tail,
-            )
-            return self._worker_crash_stub(pdf_path, stem, f"worker exit={proc.returncode}")
+            # 2026-09-12 (crash retry): a worker killed by a NATIVE crash
+            # (0xC0000005 / 0xC0000139-class on Windows, SIGSEGV on POSIX)
+            # is a probabilistic event — the same paper succeeds in a
+            # FRESH worker process (new memory layout; observed on
+            # Arrow Lake where EasyOCR/torch conv crashes ~50% of runs
+            # while another LLM's timing sails through). Retry in a new
+            # process up to extra["batch_worker_crash_retries"] (default
+            # 3). Deterministic failures burn the same budget but are
+            # capped, never looped.
+            _NATIVE_CODES = {-1073741819, 139, 3221225477, 0xC0000139}
+            retries_left = int(self.config.extra.get("batch_worker_crash_retries", 3))
+            attempt = 1
+            while (
+                proc.returncode != 0
+                and (proc.returncode in _NATIVE_CODES or -proc.returncode in _NATIVE_CODES)
+                and retries_left > 0
+            ):
+                retries_left -= 1
+                attempt += 1
+                logger.warning(
+                    "worker native crash for %s (exit=%s); retrying in a fresh "
+                    "worker process (attempt %d, %d retries left)",
+                    pdf_path.name,
+                    proc.returncode,
+                    attempt,
+                    retries_left,
+                )
+                out_path.unlink(missing_ok=True)
+                try:
+                    proc = _subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=timeout,
+                        env=env,
+                        cwd=str(Path(__file__).resolve().parents[2]),
+                    )
+                except _subprocess.TimeoutExpired:
+                    break  # timeout → fall through to the stub below
+                if proc.returncode == 0 and out_path.exists():
+                    break
+            if proc.returncode != 0 or not out_path.exists():
+                tail = (proc.stderr or proc.stdout or "")[-400:]
+                logger.error(
+                    "worker subprocess crashed (exit=%s) for %s — recording crash stub; stderr tail: %s",
+                    proc.returncode,
+                    pdf_path.name,
+                    tail,
+                )
+                return self._worker_crash_stub(pdf_path, stem, f"worker exit={proc.returncode}")
         try:
             rows = _json.loads(out_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
