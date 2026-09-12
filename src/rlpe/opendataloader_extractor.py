@@ -217,7 +217,7 @@ class OpenDataLoaderExtractor:
             # any figure with an empty caption, OCR the area below
             # the figure on the page so downstream caption parsing
             # has something to work with.
-            figures = self._ocr_missing_captions(figures, pdf_path)
+            figures = self._ocr_missing_captions(figures, pdf_path, output_dir)
             # Audit 2026-09-05 (completeness test): page-level rescue for
             # orphan plate pages. Soeka_2019 lost BOTH SEM plates (24
             # panels, 19 caption clauses) because the caption pages'
@@ -295,6 +295,7 @@ class OpenDataLoaderExtractor:
         self,
         figures: list[FigureCaptionPair],
         pdf_path: Path,
+        output_dir: Path | None = None,
     ) -> list[FigureCaptionPair]:
         """For any figure with an empty ``caption_text``, render the page
         area below the figure and OCR it to recover the caption.
@@ -329,11 +330,16 @@ class OpenDataLoaderExtractor:
             logger.info("PyMuPDF unavailable; skipping caption OCR fallback")
             return figures
 
-        ocr_engine = self._get_or_init_ocr_engine()
-        if ocr_engine is None:
-            # Init failed (already logged in ``_get_or_init_ocr_engine``);
-            # skip the OCR fallback for this paper.
-            return figures
+        # 2026-09-12: subprocess mode needs NO in-process engine — the
+        # worker loads its own. Initialising it here was the crash
+        # hotspot (quantized-LSTM init on hybrid CPUs).
+        ocr_engine = None
+        if self.rescue_ocr_inprocess:
+            ocr_engine = self._get_or_init_ocr_engine()
+            if ocr_engine is None:
+                # Init failed (already logged in ``_get_or_init_ocr_engine``);
+                # skip the OCR fallback for this paper.
+                return figures
 
         try:
             doc = fitz.open(str(pdf_path))
@@ -345,54 +351,93 @@ class OpenDataLoaderExtractor:
         # Cache the OCR result by (page_index, bbox_key) so we don't
         # re-render and re-OCR the same page band multiple times.
         ocr_cache: dict[tuple[int, str], str | None] = {}
-        try:
-            for fig in figures:
-                if fig.caption_text and fig.caption_text.strip():
-                    out.append(fig)
-                    continue
-                if not fig.merged_bbox or fig.page_number < 1:
-                    out.append(fig)
-                    continue
-                page_index = fig.page_number - 1  # PyMuPDF is 0-indexed
-                if page_index < 0 or page_index >= len(doc):
-                    out.append(fig)
-                    continue
-                bbox_key = f"{fig.merged_bbox[0]:.1f},{fig.merged_bbox[1]:.1f},{fig.merged_bbox[2]:.1f},{fig.merged_bbox[3]:.1f}"
-                cache_key = (fig.page_number, bbox_key)
-                if cache_key in ocr_cache:
-                    recovered = ocr_cache[cache_key]
-                else:
-                    # F1 (audit 2026-09-06): full-page figures (scanned
-                    # plates covering >60% of the page) have no caption
-                    # band below — OCR the whole page instead. Motoyama-
-                    # style papers: 10 empty-caption figures, one per
-                    # scanned plate page.
-                    l0, b0, r0, t0 = fig.merged_bbox
-                    _page_area = float(doc[page_index].rect.width) * float(
-                        doc[page_index].rect.height
-                    )
-                    if (r0 - l0) * (t0 - b0) > 0.6 * _page_area:
-                        recovered = _ocr_full_page(doc, page_index, ocr_engine, np)
-                    else:
-                        recovered = _ocr_caption_band(
-                            doc, page_index, fig.merged_bbox, ocr_engine, np
-                        )
-                    ocr_cache[cache_key] = recovered
-                if recovered:
-                    fig.metadata = dict(fig.metadata or {})
-                    fig.metadata["caption_recovered_via"] = "ocr_fallback"
-                    fig.metadata["caption_recovered_confidence"] = 0.6
-                    fig = FigureCaptionPair(
-                        figure_id=fig.figure_id,
-                        page_number=fig.page_number,
-                        image_paths=fig.image_paths,
-                        caption_text=recovered,
-                        merged_bbox=fig.merged_bbox,
-                        metadata=fig.metadata,
-                    )
+
+        # 2026-09-12 (subprocess isolation, phase 1): collect OCR jobs
+        # by geometry only. The EasyOCR inference itself runs in an
+        # isolated worker subprocess (phase 2) — the in-process call on
+        # a worker THREAD is the native-crash hotspot (Arrow Lake).
+        jobs: list[dict[str, Any]] = []
+        job_idx_by_cache: dict[tuple[int, str], int] = {}
+        pending: list[tuple[FigureCaptionPair, tuple[int, str]]] = []
+        for fig in figures:
+            if fig.caption_text and fig.caption_text.strip():
                 out.append(fig)
-        finally:
-            doc.close()
+                continue
+            if not fig.merged_bbox or fig.page_number < 1:
+                out.append(fig)
+                continue
+            page_index = fig.page_number - 1  # PyMuPDF is 0-indexed
+            if page_index < 0 or page_index >= len(doc):
+                out.append(fig)
+                continue
+            bbox_key = f"{fig.merged_bbox[0]:.1f},{fig.merged_bbox[1]:.1f},{fig.merged_bbox[2]:.1f},{fig.merged_bbox[3]:.1f}"
+            cache_key = (fig.page_number, bbox_key)
+            if cache_key in ocr_cache:
+                pending.append((fig, cache_key))
+                continue
+            # F1 (audit 2026-09-06): full-page figures (scanned plates
+            # covering >60% of the page) have no caption band below —
+            # OCR the whole page instead.
+            l0, b0, r0, t0 = fig.merged_bbox
+            _page_area = float(doc[page_index].rect.width) * float(
+                doc[page_index].rect.height
+            )
+            mode = "full" if (r0 - l0) * (t0 - b0) > 0.6 * _page_area else "band"
+            job_idx_by_cache[cache_key] = len(jobs)
+            jobs.append({"page_index": page_index, "mode": mode, "bbox": list(fig.merged_bbox)})
+            pending.append((fig, cache_key))
+
+        # Phase 2 — batch OCR (isolated worker by default).
+        if jobs:
+            if self.rescue_ocr_inprocess:
+                texts = []
+                for job in jobs:
+                    try:
+                        if job["mode"] == "full":
+                            texts.append(_ocr_full_page(doc, job["page_index"], ocr_engine, np))
+                        else:
+                            texts.append(
+                                _ocr_caption_band(doc, job["page_index"], tuple(job["bbox"]), ocr_engine, np)
+                            )
+                    except Exception:
+                        texts.append(None)
+            else:
+                _scratch = (output_dir or pdf_path.parent) / "od_output"
+                texts = _run_rescue_ocr_batch(pdf_path, jobs, self.ocr_lang, _scratch)
+            for (page_index, bbox_key), text in zip(
+                job_idx_by_cache.keys(), texts
+            ):
+                ocr_cache[(page_index, bbox_key)] = text
+
+        # Phase 3 — emit in the original figure order.
+        for fig in figures:
+            if fig.caption_text and fig.caption_text.strip():
+                out.append(fig)
+                continue
+            if not fig.merged_bbox or fig.page_number < 1:
+                out.append(fig)
+                continue
+            page_index = fig.page_number - 1
+            if page_index < 0 or page_index >= len(doc):
+                out.append(fig)
+                continue
+            bbox_key = f"{fig.merged_bbox[0]:.1f},{fig.merged_bbox[1]:.1f},{fig.merged_bbox[2]:.1f},{fig.merged_bbox[3]:.1f}"
+            cache_key = (fig.page_number, bbox_key)
+            recovered = ocr_cache.get(cache_key)
+            if recovered:
+                fig.metadata = dict(fig.metadata or {})
+                fig.metadata["caption_recovered_via"] = "ocr_fallback"
+                fig.metadata["caption_recovered_confidence"] = 0.6
+                fig = FigureCaptionPair(
+                    figure_id=fig.figure_id,
+                    page_number=fig.page_number,
+                    image_paths=fig.image_paths,
+                    caption_text=recovered,
+                    merged_bbox=fig.merged_bbox,
+                    metadata=fig.metadata,
+                )
+            out.append(fig)
+        doc.close()
         return out
 
     def _rescue_orphan_plate_pages(
