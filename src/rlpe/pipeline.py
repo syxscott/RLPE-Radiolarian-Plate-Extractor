@@ -6803,6 +6803,63 @@ Rules:
                                 figure_id,
                                 llm_plate_cls.reasoning[:120],
                             )
+                            # 2026-09-12 (range-chart bridge): the rejection
+                            # is often the CORRECT verdict that the figure
+                            # is a chart/table — e.g. afanasieva2020c Fig. 2,
+                            # a stratigraphic range chart whose caption
+                            # ("Asselian and Sakmarian radiolarians of the
+                            # ... sections (1–3)") carries no range-chart
+                            # keyword, so classify_figure_type routed it
+                            # here as a plate. When the vision verdict is a
+                            # chart/diagram type AND the caption carries
+                            # species clauses, hand the figure to the
+                            # range-chart extractor instead of dropping it:
+                            # the species×age data lands in
+                            # RunOutput.range_charts rather than evaporating.
+                            _img_type = (llm_plate_cls.image_type or "").strip().lower()
+                            _bridge_on = self.config.extra.get(
+                                "stage2_range_chart_bridge", True
+                            )
+                            _sp_signals = len(
+                                getattr(caption, "entities", []) or []
+                            ) + len(
+                                re.findall(
+                                    # epithet >= 4 chars: excludes function
+                                    # words ("and") so the figure-header
+                                    # tail "2. Asselian and" doesn't count
+                                    # as a species clause.
+                                    r"\b\d{1,2}\s*\.\s+[A-Z][a-z]{3,}\s+[a-z]{4,}",
+                                    caption.caption or "",
+                                )
+                            )
+                            if (
+                                _bridge_on
+                                and _img_type in {"diagram", "chart", "table", "graph"}
+                                and _sp_signals >= 2
+                            ):
+                                rc_image = getattr(region, "crop_path", None) or ""
+                                if rc_image:
+                                    try:
+                                        self._process_range_chart(
+                                            paper_id=paper_id,
+                                            figure_id=figure_id,
+                                            caption_text=caption.caption or "",
+                                            image_path=rc_image,
+                                        )
+                                        llm_diag["range_chart_bridge"] = True
+                                        logger.info(
+                                            "range-chart bridge: %s/%s routed to the "
+                                            "range-chart extractor (stage2 image_type=%s)",
+                                            paper_id,
+                                            figure_id,
+                                            _img_type,
+                                        )
+                                    except Exception:
+                                        logger.exception(
+                                            "range-chart bridge failed for %s/%s",
+                                            paper_id,
+                                            figure_id,
+                                        )
                             # Annotate each potential panel as "rejected by classifier"
                             # and return an empty match list with the diagnostic saved.
                             if self.config.save_intermediate:

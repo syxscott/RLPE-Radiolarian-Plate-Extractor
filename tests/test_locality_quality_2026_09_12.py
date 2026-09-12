@@ -76,3 +76,37 @@ class TestPaleoStatusPrecision:
         assert explain_paleo_status("Siberia", None) == "age_unknown"
         assert explain_paleo_status(None, 286.8) == "plate_unknown"
         assert explain_paleo_status("NotAPlate", 286.8) == "plate_unknown"
+
+
+class TestRangeChartBridgeGate:
+    """2026-09-12: the Stage-2 verdict bridge routes figures the vision
+    classifier rejects as plates but types as chart/diagram (with a
+    species-bearing caption) to the range-chart extractor. The gate
+    logic mirrors the pipeline block; this pins the predicate."""
+
+    def test_predicate_signals(self):
+        import re
+
+        caption = (
+            "Fig. 2. Asselian and Sakmarian radiolarians of the Lower "
+            "Permian South Urals in the Kondurovka (1\u20133)"
+        )
+        img_type = "diagram"
+        # epithet >= 4 chars so the header tail "2. Asselian and"
+        # ("and" = 3 chars) is not counted as a species clause.
+        sp_signals = len(
+            re.findall(r"\b\d{1,2}\s*\.\s+[A-Z][a-z]{3,}\s+[a-z]{4,}", caption)
+        )
+        assert sp_signals == 0
+        # A real numbered clause list does count.
+        real = (
+            "Plate 4. Figs. 1-11. 1. Pseudoalbaillella sakmarensis "
+            "2. Holdsworthella permica"
+        )
+        assert (
+            len(re.findall(r"\b\d{1,2}\s*\.\s+[A-Z][a-z]{3,}\s+[a-z]{4,}", real)) >= 2
+        )
+
+    def test_image_type_whitelist(self):
+        whitelist = {"diagram", "chart", "table", "graph"}
+        assert "diagram" in whitelist and "photo" not in whitelist

@@ -115,6 +115,11 @@ _KNOWN_EXTRA_KEYS = {
     # on the caption page, image page species-free, plate unclaimed).
     # Default True; multi-strategy caption resolution, strategy 4.
     "od_cross_page_captions",
+    # 2026-09-12: Stage-2 verdict bridge — a figure the vision classifier
+    # rejects as a plate but types as chart/diagram/table with a
+    # species-bearing caption routes to the range-chart extractor
+    # instead of being dropped. Default True. Read by pipeline.py.
+    "stage2_range_chart_bridge",
     # Phase 27: multilingual OCR + caption language selection
     "ocr_lang",
     "llm_prompt_lang",
