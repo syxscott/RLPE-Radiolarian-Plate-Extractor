@@ -5842,23 +5842,46 @@ class RadiolarianPipeline:
             # Sanitise species for use in a filename: drop subgenus
             # parentheses ("Cyrtocapsa (Mirineis) amphora" →
             # "Cyrtocapsa amphora"), then drop characters that are
-            # unsafe or noisy in filenames, then collapse whitespace
-            # and underscores into single underscores.
-            safe = re.sub(r"\s*\([^)]*\)", " ", sp)
-            safe = re.sub(r"[^\w\s.-]", "", safe)
-            safe = re.sub(r"[\s_]+", "_", safe).strip("_")
-            if not safe:
-                continue
-            # Build new name: [paper_short_]species_original
+            # Build new name: 属_种_年份_作者_短名_原文件名 (2026-09-12
+            # user-requested format). Each field is optional except the
+            # original basename; empty segments are skipped so the name
+            # degrades gracefully (e.g. no year → genus_species_author).
+            sp_parts = sp.split()
+            genus = sp_parts[0].rstrip(".,;:?!") if sp_parts else ""
+            epithet = "_".join(sp_parts[1:]).strip("_") if len(sp_parts) > 1 else ""
+            pm = r.get("paper_metadata") or {}
+            year_s = str(pm.get("year") or "").strip()
+            if not re.fullmatch(r"\d{4}", year_s or ""):
+                year_s = ""
+            author_tok = ""
+            authors = pm.get("authors") or []
+            if authors and isinstance(authors, list) and authors[0]:
+                _words = str(authors[0]).split()
+                cand = _words[0].rstrip(",").strip()
+                if len(_words) > 1 and re.fullmatch(r"(?:[^\W\d_]\.)+", cand, re.UNICODE):
+                    cand = _words[1].rstrip(",").strip()
+                if self._plausible_name_token(cand):
+                    author_tok = cand
             parts = []
+            if genus:
+                parts.append(genus)
+            if epithet:
+                parts.append(epithet)
+            if year_s:
+                parts.append(year_s)
+            if author_tok:
+                parts.append(author_tok)
             if prefix:
                 parts.append(prefix)
-            parts.append(safe)
             parts.append(old.name)
             new_name = "_".join(parts)
             new_path = old.parent / new_name
             if new_path == old:
                 continue
+            _collision = 2
+            while new_path.exists():
+                new_path = old.parent / f"{old.stem}_{_collision}{old.suffix}"
+                _collision += 1
             try:
                 old.rename(new_path)
                 r["panel_path"] = str(new_path)
