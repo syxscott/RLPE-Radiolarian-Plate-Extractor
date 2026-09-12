@@ -5593,6 +5593,15 @@ class RadiolarianPipeline:
                     if ids:
                         md["sample_ids"] = ids
                         md["sample_id"] = ids[0]
+                        # 2026-09-12 (geology linkage): propagate the
+                        # row-level sample onto every geology link so
+                        # ``geology_contexts_from_matches`` can fill
+                        # GeologyContextRecord.sample_id — the field
+                        # existed in the schema but no producer ever
+                        # wrote it, leaving every context unjoined.
+                        for gl in md.get("geology_links") or []:
+                            if isinstance(gl, dict):
+                                gl.setdefault("sample_id", ids[0])
 
         # Audit 2026-09-05 (tier3-D4): paleogeographic enrichment for
         # every row's geology_links, on BOTH extraction paths. The only
@@ -5612,6 +5621,54 @@ class RadiolarianPipeline:
             for gl in geo_links:
                 if isinstance(gl, dict):
                     _enrich_geo(gl)
+            # 2026-09-12 (geology linkage): per-row flat summary +
+            # stable join ids, so a matches.jsonl reader sees
+            # age/locality/country/coordinates alongside the species
+            # without recomputing the dim hashes. The summary takes
+            # the highest-confidence link (links are already ordered
+            # best-first by the extractors); fields the link lacks
+            # stay absent rather than being fabricated as None noise.
+            best = next(
+                (
+                    gl
+                    for gl in geo_links
+                    if isinstance(gl, dict) and (gl.get("age") or gl.get("locality"))
+                ),
+                None,
+            )
+            if best is not None:
+                summary_keys = (
+                    "age",
+                    "chronostratigraphy",
+                    "ma_top",
+                    "ma_base",
+                    "formation",
+                    "member",
+                    "group",
+                    "lithology",
+                    "locality",
+                    "country",
+                    "region",
+                    "modern_latitude",
+                    "modern_longitude",
+                    "paleo_latitude",
+                    "paleo_longitude",
+                    "plate_id",
+                    "coord_source",
+                    "reconstruction_model",
+                    "biozone",
+                )
+                md["geology_summary"] = {
+                    k: best[k] for k in summary_keys if best.get(k) is not None
+                }
+                try:
+                    from .converters import _geology_context_id, _locality_id
+
+                    md["geology_context_id"] = _geology_context_id(best)
+                    if best.get("locality"):
+                        md["locality_id"] = _locality_id(best, r.get("paper_id") or "")
+                except Exception:  # join ids must never break finalize
+                    logger.debug("geology join-id stamping failed", exc_info=True)
 
         # audit 2026-07-31: low-confidence rows must be flagged for
         # review. A confidence < 0.5 row previously shipped with

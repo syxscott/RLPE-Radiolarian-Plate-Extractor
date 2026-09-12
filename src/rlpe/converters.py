@@ -1662,13 +1662,25 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 key = (m.paper_id, f"X_{sid.value}")
                 if key in seen:
                     continue
+                # 2026-09-12 (geology linkage): derive the sample's
+                # geology join keys from the SAME row's best link so
+                # samples no longer float disconnected from the
+                # localities/geology_contexts dims.
+                _gl = next(
+                    (
+                        g
+                        for g in ((m.metadata or {}).get("geology_links") or [])
+                        if isinstance(g, dict) and g.get("locality")
+                    ),
+                    None,
+                ) or {}
                 rec = SampleRecord(
                     sample_id=f"X_{sid.value}",
                     paper_id=m.paper_id,
                     figure_id=m.figure_id,
                     caption_panel_range=None,
-                    locality_id=None,
-                    geology_context_id=None,
+                    locality_id=_locality_id(_gl, m.paper_id) if _gl.get("locality") else None,
+                    geology_context_id=_geology_context_id(_gl) if _gl else None,
                     evidence_text=text[:300],
                     page_index=(m.metadata or {}).get("page_index"),
                     confidence=sid.confidence,
@@ -1830,13 +1842,21 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 raw_key = (m.paper_id, sid_raw)
                 if raw_key in raw_seen:
                     continue
+                _gl2 = next(
+                    (
+                        g
+                        for g in ((m.metadata or {}).get("geology_links") or [])
+                        if isinstance(g, dict) and g.get("locality")
+                    ),
+                    None,
+                ) or {}
                 rec = SampleRecord(
                     sample_id=sid_str,
                     paper_id=m.paper_id,
                     figure_id=m.figure_id,
                     caption_panel_range=None,
-                    locality_id=None,
-                    geology_context_id=None,
+                    locality_id=_locality_id(_gl2, m.paper_id) if _gl2.get("locality") else None,
+                    geology_context_id=_geology_context_id(_gl2) if _gl2 else None,
                     evidence_text=text[:300],
                     page_index=(m.metadata or {}).get("page_index"),
                     confidence=0.5,
