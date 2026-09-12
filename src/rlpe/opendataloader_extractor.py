@@ -282,6 +282,7 @@ class OpenDataLoaderExtractor:
                     _normalise_ocr_lang(self.ocr_lang),
                     gpu=False,
                     verbose=False,
+                    quantize=False,
                 )
             except Exception:
                 logger.warning(
@@ -2398,10 +2399,21 @@ def _find_plate_captions(
                 # same synthetic-paragraph expansion as English papers.
                 # Phase 30: extend to ZH (``图版`` / ``圖版``) so Mainland
                 # China + Taiwan papers get the same treatment.
+                _is_fig_item = bool(
+                    _txt
+                    and _FIG_CAPTION_RE.match(_txt)
+                    and _looks_like_fig_caption(_txt)
+                )
                 if _txt and (
                     _PLATE_CAPTION_RE.match(_txt)
                     or _JA_PLATE_CAPTION_RE.match(_txt)
                     or _ZH_PLATE_CAPTION_RE.match(_txt)
+                    # 2026-09-12 (Thassanapak): "Fig. N ..." captions also
+                    # live inside list elements — re-surface them the same
+                    # way so the fig-kind dispatcher can see them. The
+                    # full fig gate (_looks_like_fig_caption) still applies
+                    # downstream.
+                    or _is_fig_item
                 ):
                     expanded_kids.append(
                         {
@@ -2696,6 +2708,22 @@ _AUTHOR_CITATION_WORDS = frozenset(
 # like "Fig. 21 Archaeodictyomitra montisserei (SQUINABOL) Pl. 8 ..."
 _FIG_HEAD_AUTHOR_CITE_RE = re.compile(r"\(([A-Z]{3,})\)")
 
+# Standard instrument / analytical acronyms that head SEM-plate
+# captions ("Scanning Electron Micrographs (SEM) of ..."). These are
+# NOT author citations — every SEM-plate caption in the literature
+# carries "(SEM)" — and must not trip the author-citation gate.
+_FIG_HEAD_ACRONYM_ALLOW = {
+    "SEM",
+    "TEM",
+    "BSE",
+    "EDS",
+    "SE",
+    "CL",
+    "XRD",
+    "XRF",
+    "EBSD",
+}
+
 
 def _looks_like_fig_caption(content: str) -> bool:
     """Return True if a paragraph whose text starts with "Fig. N" is
@@ -2718,8 +2746,12 @@ def _looks_like_fig_caption(content: str) -> bool:
     """
     if len(content) < 25:
         return False
-    if _FIG_HEAD_AUTHOR_CITE_RE.search(content[:200]):
-        return False
+    for _cite_m in _FIG_HEAD_AUTHOR_CITE_RE.finditer(content[:200]):
+        # 2026-09-12: standard instrument acronyms ("(SEM)") are exempt
+        # — the Thassanapak SEM-plate caption was rejected as an author
+        # citation because of it.
+        if _cite_m.group(1) not in _FIG_HEAD_ACRONYM_ALLOW:
+            return False
     # Inline body-text "Fig. N" mentions: a leading word like
     # "Photograph" right after the figure number signals that this
     # is an inline body-text reference to a figure that has its
@@ -3581,7 +3613,10 @@ def _rescue_ocr_worker_cli(argv: list[str]) -> int:
     import numpy as np
 
     reader = easyocr.Reader(
-        _normalise_ocr_lang(tasks.get("lang") or "en"), gpu=False, verbose=False
+        _normalise_ocr_lang(tasks.get("lang") or "en"),
+        gpu=False,
+        verbose=False,
+        quantize=False,
     )
     doc = fitz.open(tasks["pdf"])
     texts: list[str | None] = []
