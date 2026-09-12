@@ -2252,6 +2252,7 @@ def paleo_coordinates_from_localities(
     try:
         from .paleo_reconstruction import (
             ensure_rotation_source,
+            explain_paleo_status,
             infer_plate_id,
             reconstruct_paleo_position,
             reconstruction_model_label,
@@ -2338,7 +2339,13 @@ def paleo_coordinates_from_localities(
             reconstruction_model=reconstruction_model_label(plate_id),
             method="euler_pole_rotation",
             confidence=0.7 if paleo_lat is not None else 0.0,
-            backend_status="ok" if paleo_lat is not None else "plate_or_age_unknown",
+            # 2026-09-12: precise failure status (stable plate vs age
+            # unknown vs plate unknown) instead of one generic bucket.
+            backend_status=(
+                "ok"
+                if paleo_lat is not None
+                else explain_paleo_status(plate_id, age_ma)
+            ),
             # Phase 63 Plan 6.20 (Bug 6.20) + audit 2026-09-04 (geo-8):
             # the 50 km figure is only meaningful for the published
             # rotation file; embedded approximations must not claim it.

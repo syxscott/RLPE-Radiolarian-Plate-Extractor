@@ -829,6 +829,46 @@ def _rotate_point(
     return lat_new, lon_new
 
 
+def explain_paleo_status(
+    plate_id: str | None, age_ma: float | None
+) -> str:
+    """Precise ``backend_status`` for a FAILED paleo reconstruction.
+
+    ``reconstruct_paleo_position`` collapses every failure to
+    ``(None, None)``; callers previously reported the generic
+    ``"plate_or_age_unknown"`` for all of them. This helper
+    distinguishes the actionable cases:
+
+    - ``"age_unknown"``             -- the geology context carried no age
+    - ``"plate_unknown"``           -- country/locality did not map to a plate
+    - ``"stable_plate_no_rotation"`` -- identity/sparse plate table with no
+      published rotations for this age (e.g. Siberia > 50 Ma); real
+      rotations can be supplied via ``RLPE_SETON2012_ROT``
+    - ``"age_out_of_range"``        -- plate has a table but age exceeds it
+    - ``"plate_or_age_unknown"``    -- fallback
+    """
+    if age_ma is None or age_ma < 0:
+        return "age_unknown"
+    if not plate_id:
+        return "plate_unknown"
+    plate = _PLATE_ALIAS.get(plate_id, plate_id)
+    plate = _resolve_deprecated_plate(plate)
+    poles = EULER_POLES.get(plate or "")
+    if not poles:
+        return "plate_unknown"
+    ages = [p[0] for p in poles]
+    sparse_identity = (
+        len(poles) <= 3
+        and max(ages) <= 250.0
+        and all(abs(p[3]) <= 1.0 for p in poles)
+    )
+    if sparse_identity and age_ma > 50.0:
+        return "stable_plate_no_rotation"
+    if age_ma > max(ages) or age_ma < min(ages):
+        return "age_out_of_range"
+    return "plate_or_age_unknown"
+
+
 def reconstruct_paleo_position(
     modern_lat: float | None,
     modern_lon: float | None,

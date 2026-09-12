@@ -780,6 +780,43 @@ class GeologyRecord:
         return asdict(self)
 
 
+# "M.", "M.S", "M.S." — dotted initials, with or without spaces between.
+_AUTHOR_INITIALS_TOKEN_RE = re.compile(r"^[A-Z](?:\.[A-Z])*\.?$")
+
+
+def _is_author_line_title(title: str) -> bool:
+    """True when *title* looks like an author/affiliation line rather
+    than a section heading.
+
+    Observed artifact (afanasieva2020c): OD promoted the byline
+    ``"M. S. Afanasieva*"`` to a section; its text yielded
+    ``locality="Isakova"`` (a cited author) plus the Russia
+    country-centroid coordinate — a fabricated locality at the centre
+    of a continent. Multi-signal and conservative: dotted-initial
+    leading tokens, or a footnote marker on a name-shaped line. Real
+    section headings ("Kondurovka Section", "Geological Setting",
+    "Materials and Methods") never match. Long titles are exempt
+    (bylines are short).
+    """
+    t = (title or "").strip()
+    if not t or len(t) > 80:
+        return False
+    has_footnote = t.rstrip().endswith(("*", "†"))
+    tokens = t.rstrip("*† .,").split()
+    if len(tokens) < 2:
+        return False
+    leading_initials = sum(1 for tok in tokens[:-1] if _AUTHOR_INITIALS_TOKEN_RE.match(tok))
+    surname_shaped = re.fullmatch(r"[A-Z][a-z]{2,}", tokens[-1]) is not None
+    if leading_initials >= 1 and surname_shaped:
+        return True
+    if has_footnote and len(tokens) == 2 and all(tok.isalpha() for tok in tokens):
+        # "Corresponding author*" style footnote lines — the footnote
+        # marker is the discriminating signal (real section headings
+        # do not end in author-footnote asterisks).
+        return True
+    return False
+
+
 def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[GeologyRecord]:
     out: list[GeologyRecord] = []
     # Lazy import to avoid circular
@@ -811,6 +848,20 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                 "cannot be a source of geology facts",
                 sec.get("title"),
                 sec_type,
+            )
+            continue
+        # 2026-09-12 (locality quality): author-line-shaped sections.
+        # OD turns heading-like lines into sections; an author/affiliation
+        # line ("M. S. Afanasieva*") became a section whose text yielded
+        # locality="Isakova" (a cited author) + the Russia country
+        # centroid (60N/100E, conf 0.3) — a fabricated "locality" at the
+        # centre of a continent. Author-shaped titles (dotted-initial
+        # patterns, trailing affiliation markers) carry no geology facts
+        # of THIS paper.
+        if _is_author_line_title(sec.get("title") or ""):
+            logger.debug(
+                "Skipping section %r: author/affiliation line, not a geology source",
+                sec.get("title"),
             )
             continue
         # Round 20: validate each AGE_PATTERN match against the ICS
