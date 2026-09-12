@@ -92,8 +92,13 @@ def test_appends_when_bare_title_was_header_dropped():
     assert p4[0]["recovered_via"] == "journal_cross_page"
 
 
-def test_no_plate_ref_on_caption_page_no_bind():
-    """G2: without a "Plate N" reference on the caption page, no bind."""
+def test_no_plate_ref_structural_evidence_still_binds():
+    """2026-09-12 revision: the strict Plate-ref gate (G2a) missed the
+    real afanasieva2020c layout — p7's text cites no "Plate 3" at all.
+    The structural fallback (G2b) binds via the adjacent bare title:
+    caption page has no images, preceding page has images + a
+    species-free bare-title caption. Both evidences together are
+    required; neither alone suffices."""
     kids = [
         {"type": "image", "id": "p6img1", "page number": 6, "bounding box": [40, 40, 560, 800]},
         {"type": "paragraph", "page number": 6, "content": "Plate 3"},
@@ -106,7 +111,21 @@ def test_no_plate_ref_on_caption_page_no_bind():
     ]
     caps = _find_plate_captions(kids, caption_window=5)
     merged = [c for c in caps if c.get("recovered_via") == "journal_cross_page"]
-    assert not merged
+    assert merged and merged[0]["plate_number"] == 3
+    assert "tetraspinosa" in merged[0]["content"]
+
+
+def test_no_adjacent_bare_title_no_bind():
+    """Without a Plate ref AND without an adjacent bare-title caption,
+    there is nothing to bind to — the strategy must not fire."""
+    kids = [
+        # Caption page preceded by a text page (no images, no title).
+        {"type": "paragraph", "page number": 6, "content": "Body text."},
+        {"type": "paragraph", "page number": 7, "content": "More body text."},
+        {"type": "paragraph", "page number": 7, "content": PJ_CAPTION_P3},
+    ]
+    caps = _find_plate_captions(kids, caption_window=5)
+    assert not [c for c in caps if c.get("recovered_via") == "journal_cross_page"]
 
 
 def test_species_rich_caption_on_image_page_no_bind():
@@ -159,3 +178,28 @@ def test_singular_fig_paragraph_untouched():
     # Plate 3 stays bare ("Plate 3" title only) — no cross-page merge.
     p3 = [c for c in caps if c["plate_number"] == 3]
     assert p3 and p3[0]["content"].strip() == "Plate 3"
+
+
+def test_fig_caption_does_not_steal_crosspage_plate_images():
+    """A same-document "Fig. 4. Morphology ..." caption whose page has
+    no images must NOT widen its window onto a page claimed by a
+    cross-page plate caption (the p10 full-bleed plate belongs to the
+    p11 "Figs. 1–11." explanation, not to the p9 morphology figure)."""
+    kids = [
+        {"type": "paragraph", "page number": 9, "content": "Body text."},
+        {
+            "type": "paragraph",
+            "page number": 9,
+            "content": "Fig. 4. Morphology of Holdsworthella permica Kozur, 1981, specimen PIN, shown schematically.",
+        },
+        {"type": "image", "id": "p10img", "page number": 10, "bounding box": [40, 40, 560, 800]},
+        {"type": "paragraph", "page number": 10, "content": "1452 AFANASIEVA Plate 4 PALEONTOLOGICAL JOURNAL Vol. 54 No. 12 2020"},
+        {"type": "paragraph", "page number": 11, "content": "Discussion citing (Plate 4) with more description."},
+        {"type": "paragraph", "page number": 11, "content": PJ_CAPTION_P4},
+    ]
+    caps = _find_plate_captions(kids, caption_window=5)
+    by_id = {(c["plate_number"], c.get("kind")): c for c in caps}
+    # The cross-page plate caption exists and is anchored on page 10.
+    xp = by_id.get((4, "plate"))
+    assert xp is not None and xp.get("recovered_via") == "journal_cross_page"
+    assert xp["page_number"] == 10

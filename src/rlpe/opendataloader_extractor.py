@@ -2120,47 +2120,77 @@ def _bind_journal_cross_page_captions(
         if pg:
             caption_blocks.setdefault(pg, []).append((content, el))
 
+    # Bare-title PLATE captions on image pages — the merge targets for
+    # the structural-evidence fallback (their plate_number IS the answer
+    # when the caption page cites no "Plate N"). Fig-kind captions are
+    # EXCLUDED from both the occupancy check and the merge targets: a
+    # fig caption's number is a FIGURE number, not a plate number ("Fig.
+    # 4. Morphology ..." on p9 must not read as "plate 4 claimed").
+    bare_titles = [
+        d
+        for d in found
+        if d.get("kind") != "fig"
+        and not _BINOMIAL_CLAUSE_RE.search(d.get("content", ""))
+        and (d.get("page_number") or 0) in images_by_page
+    ]
     for cap_page, blocks in caption_blocks.items():
-        # G2: exactly one distinct plate number referenced on this page.
-        refs = set(_PLATE_REF_RE.findall(page_texts.get(cap_page, "")))
-        if len(refs) != 1:
-            logger.debug(
-                "cross-page strategy: page %s skipped (%d distinct Plate refs)",
-                cap_page,
-                len(refs),
-            )
-            continue
-        plate_number = int(next(iter(refs)))
-        image_page = cap_page - 1
-        # G3: preceding page has images and no species-bearing caption.
-        if image_page not in images_by_page:
-            continue
-        claims_bare_only = True
-        for d in found:
-            if d.get("page_number") != image_page:
-                continue
-            if _BINOMIAL_CLAUSE_RE.search(d.get("content", "")):
-                claims_bare_only = False
-                break
-        if not claims_bare_only:
-            continue
-        # G4: plate number already claimed with species-bearing caption?
-        already_rich = any(
-            d.get("plate_number") == plate_number
-            and _BINOMIAL_CLAUSE_RE.search(d.get("content", ""))
-            for d in found
-        )
-        if already_rich:
-            continue
         content = _strip_running_header_lines(
             "\n".join(text for text, _ in blocks)
         )
         if not content or not _BINOMIAL_CLAUSE_RE.search(content):
             continue
+        # G3 (structural): the caption page carries NO images at all
+        # (a pure text page) and the PRECEDING page carries images —
+        # the "caption printed after the plate" signature.
+        if cap_page in images_by_page:
+            continue
+        image_page = cap_page - 1
+        if image_page not in images_by_page:
+            continue
+        # G2a (preferred): the caption page cites exactly one bare
+        # "Plate N" — the journal's own linkage.
+        refs = set(_PLATE_REF_RE.findall(page_texts.get(cap_page, "")))
+        # G2b (structural fallback): bind to an existing bare-title
+        # caption on the image page. Two+ distinct refs is ambiguous on
+        # its own, but an unambiguous adjacent bare title still binds.
+        plate_number: int | None = None
+        if len(refs) == 1:
+            plate_number = int(next(iter(refs)))
+        else:
+            if len(refs) > 1:
+                logger.debug(
+                    "cross-page strategy: page %s ambiguous (%d distinct "
+                    "Plate refs); trying the adjacent bare title",
+                    cap_page,
+                    len(refs),
+                )
+            candidates = [d for d in bare_titles if d.get("page_number") == image_page]
+            if len(candidates) == 1:
+                plate_number = candidates[0].get("plate_number")
+        if plate_number is None:
+            logger.debug(
+                "cross-page strategy: page %s skipped (no unambiguous "
+                "Plate ref / adjacent bare title)",
+                cap_page,
+            )
+            continue
+        # G4: plate number already claimed with a SPECIES-bearing PLATE
+        # caption? Fig-kind captions are excluded — a fig caption's
+        # number is a figure number ("Fig. 4. Morphology ..." is not
+        # "plate 4 claimed").
+        already_rich = any(
+            d.get("kind") != "fig"
+            and d.get("plate_number") == plate_number
+            and _BINOMIAL_CLAUSE_RE.search(d.get("content", ""))
+            for d in found
+        )
+        if already_rich:
+            continue
         merged = False
         for d in found:
             if (
-                d.get("plate_number") == plate_number
+                d.get("kind") != "fig"
+                and d.get("plate_number") == plate_number
                 and d.get("page_number") == image_page
                 and not _BINOMIAL_CLAUSE_RE.search(d.get("content", ""))
             ):
@@ -2751,7 +2781,21 @@ def _build_figures_from_plate_captions(
             # caption page has no unclaimed image at all.
             candidates = _unclaimed_in_range(page_lo, page_lo)
             if not candidates:
-                candidates = _unclaimed_in_range(page_lo, page_hi)
+                # 2026-09-12: when widening, skip pages claimed by a
+                # cross-page journal caption — those full-bleed pages
+                # belong to the plate whose caption prints on the NEXT
+                # page ("Fig. 4. Morphology ..." on p9 must not steal
+                # the p10 plate that p11's "Figs. 1–11. ..." explains).
+                _xp_pages = {
+                    c.get("page_number")
+                    for c in plate_captions
+                    if c.get("recovered_via") == "journal_cross_page"
+                }
+                candidates = [
+                    im
+                    for im in _unclaimed_in_range(page_lo, page_hi)
+                    if int(im.get("page number", 0) or 0) not in _xp_pages
+                ]
         else:
             # Candidate images: in [page_lo, page_hi], not already claimed.
             candidates = _unclaimed_in_range(page_lo, page_hi)
