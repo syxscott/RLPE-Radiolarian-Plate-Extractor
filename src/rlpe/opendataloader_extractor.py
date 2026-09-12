@@ -3170,6 +3170,24 @@ def _extract_fulltext_sections(data: dict[str, Any]) -> list[dict[str, str]]:
     if current_section and current_section.get("text"):
         sections.append(current_section)
 
+    # 2026-09-12 (section recognition): heading keywords miss real
+    # geology sections ("Background", translated titles, font-shifted
+    # headings). Retype "other" sections whose BODY independently shows
+    # 2+ distinct geology signal families (ages + stratigraphic ranks +
+    # coordinates + lithology) — evidence from the content, not the
+    # heading, decides.
+    for sec in sections:
+        if (
+            sec.get("section_type") == "other"
+            and len(sec.get("text") or "") >= _GEO_CONTENT_MIN_CHARS
+            and _geology_content_signals(sec["text"]) >= _GEO_CONTENT_MIN_SIGNALS
+        ):
+            sec["section_type"] = "geological_setting"
+            logger.debug(
+                "section %r retyped geological_setting from content signals",
+                sec.get("title", "")[:50],
+            )
+
     # Fallback: if no headings found, collect all paragraphs as one section.
     if not sections:
         all_text_parts: list[str] = []
@@ -3200,6 +3218,57 @@ def _infer_section_type(title: str) -> str:
     if "material" in t or "method" in t:
         return "materials_methods"
     return "other"
+
+
+# Minimum text length before content-based typing is trusted — short
+# sections are too noisy to score.
+_GEO_CONTENT_MIN_CHARS = 150
+# Independent geology signals required to retype an "other" section as
+# geological (out of: ICS ages, stratigraphic ranks, coordinates,
+# lithology). 2+ distinct signals = evidence of real geology content.
+_GEO_CONTENT_MIN_SIGNALS = 2
+_COORD_RE = re.compile(
+    r"\d{1,3}\s*[°º]\s*\d{0,2}(?:[.′']\s*\d{0,2})?\s*[′″NSEW]|"
+    r"\d{1,3}\.\d{2,}\s*[°,]?\s*[NSEW]",
+    re.IGNORECASE,
+)
+
+
+def _geology_content_signals(text: str) -> int:
+    """Count DISTINCT geology-signal families in *text* (0-4).
+
+    Evidence-based, paper-agnostic: (1) ICS-recognised age terms,
+    (2) formal stratigraphic ranks (Formation/Member/Group), (3)
+    geographic coordinates, (4) lithology vocabulary. A section whose
+    body independently exhibits 2+ signal families is geological
+    content regardless of what its heading says.
+    """
+    signals = 0
+    try:
+        from .geology_extraction import FORMATION_PATTERN
+        from .stratigraphy import classify_age_string
+
+        ages = set()
+        for m in re.finditer(r"[A-Z][a-z]+(?:an|ian)", text):
+            cls = classify_age_string(m.group(0))
+            if cls is not None and cls.confidence > 0:
+                ages.add(m.group(0))
+        if ages:
+            signals += 1
+        if FORMATION_PATTERN.search(text):
+            signals += 1
+    except Exception:
+        pass
+    if _COORD_RE.search(text):
+        signals += 1
+    try:
+        from .geology_extraction import LITHOLOGY_PATTERN as _LP
+
+        if _LP.search(text):
+            signals += 1
+    except Exception:
+        pass
+    return signals
 
 
 # ---- paper-level metadata scrape from OpenDataLoader JSON -----------------
