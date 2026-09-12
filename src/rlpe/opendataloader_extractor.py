@@ -2791,9 +2791,18 @@ def _build_figures_from_plate_captions(
                     for c in plate_captions
                     if c.get("recovered_via") == "journal_cross_page"
                 }
+                # 2026-09-12 (Bragin): widening is capped at the ADJACENT
+                # page. A fig/map caption whose own page has no image is
+                # an inline body figure; images 2+ pages away are almost
+                # always full-bleed PLATES that the plate pass must
+                # claim ("Fig.2. geological map" on p3 claiming the p5/p6
+                # plates starved Plate 1/2 to imgs=0). Fig captions that
+                # genuinely point 2+ pages ahead are rare and are better
+                # served by _rescue_missing_images than by theft.
+                _widen_hi = min(page_lo + 1, page_hi)
                 candidates = [
                     im
-                    for im in _unclaimed_in_range(page_lo, page_hi)
+                    for im in _unclaimed_in_range(page_lo, _widen_hi)
                     if int(im.get("page number", 0) or 0) not in _xp_pages
                 ]
         else:
