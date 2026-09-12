@@ -1716,8 +1716,15 @@ _COMPOSITE_GROUP_RE = re.compile(
     r"(?:^|[.;:])\s*"
     r"(\d{1,3}[a-z]?(?:\s*[,–—-]\s*\d{1,3}[a-z]?)*)"
     r"\s*[–—-]\s*"
-    r"([A-Z][a-zA-Z-]+\??)"
-    r"(?:\s+([a-z][a-zA-Z-]{3,}))?"
+    r"(?:"
+    # Species group: capitalised genus (+ optional epithet).
+    r"([A-Z][a-zA-Z-]+\??)(?:\s+([a-z][a-zA-Z-]{3,}))?"
+    r"|"
+    # Open-nomenclature placeholder head: "gen. et sp. indet. A" /
+    # "sp. indet. B" — journals routinely key plates with these
+    # morphotype identifiers; they are real taxa groups, not prose.
+    r"((?:gen\.\s*)?(?:(?:et\s+)?sp\.|gen\.)\s+indet\.?\s*[A-Z]?)"
+    r")"
 )
 
 # Specimen-type words that head description entries ("2–paratype, GIN
@@ -1742,23 +1749,29 @@ def _parse_composite_caption(text: str) -> list[CaptionPair] | None:
     seen: set[str] = set()
     for m in _COMPOSITE_GROUP_RE.finditer(text):
         labels = _regex_expand_label_list(m.group(1))
-        genus = m.group(2).rstrip("?")
-        if genus.lower() in _COMPOSITE_NON_SPECIES:
-            # "2–paratype, GIN no ..." — a specimen-type entry, not a
-            # species group.
-            continue
-        epithet = (m.group(3) or "").strip()
-        species = f"{genus} {epithet}".strip()
-        # Open-nomenclature tail: "3- Williriedellum sp. S; 4- ..." —
-        # the short-code tail ("sp. S", "sp. cf. W.") sits right after
-        # the group match and is part of the species name.
-        tail = text[m.end() : m.end() + 48]
-        m_tail = re.match(
-            r"\s+((?:sp|spp)\.\s*(?:cf\.\s*)?[A-Z](?:\.\s*[A-Za-z][a-zA-Z-]*|\.\s*[A-Z])?|(?:sp|spp)\.)",
-            tail,
-        )
-        if m_tail:
-            species = f"{species} {m_tail.group(1).strip()}"
+        open_nom = (m.group(4) or "").strip()
+        if open_nom:
+            # "4, 5–gen. et sp. indet. A" — an author-assigned
+            # morphotype identifier; a real taxa group, kept verbatim.
+            species = re.sub(r"\s+", " ", open_nom)
+        else:
+            genus = (m.group(2) or "").rstrip("?")
+            if genus.lower() in _COMPOSITE_NON_SPECIES:
+                # "2–paratype, GIN no ..." — a specimen-type entry, not
+                # a species group.
+                continue
+            epithet = (m.group(3) or "").strip()
+            species = f"{genus} {epithet}".strip()
+            # Open-nomenclature tail: "3- Williriedellum sp. S; 4- ..."
+            # the short-code tail ("sp. S", "sp. cf. W.") sits right
+            # after the group match and is part of the species name.
+            tail = text[m.end() : m.end() + 48]
+            m_tail = re.match(
+                r"\s+((?:sp|spp)\.\s*(?:cf\.\s*|aff\.\s*)?[A-Z](?:\.\s*[A-Za-z][a-zA-Z-]*|\.\s*[A-Z])?|(?:sp|spp)\.)",
+                tail,
+            )
+            if m_tail:
+                species = f"{species} {m_tail.group(1).strip()}"
         if not labels or not species:
             continue
         new_labels = [lbl for lbl in labels if lbl not in seen]

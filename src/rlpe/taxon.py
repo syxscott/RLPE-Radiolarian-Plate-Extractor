@@ -207,6 +207,16 @@ def _is_valid_species(species: str | None) -> bool:
     # string with mid-word uppercase (SiO2, CaCO3) is a formula.
     if re.match(r"^\S+$", s.strip()) and re.search(r"(?<=.)[A-Z]", s.strip()):
         return False
+    # 2026-09-12: author-assigned morphotype identifiers — "gen. et sp.
+    # indet. A" / "sp. indet. B" carry a qualifier letter and are how
+    # the paper's own caption references those figures (Bragin Plate 2
+    # figs 4-5 and 10-12). They are real referenced taxa, not lazy LLM
+    # placeholders; the bare qualifier-less forms stay invalid.
+    if re.fullmatch(
+        r"(?:gen\.\s*)?(?:(?:et\s+)?sp\.|gen\.)\s+indet\.\s*[A-Z]",
+        s.strip(),
+    ):
+        return True
     if re.match(r"^\S+\s+(?:plots?|data|values|records)$", s.strip(), re.IGNORECASE):
         return False
     # Audit 2026-09-07 (F11): ultra-short fragments ("Ih") are OCR noise
