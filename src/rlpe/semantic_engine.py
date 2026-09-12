@@ -1707,6 +1707,90 @@ def _reject_non_taxon_pairs(pairs: list[CaptionPair]) -> list[CaptionPair]:
 # hallucination filter which killed 12 real panels. This pattern finds
 # every "labels–Genus [epithet]" group: a numeric label list (comma /
 # range separators) joined by a dash to a capitalised genus.
+# 2026-09-12 (letter-label composite captions): SEM-plate captions key
+# their panels with PARENTHESISED LETTERS —
+#   "Fig. 7. Scanning Electron Micrographs (SEM) of ... . (A)
+#    Pseudoalbaillella cf. elegans, PRC552. (B, C) P. cf. elongata,
+#    PRC553. (D-G) P. cf. fusiformis ..."
+# (Thassanapak 2020). Same composite structure as the numeric style,
+# different label FAMILY: single letters, comma lists and letter ranges
+# inside parentheses. Parentheses are the unambiguous structural anchor
+# — prose initials never sit alone inside parens. The species body may
+# carry an ABBREVIATED genus ("P. cf. elongata" for a species whose
+# full genus appeared in an earlier group).
+_PAREN_LETTER_GROUP_RE = re.compile(
+    r"\(\s*([A-Z](?:\s*[,–—-]\s*[A-Z])*)\s*\)\s*"
+    r"([A-Z][a-zA-Z-]*\.?)"
+    r"(?:\s+(cf\.|aff\.))?"
+    r"(?:\s+([a-z][a-zA-Z-]+))?"
+)
+
+
+def _expand_letter_labels(s: str) -> list[str]:
+    """Expand "(D-G)" -> ["D","E","F","G"]; "(B, C)" -> ["B","C"].
+    Uppercase primary; lowercase accepted and preserved. A two-letter
+    dash form is a RANGE and expands alphabetically ("D-G" -> D..G),
+    mirroring the numeric "1-3" semantics."""
+    out: list[str] = []
+    chunks = [c.strip() for c in re.split(r"[,–—-]", s)]
+    if (
+        len(chunks) == 2
+        and all(len(c) == 1 and c.isalpha() for c in chunks)
+    ):
+        lo, hi = chunks
+        lo_o, hi_o = ord(lo), ord(hi)
+        if lo_o <= hi_o:
+            out.extend(chr(c) for c in range(lo_o, hi_o + 1))
+        else:
+            out.extend(chr(c) for c in range(hi_o, lo_o + 1))
+        return out
+    for c in chunks:
+        if len(c) == 1 and c.isalpha():
+            out.append(c)
+    return out
+
+
+def _parse_paren_letter_caption(text: str) -> list[CaptionPair] | None:
+    """Parse paren-letter composite captions ("(A) Species ... (B, C)
+    Species ..."). Fires only when >= 2 well-formed groups exist —
+    single groups fall through to the existing parsers. Acronym parens
+    ("(SEM)") cannot match because the label grammar requires a SINGLE
+    letter."""
+    if not text:
+        return None
+    pairs: list[CaptionPair] = []
+    seen: set[str] = set()
+    for m in _PAREN_LETTER_GROUP_RE.finditer(text):
+        labels = _expand_letter_labels(m.group(1))
+        genus = m.group(2)
+        cf_aff = (m.group(3) or "").strip()
+        epithet = (m.group(4) or "").strip()
+        if cf_aff and not epithet:
+            # "P. cf." with the epithet truncated — unusable group.
+            continue
+        species = " ".join(x for x in (genus, cf_aff, epithet) if x)
+        if not labels or not species:
+            continue
+        new_labels = [lbl for lbl in labels if lbl not in seen]
+        if not new_labels:
+            continue
+        for lbl in new_labels:
+            seen.add(lbl)
+        pairs.append(
+            CaptionPair(
+                labels=new_labels,
+                species=species,
+                modifier="",
+                confidence=0.7,
+                notes="regex_fallback_paren_letter",
+                raw_text=m.group(0)[:120],
+            )
+        )
+    if len(pairs) < 2:
+        return None
+    return pairs
+
+
 _COMPOSITE_GROUP_RE = re.compile(
     # A group must START at the caption anchor, a semicolon, a colon or
     # a period — the separators journals actually put between species
@@ -1841,6 +1925,11 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     composite = _parse_composite_caption(text)
     if composite:
         return _reject_non_taxon_pairs(composite)
+    # 2026-09-12: paren-letter composite captions ("(A) Species ...
+    # (B, C) Species ...") — SEM-plate style, letter label family.
+    paren_letter = _parse_paren_letter_caption(text)
+    if paren_letter:
+        return _reject_non_taxon_pairs(paren_letter)
     # audit 2026-07-31: period-separated DISCRETE labels —
     # "Figs 1-3. 5. 8. 10. 12: Archaespongoprunum sp." — are a real
     # caption convention that the clause regex cannot parse (it stops
