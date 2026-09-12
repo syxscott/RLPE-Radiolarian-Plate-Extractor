@@ -2772,6 +2772,15 @@ def _build_figures_from_plate_captions(
             # honest.
             if next_cap_page > page_lo + 1:
                 page_hi = min(page_hi, next_cap_page - 1)
+            # 2026-09-12 (Bragin): ADJACENT captions must not have their
+            # images swallowed either. The old condition skipped the
+            # clamp when next_cap_page == page_lo + 1, so Plate 1 (p5)
+            # claimed the p6 image that belongs to Plate 2 (p6) —
+            # adjacent full-bleed plates starved every second plate.
+            # A caption's reach now always stops before the next
+            # caption's page; same-page caption pairs are protected by
+            # the ``max(page_hi, page_lo)`` floor below.
+            page_hi = min(page_hi, max(next_cap_page - 1, page_lo))
         page_hi = max(page_hi, page_lo)  # never invert
 
         if is_fig:
