@@ -391,6 +391,9 @@ _SUMMARY_COLUMNS: tuple[str, ...] = (
     "locality_id",
     "geology_context_id",
     "sample_id",
+    # 2026-09-12: same-species panels collapse into one row; this count
+    # preserves how many specimen images the row actually represents.
+    "panel_image_count",
 )
 
 
@@ -416,6 +419,7 @@ def build_summary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "locality_id": md.get("locality_id"),
             "geology_context_id": md.get("geology_context_id"),
             "sample_id": md.get("sample_id"),
+            "panel_image_count": 1 + len(md.get("additional_panel_paths") or []),
         }
         for k in _SUMMARY_COLUMNS:
             if k not in rec:

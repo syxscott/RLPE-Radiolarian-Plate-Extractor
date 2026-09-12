@@ -5805,7 +5805,114 @@ class RadiolarianPipeline:
             except OSError as exc:
                 logger.debug("panel rename failed for %s: %s", pp, exc)
 
+        # 2026-09-12 (species-panel dedup): when the SAME species with
+        # IDENTICAL geology data is linked to many panel images (one
+        # plate, many specimens of one species — Bragin Plate 1 figs
+        # 12-17 are six G. algidum panels), keep only the FIRST image
+        # as the table association; the remaining images move to
+        # metadata["additional_panel_paths"] so nothing is lost — the
+        # files stay on disk and stay reachable from the single row.
+        if (getattr(self, "config", None) is not None) and self.config.extra.get(
+            "dedup_species_panels", True
+        ):
+            kept = self._dedup_species_panels(kept)
+
         return kept
+
+    @staticmethod
+    def _dedup_species_panels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Collapse rows describing the same (species, geology) record
+        into one row whose ``panel_path`` is the first image and whose
+        ``metadata["additional_panel_paths"]`` holds the rest.
+
+        Grouping key: (paper_id, species, canonical geology_summary).
+        Rows without a species or without a panel image are never
+        merged (no identity / nothing to preserve), and stub rows
+        (``_ingestion_*`` / RANGE_CHART anchors) are excluded — they
+        are not specimen panels.
+        """
+        import json as _json
+
+        def _is_stub(r: dict[str, Any]) -> bool:
+            fid = r.get("figure_id") or ""
+            return (
+                fid.startswith("_ingestion")
+                or (r.get("panel_id") == "RANGE_CHART")
+                or not (r.get("panel_path") or "").strip()
+            )
+
+        def _geo_key(r: dict[str, Any]) -> str:
+            gs = r.get("metadata", {}).get("geology_summary") or {}
+            try:
+                return _json.dumps(gs, ensure_ascii=False, sort_keys=True)
+            except (TypeError, ValueError):
+                return ""
+
+        first_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for r in rows:
+            sp = (r.get("species") or "").strip()
+            if _is_stub(r) or not sp:
+                continue
+            key = (
+                r.get("paper_id") or "",
+                sp,
+                _geo_key(r),
+            )
+            primary = first_by_key.get(key)
+            if primary is None:
+                first_by_key[key] = r
+            else:
+                extra = primary.setdefault("metadata", {}).setdefault(
+                    "additional_panel_paths", []
+                )
+                pp = r.get("panel_path")
+                if pp and pp not in extra:
+                    extra.append(pp)
+                # Preserve panel ids for traceability (panel 12, 13, ...).
+                pid = r.get("panel_id")
+                if pid:
+                    pids = primary["metadata"].setdefault("additional_panel_ids", [])
+                    if pid not in pids:
+                        pids.append(pid)
+                # Review flags: a merged-away row's review reasons must
+                # not silently vanish.
+                src_md = r.get("metadata") or {}
+                if src_md.get("needs_review"):
+                    dst_md = primary.setdefault("metadata", {})
+                    dst_md.setdefault("needs_review", True)
+                    reasons = list(dst_md.get("review_reasons") or [])
+                    for reason in src_md.get("review_reasons") or []:
+                        if reason not in reasons:
+                            reasons.append(reason)
+                    dst_md["review_reasons"] = reasons
+
+        out: list[dict[str, Any]] = []
+        seen_passthrough: set[int] = set()
+        for r in rows:
+            sp = (r.get("species") or "").strip()
+            if _is_stub(r) or not sp:
+                if id(r) not in seen_passthrough:
+                    seen_passthrough.add(id(r))
+                    out.append(r)
+                continue
+            key = (
+                r.get("paper_id") or "",
+                sp,
+                _geo_key(r),
+            )
+            if first_by_key.get(key) is r:
+                out.append(r)
+        n_before = len(rows)
+        n_after = len(out)
+        if n_after < n_before:
+            logger.info(
+                "species-panel dedup: %d rows collapsed to %d "
+                "(same species + same geology; extra panel images kept in "
+                "metadata.additional_panel_paths)",
+                n_before,
+                n_after,
+            )
+        return out
 
     @staticmethod
     def _plausible_name_token(token: str) -> bool:

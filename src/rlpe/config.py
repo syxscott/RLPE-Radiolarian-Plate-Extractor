@@ -120,6 +120,13 @@ _KNOWN_EXTRA_KEYS = {
     # species-bearing caption routes to the range-chart extractor
     # instead of being dropped. Default True. Read by pipeline.py.
     "stage2_range_chart_bridge",
+    # 2026-09-12: collapse rows describing the same species with
+    # identical geology data into one row — first panel image becomes
+    # the table association, the rest move to
+    # metadata.additional_panel_paths (files stay on disk). Default
+    # True; opt-out for occurrence-level exports that need one row per
+    # specimen panel.
+    "dedup_species_panels",
     # Phase 27: multilingual OCR + caption language selection
     "ocr_lang",
     "llm_prompt_lang",
