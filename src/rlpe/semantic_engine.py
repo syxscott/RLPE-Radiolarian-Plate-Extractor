@@ -1699,6 +1699,88 @@ def _reject_non_taxon_pairs(pairs: list[CaptionPair]) -> list[CaptionPair]:
     return kept
 
 
+# 2026-09-12 (composite captions): one plate, MANY species groups —
+# "Plate 1. 1-5–Praenanina? hirsuta nov. sp.; 6–Nodotrisphaera ossispina
+# ...; 8, 9–Hindeosphaera venusta ...; 12-17–Glomeropyle algidum ..."
+# (Bragin 2020). The clause regex fragments on this shape and Stage-1
+# LLMs return only the FIRST group, so the caption set {1..5} fed the
+# hallucination filter which killed 12 real panels. This pattern finds
+# every "labels–Genus [epithet]" group: a numeric label list (comma /
+# range separators) joined by a dash to a capitalised genus.
+_COMPOSITE_GROUP_RE = re.compile(
+    # A group must START at the caption anchor, a semicolon, a colon or
+    # a period — the separators journals actually put between species
+    # groups. Without this anchor constraint, prose like
+    # "Sample 0501-21-03, Middle Jurassic" backtracks into a bogus
+    # group (labels="1", genus="Middle").
+    r"(?:^|[.;:])\s*"
+    r"(\d{1,3}[a-z]?(?:\s*[,–—-]\s*\d{1,3}[a-z]?)*)"
+    r"\s*[–—-]\s*"
+    r"([A-Z][a-zA-Z-]+\??)"
+    r"(?:\s+([a-z][a-zA-Z-]{3,}))?"
+)
+
+# Specimen-type words that head description entries ("2–paratype, GIN
+# no ..."), not species groups.
+_COMPOSITE_NON_SPECIES = {"paratype", "holotype", "specimen", "detail", "type"}
+
+
+def _parse_composite_caption(text: str) -> list[CaptionPair] | None:
+    """Parse a composite plate caption (one plate, many species groups).
+
+    Fires only when the text is anchored by ``Plate N.`` AND at least
+    TWO distinct label groups match — single-group captions follow the
+    existing clause/reconstruction parsers. Returns None when the
+    composite shape is absent, so the caller falls through.
+    """
+    if not text:
+        return None
+    m_anchor = re.match(r"^\s*(?:Explanation\s+of\s+)?Plate\s+\d+", text, re.IGNORECASE)
+    if not m_anchor:
+        return None
+    pairs: list[CaptionPair] = []
+    seen: set[str] = set()
+    for m in _COMPOSITE_GROUP_RE.finditer(text):
+        labels = _regex_expand_label_list(m.group(1))
+        genus = m.group(2).rstrip("?")
+        if genus.lower() in _COMPOSITE_NON_SPECIES:
+            # "2–paratype, GIN no ..." — a specimen-type entry, not a
+            # species group.
+            continue
+        epithet = (m.group(3) or "").strip()
+        species = f"{genus} {epithet}".strip()
+        # Open-nomenclature tail: "3- Williriedellum sp. S; 4- ..." —
+        # the short-code tail ("sp. S", "sp. cf. W.") sits right after
+        # the group match and is part of the species name.
+        tail = text[m.end() : m.end() + 48]
+        m_tail = re.match(
+            r"\s+((?:sp|spp)\.\s*(?:cf\.\s*)?[A-Z](?:\.\s*[A-Za-z][a-zA-Z-]*|\.\s*[A-Z])?|(?:sp|spp)\.)",
+            tail,
+        )
+        if m_tail:
+            species = f"{species} {m_tail.group(1).strip()}"
+        if not labels or not species:
+            continue
+        new_labels = [lbl for lbl in labels if lbl not in seen]
+        if not new_labels:
+            continue
+        for lbl in new_labels:
+            seen.add(lbl)
+        pairs.append(
+            CaptionPair(
+                labels=new_labels,
+                species=species,
+                modifier="",
+                confidence=0.7,
+                notes="regex_fallback_composite",
+                raw_text=m.group(0)[:120],
+            )
+        )
+    if len(pairs) < 2:
+        return None
+    return pairs
+
+
 def _clean_llm_species(value: Any) -> str | None:
     """Normalise an LLM-returned species field.
 
@@ -1736,6 +1818,16 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     # otherwise the U+FB01 ligature in OpenDataLoader output makes
     # _CAPTION_CLAUSE_RE miss every clause and return zero pairs.
     text = _normalize_caption_text(caption_text)
+    # 2026-09-12 (composite captions): "Plate 1. 1-5–Species A ...;
+    # 6–Species B ...; 12-17–Species D" — one plate, many numbered
+    # species groups separated by specimen-catalogue prose. The clause
+    # regex fragments on this shape and Stage-1 LLMs return only the
+    # first group, so the caption set starved the hallucination filter
+    # (Bragin: 12/17 real panels dropped). When the composite shape
+    # yields >= 2 groups it IS the correct parse — return it directly.
+    composite = _parse_composite_caption(text)
+    if composite:
+        return _reject_non_taxon_pairs(composite)
     # audit 2026-07-31: period-separated DISCRETE labels —
     # "Figs 1-3. 5. 8. 10. 12: Archaespongoprunum sp." — are a real
     # caption convention that the clause regex cannot parse (it stops

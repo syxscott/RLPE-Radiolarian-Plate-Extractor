@@ -6767,19 +6767,65 @@ Rules:
                         return False
 
                     pre_filter = len(llm_results)
-                    llm_results = [
+                    _kept_rows = [
                         r for r in llm_results if _label_in_caption(r.get("panel_id") or "")
                     ]
-                    dropped = pre_filter - len(llm_results)
+                    _dropped_rows = [r for r in llm_results if id(r) not in {id(x) for x in _kept_rows}]
+                    dropped = pre_filter - len(_kept_rows)
                     if dropped:
-                        logger.info(
-                            "Hallucination filter %s/%s: dropped %d/%d "
-                            "panels whose labels are not in the caption set",
-                            paper_id,
-                            figure_id,
-                            dropped,
-                            pre_filter,
+                        # 2026-09-12 (composite-caption tolerance): when the
+                        # dropped panels OUTNUMBER the kept ones and the
+                        # combined label set is a continuous numeric run
+                        # (1..N without holes), the caption parse was almost
+                        # certainly INCOMPLETE — composite captions
+                        # ("1-5–Sp. A; 6–Sp. B; ...; 12-17–Sp. D") used to
+                        # parse only the first group, and the starved caption
+                        # set killed 12/17 real panels on Bragin. Keep the
+                        # dropped panels: rows with a caption-matched species
+                        # keep it; rescued rows carry species=None plus a
+                        # review flag so the gap stays auditable.
+                        def _numeric_label(r: dict[str, Any]) -> int | None:
+                            m_n = _re_hallu.match(r"^(\d{1,3})", (r.get("panel_id") or "").strip())
+                            return int(m_n.group(1)) if m_n else None
+
+                        _nums = sorted(
+                            n
+                            for n in (_numeric_label(r) for r in llm_results)
+                            if n is not None
                         )
+                        _continuous = bool(_nums) and _nums == list(
+                            range(_nums[0], _nums[-1] + 1)
+                        )
+                        if dropped > len(_kept_rows) and _continuous:
+                            logger.warning(
+                                "Hallucination filter %s/%s: dropped=%d > kept=%d "
+                                "with continuous labels %d..%d — caption parse "
+                                "likely incomplete (composite caption); keeping "
+                                "all panels, unlabelled ones flagged for review",
+                                paper_id,
+                                figure_id,
+                                dropped,
+                                len(_kept_rows),
+                                _nums[0],
+                                _nums[-1],
+                            )
+                            for r in _dropped_rows:
+                                md_r = r.setdefault("metadata", {})
+                                md_r.setdefault("needs_review", True)
+                                reasons = list(md_r.get("review_reasons") or [])
+                                if "caption_parse_incomplete" not in reasons:
+                                    reasons.append("caption_parse_incomplete")
+                                md_r["review_reasons"] = reasons
+                        else:
+                            llm_results = _kept_rows
+                            logger.info(
+                                "Hallucination filter %s/%s: dropped %d/%d "
+                                "panels whose labels are not in the caption set",
+                                paper_id,
+                                figure_id,
+                                dropped,
+                                pre_filter,
+                            )
                 # Enrich LLM-first results with scale_bar + geology_links.
                 # Without this, the LLM-first path skips the metadata
                 # enrichment that the classical path applies at the end of
