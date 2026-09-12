@@ -658,6 +658,18 @@ Extract every piece of geological information visible in the chart as strict JSO
   "confidence": 0.0-1.0 reflecting your certainty in the extraction overall
 }
 
+Chart layout VARIANTS — adapt, do not refuse:
+- The classic layout has measured sections on one axis and species on
+  the other (examples above use sections on the vertical axis).
+- SIMPLER RANGE TABLES list species as ROWS and geological time units
+  (stages/epochs) as COLUMNS, with a mark/range bar per row. For these:
+  emit one species_ranges entry per species row; set "section" to
+  "whole chart"; describe range_top/range_base with the stage or epoch
+  labels you can read (e.g. range_top="Carnian", range_base="Ladinian");
+  omit bed numbers that the chart does not show.
+- If NO species names are legible, return empty species_ranges — never
+  invent names.
+
 Rules:
 - Read the species names carefully — chart text is often small and OCR can
   produce slight misreads (e.g. "Pteruridonrceras" should be corrected
@@ -865,6 +877,18 @@ def _parse_extraction_response(
     JSON → dataclass conversion without making a real API call.
     """
     result = base_result or RangeChartResult(figure_id=figure_id, paper_id=paper_id)
+    # 2026-09-12: key-alias normalisation — flash models sometimes emit
+    # "species"/"ranges"/"species_list" instead of "species_ranges".
+    if not parsed.get("species_ranges"):
+        for alias in ("species", "ranges", "species_list"):
+            if parsed.get(alias):
+                parsed["species_ranges"] = parsed[alias]
+                break
+    if not parsed.get("sections"):
+        for alias in ("columns", "measured_sections"):
+            if parsed.get(alias):
+                parsed["sections"] = parsed[alias]
+                break
     for sec in parsed.get("sections") or []:
         if not isinstance(sec, dict):
             continue
