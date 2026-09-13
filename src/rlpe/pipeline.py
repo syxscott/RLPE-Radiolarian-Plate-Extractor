@@ -712,9 +712,15 @@ class RadiolarianPipeline:
         isolation = str(self.config.extra.get("batch_isolation", "inprocess"))
         pool_workers = max(1, int(self.config.num_workers))
         if isolation == "subprocess":
-            per_worker_mb = int(
-                self.config.extra.get("batch_worker_memory_mb", 2048) or 0
-            )
+            mem_raw = self.config.extra.get("batch_worker_memory_mb", 2048)
+            try:
+                per_worker_mb = int(mem_raw or 0)
+            except (TypeError, ValueError):
+                logger.debug(
+                    "run: bad batch_worker_memory_mb=%r — falling back to 2048",
+                    mem_raw,
+                )
+                per_worker_mb = 2048
             total_mb = _total_physical_memory_mb()
             capped = _memory_capped_workers(pool_workers, total_mb, per_worker_mb)
             if capped < pool_workers:
@@ -766,7 +772,9 @@ class RadiolarianPipeline:
             # (2026-09-13: ``isolation`` is now read before pool creation
             # for the memory guard; reused here.)
             if isolation == "subprocess":
-                worker_config_path = self._dump_worker_config()
+                worker_config_path = self._dump_worker_config(
+                    effective_workers=pool_workers
+                )
                 submit_fn = lambda p: self._process_one_pdf_in_subprocess(  # noqa: E731
                     p, worker_config_path
                 )
@@ -798,7 +806,12 @@ class RadiolarianPipeline:
                 for i, p in enumerate(pending_pdfs):
                     if cancel_event is not None and cancel_event.is_set():
                         break
-                    if i:
+                    # Stagger only the INITIAL wave: submissions beyond
+                    # pool_workers just sit in the queue anyway, and
+                    # sleeping between them would delay queueing (and
+                    # cancel responsiveness) by stagger × (pending-pool)
+                    # for large batches — ~22 min at 88 papers / N=16.
+                    if 0 < i < pool_workers:
                         time.sleep(stagger)
                     futures[pool.submit(submit_fn, p)] = p
             else:
@@ -2732,7 +2745,7 @@ class RadiolarianPipeline:
 
     # ----- F19: batch subprocess isolation ---------------------------------
 
-    def _dump_worker_config(self) -> Path:
+    def _dump_worker_config(self, effective_workers: int | None = None) -> Path:
         """Serialise this run's full config for the worker subprocesses.
 
         Written once per batch into the work dir with mode 0600; includes
@@ -2742,18 +2755,20 @@ class RadiolarianPipeline:
         2026-09-13 (high-parallelism guardrail): when
         ``llm_global_max_concurrent`` is set, the per-worker
         ``llm_max_concurrent`` in the dumped config is rewritten to
-        ``global // num_workers`` — without it, N workers × per-worker
+        ``global // workers`` — without it, N workers × per-worker
         concurrency fire simultaneously (16 × 8 = 128 API calls, a
-        429/limit storm). Without a global cap, a combined
-        workers × llm_max_concurrent above 32 gets a warning pointing
-        at the knob.
+        429/limit storm). ``effective_workers`` is the memory-guard-
+        capped pool size; division must use the concurrency that will
+        actually run, not the raw ``num_workers``. Without a global
+        cap, a combined workers × llm_max_concurrent above 32 gets a
+        warning pointing at the knob.
         """
         from dataclasses import replace as _dc_replace
 
         from .config_io import dump_worker_config
 
         dump_cfg = self.config
-        num_w = max(1, int(self.config.num_workers))
+        num_w = max(1, int(effective_workers or self.config.num_workers))
         global_cap = int(self.config.extra.get("llm_global_max_concurrent", 0) or 0)
         if global_cap > 0:
             per_worker = max(1, global_cap // num_w)

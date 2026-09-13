@@ -63,6 +63,11 @@ def _exclusive_file_lock(lock_path: Path, timeout: float = 120.0):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fh = open(lock_path, "a+")
     try:
+        # msvcrt.locking locks a region relative to the CURRENT file
+        # position; pin it to 0 so the locked region is deterministic
+        # regardless of append-mode positioning (the lock file stays
+        # empty — we never write to it — but don't rely on that).
+        fh.seek(0)
         if sys.platform == "win32":
             import msvcrt
 

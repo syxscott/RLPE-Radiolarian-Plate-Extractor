@@ -213,6 +213,21 @@ class TestGlobalLlmConcurrencyDivision:
         finally:
             path.unlink(missing_ok=True)
 
+    def test_dump_divides_by_effective_workers_not_raw(self, pipe, tmp_path):
+        """The LLM budget must be divided by the memory-guard-capped
+        pool (what will actually run), not the raw num_workers: with a
+        global budget of 40, 16 raw workers -> 2 each but 12 effective
+        workers -> 3 each."""
+        pipe.config.extra["llm_global_max_concurrent"] = 40
+        pipe.config.extra["llm_max_concurrent"] = 8
+        pipe.config.num_workers = 16
+        path = pipe._dump_worker_config(effective_workers=12)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            assert payload["extra"]["llm_max_concurrent"] == 3
+        finally:
+            path.unlink(missing_ok=True)
+
     def test_dump_without_global_cap_leaves_value(self, pipe):
         pipe.config.extra["llm_max_concurrent"] = 8
         pipe.config.num_workers = 4
