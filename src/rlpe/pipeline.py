@@ -4962,6 +4962,20 @@ class RadiolarianPipeline:
             self._exit_od_grobid_guard()
 
     def _process_one_pdf_grobid_impl(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
+        # 2026-09-12: explicit GROBID disable. The /api/isalive probe
+        # passes even when the server cannot process PDFs (Windows has
+        # no pdfalto binary), so the probe alone can't avoid burning
+        # max_retries × timeout on every paper. disable_grobid skips
+        # GROBID entirely and goes straight to the OD path.
+        if self.config.extra.get("disable_grobid", False):
+            logger.warning(
+                "GROBID disabled (disable_grobid=true); going straight to "
+                "OpenDataLoader for %s",
+                pdf_path.name,
+            )
+            if not self.config.extra.get("disable_od_fallback", False):
+                return self._process_one_pdf_od(paper_id, pdf_path)
+            return []
         # Phase 43: fast-fail when GROBID is offline. The GrobidClient
         # retry loop burns ``max_retries * timeout`` seconds (up to
         # 900s by default) hammering a closed port. Probe first; if
@@ -7958,8 +7972,41 @@ Rules:
                 continue
             seen_panel_keys.add(key)
             deduped_matches.append(m)
+        # 2026-09-12 (LLM call reduction): build a high-confidence pair
+        # lookup ONCE; panels whose label resolves unambiguously to a
+        # validated caption species skip their match_panel call — the
+        # strict caption-pair evidence already assigned them. On
+        # figure-rich papers this removed roughly half of the Stage-4
+        # calls (Ozsvart: 95 calls; Bragin: 95).
+        strict_pair_lookup: dict[str, str] = {}
+        if self.config.extra.get("llm_skip_strict_caption_match", True):
+            try:
+                from .taxon import _is_valid_species as _ivs_skip
+
+                for cp in caption_pairs or []:
+                    cp_conf = getattr(cp, "confidence", None)
+                    cp_species = (getattr(cp, "species", "") or "").strip()
+                    if not cp_species or not _ivs_skip(cp_species):
+                        continue
+                    if cp_conf is not None and float(cp_conf) < 0.7:
+                        continue
+                    for lbl in getattr(cp, "labels", None) or []:
+                        if lbl:
+                            strict_pair_lookup[_normalize_panel_label(lbl) or lbl] = cp_species
+            except Exception:
+                strict_pair_lookup = {}
         new_matches = []
         for m in deduped_matches:
+            # 2026-09-12: strict caption-pair skip — the label is already
+            # authoritatively matched.
+            if strict_pair_lookup:
+                _skip_key = _normalize_panel_label(m.panel_id or "") or (m.panel_id or "")
+                if _skip_key and _skip_key in strict_pair_lookup:
+                    md_skip = m.metadata or {}
+                    md_skip["llm_stage4_skipped"] = "strict_caption_pair"
+                    m.metadata = md_skip
+                    new_matches.append(m)
+                    continue
             try:
                 if not m.panel_path or not Path(m.panel_path).is_file():
                     new_matches.append(m)

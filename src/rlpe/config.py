@@ -155,6 +155,11 @@ _KNOWN_EXTRA_KEYS = {
     "grobid_timeout",
     "max_regions_per_caption",
     "grobid_no_probe",  # Phase 43: skip is_available() probe
+    # 2026-09-12: disable GROBID entirely — go straight to the
+    # OpenDataLoader path. The isalive probe passes even when the
+    # server cannot process PDFs (no pdfalto on Windows), burning
+    # retries on every paper. Read by pipeline.py.
+    "disable_grobid",
     "disable_od_fallback",
     # LLM 5-stage semantic engine
     "llm_enhanced_mode",
@@ -166,6 +171,10 @@ _KNOWN_EXTRA_KEYS = {
     "llm_match_samples",
     "llm_diagnostic_dir",
     "llm_skip_match_on_empty_caption",
+    # 2026-09-12: skip Stage-4 match_panel for panels whose label is
+    # already resolved to a validated high-confidence caption species
+    # (strict caption-pair match). Default True. Read by pipeline.py.
+    "llm_skip_strict_caption_match",
     "llm_retry_without_thinking",
     "llm_temperature",
     "llm_thinking_budget",
