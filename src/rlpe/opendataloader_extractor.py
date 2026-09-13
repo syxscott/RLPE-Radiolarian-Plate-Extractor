@@ -380,9 +380,7 @@ class OpenDataLoaderExtractor:
             # covering >60% of the page) have no caption band below —
             # OCR the whole page instead.
             l0, b0, r0, t0 = fig.merged_bbox
-            _page_area = float(doc[page_index].rect.width) * float(
-                doc[page_index].rect.height
-            )
+            _page_area = float(doc[page_index].rect.width) * float(doc[page_index].rect.height)
             mode = "full" if (r0 - l0) * (t0 - b0) > 0.6 * _page_area else "band"
             job_idx_by_cache[cache_key] = len(jobs)
             jobs.append({"page_index": page_index, "mode": mode, "bbox": list(fig.merged_bbox)})
@@ -398,16 +396,16 @@ class OpenDataLoaderExtractor:
                             texts.append(_ocr_full_page(doc, job["page_index"], ocr_engine, np))
                         else:
                             texts.append(
-                                _ocr_caption_band(doc, job["page_index"], tuple(job["bbox"]), ocr_engine, np)
+                                _ocr_caption_band(
+                                    doc, job["page_index"], tuple(job["bbox"]), ocr_engine, np
+                                )
                             )
                     except Exception:
                         texts.append(None)
             else:
                 _scratch = (output_dir or pdf_path.parent) / "od_output"
                 texts = _run_rescue_ocr_batch(pdf_path, jobs, self.ocr_lang, _scratch)
-            for (page_index, bbox_key), text in zip(
-                job_idx_by_cache.keys(), texts
-            ):
+            for (page_index, bbox_key), text in zip(job_idx_by_cache.keys(), texts):
                 ocr_cache[(page_index, bbox_key)] = text
 
         # Phase 3 — emit in the original figure order.
@@ -567,9 +565,7 @@ class OpenDataLoaderExtractor:
                 # is printed ON the plate itself. OCR the whole page.
                 coverage = (right - left) * (top - bottom) / page_area
                 mode = "full" if coverage > 0.6 else "band"
-                ocr_jobs.append(
-                    {"page_index": page_index, "mode": mode, "bbox": list(bbox)}
-                )
+                ocr_jobs.append({"page_index": page_index, "mode": mode, "bbox": list(bbox)})
                 job_meta.append((page, group_idx, group))
 
         # Phase 2 — batch OCR. Default: isolated worker subprocess
@@ -589,9 +585,7 @@ class OpenDataLoaderExtractor:
                 except Exception:
                     texts.append(None)
         else:
-            texts = _run_rescue_ocr_batch(
-                pdf_path, ocr_jobs, self.ocr_lang, output_dir
-            )
+            texts = _run_rescue_ocr_batch(pdf_path, ocr_jobs, self.ocr_lang, output_dir)
         if not texts or all(t is None for t in texts):
             if ocr_jobs:
                 logger.info(
@@ -608,77 +602,76 @@ class OpenDataLoaderExtractor:
             if not recovered:
                 continue
             if True:
-                    ok, probe = _rescue_orphan_plate_pages_marker_check(recovered)
-                    if not ok:
-                        logger.debug(
-                            "orphan-page rescue: page %d OCR text %r lacks a "
-                            "caption marker; skipping",
-                            page,
-                            probe[:40],
-                        )
-                        continue
-                    # Duplicate-caption guard: OD sometimes leaves a
-                    # stray image on a neighbouring page whose caption
-                    # band reads the SAME caption as an existing pair
-                    # (observed on Soeka p3, duplicating p4's Figure 2
-                    # chart caption). Near-identical text = same
-                    # figure, not a new one.
-                    is_dup = False
-                    for existing in figures:
-                        ratio = difflib.SequenceMatcher(
-                            None,
-                            recovered[:200].lower(),
-                            (existing.caption_text or "")[:200].lower(),
-                        ).ratio()
-                        if ratio >= 0.8:
-                            is_dup = True
-                            break
-                    if is_dup:
-                        logger.debug(
-                            "orphan-page rescue: page %d OCR caption duplicates "
-                            "an existing figure's caption; skipping",
-                            page,
-                        )
-                        continue
-                    image_paths = _resolve_image_paths(group, output_dir, paper_id)
-                    if not image_paths:
-                        continue
-                    # figure_id: prefer an OCR'd "Plate N" number so the
-                    # id matches the paper's own numbering; else fall
-                    # back to a page-scoped rescue id.
-                    plate_m = re.search(r"Plate\s+(\d+)", probe, re.IGNORECASE)
-                    if plate_m:
-                        figure_id = f"od_plate_{paper_id}_p{page:03d}_pl{int(plate_m.group(1)):02d}"
-                    else:
-                        figure_id = f"od_plate_{paper_id}_p{page:03d}_ocr{group_idx}"
-                    # Dedup against existing and previously rescued ids.
-                    base_id = figure_id
-                    suffix = 2
-                    while figure_id in existing_ids:
-                        figure_id = f"{base_id}_r{suffix}"
-                        suffix += 1
-                    existing_ids.add(figure_id)
-                    rescued.append(
-                        FigureCaptionPair(
-                            figure_id=figure_id,
-                            page_number=page,
-                            image_paths=image_paths,
-                            caption_text=recovered,
-                            merged_bbox=bbox,
-                            metadata={
-                                "caption_recovered_via": "ocr_page_rescue",
-                                "caption_recovered_confidence": 0.55,
-                                "orphan_rescue_group": group_idx,
-                            },
-                        )
-                    )
-                    logger.info(
-                        "orphan-page rescue: page %d promoted to %s "
-                        "(caption recovered via OCR, %d chars)",
+                ok, probe = _rescue_orphan_plate_pages_marker_check(recovered)
+                if not ok:
+                    logger.debug(
+                        "orphan-page rescue: page %d OCR text %r lacks a caption marker; skipping",
                         page,
-                        figure_id,
-                        len(recovered),
+                        probe[:40],
                     )
+                    continue
+                # Duplicate-caption guard: OD sometimes leaves a
+                # stray image on a neighbouring page whose caption
+                # band reads the SAME caption as an existing pair
+                # (observed on Soeka p3, duplicating p4's Figure 2
+                # chart caption). Near-identical text = same
+                # figure, not a new one.
+                is_dup = False
+                for existing in figures:
+                    ratio = difflib.SequenceMatcher(
+                        None,
+                        recovered[:200].lower(),
+                        (existing.caption_text or "")[:200].lower(),
+                    ).ratio()
+                    if ratio >= 0.8:
+                        is_dup = True
+                        break
+                if is_dup:
+                    logger.debug(
+                        "orphan-page rescue: page %d OCR caption duplicates "
+                        "an existing figure's caption; skipping",
+                        page,
+                    )
+                    continue
+                image_paths = _resolve_image_paths(group, output_dir, paper_id)
+                if not image_paths:
+                    continue
+                # figure_id: prefer an OCR'd "Plate N" number so the
+                # id matches the paper's own numbering; else fall
+                # back to a page-scoped rescue id.
+                plate_m = re.search(r"Plate\s+(\d+)", probe, re.IGNORECASE)
+                if plate_m:
+                    figure_id = f"od_plate_{paper_id}_p{page:03d}_pl{int(plate_m.group(1)):02d}"
+                else:
+                    figure_id = f"od_plate_{paper_id}_p{page:03d}_ocr{group_idx}"
+                # Dedup against existing and previously rescued ids.
+                base_id = figure_id
+                suffix = 2
+                while figure_id in existing_ids:
+                    figure_id = f"{base_id}_r{suffix}"
+                    suffix += 1
+                existing_ids.add(figure_id)
+                rescued.append(
+                    FigureCaptionPair(
+                        figure_id=figure_id,
+                        page_number=page,
+                        image_paths=image_paths,
+                        caption_text=recovered,
+                        merged_bbox=bbox,
+                        metadata={
+                            "caption_recovered_via": "ocr_page_rescue",
+                            "caption_recovered_confidence": 0.55,
+                            "orphan_rescue_group": group_idx,
+                        },
+                    )
+                )
+                logger.info(
+                    "orphan-page rescue: page %d promoted to %s "
+                    "(caption recovered via OCR, %d chars)",
+                    page,
+                    figure_id,
+                    len(recovered),
+                )
         doc.close()
         if rescued:
             logger.info(
@@ -2228,9 +2221,7 @@ def _bind_journal_cross_page_captions(
         and (d.get("page_number") or 0) in images_by_page
     ]
     for cap_page, blocks in caption_blocks.items():
-        content = _strip_running_header_lines(
-            "\n".join(text for text, _ in blocks)
-        )
+        content = _strip_running_header_lines("\n".join(text for text, _ in blocks))
         if not content or not _BINOMIAL_CLAUSE_RE.search(content):
             continue
         # G3 (structural): the caption page carries NO images at all
@@ -2308,8 +2299,7 @@ def _bind_journal_cross_page_captions(
             seen_plates.add(plate_number)
             seen_plates_with_kind.add((plate_number, "plate"))
         logger.info(
-            "cross-page strategy: bound %d caption block(s) on page %s to "
-            "plate %s (image page %s)",
+            "cross-page strategy: bound %d caption block(s) on page %s to plate %s (image page %s)",
             len(blocks),
             cap_page,
             plate_number,
@@ -2400,9 +2390,7 @@ def _find_plate_captions(
                 # Phase 30: extend to ZH (``图版`` / ``圖版``) so Mainland
                 # China + Taiwan papers get the same treatment.
                 _is_fig_item = bool(
-                    _txt
-                    and _FIG_CAPTION_RE.match(_txt)
-                    and _looks_like_fig_caption(_txt)
+                    _txt and _FIG_CAPTION_RE.match(_txt) and _looks_like_fig_caption(_txt)
                 )
                 if _txt and (
                     _PLATE_CAPTION_RE.match(_txt)
@@ -2612,8 +2600,7 @@ def _find_plate_captions(
     if len(real_found) != len(found):
         dropped = {d["plate_number"] for d in found} - {d["plate_number"] for d in real_found}
         logger.debug(
-            "_find_plate_captions: dropped running-header/footer caption(s) "
-            "for plate(s) %s",
+            "_find_plate_captions: dropped running-header/footer caption(s) for plate(s) %s",
             sorted(dropped),
         )
     return real_found
@@ -2989,7 +2976,10 @@ def _build_figures_from_plate_captions(
                     # get the same fig_type protection as the OCR
                     # rescue paths (pipeline reads this key).
                     **(
-                        {"caption_recovered_via": cap["recovered_via"], "caption_recovered_confidence": 0.65}
+                        {
+                            "caption_recovered_via": cap["recovered_via"],
+                            "caption_recovered_confidence": 0.65,
+                        }
                         if cap.get("recovered_via")
                         else {}
                     ),
@@ -3607,7 +3597,6 @@ def _rescue_ocr_worker_cli(argv: list[str]) -> int:
         torch.set_num_threads(1)
     except Exception:
         pass
-    import cv2
     import easyocr
     import fitz
     import numpy as np
@@ -3626,9 +3615,7 @@ def _rescue_ocr_worker_cli(argv: list[str]) -> int:
             if job.get("mode") == "full":
                 text = _ocr_full_page(doc, page_index, reader, np)
             else:
-                text = _ocr_caption_band(
-                    doc, page_index, job.get("bbox"), reader, np
-                )
+                text = _ocr_caption_band(doc, page_index, job.get("bbox"), reader, np)
             texts.append(text)
         except Exception:
             # A single bad job must not sink the batch.
@@ -3636,9 +3623,7 @@ def _rescue_ocr_worker_cli(argv: list[str]) -> int:
             texts.append(None)
     out_path = Path(argv[1])
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps({"texts": texts}, ensure_ascii=False), encoding="utf-8"
-    )
+    out_path.write_text(json.dumps({"texts": texts}, ensure_ascii=False), encoding="utf-8")
     return 0
 
 
@@ -3656,7 +3641,6 @@ def _run_rescue_ocr_batch(
     load (~seconds) happens once for the whole paper.
     """
     import subprocess
-    import tempfile
 
     if not jobs:
         return []
@@ -3667,8 +3651,7 @@ def _run_rescue_ocr_batch(
         "pdf": str(pdf_path),
         "lang": ocr_lang,
         "jobs": [
-            {"page_index": j["page_index"], "mode": j["mode"], "bbox": j.get("bbox")}
-            for j in jobs
+            {"page_index": j["page_index"], "mode": j["mode"], "bbox": j.get("bbox")} for j in jobs
         ],
     }
     tasks_path.write_text(json.dumps(tasks, ensure_ascii=False), encoding="utf-8")
@@ -3710,9 +3693,9 @@ def _run_rescue_ocr_batch(
         )
     else:
         try:
-            results = json.loads(results_path.read_text(encoding="utf-8")).get(
-                "texts"
-            ) or [None] * len(jobs)
+            results = json.loads(results_path.read_text(encoding="utf-8")).get("texts") or [
+                None
+            ] * len(jobs)
         except (OSError, ValueError):
             logger.warning("rescue-ocr results unreadable; rescue degraded")
     for p in (tasks_path, results_path):

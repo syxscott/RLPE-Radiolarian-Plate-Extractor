@@ -28,9 +28,12 @@ class TestAuthorLineGate:
         assert _is_author_line_title("Systematic paleontology") is False
 
     def test_long_titles_exempt(self):
-        assert _is_author_line_title(
-            "Revision of the genera Spinodeflandrella Kozur 1981 and Holdsworthella" * 2
-        ) is False
+        assert (
+            _is_author_line_title(
+                "Revision of the genera Spinodeflandrella Kozur 1981 and Holdsworthella" * 2
+            )
+            is False
+        )
 
 
 class TestAuthorSectionSkipped:
@@ -66,9 +69,7 @@ class TestPaleoStatusPrecision:
     def test_stable_plate_status(self):
         from rlpe.paleo_reconstruction import explain_paleo_status
 
-        assert (
-            explain_paleo_status("Siberia", 286.8) == "stable_plate_no_rotation"
-        )
+        assert explain_paleo_status("Siberia", 286.8) == "stable_plate_no_rotation"
 
     def test_age_and_plate_unknown(self):
         from rlpe.paleo_reconstruction import explain_paleo_status
@@ -94,18 +95,11 @@ class TestRangeChartBridgeGate:
         img_type = "diagram"
         # epithet >= 4 chars so the header tail "2. Asselian and"
         # ("and" = 3 chars) is not counted as a species clause.
-        sp_signals = len(
-            re.findall(r"\b\d{1,2}\s*\.\s+[A-Z][a-z]{3,}\s+[a-z]{4,}", caption)
-        )
+        sp_signals = len(re.findall(r"\b\d{1,2}\s*\.\s+[A-Z][a-z]{3,}\s+[a-z]{4,}", caption))
         assert sp_signals == 0
         # A real numbered clause list does count.
-        real = (
-            "Plate 4. Figs. 1-11. 1. Pseudoalbaillella sakmarensis "
-            "2. Holdsworthella permica"
-        )
-        assert (
-            len(re.findall(r"\b\d{1,2}\s*\.\s+[A-Z][a-z]{3,}\s+[a-z]{4,}", real)) >= 2
-        )
+        real = "Plate 4. Figs. 1-11. 1. Pseudoalbaillella sakmarensis 2. Holdsworthella permica"
+        assert len(re.findall(r"\b\d{1,2}\s*\.\s+[A-Z][a-z]{3,}\s+[a-z]{4,}", real)) >= 2
 
     def test_image_type_whitelist(self):
         whitelist = {"diagram", "chart", "table", "graph"}

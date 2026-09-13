@@ -5,8 +5,9 @@ token bboxes back to source coordinates."""
 
 from __future__ import annotations
 
-import numpy as np
 from unittest.mock import MagicMock
+
+import numpy as np
 
 from rlpe.ocr import OCRBackend
 

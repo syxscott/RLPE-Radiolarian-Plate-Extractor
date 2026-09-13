@@ -79,14 +79,15 @@ class TestAppendJsonlConcurrency:
             # full rlpe.pipeline in a cold process drags in the
             # torch/cv2 stack, which natively crashes on some Arrow
             # Lake machines and would test DLL layout, not the lock.
+            src_dir = repr(str(Path(__file__).resolve().parent.parent / "src"))
+            journal = repr(str(j))
             script = (
                 "import sys;"
-                "sys.path.insert(0, %r);"
+                f"sys.path.insert(0, {src_dir});"
                 "from pathlib import Path;"
                 "from rlpe.utils import _append_jsonl;"
-                "_append_jsonl(Path(%r), "
-                "[{'paper_id': 'p%d', 'i': i} for i in range(10)])"
-                % (str(Path(__file__).resolve().parent.parent / "src"), str(j), worker)
+                f"_append_jsonl(Path({journal}), "
+                f"[{{'paper_id': 'p{worker}', 'i': i}} for i in range(10)])"
             )
             procs.append(subprocess.Popen([sys.executable, "-c", script]))
         for proc in procs:

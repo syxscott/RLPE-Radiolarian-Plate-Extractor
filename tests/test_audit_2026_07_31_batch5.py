@@ -100,14 +100,20 @@ class TestReviewCorrections:
 
 class TestApiSandbox:
     def test_work_dir_obeys_test_env(self, monkeypatch):
-        monkeypatch.setenv("RLPE_API_TEST_TMP", "/tmp/rlpe_api_test_sandbox_x")
+        # 2026-09-14: compare against the OS-resolved sandbox prefix —
+        # "/tmp/..." is a valid tmp path on POSIX but resolves to
+        # "<drive>:\tmp\..." on Windows, so a literal-prefix assert
+        # only ever passed on Linux. Path() normalises both sides to
+        # the platform rendering.
+        sandbox = str(Path("/tmp") / "rlpe_api_test_sandbox_x")
+        monkeypatch.setenv("RLPE_API_TEST_TMP", sandbox)
         import importlib
 
         import rlpe.api.app as app_mod
 
         importlib.reload(app_mod)
-        assert str(app_mod.WORK_DIR).startswith("/tmp/rlpe_api_test_sandbox_x")
-        assert str(app_mod.UPLOAD_DIR).startswith("/tmp/rlpe_api_test_sandbox_x")
+        assert str(app_mod.WORK_DIR).startswith(sandbox)
+        assert str(app_mod.UPLOAD_DIR).startswith(sandbox)
         # restore module state for other tests
         monkeypatch.delenv("RLPE_API_TEST_TMP")
         importlib.reload(app_mod)

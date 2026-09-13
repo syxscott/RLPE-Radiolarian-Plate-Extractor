@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-
 CAPTION = (
     "Fig. 2. Asselian and Sakmarian radiolarians of the Lower Permian "
     "South Urals in the Kondurovka (1\u20133)"
@@ -106,9 +105,7 @@ class TestEntityExtractionGeologicGate:
     def test_real_binomial_still_extracted(self):
         from rlpe.association import extract_taxa_from_caption
 
-        taxa = extract_taxa_from_caption(
-            "Plate 3. Spinodeflandrella tetraspinosa (pl. 3, figs. 1)"
-        )
+        taxa = extract_taxa_from_caption("Plate 3. Spinodeflandrella tetraspinosa (pl. 3, figs. 1)")
         assert any("tetraspinosa" in t for t in taxa)
 
 
@@ -144,17 +141,23 @@ class TestRunningHeaderFilter:
     def test_journal_header_detected(self):
         from rlpe.opendataloader_extractor import _is_running_header_footer
 
-        assert _is_running_header_footer(
-            "1452 AFANASIEVA Plate 4 10 PALEONTOLOGICAL JOURNAL Vol. 54 No. 12 2020"
-        ) is True
+        assert (
+            _is_running_header_footer(
+                "1452 AFANASIEVA Plate 4 10 PALEONTOLOGICAL JOURNAL Vol. 54 No. 12 2020"
+            )
+            is True
+        )
 
     def test_real_plate_caption_not_flagged(self):
         from rlpe.opendataloader_extractor import _is_running_header_footer
 
-        assert _is_running_header_footer(
-            "Plate 3. (Reconstructed from systematic descriptions) "
-            "Spinodeflandrella tetraspinosa (pl. 3, figs. 1)"
-        ) is False
+        assert (
+            _is_running_header_footer(
+                "Plate 3. (Reconstructed from systematic descriptions) "
+                "Spinodeflandrella tetraspinosa (pl. 3, figs. 1)"
+            )
+            is False
+        )
 
     def test_find_plate_captions_drops_header(self):
         from rlpe.opendataloader_extractor import _find_plate_captions

@@ -162,9 +162,7 @@ class TestSampleJoinKeys:
         if rec.locality_id is not None:
             # When the row's links carry a locality, the sample must
             # carry the SAME stable id the localities dim uses.
-            assert rec.locality_id == _locality_id(
-                md["geology_links"][0], "pap1"
-            )
+            assert rec.locality_id == _locality_id(md["geology_links"][0], "pap1")
         # No link locality -> ids stay None (never fabricated).
         md_noloc = dict(md)
         md_noloc["geology_links"] = [

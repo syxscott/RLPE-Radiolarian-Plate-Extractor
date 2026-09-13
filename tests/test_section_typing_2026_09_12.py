@@ -11,7 +11,6 @@ from rlpe.opendataloader_extractor import (
     _infer_section_type,
 )
 
-
 GEO_TEXT = (
     "The Khivach River section exposes the Halika Formation near "
     "64.5 N 170.2 E. Norian and Carnian radiolarians occur in grey "

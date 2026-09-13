@@ -105,7 +105,10 @@ class TestSubprocessWrapper:
         import stat
 
         mode = stat.S_IMODE(os.stat(path).st_mode)
-        assert mode == 0o600
+        # 2026-09-14: os.chmod on Windows can only toggle the read-only
+        # bit, so stat reports 0o666 regardless of the requested 0600.
+        if os.name != "nt":
+            assert mode == 0o600
         payload = json.loads(path.read_text())
         assert payload["extra"]["llm_api_key"] == "sk-secret-parent"
 

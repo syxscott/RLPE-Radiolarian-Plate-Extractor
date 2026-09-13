@@ -191,9 +191,7 @@ def _total_physical_memory_mb() -> int | None:
     return None
 
 
-def _memory_capped_workers(
-    num_workers: int, total_mem_mb: int | None, per_worker_mb: int
-) -> int:
+def _memory_capped_workers(num_workers: int, total_mem_mb: int | None, per_worker_mb: int) -> int:
     """Cap the batch worker count to what physical RAM supports.
 
     Each subprocess worker is a full python stack (torch + PaddleOCR +
@@ -211,9 +209,7 @@ def _memory_capped_workers(
     return max(1, min(num_workers, budget))
 
 
-def _effective_spawn_stagger(
-    stagger_sec: float, isolation: str, pool_workers: int
-) -> float:
+def _effective_spawn_stagger(stagger_sec: float, isolation: str, pool_workers: int) -> float:
     """Resolve the worker spawn stagger (seconds) from config + defaults.
 
     ``-1`` (auto) staggers initial submissions by 15s when 8+ subprocess
@@ -280,7 +276,9 @@ class RadiolarianPipeline:
                 import torch as _torch
 
                 _torch.set_num_threads(_clamp_n)
-                logger.info("torch intra-op threads clamped to %d (Arrow Lake conv stability)", _clamp_n)
+                logger.info(
+                    "torch intra-op threads clamped to %d (Arrow Lake conv stability)", _clamp_n
+                )
             except Exception:  # torch absent / clamp refused — proceed
                 pass
         # Phase 29: forward retry + timeout knobs from the config
@@ -488,9 +486,7 @@ class RadiolarianPipeline:
                         # native-crash hotspot on multi-DLL Windows
                         # processes (torch/easyocr access violation);
                         # operators can disable it via this extra key.
-                        rescue_ocr=bool(
-                            self.config.extra.get("od_orphan_rescue_ocr", True)
-                        ),
+                        rescue_ocr=bool(self.config.extra.get("od_orphan_rescue_ocr", True)),
                         # 2026-09-12: journal-style cross-page caption
                         # binding (multi-evidence gated, default on).
                         cross_page_captions=bool(
@@ -772,9 +768,7 @@ class RadiolarianPipeline:
             # (2026-09-13: ``isolation`` is now read before pool creation
             # for the memory guard; reused here.)
             if isolation == "subprocess":
-                worker_config_path = self._dump_worker_config(
-                    effective_workers=pool_workers
-                )
+                worker_config_path = self._dump_worker_config(effective_workers=pool_workers)
                 submit_fn = lambda p: self._process_one_pdf_in_subprocess(  # noqa: E731
                     p, worker_config_path
                 )
@@ -787,9 +781,7 @@ class RadiolarianPipeline:
             # during the ramp stops submitting immediately.
             stagger_raw = self.config.extra.get("batch_spawn_stagger_sec", -1)
             try:
-                stagger = _effective_spawn_stagger(
-                    float(stagger_raw), isolation, pool_workers
-                )
+                stagger = _effective_spawn_stagger(float(stagger_raw), isolation, pool_workers)
             except (TypeError, ValueError):
                 logger.debug(
                     "run: bad batch_spawn_stagger_sec=%r — falling back to auto",
@@ -1073,9 +1065,11 @@ class RadiolarianPipeline:
                     ),
                 }
                 _manifest["data_inventory"] = _inv
-                _flush_print(
-                    "data_inventory: "
-                    + ", ".join(f"{k}={v}" for k, v in _inv.items() if v)
+                # 2026-09-14 (ruff F821): this used to call cli.py's
+                # ``_flush_print`` without importing it — a latent
+                # NameError silently eaten by the except below.
+                logger.info(
+                    "data_inventory: " + ", ".join(f"{k}={v}" for k, v in _inv.items() if v)
                 )
             except Exception:
                 logger.debug("data_inventory build failed", exc_info=True)
@@ -2978,7 +2972,7 @@ class RadiolarianPipeline:
         prior: list[dict[str, Any]] = []
         bad_lines: list[int] = []
         try:
-            with open(manifest_path, "r", encoding="utf-8") as fh:
+            with open(manifest_path, encoding="utf-8") as fh:
                 for lineno, line in enumerate(fh, 1):
                     line = line.strip()
                     if not line:
@@ -2991,9 +2985,7 @@ class RadiolarianPipeline:
                     if isinstance(obj, dict):
                         prior.append(obj)
         except OSError:
-            logger.warning(
-                "run: could not read prior %s for resume merge", manifest_path.name
-            )
+            logger.warning("run: could not read prior %s for resume merge", manifest_path.name)
             return []
         if bad_lines:
             logger.warning(
@@ -5170,8 +5162,7 @@ class RadiolarianPipeline:
         # GROBID entirely and goes straight to the OD path.
         if self.config.extra.get("disable_grobid", False):
             logger.warning(
-                "GROBID disabled (disable_grobid=true); going straight to "
-                "OpenDataLoader for %s",
+                "GROBID disabled (disable_grobid=true); going straight to OpenDataLoader for %s",
                 pdf_path.name,
             )
             if not self.config.extra.get("disable_od_fallback", False):
@@ -5644,9 +5635,7 @@ class RadiolarianPipeline:
             # without parseable species clauses. \b\d{1,2}\b refuses to
             # match inside 4-digit numbers, so page/year ranges
             # ("947-1093", "2020-2021") cannot fire it.
-            m = _re_hallu2.search(
-                r"\b(\d{1,2})\s*[-\u2013]\s*(\d{1,2})\b", caption.caption or ""
-            )
+            m = _re_hallu2.search(r"\b(\d{1,2})\s*[-\u2013]\s*(\d{1,2})\b", caption.caption or "")
             if m:
                 lo, hi = int(m.group(1)), int(m.group(2))
                 if 0 < lo < hi <= 99:
@@ -6058,28 +6047,19 @@ class RadiolarianPipeline:
             if isinstance(_lp, dict):
                 _lp_conf = _lp.get("confidence")
                 _lp_sp = (_lp.get("species") or "").strip().lower()
-                if (
-                    isinstance(_lp_conf, (int, float))
-                    and _sp_now
-                    and _lp_sp == _sp_low
-                ):
+                if isinstance(_lp_conf, (int, float)) and _sp_now and _lp_sp == _sp_low:
                     _evidence.append(float(_lp_conf))
             _s4 = md.get("llm_stage4") or {}
             if isinstance(_s4, dict):
                 _s4_conf = _s4.get("confidence")
                 _s4_sp = (_s4.get("species") or "").strip().lower()
-                if (
-                    isinstance(_s4_conf, (int, float))
-                    and _sp_now
-                    and _s4_sp == _sp_low
-                ):
+                if isinstance(_s4_conf, (int, float)) and _sp_now and _s4_sp == _sp_low:
                     _evidence.append(float(_s4_conf))
             if not _evidence and md.get("caption_pairs_used") and _sp_now:
                 _pair_confs = [
                     cp.get("confidence")
                     for cp in (r.get("caption_pairs") or [])
-                    if isinstance(cp, dict)
-                    and isinstance(cp.get("confidence"), (int, float))
+                    if isinstance(cp, dict) and isinstance(cp.get("confidence"), (int, float))
                 ]
                 if _pair_confs:
                     _evidence.append(max(_pair_confs))
@@ -6096,9 +6076,9 @@ class RadiolarianPipeline:
             # (e.g. caption-band OCR died on an oversized scan) can never
             # carry a species — mark it so the gap is visible in exports
             # instead of a silent "species: null".
-            has_caption_text = bool(
-                (r.get("caption_snippet") or "").strip()
-            ) or bool((r.get("ocr_text") or "").strip())
+            has_caption_text = bool((r.get("caption_snippet") or "").strip()) or bool(
+                (r.get("ocr_text") or "").strip()
+            )
             if not has_caption_text:
                 md = r.setdefault("metadata", {})
                 md.setdefault("needs_review", True)
@@ -6262,9 +6242,7 @@ class RadiolarianPipeline:
             if primary is None:
                 first_by_key[key] = r
             else:
-                extra = primary.setdefault("metadata", {}).setdefault(
-                    "additional_panel_paths", []
-                )
+                extra = primary.setdefault("metadata", {}).setdefault("additional_panel_paths", [])
                 pp = r.get("panel_path")
                 if pp and pp not in extra:
                     extra.append(pp)
@@ -6875,9 +6853,7 @@ Rules:
                 _img_type,
             )
         except Exception:
-            logger.exception(
-                "range-chart bridge failed for %s/%s", paper_id, figure_id
-            )
+            logger.exception("range-chart bridge failed for %s/%s", paper_id, figure_id)
 
     def _process_region(
         self,
@@ -7292,7 +7268,9 @@ Rules:
                     _kept_rows = [
                         r for r in llm_results if _label_in_caption(r.get("panel_id") or "")
                     ]
-                    _dropped_rows = [r for r in llm_results if id(r) not in {id(x) for x in _kept_rows}]
+                    _dropped_rows = [
+                        r for r in llm_results if id(r) not in {id(x) for x in _kept_rows}
+                    ]
                     dropped = pre_filter - len(_kept_rows)
                     if dropped:
                         # 2026-09-12 (composite-caption tolerance): when the
@@ -7311,13 +7289,9 @@ Rules:
                             return int(m_n.group(1)) if m_n else None
 
                         _nums = sorted(
-                            n
-                            for n in (_numeric_label(r) for r in llm_results)
-                            if n is not None
+                            n for n in (_numeric_label(r) for r in llm_results) if n is not None
                         )
-                        _continuous = bool(_nums) and _nums == list(
-                            range(_nums[0], _nums[-1] + 1)
-                        )
+                        _continuous = bool(_nums) and _nums == list(range(_nums[0], _nums[-1] + 1))
                         if dropped > len(_kept_rows) and _continuous:
                             logger.warning(
                                 "Hallucination filter %s/%s: dropped=%d > kept=%d "

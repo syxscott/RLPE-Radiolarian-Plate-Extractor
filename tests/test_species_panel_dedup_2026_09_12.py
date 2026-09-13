@@ -8,7 +8,9 @@ from __future__ import annotations
 from rlpe.pipeline import RadiolarianPipeline
 
 
-def _row(species: str | None, path: str | None, panel_id: str = "1", age: str | None = "Lower Permian") -> dict:
+def _row(
+    species: str | None, path: str | None, panel_id: str = "1", age: str | None = "Lower Permian"
+) -> dict:
     md: dict = {"figure_type": "plate"}
     if age:
         md["geology_summary"] = {"age": age, "locality": "Kondurovka"}
@@ -75,9 +77,7 @@ class TestSpeciesPanelDedup:
         ]
         out = _dedup(rows)
         assert len(out) == 2
-        assert not any(
-            (r["metadata"] or {}).get("additional_panel_paths") for r in out
-        )
+        assert not any((r["metadata"] or {}).get("additional_panel_paths") for r in out)
 
     def test_stub_rows_untouched(self):
         stub = {

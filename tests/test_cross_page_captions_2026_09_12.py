@@ -193,8 +193,16 @@ def test_fig_caption_does_not_steal_crosspage_plate_images():
             "content": "Fig. 4. Morphology of Holdsworthella permica Kozur, 1981, specimen PIN, shown schematically.",
         },
         {"type": "image", "id": "p10img", "page number": 10, "bounding box": [40, 40, 560, 800]},
-        {"type": "paragraph", "page number": 10, "content": "1452 AFANASIEVA Plate 4 PALEONTOLOGICAL JOURNAL Vol. 54 No. 12 2020"},
-        {"type": "paragraph", "page number": 11, "content": "Discussion citing (Plate 4) with more description."},
+        {
+            "type": "paragraph",
+            "page number": 10,
+            "content": "1452 AFANASIEVA Plate 4 PALEONTOLOGICAL JOURNAL Vol. 54 No. 12 2020",
+        },
+        {
+            "type": "paragraph",
+            "page number": 11,
+            "content": "Discussion citing (Plate 4) with more description.",
+        },
         {"type": "paragraph", "page number": 11, "content": PJ_CAPTION_P4},
     ]
     caps = _find_plate_captions(kids, caption_window=5)
