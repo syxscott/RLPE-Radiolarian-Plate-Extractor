@@ -56,12 +56,14 @@ def test_hallucination_filter_present():
     # The filter must use pair_lookup (caption-derived labels).
     assert "pair_lookup" in src_text
     # The filter must be INSIDE _process_region, AFTER the pair_lookup
-    # is built. pair_lookup is built around line 2493; the filter
-    # must come later. Verify the order: search for "def _process_region"
-    # then check pair_lookup assignment comes before hallucination filter.
+    # is built. Slice the method body by the NEXT method definition at
+    # the same indent level instead of a fixed char window — the
+    # method legitimately grew (2026-09 high-parallelism + caption
+    # work pushed the filter past the old 25000-char window).
     pr_idx = src_text.find("def _process_region(")
     assert pr_idx > 0
-    region = src_text[pr_idx : pr_idx + 25000]
+    next_def = src_text.find("\n    def ", pr_idx + 1)
+    region = src_text[pr_idx : next_def if next_def > 0 else len(src_text)]
     pl_idx = region.find("pair_lookup: dict[str, str] = {}")
     hf_idx = region.find("Hallucination filter")
     assert pl_idx > 0 and hf_idx > 0, (

@@ -150,6 +150,7 @@ class TestLowConfidenceReviewFlag:
                     "species": "X",
                     "confidence": 0.3,
                     "panel_path": "/x.png",
+                    "caption_snippet": "fig. 1. Species X",
                 },
                 {
                     "paper_id": "p",
@@ -158,6 +159,18 @@ class TestLowConfidenceReviewFlag:
                     "species": "Y",
                     "confidence": 0.8,
                     "panel_path": "/y.png",
+                    "caption_snippet": "fig. 2. Species Y",
+                },
+                {
+                    # 2026-09-12 contract: a caption-less row is
+                    # review-worthy REGARDLESS of confidence — species
+                    # without caption provenance is unverifiable.
+                    "paper_id": "p",
+                    "figure_id": "f",
+                    "panel_id": "3",
+                    "species": "Z",
+                    "confidence": 0.8,
+                    "panel_path": "/z.png",
                 },
             ]
             out = pipe._finalize_rows(rows)
@@ -166,6 +179,9 @@ class TestLowConfidenceReviewFlag:
             assert "low_confidence" in low["metadata"]["review_reasons"]
             hi = [r for r in out if r["panel_id"] == "2"][0]
             assert not (hi.get("metadata") or {}).get("needs_review", False)
+            no_caption = [r for r in out if r["panel_id"] == "3"][0]
+            assert (no_caption.get("metadata") or {}).get("needs_review") is True
+            assert "missing_caption_text" in no_caption["metadata"]["review_reasons"]
 
 
 class TestJournalGarbage:

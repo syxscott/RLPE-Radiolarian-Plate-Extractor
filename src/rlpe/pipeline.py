@@ -5635,6 +5635,24 @@ class RadiolarianPipeline:
             pass
 
         if not pair_lookup:
+            # 2026-09-14 (CI round12 regression): range-only captions
+            # like "figs 1-9." legitimately yield NO species from the
+            # caption parser (parser no longer emits garbage species
+            # like "Sample"), but this filter only needs the LABEL SET
+            # to reject phantom panel_ids. Expand the first bounded
+            # numeric range so filtering still applies to captions
+            # without parseable species clauses. \b\d{1,2}\b refuses to
+            # match inside 4-digit numbers, so page/year ranges
+            # ("947-1093", "2020-2021") cannot fire it.
+            m = _re_hallu2.search(
+                r"\b(\d{1,2})\s*[-\u2013]\s*(\d{1,2})\b", caption.caption or ""
+            )
+            if m:
+                lo, hi = int(m.group(1)), int(m.group(2))
+                if 0 < lo < hi <= 99:
+                    pair_lookup = {str(n): None for n in range(lo, hi + 1)}
+
+        if not pair_lookup:
             return matches  # No caption to filter against — keep all.
 
         caption_labels: set[str] = set()
