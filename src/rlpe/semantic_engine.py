@@ -1750,6 +1750,51 @@ def _expand_letter_labels(s: str) -> list[str]:
     return out
 
 
+_PAREN_DIGIT_GROUP_RE = re.compile(
+    # Cluster C: "(1) Globotruncana sp. cf. G. bulloides Vogler; (2) ..."
+    # paren-wrapped DIGIT labels; the species body is captured verbatim
+    # (genus, optional sp./spp., optional cf./aff. with abbreviated genus
+    # "G. bulloides", trailing epithet words) and stops at capitalised
+    # author surnames and at the next paren-digit group.
+    r"\(\s*(\d{1,3}(?:\s*[,–—-]\s*\d{1,3})*)\s*\)\s*"
+    r"([A-Z][a-zA-Z-]+(?:\s+(?:sp\.|spp\.))?(?:\s+(?:cf\.|aff\.)\s*(?:[A-Z]\.\s*)?[a-z][a-zA-Z-]+)*(?:\s+[a-z][a-zA-Z-]+)*)"
+)
+
+
+def _parse_paren_digit_caption(text: str) -> list[CaptionPair] | None:
+    """Parse paren-wrapped digit-label composite captions —
+    "(1) Globotruncana sp. cf. G. bulloides Vogler; (2) ..." with heavy
+    cf. open nomenclature (Palaeoworld/Brežđe style). Fires only with
+    >= 2 groups; fewer falls through to the existing parsers."""
+    if not text:
+        return None
+    pairs: list[CaptionPair] = []
+    seen: set[str] = set()
+    for m in _PAREN_DIGIT_GROUP_RE.finditer(text):
+        labels = _regex_expand_label_list(m.group(1))
+        species = (m.group(2) or "").strip()
+        if not labels or not species:
+            continue
+        new_labels = [lbl for lbl in labels if lbl not in seen]
+        if not new_labels:
+            continue
+        for lbl in new_labels:
+            seen.add(lbl)
+        pairs.append(
+            CaptionPair(
+                labels=new_labels,
+                species=species,
+                modifier="",
+                confidence=0.7,
+                notes="regex_fallback_paren_digit",
+                raw_text=m.group(0)[:120],
+            )
+        )
+    if len(pairs) < 2:
+        return None
+    return pairs
+
+
 def _parse_paren_letter_caption(text: str) -> list[CaptionPair] | None:
     """Parse paren-letter composite captions ("(A) Species ... (B, C)
     Species ..."). Fires only when >= 2 well-formed groups exist —
@@ -1799,7 +1844,10 @@ _COMPOSITE_GROUP_RE = re.compile(
     # group (labels="1", genus="Middle").
     r"(?:^|[.;:])\s*"
     r"(\d{1,3}[a-z]?(?:\s*[,–—-]\s*\d{1,3}[a-z]?)*)"
-    r"\s*[–—-]\s*"
+    # 2026-09-12 (Cluster D): the label→species separator is a dash in
+    # Bragin-style captions ("1-5–Species") but a PERIOD in others
+    # ("Plate 5. 1-3. Dactyliodiscus lenticulatus (Jud)"). Accept both.
+    r"(?:\s*[–—-]|\s*\.\s+)\s*"
     r"(?:"
     # Species group: capitalised genus (+ optional epithet).
     r"([A-Z][a-zA-Z-]+\??)(?:\s+([a-z][a-zA-Z-]{3,}))?"
@@ -1813,7 +1861,20 @@ _COMPOSITE_GROUP_RE = re.compile(
 
 # Specimen-type words that head description entries ("2–paratype, GIN
 # no ..."), not species groups.
-_COMPOSITE_NON_SPECIES = {"paratype", "holotype", "specimen", "detail", "type"}
+_COMPOSITE_NON_SPECIES = {
+    "paratype",
+    "holotype",
+    "specimen",
+    "detail",
+    "type",
+    # 2026-09-12 (Cluster D): specimen-catalogue repository acronyms —
+    # "1 – GIN, no. 4870/269" clauses matched "GIN" as a genus and
+    # fabricated bogus species groups.
+    "gin",
+    "pin",
+    "nhm",
+    "usp",
+}
 
 
 def _parse_composite_caption(text: str) -> list[CaptionPair] | None:
@@ -1930,6 +1991,11 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     paren_letter = _parse_paren_letter_caption(text)
     if paren_letter:
         return _reject_non_taxon_pairs(paren_letter)
+    # 2026-09-12: paren-digit composite captions ("(1) Genus sp. cf.
+    # G. epithet ...; (2) ...") — Brežđe/Palaeoworld style.
+    paren_digit = _parse_paren_digit_caption(text)
+    if paren_digit:
+        return _reject_non_taxon_pairs(paren_digit)
     # audit 2026-07-31: period-separated DISCRETE labels —
     # "Figs 1-3. 5. 8. 10. 12: Archaespongoprunum sp." — are a real
     # caption convention that the clause regex cannot parse (it stops
