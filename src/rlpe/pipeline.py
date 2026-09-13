@@ -197,21 +197,26 @@ class RadiolarianPipeline:
         # instead of raising KeyboardInterrupt. This lets the GUI
         # show a clean "cancelled" state and free the worker thread.
         self._cancel_event = cancel_event
-        # 2026-09-12 (Arrow Lake): clamp torch's intra-op thread pool to
-        # ONE thread BEFORE any OCR backend initialises. The hybrid
-        # hybrid-core CPU (Intel Ultra 225H) segfaults inside torch's
-        # conv kernels when the default thread pool fans out across
-        # P-cores and E-cores (EasyOCR CRAFT + quantized LSTM were the
-        # observed victims). The same clamp demonstrably fixed the
-        # rescue-OCR worker; the env var (OMP_NUM_THREADS) set via
-        # .env does NOT cover the init window because dotenv loads
-        # after torch. Off via extra["clamp_torch_threads"]=False.
-        if self.config.extra.get("clamp_torch_threads", True):
+        # 2026-09-12 (Arrow Lake): clamp torch's intra-op thread pool
+        # BEFORE any OCR backend initialises. The hybrid-core CPU
+        # (Intel Ultra 225H) segfaults inside torch's conv kernels when
+        # the default thread pool fans out across P-cores and E-cores
+        # (EasyOCR CRAFT + quantized LSTM were the observed victims).
+        # The same clamp demonstrably fixed the rescue-OCR worker; the
+        # env var (OMP_NUM_THREADS) set via .env does NOT cover the
+        # init window because dotenv loads after torch.
+        # 2026-09-12 (perf research): the clamp value is now tunable —
+        # True → 1 thread (max stability, ~4x slower OCR), an integer
+        # N → N threads (measured: 4 threads is 3.2x faster than 1 and
+        # empirically stable on this machine), False → no clamp.
+        _clamp = self.config.extra.get("clamp_torch_threads", True)
+        _clamp_n = 1 if _clamp is True else int(_clamp or 0)
+        if _clamp_n > 0:
             try:
                 import torch as _torch
 
-                _torch.set_num_threads(1)
-                logger.info("torch intra-op threads clamped to 1 (Arrow Lake conv stability)")
+                _torch.set_num_threads(_clamp_n)
+                logger.info("torch intra-op threads clamped to %d (Arrow Lake conv stability)", _clamp_n)
             except Exception:  # torch absent / clamp refused — proceed
                 pass
         # Phase 29: forward retry + timeout knobs from the config

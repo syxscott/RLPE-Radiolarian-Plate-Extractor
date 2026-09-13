@@ -127,10 +127,11 @@ _KNOWN_EXTRA_KEYS = {
     # True; opt-out for occurrence-level exports that need one row per
     # specimen panel.
     "dedup_species_panels",
-    # 2026-09-12 (Arrow Lake): clamp torch intra-op threads to 1 at
+    # 2026-09-12 (Arrow Lake): clamp torch intra-op threads at
     # pipeline init — the hybrid-core CPU segfaults in torch conv when
-    # the default pool fans out (EasyOCR CRAFT victim). False restores
-    # the unclamped default. Read by pipeline.py.
+    # the default pool fans out (EasyOCR CRAFT victim). True = 1 thread
+    # (max stability), an integer N = N threads (4 measured 3.2x faster
+    # than 1 and stable), False = no clamp. Read by pipeline.py.
     "clamp_torch_threads",
     # 2026-09-12: fresh-worker retries after a NATIVE worker crash
     # (0xC0000005-class) — probabilistic on hybrid CPUs; each retry is
