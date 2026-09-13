@@ -262,6 +262,17 @@ def _is_valid_species(species: str | None) -> bool:
         "electron",
         "micrograph",
         "micrographs",
+        # 2026-09-12: batch_2020 leaks — caption prose heads ("After acid
+        # treatment"), section/figure-description words, truncated frags.
+        "after",
+        "dimensions",
+        "dimension",
+        "material",
+        "materials",
+        "sel",
+        "clay",
+        "bodrak",
+        "gin",
         "new",
         "report",
         "reports",

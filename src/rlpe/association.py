@@ -96,6 +96,21 @@ _TAXON_STOP_WORDS: frozenset[str] = frozenset(
         "sections",
         "sample",
         "samples",
+        # 2026-09-12: figure-prose and section words observed leaking as
+        # species on batch_2020 (After/Dimensions/Material from caption
+        # prose; Clay/Bodrak from geological-setting text; Sel truncated;
+        # GIN from specimen-catalogue clauses "4 - GIN, no. 4870/269").
+        "after",
+        "acid",
+        "treatment",
+        "dimensions",
+        "dimension",
+        "material",
+        "materials",
+        "sel",
+        "clay",
+        "bodrak",
+        "gin",
         "locality",
         "localities",
         "age",
@@ -1195,12 +1210,28 @@ def match_panels(
         first_label = labels[0] if labels else None
         if first_label and not is_valid_panel_label(first_label):
             first_label = None
+        # 2026-09-12: validate the fallback species like every other
+        # writer — prose fragments ("After", "Sel") landed here because
+        # the taxa list came from an unfiltered caption scan.
+        fallback_species = taxa[0] if taxa else None
+        if fallback_species:
+            try:
+                from .taxon import _is_valid_species as _ivs_fb
+
+                if not _ivs_fb(fallback_species):
+                    logger.debug(
+                        "no-panel fallback species rejected: %r",
+                        fallback_species,
+                    )
+                    fallback_species = None
+            except Exception:
+                pass
         matches.append(
             MatchResult(
                 paper_id=paper_id,
                 figure_id=figure_id,
                 panel_id=first_label,
-                species=taxa[0] if taxa else None,
+                species=fallback_species,
                 label_text=first_label,
                 panel_path=None,
                 bbox=None,

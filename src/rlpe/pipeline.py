@@ -3439,7 +3439,25 @@ class RadiolarianPipeline:
                     "image_sha": _sha256_file(crop),
                 }
                 if parsed["confidence"] >= self.config.llm_per_panel_min_conf:
-                    r["species"] = parsed.get("species") or r.get("species")
+                    # 2026-09-12: validate the LLM's species like every
+                    # other writer — Stage 4.5 page-context prompts carry
+                    # geological prose ("Clay", "Bodrak") that used to land
+                    # in the species field verbatim.
+                    _pp_species = parsed.get("species")
+                    if _pp_species:
+                        try:
+                            from .taxon import _is_valid_species as _ivs45
+
+                            if not _ivs45(_pp_species):
+                                logger.debug(
+                                    "Stage 4.5: LLM species rejected: %r",
+                                    _pp_species,
+                                )
+                                _pp_species = None
+                        except Exception:
+                            pass
+                    if _pp_species:
+                        r["species"] = _pp_species
                     r["label"] = parsed.get("label") or r.get("label")
             except Exception as exc:
                 logger.warning(
@@ -3552,7 +3570,14 @@ class RadiolarianPipeline:
                         chosen = cand
                         break
             if not chosen:
-                chosen = "\n\n".join(page_text_lookup.values())
+                # 2026-09-12 (geology-leak fix): do NOT fall back to the
+                # entire paper body. The full blob carries geological-
+                # setting prose ("Clay", "Bodrak section") which the
+                # Stage 4.5 prompt then presented as panel context — the
+                # LLM answered with locality names as species. Nearby
+                # pages only; no nearby text → no context (the row keeps
+                # its caption_pairs signal, which is the reliable one).
+                chosen = ""
             page_context = chosen[:1500]
         # Stamp the new keys on every row. We always overwrite
         # ``caption_pairs`` / ``page_context_snippet`` because the
@@ -7948,7 +7973,24 @@ Rules:
                         use_m3 = True
                 if use_m3:
                     m.panel_id = panel_match.label or m.panel_id
-                    m.species = panel_match.species or m.species
+                    # 2026-09-12: LLM output is not trusted verbatim — run
+                    # the same binomial validation the caption paths use.
+                    # "After"/"Dimensions"/section-word strings landed in
+                    # rows via this site before the guard existed.
+                    _llm_species = panel_match.species or m.species
+                    if _llm_species:
+                        try:
+                            from .taxon import _is_valid_species as _ivs
+
+                            if not _ivs(_llm_species):
+                                logger.debug(
+                                    "Stage 4: LLM species rejected (not a plausible taxon): %r",
+                                    _llm_species,
+                                )
+                                _llm_species = None
+                        except Exception:
+                            pass
+                    m.species = _llm_species or m.species
                     m.label_text = panel_match.label or m.label_text
                     # Use llm_conf directly, not max(rule_conf, llm_conf). The
                     # two scores come from different scoring systems (rule-
