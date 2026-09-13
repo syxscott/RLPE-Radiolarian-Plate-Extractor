@@ -191,9 +191,7 @@ class OCRBackend:
                     easyocr_langs = ["ch_sim" if l == "zh" else l for l in self.lang]
                     # 2026-09-12 (Arrow Lake): quantize=False — the
                     # quantized LSTM segfaults on this hybrid CPU.
-                    self._engine = easyocr.Reader(
-                        easyocr_langs, gpu=self.use_gpu, quantize=False
-                    )
+                    self._engine = easyocr.Reader(easyocr_langs, gpu=self.use_gpu, quantize=False)
                     return self._engine
                 except Exception:
                     logger.warning("EasyOCR init failed; OCR disabled")

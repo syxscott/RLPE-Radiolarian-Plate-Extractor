@@ -345,9 +345,7 @@ def _is_valid_species(species: str | None) -> bool:
     except Exception:  # stratigraphy unavailable → skip that guard
         pass
     _function_words = {"and", "or", "of", "the", "in", "on", "at", "to", "from", "with", "for"}
-    if any(
-        t.lower().rstrip(".,;:?!") in _function_words for t in s.split()
-    ):
+    if any(t.lower().rstrip(".,;:?!") in _function_words for t in s.split()):
         return False
 
     # Shape check: must decompose to a real-looking taxon. We reuse

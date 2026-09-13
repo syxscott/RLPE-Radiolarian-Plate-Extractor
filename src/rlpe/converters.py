@@ -1666,14 +1666,17 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 # geology join keys from the SAME row's best link so
                 # samples no longer float disconnected from the
                 # localities/geology_contexts dims.
-                _gl = next(
-                    (
-                        g
-                        for g in ((m.metadata or {}).get("geology_links") or [])
-                        if isinstance(g, dict) and g.get("locality")
-                    ),
-                    None,
-                ) or {}
+                _gl = (
+                    next(
+                        (
+                            g
+                            for g in ((m.metadata or {}).get("geology_links") or [])
+                            if isinstance(g, dict) and g.get("locality")
+                        ),
+                        None,
+                    )
+                    or {}
+                )
                 rec = SampleRecord(
                     sample_id=f"X_{sid.value}",
                     paper_id=m.paper_id,
@@ -1842,14 +1845,17 @@ def sample_records_from_matches(matches: list[MatchResult]) -> list[dict[str, An
                 raw_key = (m.paper_id, sid_raw)
                 if raw_key in raw_seen:
                     continue
-                _gl2 = next(
-                    (
-                        g
-                        for g in ((m.metadata or {}).get("geology_links") or [])
-                        if isinstance(g, dict) and g.get("locality")
-                    ),
-                    None,
-                ) or {}
+                _gl2 = (
+                    next(
+                        (
+                            g
+                            for g in ((m.metadata or {}).get("geology_links") or [])
+                            if isinstance(g, dict) and g.get("locality")
+                        ),
+                        None,
+                    )
+                    or {}
+                )
                 rec = SampleRecord(
                     sample_id=sid_str,
                     paper_id=m.paper_id,
@@ -2342,9 +2348,7 @@ def paleo_coordinates_from_localities(
             # 2026-09-12: precise failure status (stable plate vs age
             # unknown vs plate unknown) instead of one generic bucket.
             backend_status=(
-                "ok"
-                if paleo_lat is not None
-                else explain_paleo_status(plate_id, age_ma)
+                "ok" if paleo_lat is not None else explain_paleo_status(plate_id, age_ma)
             ),
             # Phase 63 Plan 6.20 (Bug 6.20) + audit 2026-09-04 (geo-8):
             # the 50 km figure is only meaningful for the published

@@ -73,9 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:  # usage reporting must never fail the worker
         import logging
 
-        logging.getLogger(__name__).debug(
-            "worker llm-usage sidecar write failed", exc_info=True
-        )
+        logging.getLogger(__name__).debug("worker llm-usage sidecar write failed", exc_info=True)
     return 0
 
 

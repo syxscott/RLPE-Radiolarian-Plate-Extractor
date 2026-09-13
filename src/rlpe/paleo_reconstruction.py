@@ -829,9 +829,7 @@ def _rotate_point(
     return lat_new, lon_new
 
 
-def explain_paleo_status(
-    plate_id: str | None, age_ma: float | None
-) -> str:
+def explain_paleo_status(plate_id: str | None, age_ma: float | None) -> str:
     """Precise ``backend_status`` for a FAILED paleo reconstruction.
 
     ``reconstruct_paleo_position`` collapses every failure to
@@ -858,9 +856,7 @@ def explain_paleo_status(
         return "plate_unknown"
     ages = [p[0] for p in poles]
     sparse_identity = (
-        len(poles) <= 3
-        and max(ages) <= 250.0
-        and all(abs(p[3]) <= 1.0 for p in poles)
+        len(poles) <= 3 and max(ages) <= 250.0 and all(abs(p[3]) <= 1.0 for p in poles)
     )
     if sparse_identity and age_ma > 50.0:
         return "stable_plate_no_rotation"

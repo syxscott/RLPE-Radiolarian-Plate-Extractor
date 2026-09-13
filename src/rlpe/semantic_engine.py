@@ -1672,7 +1672,11 @@ def _species_candidate_rejected(species: str) -> str | None:
         from .stratigraphy import classify_age_string
 
         cls = classify_age_string(tokens[0])
-        if cls is not None and cls.rank in {"age", "epoch", "period", "era", "eon"} and cls.confidence > 0:
+        if (
+            cls is not None
+            and cls.rank in {"age", "epoch", "period", "era", "eon"}
+            and cls.confidence > 0
+        ):
             return "geologic_time_term"
     except Exception:  # stratigraphy unavailable → skip that guard
         pass
@@ -1733,10 +1737,7 @@ def _expand_letter_labels(s: str) -> list[str]:
     mirroring the numeric "1-3" semantics."""
     out: list[str] = []
     chunks = [c.strip() for c in re.split(r"[,–—-]", s)]
-    if (
-        len(chunks) == 2
-        and all(len(c) == 1 and c.isalpha() for c in chunks)
-    ):
+    if len(chunks) == 2 and all(len(c) == 1 and c.isalpha() for c in chunks):
         lo, hi = chunks
         lo_o, hi_o = ord(lo), ord(hi)
         if lo_o <= hi_o:
@@ -2056,9 +2057,7 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
         # ("Fig. 1. Entactinia itsukichiensis: ..." pinned test).
         prefix_match = re.match(r"^[Ff]ig(?:ure)?\.", m.group(0))
         if prefix_match and len(labels) == 1:
-            enum_match = re.search(
-                r"\((\d+[a-z]?(?:\s*[,\-–—]\s*\d+[a-z]?)+)\)", text
-            )
+            enum_match = re.search(r"\((\d+[a-z]?(?:\s*[,\-–—]\s*\d+[a-z]?)+)\)", text)
             if enum_match:
                 enum_labels = _regex_expand_label_list(enum_match.group(1))
                 if enum_labels:
