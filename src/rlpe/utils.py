@@ -3,8 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 import threading
+import time
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +35,86 @@ import datetime as _dt  # noqa: E402  (always available with stdlib)
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+# --- 2026-09-13: crash-resume journal append (cross-process safe) -----------
+# Lives in the dependency-light utils module (not pipeline.py) so the
+# batch worker tests can exercise multi-process append behaviour without
+# importing the torch/cv2/paddleocr stack — on Arrow Lake even a bare
+# module import of the heavy chain crashes some cold processes.
+
+
+@contextmanager
+def _exclusive_file_lock(lock_path: Path, timeout: float = 120.0):
+    """Exclusive cross-process advisory lock on a dedicated lock file.
+
+    Batch worker subprocesses all append to the shared matches.jsonl
+    journal. Single ``write()`` calls are only "atomic enough" on
+    POSIX — on Windows, concurrent O_APPEND writers can interleave and
+    tear lines, which made the whole resume journal unparseable.
+    Serialise writers through ``msvcrt.locking`` (Windows) /
+    ``fcntl.flock`` (POSIX) on ``<target>.lock`` so an append is atomic
+    across processes. The critical section is a single buffered write
+    (microseconds), so the ``timeout`` ceiling only fires when
+    something is pathologically wrong; raising then is safe because
+    the caller treats append failures as non-fatal (the end-of-run
+    aggregate still covers the paper).
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_path, "a+")
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() > deadline:
+                        raise
+                    time.sleep(0.05)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":
+                import msvcrt
+
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass  # best-effort release; close() drops the handle anyway
+            else:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    finally:
+        fh.close()
+
+
+def _append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    """True line-append for the per-paper incremental matches file.
+
+    Concurrent batch workers append simultaneously (one process per
+    paper under ``batch_isolation="subprocess"``); the payload goes out
+    as a single ``write()`` inside an exclusive cross-process lock so
+    lines cannot interleave even on Windows. Duplicate lines (re-runs)
+    remain tolerated downstream via paper_id keep-last dedup in the
+    resume merge; the canonical aggregate is written by the parent via
+    ``write_jsonl``.
+    """
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+    with _exclusive_file_lock(path.with_suffix(path.suffix + ".lock")):
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(payload)
 
 
 def slugify(text: str, fallback: str = "item") -> str:

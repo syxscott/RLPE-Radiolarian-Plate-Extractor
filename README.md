@@ -184,6 +184,7 @@ matches.jsonl + run_output.json（schema v1.3.0）→ 导出器族
 | OCR | `--ocr-backend paddleocr\|easyocr --ocr-lang` | 主 OCR；OD 路径另有 config-only 键 `od_use_ocr` |
 | 可复现 | `--deterministic --deterministic-seed N` | temperature=0 + RNG 播种（2026-09-06 接线修复） |
 | 性能 | `--num-workers`（1-32）`--render-dpi` | 并发与渲染精度 |
+| 高并行 | `--batch-worker-memory-mb`（默认 2048）`--llm-global-max-concurrent`（默认 0=关）`--batch-spawn-stagger-sec`（默认 -1=auto） | 8-16 worker 护栏，见下节 |
 | 导出 | `--export-csv / --export-json / --export-jsonl` | 三通道独立触发 |
 | 数据合规 | `--data-outbound-policy api_redacted\|api_full\|local_only` + `--i-understand-data-leaves-my-machine` | 出站策略（默认 api_redacted） |
 | 视觉 | `--use-yolo-figures [--yolo-model-path]`；`--od-panel-detector opencv\|yolo`；`--sam2-checkpoint` | YOLO 图版检测 / panel 检测器选择（yolo = E2 训练权重）/ SAM2 分割 |
@@ -197,6 +198,25 @@ matches.jsonl + run_output.json（schema v1.3.0）→ 导出器族
 - `-q/--verbose`：只调了 `rlpe.cli` logger（无任何输出）——已改为包级 logger。
 
 </details>
+
+### 高并行批量提取（可选，面向高性能机）
+
+`--batch-isolation subprocess`（默认）下每篇论文在独立 `python -m rlpe.worker`
+进程中运行，`--num-workers N` 就是并行进程数，上限 32。2026-09-13 起为 8-16
+worker 场景提供三道护栏（均可选，默认行为不变）：
+
+| 护栏 | 默认 | 作用 |
+|---|---|---|
+| `--batch-worker-memory-mb` | 2048 | 启动时按 `min(num-workers, 0.8×总内存/估算)` 压低 worker 数（每 worker 实测 1.5-2.5 GB：torch+OCR+SAM2+LLM）；`0` 关闭 |
+| `--llm-global-max-concurrent` | 0（关） | 把 LLM API 并发预算按 `全局/worker 数` 分摊到各 worker，避免 16×8=128 并发请求触发限流 |
+| `--batch-spawn-stagger-sec` | -1（auto） | 初始 worker 错峰启动（auto：≥8 worker 时 15s，否则 0），避免 N 个 torch/OCR/SAM2 同时初始化 |
+
+共享结果日志（`work/manifests/matches.jsonl`）已加跨进程文件锁，Windows 多进程
+追加不再可能撕裂行；resume 合并对单个坏行容错（跳过并告警，不再整份丢弃）。
+
+内存估算公式：`可开 worker 数 ≈ 0.8 × 总内存GB / 单worker估算GB`。
+32 GB / 14 线程（如 Ultra 5 225H）→ 约 8-12 worker；64 GB 高性能机可直接
+`--num-workers 16 --llm-global-max-concurrent 32`（`clamp_torch_threads: 1`）。
 
 ---
 

@@ -94,7 +94,15 @@ from .types import (
     PanelCandidate,
     PaperMetadata,
 )
-from .utils import ensure_dir, slugify, stable_id, write_json, write_jsonl
+from .utils import (
+    _append_jsonl,
+    _exclusive_file_lock,  # noqa: F401  (re-export: tests import from here)
+    ensure_dir,
+    slugify,
+    stable_id,
+    write_json,
+    write_jsonl,
+)
 
 
 # Audit 2026-08-20: ``write_json`` is imported from ``rlpe.utils``
@@ -146,22 +154,78 @@ def _short_sha256_file(path: Path) -> str:
 _sha256_file = _short_sha256_file  # noqa: F811  (legacy alias for backward compat)
 
 
-def _append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    """True line-append for the per-paper incremental matches file.
+def _total_physical_memory_mb() -> int | None:
+    """Total physical RAM in MB, or ``None`` when it cannot be determined.
 
-    Concurrent batch workers may append simultaneously; single
-    ``write()`` calls of complete lines are atomic enough on POSIX for
-    this crash-resume journal (the canonical aggregate is written by
-    the parent via ``write_jsonl``).
+    Windows uses ``GlobalMemoryStatusEx``; POSIX uses ``sysconf``. Any
+    failure returns ``None`` so the memory guard degrades to a no-op
+    rather than blocking a batch on a probe.
     """
-    if not rows:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    import json as _json
+    try:
+        if sys.platform == "win32":
+            import ctypes
 
-    with open(path, "a", encoding="utf-8") as fh:
-        for r in rows:
-            fh.write(_json.dumps(r, ensure_ascii=False) + "\n")
+            class _MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = _MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return int(stat.ullTotalPhys // (1024 * 1024))
+        else:
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            return int(pages * page_size // (1024 * 1024))
+    except Exception:
+        return None
+    return None
+
+
+def _memory_capped_workers(
+    num_workers: int, total_mem_mb: int | None, per_worker_mb: int
+) -> int:
+    """Cap the batch worker count to what physical RAM supports.
+
+    Each subprocess worker is a full python stack (torch + PaddleOCR +
+    SAM2 + LLM client, observed 1.5-2.5 GB); ``num_workers`` beyond
+    what RAM supports just thrashes the page file and OOM-kills
+    workers mid-paper. Effective workers = min(num_workers,
+    0.8 × total / per_worker) — the 20% headroom covers the OS, the
+    parent process, and per-worker transient peaks. ``per_worker_mb <= 0``
+    disables the guard; an unknown total memory is a no-op. Purely a
+    cap: never raises the count above what the user asked for.
+    """
+    if per_worker_mb <= 0 or not total_mem_mb or total_mem_mb <= 0:
+        return num_workers
+    budget = int(total_mem_mb * 0.8 // per_worker_mb)
+    return max(1, min(num_workers, budget))
+
+
+def _effective_spawn_stagger(
+    stagger_sec: float, isolation: str, pool_workers: int
+) -> float:
+    """Resolve the worker spawn stagger (seconds) from config + defaults.
+
+    ``-1`` (auto) staggers initial submissions by 15s when 8+ subprocess
+    workers are in flight — N simultaneous ``import torch`` + OCR/SAM2
+    checkpoint loads thrash disk and antivirus scanning and can trip
+    the Arrow Lake native crashes the isolation mode exists to contain.
+    Anything >= 0 is used as-is (0 = no stagger, the historic default
+    for small pools and inprocess mode).
+    """
+    if stagger_sec >= 0:
+        return float(stagger_sec)
+    return 15.0 if (isolation == "subprocess" and pool_workers >= 8) else 0.0
 
 
 class RadiolarianPipeline:
@@ -639,7 +703,32 @@ class RadiolarianPipeline:
         # had finished — a 30s sleep per PDF meant 4 PDFs blocked for
         # 2 minutes after the user clicked Cancel.
         cancelled_fast = False  # audit 2026-07-26 M6: set by the cancel branch
-        pool = ThreadPoolExecutor(max_workers=max(1, self.config.num_workers))
+        # 2026-09-13 (high-parallelism guardrails): isolation is read
+        # BEFORE pool creation so the memory guard can cap the pool —
+        # under subprocess isolation each paper is a full python
+        # process (torch + OCR + SAM2), and a worker count beyond what
+        # RAM supports just thrashes the page file. inprocess mode
+        # shares one process, so the guard does not apply there.
+        isolation = str(self.config.extra.get("batch_isolation", "inprocess"))
+        pool_workers = max(1, int(self.config.num_workers))
+        if isolation == "subprocess":
+            per_worker_mb = int(
+                self.config.extra.get("batch_worker_memory_mb", 2048) or 0
+            )
+            total_mb = _total_physical_memory_mb()
+            capped = _memory_capped_workers(pool_workers, total_mb, per_worker_mb)
+            if capped < pool_workers:
+                logger.warning(
+                    "run: memory guard reduced batch workers %d -> %d "
+                    "(total RAM %s MB, per-worker estimate %d MB; "
+                    "set batch_worker_memory_mb=0 to disable the guard)",
+                    pool_workers,
+                    capped,
+                    total_mb,
+                    per_worker_mb,
+                )
+                pool_workers = capped
+        pool = ThreadPoolExecutor(max_workers=pool_workers)
         try:
             # Audit 2026-09-01 (architectural P0 #4): per-paper
             # checkpoint + --resume. Read each ``_checkpoints/<stem>.done``
@@ -674,7 +763,8 @@ class RadiolarianPipeline:
             # crash (the recurring PaddleOCR SIGSEGV) kills at most ONE
             # paper instead of the whole batch; the parent collects rows
             # from every paper and writes the aggregate once.
-            isolation = str(self.config.extra.get("batch_isolation", "inprocess"))
+            # (2026-09-13: ``isolation`` is now read before pool creation
+            # for the memory guard; reused here.)
             if isolation == "subprocess":
                 worker_config_path = self._dump_worker_config()
                 submit_fn = lambda p: self._process_one_pdf_in_subprocess(  # noqa: E731
@@ -682,7 +772,37 @@ class RadiolarianPipeline:
                 )
             else:
                 submit_fn = self._process_one_pdf
-            futures = {pool.submit(submit_fn, p): p for p in pending_pdfs}
+            # 2026-09-13 (high-parallelism): stagger the initial wave of
+            # subprocess spawns (auto: 15s at 8+ workers) so N workers
+            # don't import torch / load OCR+SAM2 checkpoints at the same
+            # instant. cancel_event is polled between spawns so a cancel
+            # during the ramp stops submitting immediately.
+            stagger_raw = self.config.extra.get("batch_spawn_stagger_sec", -1)
+            try:
+                stagger = _effective_spawn_stagger(
+                    float(stagger_raw), isolation, pool_workers
+                )
+            except (TypeError, ValueError):
+                logger.debug(
+                    "run: bad batch_spawn_stagger_sec=%r — falling back to auto",
+                    stagger_raw,
+                )
+                stagger = _effective_spawn_stagger(-1.0, isolation, pool_workers)
+            futures: dict = {}
+            if stagger > 0 and isolation == "subprocess":
+                logger.info(
+                    "run: staggering subprocess spawns by %.0fs (ramping up %d workers)",
+                    stagger,
+                    len(pending_pdfs),
+                )
+                for i, p in enumerate(pending_pdfs):
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
+                    if i:
+                        time.sleep(stagger)
+                    futures[pool.submit(submit_fn, p)] = p
+            else:
+                futures = {pool.submit(submit_fn, p): p for p in pending_pdfs}
             try:
                 # Phase 42: also check cancel_event at the top of the
                 # loop so a Cancel that arrives BEFORE any PDF
@@ -2618,13 +2738,52 @@ class RadiolarianPipeline:
         Written once per batch into the work dir with mode 0600; includes
         the resolved LLM credentials that ``save_config`` would strip
         (see ``config_io.dump_worker_config``).
+
+        2026-09-13 (high-parallelism guardrail): when
+        ``llm_global_max_concurrent`` is set, the per-worker
+        ``llm_max_concurrent`` in the dumped config is rewritten to
+        ``global // num_workers`` — without it, N workers × per-worker
+        concurrency fire simultaneously (16 × 8 = 128 API calls, a
+        429/limit storm). Without a global cap, a combined
+        workers × llm_max_concurrent above 32 gets a warning pointing
+        at the knob.
         """
+        from dataclasses import replace as _dc_replace
+
         from .config_io import dump_worker_config
 
+        dump_cfg = self.config
+        num_w = max(1, int(self.config.num_workers))
+        global_cap = int(self.config.extra.get("llm_global_max_concurrent", 0) or 0)
+        if global_cap > 0:
+            per_worker = max(1, global_cap // num_w)
+            if per_worker < int(self.config.extra.get("llm_max_concurrent", 8) or 8):
+                logger.info(
+                    "run: llm_global_max_concurrent=%d across %d workers -> "
+                    "per-worker llm_max_concurrent=%d",
+                    global_cap,
+                    num_w,
+                    per_worker,
+                )
+            dump_cfg = _dc_replace(
+                self.config,
+                extra={**self.config.extra, "llm_max_concurrent": per_worker},
+            )
+        else:
+            per_worker_cfg = int(self.config.extra.get("llm_max_concurrent", 8) or 8)
+            if num_w * per_worker_cfg > 32:
+                logger.warning(
+                    "run: %d workers × llm_max_concurrent=%d = %d concurrent "
+                    "LLM calls — likely to hit API rate limits; consider "
+                    "llm_global_max_concurrent to divide the budget",
+                    num_w,
+                    per_worker_cfg,
+                    num_w * per_worker_cfg,
+                )
         path = self.config.work_dir / "manifests" / ".batch_worker_config.json"
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         self.config.manifests_dir().mkdir(parents=True, exist_ok=True)
-        dump_worker_config(self.config, path)
+        dump_worker_config(dump_cfg, path)
         return path
 
     def _process_one_pdf_in_subprocess(
@@ -2788,21 +2947,48 @@ class RadiolarianPipeline:
         ]
 
     def _load_prior_rows(self, manifest_path: Path) -> list[dict[str, Any]]:
-        """Load rows from a previous run's matches.jsonl (resume merge)."""
+        """Load rows from a previous run's matches.jsonl (resume merge).
+
+        2026-09-13: parsed line-by-line instead of via the
+        ``"}\\n" → "},\\n"`` whole-file splice. One torn line (a
+        pre-lock concurrent append, or a crash mid-write) used to make
+        the whole-file JSON parse fail and silently drop EVERY prior
+        row from the resume merge; bad lines are now skipped with a
+        warning naming the line numbers and the good rows survive.
+        """
         import json as _json
 
         if not manifest_path.exists():
             return []
+        prior: list[dict[str, Any]] = []
+        bad_lines: list[int] = []
         try:
-            prior = _json.loads(
-                "["
-                + manifest_path.read_text(encoding="utf-8").replace("}\n", "},\n").rstrip(",\n")
-                + "]"
+            with open(manifest_path, "r", encoding="utf-8") as fh:
+                for lineno, line in enumerate(fh, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = _json.loads(line)
+                    except ValueError:
+                        bad_lines.append(lineno)
+                        continue
+                    if isinstance(obj, dict):
+                        prior.append(obj)
+        except OSError:
+            logger.warning(
+                "run: could not read prior %s for resume merge", manifest_path.name
             )
-        except (OSError, ValueError):
-            logger.warning("run: could not parse prior matches.jsonl for resume merge")
             return []
-        return prior if isinstance(prior, list) else []
+        if bad_lines:
+            logger.warning(
+                "run: %s has %d unparseable line(s) (first: line %d) — "
+                "skipped; rows only on those lines are not carried into the merge",
+                manifest_path.name,
+                len(bad_lines),
+                bad_lines[0],
+            )
+        return prior
 
     def _merge_resume_rows(
         self, manifest_path: Path, rows: list[dict[str, Any]]

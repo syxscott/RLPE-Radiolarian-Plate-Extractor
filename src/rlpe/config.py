@@ -85,6 +85,16 @@ _KNOWN_EXTRA_KEYS = {
     # F19: batch subprocess isolation
     "batch_isolation",
     "batch_worker_timeout_sec",
+    # 2026-09-13: high-parallelism guardrails (8-16 subprocess workers).
+    # batch_worker_memory_mb: per-worker RAM estimate for the batch
+    # start-time worker cap (0 disables the guard). llm_global_max_concurrent:
+    # divides the LLM API budget across workers (0 = off, per-worker
+    # llm_max_concurrent applies unchanged). batch_spawn_stagger_sec:
+    # seconds between initial subprocess spawns (-1 = auto: 15s at 8+
+    # workers, else 0).
+    "batch_worker_memory_mb",
+    "llm_global_max_concurrent",
+    "batch_spawn_stagger_sec",
     # Legacy vendor-branded aliases of the llm_* keys above (F17
     # rename). Kept listed so old configs load without typo warnings;
     # the backend builders read them as fallbacks.

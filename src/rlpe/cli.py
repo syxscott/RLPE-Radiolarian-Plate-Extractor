@@ -461,7 +461,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--grobid-timeout",
         type=int,
         default=None,
-        help="Per-attempt GROBID POST timeout in seconds (default 300).",
+        help="Per-attempt GROBID POST timeout (default 300).",
+    )
+    # 2026-09-13: surface the config-only disable_grobid key — machines
+    # without a working GROBID install (e.g. no pdfalto on Windows)
+    # otherwise pay a per-paper availability probe before the OD
+    # fallback.
+    p.add_argument(
+        "--disable-grobid",
+        dest="disable_grobid",
+        action="store_true",
+        default=False,
+        help="Skip GROBID entirely and go straight to OpenDataLoader. "
+        "For machines without a working GROBID server.",
     )
     # Phase 29: opt-out for OD fallback. By default, when GROBID
     # retries are exhausted the pipeline falls back to OpenDataLoader
@@ -675,6 +687,36 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=3600,
         help="Kill a hung batch worker subprocess after this many seconds.",
+    )
+    # 2026-09-13: high-parallelism guardrails (8-16 subprocess workers).
+    p.add_argument(
+        "--batch-worker-memory-mb",
+        dest="batch_worker_memory_mb",
+        type=int,
+        default=2048,
+        help="Per-worker RAM estimate (MB) for the batch start-time "
+        "worker cap: workers = min(num-workers, 0.8*total-RAM/estimate). "
+        "Each subprocess worker loads torch + OCR + SAM2 (1.5-2.5 GB "
+        "observed). 0 disables the guard. Default 2048.",
+    )
+    p.add_argument(
+        "--llm-global-max-concurrent",
+        dest="llm_global_max_concurrent",
+        type=int,
+        default=0,
+        help="Divide the LLM API budget across batch workers: each "
+        "worker's llm_max_concurrent becomes global/num-workers. Prevents "
+        "16 workers × 8 calls = 128 simultaneous API requests (429 "
+        "storms). 0 = off (per-worker value applies unchanged).",
+    )
+    p.add_argument(
+        "--batch-spawn-stagger-sec",
+        dest="batch_spawn_stagger_sec",
+        type=float,
+        default=-1.0,
+        help="Seconds between the initial wave of subprocess spawns. "
+        "-1 = auto (15s when 8+ workers, else 0) so N torch/OCR/SAM2 "
+        "initializations don't collide on disk/CPU. 0 disables.",
     )
     p.add_argument("--gemma-no-4bit", action="store_true")
     p.add_argument("--gemma-no-bfloat16", action="store_true")
@@ -1365,6 +1407,13 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             # fall back to OD on GROBID failure; ``--disable-od-fallback``
             # sets True to restore legacy visual-stub behaviour.
             "disable_od_fallback": bool(args.disable_od_fallback),
+            # 2026-09-13: forward --disable-grobid; OR with the config
+            # file's value so a saved disable_grobid=true survives a
+            # command line that omits the (default-False) flag.
+            "disable_grobid": bool(
+                args.disable_grobid
+                or getattr(args, "_config_extra", {}).get("disable_grobid", False)
+            ),
             "sam2_checkpoint": args.sam2_checkpoint,
             "sam2_model_cfg": args.sam2_model_cfg,
             "sam2_grid_size": args.sam2_grid_size,
@@ -1409,6 +1458,10 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             # F19: per-paper subprocess isolation (see --batch-isolation).
             "batch_isolation": args.batch_isolation,
             "batch_worker_timeout_sec": args.batch_worker_timeout_sec,
+            # 2026-09-13: high-parallelism guardrails.
+            "batch_worker_memory_mb": args.batch_worker_memory_mb,
+            "llm_global_max_concurrent": args.llm_global_max_concurrent,
+            "batch_spawn_stagger_sec": args.batch_spawn_stagger_sec,
             # F18: --llm-profile materializes a saved preset into this
             # run's config (below, post-build) without touching the
             # saved active-preset pointer.
