@@ -570,8 +570,12 @@ def test_method_clamps_confidence_to_unit_interval(tmp_path):
     cfg = _make_cfg(tmp_path, llm_per_panel_enabled=True)
     backend = MagicMock()
     backend.backend_name = "test_backend"
+    # 2026-09-13: the Stage-4.5 write path validates the LLM species via
+    # taxon._is_valid_species, so the fixture must return a well-formed
+    # binomen — a single-letter species like "X" is (correctly) rejected
+    # and the overwrite would never happen.
     backend.infer_panel.return_value = {
-        "species": "X",
+        "species": "Xenus minimus",
         "label": "X",
         "confidence": 1.7,  # out of range
         "reasoning": "r",
@@ -593,7 +597,7 @@ def test_method_clamps_confidence_to_unit_interval(tmp_path):
     ]
     out = pipe._apply_llm_per_panel_species_id(results, paper_id="paper1")
     # Confidence 1.7 → clamped to 1.0 → above 0.55 → overwrite happens.
-    assert out[0]["species"] == "X"
+    assert out[0]["species"] == "Xenus minimus"
     assert out[0]["metadata"]["llm_per_panel"]["confidence"] == 1.0
 
 
