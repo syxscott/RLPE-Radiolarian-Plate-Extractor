@@ -5807,6 +5807,58 @@ class RadiolarianPipeline:
                 conf = float(r.get("confidence") or 0.0)
             except (TypeError, ValueError):
                 conf = 0.0
+            # 2026-09-12 (confidence recalibration): the exported value
+            # used to be whatever the last writer left — the Stage-4
+            # prompt cap (0.55), 0.0 from hybrid-added rows (which then
+            # escaped the review flag since the rule is 0.0 < conf), or
+            # the panel-detection score. Recompute from the row's own
+            # evidence, strongest first:
+            #   Stage 4.5 per-panel vision > Stage 4 LLM match >
+            #   strict caption-pair match > detection score.
+            # Evidence that DISAGREES with the row's species (LLM said X,
+            # caption said Y) is ignored; evidence never lowers conf.
+            md = r.setdefault("metadata", {})
+            _sp_now = (r.get("species") or "").strip()
+            _sp_low = _sp_now.lower()
+            _evidence: list[float] = []
+            _lp = md.get("llm_per_panel") or {}
+            if isinstance(_lp, dict):
+                _lp_conf = _lp.get("confidence")
+                _lp_sp = (_lp.get("species") or "").strip().lower()
+                if (
+                    isinstance(_lp_conf, (int, float))
+                    and _sp_now
+                    and _lp_sp == _sp_low
+                ):
+                    _evidence.append(float(_lp_conf))
+            _s4 = md.get("llm_stage4") or {}
+            if isinstance(_s4, dict):
+                _s4_conf = _s4.get("confidence")
+                _s4_sp = (_s4.get("species") or "").strip().lower()
+                if (
+                    isinstance(_s4_conf, (int, float))
+                    and _sp_now
+                    and _s4_sp == _sp_low
+                ):
+                    _evidence.append(float(_s4_conf))
+            if not _evidence and md.get("caption_pairs_used") and _sp_now:
+                _pair_confs = [
+                    cp.get("confidence")
+                    for cp in (r.get("caption_pairs") or [])
+                    if isinstance(cp, dict)
+                    and isinstance(cp.get("confidence"), (int, float))
+                ]
+                if _pair_confs:
+                    _evidence.append(max(_pair_confs))
+            if _evidence:
+                conf = max([conf] + _evidence)
+                r["confidence"] = round(min(0.99, conf), 4)
+            elif _sp_now and conf == 0.0:
+                # hybrid-added rows: caption parse existed but the row
+                # carried 0.0 — give it the caption-evidence floor so the
+                # review rule (0.0 < conf < 0.5) can see it.
+                conf = 0.4
+                r["confidence"] = 0.4
             # 2026-09-12 observability: a row with no caption text at all
             # (e.g. caption-band OCR died on an oversized scan) can never
             # carry a species — mark it so the gap is visible in exports
