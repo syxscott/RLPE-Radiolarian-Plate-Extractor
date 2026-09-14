@@ -194,3 +194,25 @@ class TestPairingFlakeWarning:
             pipe._process_one_pdf_od_inner("p1", tmp_path / "paper.pdf")
         msgs = [w["message"] for w in _drain_warnings()]
         assert any("pairing flake" in m for m in msgs), msgs
+
+
+class TestSampleIdPrecedence:
+    def test_specimen_number_demoted_below_sample_code(self, pipe):
+        """Boughdiri 2007: caption items carry BOTH the sample code
+        (CH4) and the plate-internal specimen number (7). sample_id
+        must resolve to the sample code; the specimen number stays in
+        sample_ids as a trailing, clearly-demoted entry."""
+        rows = [
+            {
+                "paper_id": "p",
+                "figure_id": "f",
+                "panel_id": "1",
+                "species": "Ristola altissima altissima",
+                "caption_snippet": "1) Ristola altissima altissima (RUST), CH4, specimen 7, 550 um",
+                "metadata": {},
+            }
+        ]
+        out = pipe._finalize_rows(rows)
+        md = out[0].get("metadata") or {}
+        assert md.get("sample_id") == "CH4", md.get("sample_id")
+        assert md.get("sample_ids", [])[-1].endswith("7")

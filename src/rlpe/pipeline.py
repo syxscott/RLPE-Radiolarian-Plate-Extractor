@@ -6483,6 +6483,20 @@ class RadiolarianPipeline:
                     # "B_DP2"); base extractor values that are mere
                     # truncations of a collected value ("B") are dropped.
                     code_vals = [s.value for s in _extract_sample_code_ids(snippet) if s.value]
+                    # 2026-09-14 (Boughdiri): the base extractors miss
+                    # bare letter-prefixed sample codes like CH4 / MB4
+                    # (CH4 also happens to be a chemical formula, but in
+                    # a plate caption context the letter-run+digit token
+                    # is the sampling identifier). Scan generically; the
+                    # specimen-number demotion below keeps pure digits
+                    # from winning, and every candidate stays visible in
+                    # sample_ids for operator review.
+                    import re as _re_code
+
+                    for _cm in _re_code.finditer(r"\b([A-Z]{1,3})(\d{1,4}(?:\.\d+)?)\b", snippet):
+                        _cand = _cm.group(1) + _cm.group(2)
+                        if _cand not in {v.split('_', 1)[-1] for v in code_vals if '_' in v} and _cand not in code_vals:
+                            code_vals.append(_cand)
                     lowered = {v.casefold() for v in code_vals}
                     ids: list[str] = list(code_vals)
                     for s in _extract_sample_ids(snippet):
@@ -6494,6 +6508,20 @@ class RadiolarianPipeline:
                         lowered.add(key)
                         ids.append(s.value)
                     if ids:
+                        # 2026-09-14 (Boughdiri sample_id fix): specimen
+                        # numbers ("specimen 7" / bare digits) are the
+                        # plate-internal photo number, NOT the sample —
+                        # demote them below any letter-bearing sample
+                        # code (CH4, MB4, Mg-100) so sample_id resolves
+                        # to the real sampling identifier.
+                        def _is_specimen_like(v: str) -> bool:
+                            import re as _re_s
+
+                            return bool(
+                                _re_s.match(r"^(R_)?specimen[ _]?\d+$", v, _re_s.I)
+                            ) or v.isdigit()
+
+                        ids = sorted(ids, key=_is_specimen_like)
                         md["sample_ids"] = ids
                         md["sample_id"] = ids[0]
                         # 2026-09-12 (geology linkage): propagate the
