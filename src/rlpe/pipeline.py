@@ -3955,12 +3955,26 @@ class RadiolarianPipeline:
         def _has_digit_tokens(toks: list[Any]) -> bool:
             return any((t.text or "").strip().strip(".,;:()[]").isdigit() for t in (toks or []))
 
-        if not _has_digit_tokens(tokens):
+        # 2026-09-14 (overfitting audit follow-up): the EasyOCR retry is
+        # only meaningful when the PRIMARY backend is the known-broken
+        # PaddleOCR build. Gating on the real backend attribute keeps
+        # mocked OCR (tests) and non-paddle primaries from triggering a
+        # heavyweight native model load on the no-tokens path — an EasyOCR
+        # init inside pytest killed the suite via a torch/VGG access
+        # violation on the hybrid-CPU dev box.
+        fb_backend_name = str(
+            self.config.extra.get("ocr_digit_fallback_backend", "easyocr") or ""
+        ).strip()
+        if (
+            not _has_digit_tokens(tokens)
+            and fb_backend_name
+            and getattr(ocr, "backend", "") == fb_backend_name
+        ):
             # 2026-09-14: PaddleOCR's onednn executor silently yields no
             # tokens on some builds (observed: NotImplementedError caught
             # inside paddle, 0 tokens returned on the Arrow Lake dev box)
             # while EasyOCR reads the same white-on-black digits at ~1.0
-            # confidence. Retry ONCE with a lazily-built EasyOCR backend
+            # confidence. Retry ONCE with the configured secondary backend
             # before giving up — one extra model load per pipeline
             # instance, only on the no-digits path.
             fb = getattr(self, "_ocr_digit_fallback_backend", None)
@@ -3968,19 +3982,15 @@ class RadiolarianPipeline:
                 try:
                     from .ocr import OCRBackend
 
-                    fb = OCRBackend(backend="easyocr")
+                    fb = OCRBackend(backend=fb_backend_name)
                 except Exception:
                     fb = False  # sentinel: unavailable, don't retry
                 self._ocr_digit_fallback_backend = fb
             if fb:
                 try:
-                    tokens = fb.recognize_panel(
-                        region_img, (0, 0, int(w_img), int(h_img))
-                    )
+                    tokens = fb.recognize_panel(region_img, (0, 0, int(w_img), int(h_img)))
                 except Exception:
-                    logger.debug(
-                        "printed-number EasyOCR fallback failed", exc_info=True
-                    )
+                    logger.debug("printed-number EasyOCR fallback failed", exc_info=True)
                     return assignments
 
         def _seg_contains(j: int, cx: float, cy: float) -> bool:
@@ -4022,15 +4032,34 @@ class RadiolarianPipeline:
         # Highest-confidence read first; a label already assigned keeps
         # its first (strongest) read; a seg already claimed by a
         # stronger read is not stolen.
+        # 2026-09-14 (overfitting audit): a segment that received reads
+        # of DIFFERENT wanted labels is ambiguous — typically a scale
+        # bar ("10 um") sitting in the same panel as a true printed
+        # label, or a stray digit. Distrust the whole segment: drop it
+        # from pass-0 eligibility so its label falls through to the
+        # corner-zoom pass / rank fallback instead of being claimed by
+        # whichever read happened to sort first.
+        reads_by_seg: dict[int, set[int]] = {}
+        for _conf, _label, _text, _seg in reads:
+            reads_by_seg.setdefault(_seg, set()).add(_label)
+        conflicted_segs = {seg for seg, labs in reads_by_seg.items() if len(labs) > 1}
+
         claimed_labels: set[int] = set()
         claimed_segs: set[int] = set()
         for conf, label, text, seg_j in sorted(reads, key=lambda r: -r[0]):
             if label in claimed_labels or seg_j in claimed_segs:
                 continue
+            if seg_j in conflicted_segs:
+                continue
             claimed_labels.add(label)
             claimed_segs.add(seg_j)
             assignments[label] = (seg_j, float(conf), text)
 
+        # Consistency gate: printed-number pairing is only trusted when
+        # a clear MAJORITY of the caption labels were read cleanly. A
+        # plate where 1-2 reads survived is far more likely noise
+        # (scale bars, misreads) than signal - abandon pass 0 entirely
+        # and let the flagged positional fallback handle it.
         # Second pass — corner zoom for panels the full-plate read
         # missed. Full-plate OCR drops small/edge-corner digits (the
         # Beccaro '1' sits flush against the plate's top-left edge);
@@ -4044,9 +4073,12 @@ class RadiolarianPipeline:
         for j in unclaimed_segs:
             sx, sy, sw, sh = segmented[j].bbox
             try:
-                corner_tokens = read_backend.recognize_panel_label(
-                    region_img, (int(sx), int(sy), int(sw), int(sh)), label_corner="adaptive"
-                ) or []
+                corner_tokens = (
+                    read_backend.recognize_panel_label(
+                        region_img, (int(sx), int(sy), int(sw), int(sh)), label_corner="adaptive"
+                    )
+                    or []
+                )
             except Exception:
                 continue
             best = None
@@ -4066,6 +4098,24 @@ class RadiolarianPipeline:
                 assignments[lab] = (j, conf, text)
                 claimed_labels.add(lab)
                 claimed_segs.add(j)
+
+        # Consistency gate (after the corner pass so corner reads count
+        # toward coverage): printed-number pairing is only trusted when
+        # a clear MAJORITY of the caption labels were read cleanly. A
+        # plate with only 1-2 surviving reads is far more likely noise
+        # (scale bars, misreads) than signal - abandon pass 0 entirely
+        # and let the flagged positional fallback handle it.
+        # Floor of 1 keeps small plates (2 labels) viable at 50%.
+        _min_trusted = max(1, -(-len(wanted_labels) // 2))
+        if len(assignments) < _min_trusted:
+            logger.debug(
+                "printed-number pass: only %d/%d labels paired cleanly "
+                "(min %d) - discarding; falling back to rank pairing",
+                len(assignments),
+                len(wanted_labels),
+                _min_trusted,
+            )
+            return {}
         return assignments
 
     def _recover_bboxes_via_segmentation(
@@ -4387,11 +4437,16 @@ class RadiolarianPipeline:
                 md["printed_label_read"] = ocr_paired[panel_i]
             else:
                 md["association_method"] = "positional_fallback"
-                md.setdefault("needs_review", True)
-                reasons = list(md.get("review_reasons") or [])
-                if "positional_panel_association" not in reasons:
-                    reasons.append("positional_panel_association")
-                md["review_reasons"] = reasons
+                # A single-label single-segment figure has nothing to
+                # scramble against - positional pairing is the only
+                # possible (and correct) assignment. Flag only real
+                # multi-panel grids where the order was unverifiable.
+                if n_panels > 1 or n_segs > 1:
+                    md.setdefault("needs_review", True)
+                    reasons = list(md.get("review_reasons") or [])
+                    if "positional_panel_association" not in reasons:
+                        reasons.append("positional_panel_association")
+                    md["review_reasons"] = reasons
             orig_r["metadata"] = md
             # Write crop if possible.
             if pil_region is not None and crop_dir is not None:
@@ -4529,9 +4584,7 @@ class RadiolarianPipeline:
         if not contexts:
             return results
 
-        resolution = self._resolve_paper_unit_geology(
-            paper_id, sections, wanted_units
-        )
+        resolution = self._resolve_paper_unit_geology(paper_id, sections, wanted_units)
         section_codes = (getattr(self, "_paper_unit_geology_sections", {}) or {}).get(
             paper_id
         ) or {}

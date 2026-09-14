@@ -127,12 +127,52 @@ class TestPrintedNumberPairing:
         ]
         region = np.zeros((100, 300, 3), dtype=np.uint8)
         pipe.ocr = MagicMock()
+        pipe.ocr.backend = "paddleocr"  # the known-broken primary
         pipe.ocr.recognize_panel.return_value = []  # nothing readable
+        # the EasyOCR fallback construction is gated to real paddle
+        # primaries and monkeypatched out here — a real model load in a
+        # unit test would be both slow and native-crash-prone.
+        pipe._ocr_digit_fallback_backend = False
         rows = _rows([1, 2])
         out = pipe._recover_bboxes_via_segmentation(rows, region, "p", "f")
         for r in out:
             assert r["metadata"]["association_method"] == "positional_fallback"
             assert "positional_panel_association" in r["metadata"]["review_reasons"]
+
+    def test_scale_bar_digit_does_not_hijack_pairing(self, pipe):
+        """A scale-bar '10 um' token inside another panel's segment must
+        not claim label 10 for that segment: the conflicting segment
+        (two different wanted labels read inside it) is distrusted."""
+        # seg0 = printed panel 7's specimen WITH a scale bar reading 10;
+        # seg1 = printed panel 10's specimen with its true label.
+        segmented = [_Seg((100, 100, 200, 200)), _Seg((400, 100, 200, 200))]
+        region = np.zeros((400, 700, 3), dtype=np.uint8)
+        pipe.ocr = MagicMock()
+        pipe.ocr.backend = "paddleocr"
+        pipe.ocr.recognize_panel.return_value = [
+            MagicMock(text="10", confidence=0.99, bbox=(180, 250, 40, 25)),  # scale bar in seg0
+            MagicMock(text="7", confidence=0.9, bbox=(110, 110, 25, 25)),  # true label, seg0
+            MagicMock(text="10", confidence=0.9, bbox=(410, 110, 40, 25)),  # true label, seg1
+        ]
+        got = pipe._ocr_printed_panel_assignments(region, segmented, {7, 10})
+        # seg0 is conflicted (reads {10, 7}) -> distrusted; label 10 must
+        # NOT be assigned to seg0. Label 10 takes its clean seg1.
+        assert got[10][0] == 1
+        assert 7 not in got, "conflicted segment must not claim label 7"
+
+    def test_coverage_gate_discards_noise_reads(self, pipe):
+        """Only 1 of 4 wanted labels read cleanly -> below the 50%
+        consistency gate -> pass 0 abandoned entirely (return {}), so
+        1-2 stray digit reads cannot scramble a whole plate."""
+        segmented = [_Seg((10 * i, 10, 50, 50)) for i in range(4)]
+        region = np.zeros((100, 300, 3), dtype=np.uint8)
+        pipe.ocr = MagicMock()
+        pipe.ocr.backend = "paddleocr"
+        pipe.ocr.recognize_panel.return_value = [
+            MagicMock(text="1", confidence=0.99, bbox=(15, 15, 20, 20))
+        ]
+        got = pipe._ocr_printed_panel_assignments(region, segmented, {1, 2, 3, 4})
+        assert got == {}
 
     def test_more_labels_than_segments_keeps_species_rows(self, pipe):
         """35 labels vs 32 segments: unpaired labels keep their rows

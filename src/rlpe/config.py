@@ -149,6 +149,10 @@ _KNOWN_EXTRA_KEYS = {
     # ages come from the cited unit instead of a proximity-matched
     # geological-setting record.
     "use_caption_unit_geology",
+    # 2026-09-14: secondary OCR backend for the printed-number panel pairing
+    # pass (empty string disables — used by tests to avoid a native model
+    # load).
+    "ocr_digit_fallback_backend",
     # 2026-09-12: fresh-worker retries after a NATIVE worker crash
     # (0xC0000005-class) — probabilistic on hybrid CPUs; each retry is
     # a new process/memory layout. Default 3; 0 disables.

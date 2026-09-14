@@ -38,7 +38,17 @@ def _make_pipeline(tmp_path: Path) -> RadiolarianPipeline:
         save_intermediate=False,
         min_panel_score=0.0,
     )
-    return RadiolarianPipeline(cfg)
+    # 2026-09-14: the printed-number pairing pass would otherwise load a
+    # real OCR engine inside these tests (native-crash-prone on the
+    # hybrid-CPU dev box and slow everywhere). Stub the OCR to "nothing
+    # readable" so every test exercises the historical rank fallback
+    # deterministically; printed-number pairing has its own suite.
+    pipe = RadiolarianPipeline(cfg)
+    pipe.ocr = MagicMock()
+    pipe.ocr.backend = "paddleocr"
+    pipe.ocr.recognize_panel.return_value = []
+    pipe.ocr.recognize_panel_label.return_value = []
+    return pipe
 
 
 def _build_synthetic_plate(n: int = 9, panel_w: int = 256, panel_h: int = 256) -> np.ndarray:

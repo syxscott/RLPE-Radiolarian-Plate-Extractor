@@ -1658,8 +1658,7 @@ _ITEM_SPLIT_RE = re.compile(r"(?:^|\n)\s*(\d{1,3})\s*[-–—]\s*", re.MULTILINE
 # swallow the real "UAZ A is assigned to …".
 _UNIT_NAME_RE = r"((?:UAZ|Subzone|Zone|Unit|Assemblage|Bed))"
 _UNIT_AGE_ASSIGNED_RE = re.compile(
-    _UNIT_NAME_RE
-    + r"\s+([A-Z]|\d+|[IVX]+)\s+(?:is|was)\s+assigned to\s+([^(.]{3,160})",
+    _UNIT_NAME_RE + r"\s+([A-Z]|\d+|[IVX]+)\s+(?:is|was)\s+assigned to\s+([^(.]{3,160})",
     re.IGNORECASE,
 )
 _UNIT_AGE_HEADING_RE = re.compile(
@@ -1671,9 +1670,7 @@ _UNIT_AGE_HEADING_RE = re.compile(
 #   "… deposition began in the early?-mid Bathonian-early Callovian
 #    pars (UAZ A) at the Coston delle Vette section"
 _UNIT_AGE_BEFORE_RE = re.compile(
-    r"([^(.\n]{10,160}?)\s*\(\s*"
-    + _UNIT_NAME_RE
-    + r"\s+([A-Z]|\d+|[IVX]+)\s*\)",
+    r"([^(.\n]{10,160}?)\s*\(\s*" + _UNIT_NAME_RE + r"\s+([A-Z]|\d+|[IVX]+)\s*\)",
     re.IGNORECASE,
 )
 _STAGE_WORDS = (
@@ -1841,6 +1838,7 @@ def build_unit_resolution_prompt(
         + (", ".join(sorted(wanted_units)) if wanted_units else "(detect all)")
         + ".\n\n"
     )
+
     # 2026-09-14: stratigraphy-bearing sections first (the LLM read was
     # losing every unit past the char cap when front-matter sections
     # consumed the budget), and raise the cap — modern cloud models
@@ -1853,12 +1851,9 @@ def build_unit_resolution_prompt(
             return 2
         return 1
 
-    ordered = sorted(
-        (s for s in (sections or []) if s.get("text")), key=_prio
-    )
+    ordered = sorted((s for s in (sections or []) if s.get("text")), key=_prio)
     prose = "\n\n".join(
-        f"[{s.get('title') or s.get('section_type') or 'section'}]\n"
-        + (s.get("text") or "")[:6000]
+        f"[{s.get('title') or s.get('section_type') or 'section'}]\n" + (s.get("text") or "")[:6000]
         for s in ordered
     )[:24000]
     user_prompt = wanted_line + prose
