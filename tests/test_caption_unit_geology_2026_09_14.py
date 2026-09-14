@@ -118,8 +118,35 @@ class TestPrintedNumberPairing:
         assert md1["printed_label_read"] == "1"
 
     def test_fallback_rank_pairing_flagged_for_review(self, pipe):
-        """Without readable printed numbers the historical rank pairing
-        runs but the rows are flagged for review."""
+        """Digits EXIST on the plate but pairing was discarded (coverage
+        gate) — the historical rank pairing runs and the rows are
+        flagged for review: the order really is unverifiable."""
+        pipe.segmenter = MagicMock()
+        pipe.segmenter._segment_with_opencv.return_value = [
+            _Seg((10 * i, 10, 50, 50)) for i in range(4)
+        ]
+        region = np.zeros((100, 300, 3), dtype=np.uint8)
+        pipe.ocr = MagicMock()
+        pipe.ocr.backend = "paddleocr"  # the known-broken primary
+        # one stray read for 4 wanted labels -> below the coverage gate
+        pipe.ocr.recognize_panel.return_value = [
+            MagicMock(text="1", confidence=0.99, bbox=(15, 15, 20, 20))
+        ]
+        # the EasyOCR fallback construction is gated to real paddle
+        # primaries and monkeypatched out here — a real model load in a
+        # unit test would be both slow and native-crash-prone.
+        pipe._ocr_digit_fallback_backend = False
+        rows = _rows([1, 2, 3, 4])
+        out = pipe._recover_bboxes_via_segmentation(rows, region, "p", "f")
+        for r in out:
+            assert r["metadata"]["association_method"] == "positional_fallback"
+            assert "positional_panel_association" in r["metadata"]["review_reasons"]
+
+    def test_fallback_no_digits_stamps_caption_order(self, pipe):
+        """P2a: the full-plate read (primary + fallback) found NO digit
+        tokens at all — the plate carries no printed numbers (Bragin
+        2025 shape). Caption/reading order is the only possible pairing:
+        expected behaviour, no review alarm."""
         pipe.segmenter = MagicMock()
         pipe.segmenter._segment_with_opencv.return_value = [
             _Seg((10, 10, 50, 50)),
@@ -127,17 +154,14 @@ class TestPrintedNumberPairing:
         ]
         region = np.zeros((100, 300, 3), dtype=np.uint8)
         pipe.ocr = MagicMock()
-        pipe.ocr.backend = "paddleocr"  # the known-broken primary
-        pipe.ocr.recognize_panel.return_value = []  # nothing readable
-        # the EasyOCR fallback construction is gated to real paddle
-        # primaries and monkeypatched out here — a real model load in a
-        # unit test would be both slow and native-crash-prone.
+        pipe.ocr.backend = "paddleocr"
+        pipe.ocr.recognize_panel.return_value = []  # nothing readable anywhere
         pipe._ocr_digit_fallback_backend = False
         rows = _rows([1, 2])
         out = pipe._recover_bboxes_via_segmentation(rows, region, "p", "f")
         for r in out:
-            assert r["metadata"]["association_method"] == "positional_fallback"
-            assert "positional_panel_association" in r["metadata"]["review_reasons"]
+            assert r["metadata"]["association_method"] == "caption_order_positional"
+            assert not r["metadata"].get("needs_review")
 
     def test_scale_bar_digit_does_not_hijack_pairing(self, pipe):
         """A scale-bar '10 um' token inside another panel's segment must
@@ -282,6 +306,9 @@ class TestRowAttachment:
                 }
             }
         }
+        # P1: the sample map is cached alongside the unit map — seed it
+        # so the short-circuit fires without an LLM.
+        pipe._paper_sample_unit_geology = {"p": {}}
         pipe._paper_sections_cache = {"p": []}
         pipe._paper_unit_geology_sections = {
             "p": {"CV": "Coston delle Vette, Southern Alps, Italy"}

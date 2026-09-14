@@ -3937,23 +3937,34 @@ class RadiolarianPipeline:
         visible downstream.
         """
         assignments: dict[int, tuple[int, float, str]] = {}
+        # 2026-09-14 (P2a): per-call diagnostic consumed by the
+        # association_method stamper — distinguishes "the plate carries
+        # NO printed numbers" (caption-order pairing is the only and
+        # expected outcome) from "digits exist but pairing failed"
+        # (genuinely unverifiable → review) from "OCR read crashed"
+        # (unknown → review).
+        self._pass0_diag = {"digit_tokens": False, "read_failed": False}
         if region_img is None or not segmented or not wanted_labels:
             return assignments
         ocr = getattr(self, "ocr", None)
         if ocr is None:
             return assignments
         h_img, w_img = region_img.shape[:2]
+
+        def _has_digit_tokens(toks: list[Any]) -> bool:
+            return any((t.text or "").strip().strip(".,;:()[]").isdigit() for t in (toks or []))
+
+        digit_tokens_seen = False
         try:
             tokens = ocr.recognize_panel(region_img, (0, 0, int(w_img), int(h_img)))
+            digit_tokens_seen = _has_digit_tokens(tokens)
         except Exception:
+            self._pass0_diag["read_failed"] = True
             logger.debug(
                 "printed-number OCR failed; falling back to rank pairing",
                 exc_info=True,
             )
             return assignments
-
-        def _has_digit_tokens(toks: list[Any]) -> bool:
-            return any((t.text or "").strip().strip(".,;:()[]").isdigit() for t in (toks or []))
 
         # 2026-09-14 (overfitting audit follow-up): the EasyOCR retry is
         # only meaningful when the PRIMARY backend is the known-broken
@@ -3965,18 +3976,24 @@ class RadiolarianPipeline:
         fb_backend_name = str(
             self.config.extra.get("ocr_digit_fallback_backend", "easyocr") or ""
         ).strip()
+        # 2026-09-14 (P0 fix): the retry is meaningful ONLY when the
+        # PRIMARY backend is the known-broken PaddleOCR build (onednn
+        # executor silently yields 0 tokens on some hosts) AND the
+        # configured fallback differs from the primary. The previous
+        # condition compared the primary against the FALLBACK name
+        # ("easyocr"), which is inverted — under the default
+        # paddleocr-primary config the retry branch was dead code, so
+        # every plate fell back to rank pairing even when EasyOCR could
+        # read the printed digits cleanly (observed: Danelian 19/23
+        # digits, Boughdiri 21 digits, all lost).
+        _primary_backend = str(getattr(ocr, "backend", "") or "")
+        fb = None  # constructed lazily inside the gate branch only
         if (
-            not _has_digit_tokens(tokens)
+            not digit_tokens_seen
             and fb_backend_name
-            and getattr(ocr, "backend", "") == fb_backend_name
+            and _primary_backend == "paddleocr"
+            and fb_backend_name != _primary_backend
         ):
-            # 2026-09-14: PaddleOCR's onednn executor silently yields no
-            # tokens on some builds (observed: NotImplementedError caught
-            # inside paddle, 0 tokens returned on the Arrow Lake dev box)
-            # while EasyOCR reads the same white-on-black digits at ~1.0
-            # confidence. Retry ONCE with the configured secondary backend
-            # before giving up — one extra model load per pipeline
-            # instance, only on the no-digits path.
             fb = getattr(self, "_ocr_digit_fallback_backend", None)
             if fb is None:
                 try:
@@ -3989,7 +4006,9 @@ class RadiolarianPipeline:
             if fb:
                 try:
                     tokens = fb.recognize_panel(region_img, (0, 0, int(w_img), int(h_img)))
+                    digit_tokens_seen = _has_digit_tokens(tokens)
                 except Exception:
+                    self._pass0_diag["read_failed"] = True
                     logger.debug("printed-number EasyOCR fallback failed", exc_info=True)
                     return assignments
 
@@ -4067,7 +4086,7 @@ class RadiolarianPipeline:
         # and reads them reliably. Only UNCLAIMED segments are tried,
         # and only reads landing in the wanted label set are trusted.
         read_backend = ocr
-        if not _has_digit_tokens(tokens) and fb:
+        if not digit_tokens_seen and fb:
             read_backend = fb
         unclaimed_segs = [j for j in range(len(segmented)) if j not in claimed_segs]
         for j in unclaimed_segs:
@@ -4115,7 +4134,11 @@ class RadiolarianPipeline:
                 len(wanted_labels),
                 _min_trusted,
             )
+            self._pass0_diag["digit_tokens"] = digit_tokens_seen or bool(assignments)
+            self._pass0_diag["assignments"] = len(assignments)
             return {}
+        self._pass0_diag["digit_tokens"] = digit_tokens_seen or bool(assignments)
+        self._pass0_diag["assignments"] = len(assignments)
         return assignments
 
     def _recover_bboxes_via_segmentation(
@@ -4435,6 +4458,10 @@ class RadiolarianPipeline:
             if panel_i in ocr_paired:
                 md["association_method"] = "printed_number_ocr"
                 md["printed_label_read"] = ocr_paired[panel_i]
+                # P2a: the printed label WAS read off the plate — record
+                # it so the converter's missing_printed_panel_id review
+                # reason doesn't fire on evidence-backed rows.
+                md.setdefault("printed_panel_id", str(ocr_paired[panel_i]))
             else:
                 md["association_method"] = "positional_fallback"
                 # A single-label single-segment figure has nothing to
@@ -4442,11 +4469,25 @@ class RadiolarianPipeline:
                 # possible (and correct) assignment. Flag only real
                 # multi-panel grids where the order was unverifiable.
                 if n_panels > 1 or n_segs > 1:
-                    md.setdefault("needs_review", True)
-                    reasons = list(md.get("review_reasons") or [])
-                    if "positional_panel_association" not in reasons:
-                        reasons.append("positional_panel_association")
-                    md["review_reasons"] = reasons
+                    _diag = getattr(self, "_pass0_diag", None) or {}
+                    if not _diag.get("digit_tokens") and not _diag.get("read_failed"):
+                        # 2026-09-14 (P2a): the full-plate read (primary +
+                        # fallback backends) found NO printed digits
+                        # anywhere — e.g. Bragin 2025 Plate I carries no
+                        # panel numbers at all, only specimens and scale
+                        # bars. Caption/reading order is then the only
+                        # possible pairing: expected behaviour, not an
+                        # unverifiable guess, so no review flag.
+                        md["association_method"] = "caption_order_positional"
+                    else:
+                        # Digits exist on this plate but this label was
+                        # not among the clean reads (or the OCR read
+                        # crashed) — the order really is unverifiable.
+                        md.setdefault("needs_review", True)
+                        reasons = list(md.get("review_reasons") or [])
+                        if "positional_panel_association" not in reasons:
+                            reasons.append("positional_panel_association")
+                        md["review_reasons"] = reasons
             orig_r["metadata"] = md
             # Write crop if possible.
             if pil_region is not None and crop_dir is not None:
@@ -4479,6 +4520,7 @@ class RadiolarianPipeline:
         paper_id: str,
         sections: list[dict[str, Any]] | None,
         wanted_units: set[str] | None,
+        wanted_samples: set[str] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """One-shot paper-level unit→age resolution (2026-09-14).
 
@@ -4495,30 +4537,55 @@ class RadiolarianPipeline:
         of plate count); the regex fallback reads the two common prose
         shapes ("X is assigned to …" / "X (…)" headings) when no LLM is
         configured. Cached per paper.
+
+        2026-09-14 (P1): when the captions cite SAMPLE codes instead of
+        units (Boughdiri shape: "1) Species, CH4, specimen 7"), the same
+        call also resolves sample→unit ("Sample CHA4 … attributed to
+        UAZ 5-7"); the sample map is cached on
+        ``_paper_sample_unit_geology[paper_id]`` and the units it
+        references join the wanted-units set so their ages resolve in
+        the same pass. Regex fallback: ``extract_sample_unit_map_regex``.
         """
         cached = getattr(self, "_paper_unit_geology", None)
         if cached is None:
             cached = self._paper_unit_geology = {}
+        sample_cached = getattr(self, "_paper_sample_unit_geology", None)
+        if sample_cached is None:
+            sample_cached = self._paper_sample_unit_geology = {}
         if getattr(self, "_paper_sections_cache", None) is None:
             self._paper_sections_cache = {}
         if getattr(self, "_paper_unit_geology_sections", None) is None:
             self._paper_unit_geology_sections = {}
         self._paper_sections_cache[paper_id] = list(sections or [])
-        if paper_id in cached:
+        if paper_id in cached and paper_id in sample_cached:
             return cached[paper_id]
 
+        wanted_samples = {str(s).strip().upper() for s in (wanted_samples or set()) if s}
         resolution: dict[str, dict[str, Any]] = {}
-        if wanted_units and self.gemma_runtime is not None:
+        sample_map: dict[str, dict[str, Any]] = {}
+        if (wanted_units or wanted_samples) and self.gemma_runtime is not None:
             try:
                 from .gemma_postprocess import gemma_extract_text_json
                 from .geology_extraction import (
                     build_unit_resolution_prompt,
+                    parse_sample_resolution_response,
                     parse_unit_resolution_response,
                 )
 
-                system_prompt, user_prompt = build_unit_resolution_prompt(sections, wanted_units)
+                system_prompt, user_prompt = build_unit_resolution_prompt(
+                    sections, wanted_units, wanted_samples
+                )
                 out = gemma_extract_text_json(self.gemma_runtime, system_prompt, user_prompt)
-                resolution = parse_unit_resolution_response(out, wanted_units)
+                # Parse the sample map FIRST: the prose units it cites
+                # join the wanted set so the units filter can't drop
+                # them (a paper may assign units to samples in prose
+                # only, never in a caption).
+                sample_map = parse_sample_resolution_response(out, wanted_samples)
+                prose_units = {
+                    str(v.get("unit")).strip().upper() for v in sample_map.values() if v.get("unit")
+                }
+                extended_units = set(wanted_units or set()) | prose_units
+                resolution = parse_unit_resolution_response(out, extended_units or None)
                 codes = (out or {}).get("section_codes")
                 if isinstance(codes, dict):
                     self._paper_unit_geology_sections[paper_id] = {
@@ -4532,21 +4599,48 @@ class RadiolarianPipeline:
         # resolve only some units (observed: 1/6 on Beccaro), and the
         # regex fallback reads the two common prose shapes reliably.
         # LLM entries win; regex fills the gaps.
-        if wanted_units:
-            try:
-                from .geology_extraction import extract_unit_age_map_regex
+        try:
+            from .geology_extraction import extract_unit_age_map_regex
 
-                _missing = wanted_units - set(resolution)
+            prose_units = {
+                str(v.get("unit")).strip().upper() for v in sample_map.values() if v.get("unit")
+            }
+            _wanted_all = set(wanted_units or set()) | prose_units
+            if _wanted_all:
+                _missing = _wanted_all - set(resolution)
                 if _missing:
                     resolution.update(extract_unit_age_map_regex(sections, _missing))
+        except Exception:
+            logger.debug("unit-geology regex fallback failed", exc_info=True)
+        if wanted_samples:
+            try:
+                from .geology_extraction import (
+                    extract_sample_unit_map_regex,
+                    sample_codes_match,
+                )
+
+                _missing_samples = {
+                    s
+                    for s in wanted_samples
+                    if not any(sample_codes_match(s, k) for k in sample_map)
+                }
+                if _missing_samples:
+                    sample_map.update(extract_sample_unit_map_regex(sections, wanted_samples))
             except Exception:
-                logger.debug("unit-geology regex fallback failed", exc_info=True)
+                logger.debug("sample-unit regex fallback failed", exc_info=True)
         cached[paper_id] = resolution
+        sample_cached[paper_id] = sample_map
         if resolution:
             logger.info(
                 "unit-geology resolution for %s: %s",
                 paper_id,
                 ", ".join(sorted(resolution)),
+            )
+        if sample_map:
+            logger.info(
+                "sample-unit resolution for %s: %s",
+                paper_id,
+                ", ".join(f"{k}→{v.get('unit')}" for k, v in sorted(sample_map.items())),
             )
         return resolution
 
@@ -4568,26 +4662,43 @@ class RadiolarianPipeline:
         """
         if not results:
             return results
-        from .geology_extraction import extract_caption_item_context
+        from .geology_extraction import extract_caption_item_context, sample_codes_match
 
         wanted_units: set[str] = set()
+        wanted_samples: set[str] = set()
         contexts: dict[int, dict[str, str | None]] = {}
         for i, r in enumerate(results):
             cap = figure_captions.get(r.get("figure_id") or "")
             if not cap:
                 continue
             ctx = extract_caption_item_context(cap, r.get("panel_id"))
+            # P1: per-ROW sample codes come only from the row's own
+            # caption item — scanning the whole plate snippet here would
+            # attach another item's sample to this row (a wrong claim,
+            # not a resolution).
             if ctx["unit_token"] or ctx["sample_code"]:
                 contexts[i] = ctx
                 if ctx["unit_token"]:
                     wanted_units.add(ctx["unit_token"])
+                if ctx["sample_code"]:
+                    wanted_samples.add(str(ctx["sample_code"]).strip().upper())
         if not contexts:
             return results
 
-        resolution = self._resolve_paper_unit_geology(paper_id, sections, wanted_units)
+        resolution = self._resolve_paper_unit_geology(
+            paper_id, sections, wanted_units, wanted_samples=wanted_samples
+        )
         section_codes = (getattr(self, "_paper_unit_geology_sections", {}) or {}).get(
             paper_id
         ) or {}
+        sample_map = (getattr(self, "_paper_sample_unit_geology", {}) or {}).get(paper_id) or {}
+
+        def _norm_ukey(s: str) -> str:
+            import re as _re_u
+
+            return _re_u.sub(r"\s*[–—-]\s*", "-", _re_u.sub(r"\s+", " ", str(s or "")).upper())
+
+        resolution_by_norm = {_norm_ukey(k): v for k, v in (resolution or {}).items()}
         for i, ctx in contexts.items():
             r = results[i]
             md = r.get("metadata") or {}
@@ -4614,7 +4725,48 @@ class RadiolarianPipeline:
             sec_code = ctx.get("section_code")
             if sec_code and sec_code in section_codes:
                 link["locality"] = section_codes[sec_code]
-            if not entry:
+            # P1 (sample→unit→age): the caption cites a SAMPLE, the prose
+            # assigns the unit to it ("Sample CHA4 … attributed to UAZ
+            # 5-7 of latest Bajocian–early Callovian age"). When the
+            # caption's own unit (if any) stayed unresolved, resolve the
+            # age through the sample chain instead of leaving the row
+            # ageless.
+            sample_link: dict[str, Any] | None = None
+            if not entry and ctx.get("sample_code") and sample_map:
+                sc = str(ctx["sample_code"]).strip().upper()
+                sentry = next(
+                    (v for k, v in sample_map.items() if sample_codes_match(sc, k)),
+                    None,
+                )
+                if sentry and sentry.get("unit"):
+                    ukey = str(sentry["unit"])
+                    uentry = resolution.get(ukey) or resolution_by_norm.get(_norm_ukey(ukey))
+                    # The sample regex captured the age tail from the SAME
+                    # sentence ("… attributed to UAZ 5-7 of latest
+                    # Bajocian–early Callovian age") — use it when the
+                    # unit→age map has no entry for the unit (papers may
+                    # assign units to samples in prose only).
+                    sentry_age = str(sentry.get("age_text") or "").strip()
+                    age_text = (uentry or {}).get("age_text") or sentry_age or None
+                    chrono = (uentry or {}).get("chronostratigraphy")
+                    if age_text or chrono:
+                        prose_key = next((k for k in sample_map if sample_codes_match(sc, k)), sc)
+                        sample_link = {
+                            "label": "sample_unit_geology",
+                            "biozone": ukey,
+                            "sample_code": sc,
+                            "confidence": 0.7,
+                            "age": age_text,
+                            "chronostratigraphy": chrono,
+                            "evidence_text": (
+                                f"sample {sc} (prose: {prose_key}) → unit {ukey} → {age_text}"
+                            ),
+                        }
+                        if (uentry or {}).get("ma_top") is not None:
+                            sample_link["ma_top"] = uentry["ma_top"]
+                        if (uentry or {}).get("ma_base") is not None:
+                            sample_link["ma_base"] = uentry["ma_base"]
+            if not entry and sample_link is None:
                 md.setdefault("needs_review", True)
                 reasons = list(md.get("review_reasons") or [])
                 if "unresolved_unit_age" not in reasons:
@@ -4622,6 +4774,11 @@ class RadiolarianPipeline:
                 md["review_reasons"] = reasons
             links = list(md.get("geology_links") or [])
             links.insert(0, link)
+            if sample_link is not None:
+                # Prepend so the finalize best-link pick (first link with
+                # an age) prefers the resolved sample chain over the
+                # unresolved caption-unit link.
+                links.insert(0, sample_link)
             md["geology_links"] = links
             r["metadata"] = md
         return results
@@ -6495,12 +6652,25 @@ class RadiolarianPipeline:
 
                     for _cm in _re_code.finditer(r"\b([A-Z]{1,3})(\d{1,4}(?:\.\d+)?)\b", snippet):
                         _cand = _cm.group(1) + _cm.group(2)
-                        if _cand not in {v.split('_', 1)[-1] for v in code_vals if '_' in v} and _cand not in code_vals:
+                        if (
+                            _cand not in {v.split("_", 1)[-1] for v in code_vals if "_" in v}
+                            and _cand not in code_vals
+                        ):
                             code_vals.append(_cand)
                     lowered = {v.casefold() for v in code_vals}
                     ids: list[str] = list(code_vals)
+                    # 2026-09-14 (P2b): the base extractor can emit bare
+                    # prose words ("sample number" → value "number") that
+                    # survive its own stopword table on some shapes. They
+                    # are not identifiers — drop them here.
+                    from .sample_id_extractor import (
+                        _SAMPLE_CODE_STOPWORDS as _sample_stopwords,
+                    )
+
                     for s in _extract_sample_ids(snippet):
                         if s.kind not in ("sample", "id") or not s.value:
+                            continue
+                        if s.value.strip().casefold() in _sample_stopwords:
                             continue
                         key = s.value.casefold()
                         if key in lowered or any(k.startswith(key) for k in lowered):
@@ -6517,9 +6687,10 @@ class RadiolarianPipeline:
                         def _is_specimen_like(v: str) -> bool:
                             import re as _re_s
 
-                            return bool(
-                                _re_s.match(r"^(R_)?specimen[ _]?\d+$", v, _re_s.I)
-                            ) or v.isdigit()
+                            return (
+                                bool(_re_s.match(r"^(R_)?specimen[ _]?\d+$", v, _re_s.I))
+                                or v.isdigit()
+                            )
 
                         ids = sorted(ids, key=_is_specimen_like)
                         md["sample_ids"] = ids

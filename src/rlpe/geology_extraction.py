@@ -1648,7 +1648,17 @@ _ITEM_UNIT_RE = re.compile(
     r"\b(UAZ|Subzone|Zone|Unit|Assemblage|Bed)\s+([A-Z]|\d+|[IVX]+)\b",
     re.IGNORECASE,
 )
-_ITEM_SPLIT_RE = re.compile(r"(?:^|\n)\s*(\d{1,3})\s*[-–—]\s*", re.MULTILINE)
+# Item start: "1 – …" (Beccaro, any dash kind), "1) …" / "1. …" at line
+# start, "; 2) …" — Boughdiri 2007 writes plate items as
+# "…; 2) Palinandromeda podbielensis (OZVOLDOVA), MB4, …" with the
+# previous item ending in ";" on the SAME line — and "scale. 1) …"
+# (same-line sentence end). The item text must start with a CAPITAL
+# (genus) so prose like "in Fig. 3) rare" or "550 µm; 7 of these"
+# cannot split.
+_ITEM_SPLIT_RE = re.compile(
+    r"(?:^|[\n;]|\.\s)\s*(\d{1,3})\s*(?:[-–—)]|\.\s)\s*(?=[A-Z])",
+    re.MULTILINE,
+)
 
 # 2026-09-14 (tightened): the unit name must come from the KNOWN
 # vocabulary in _ITEM_UNIT_RE, and the name/number junction must stay
@@ -1813,31 +1823,54 @@ def extract_unit_age_map_regex(
 
 
 def build_unit_resolution_prompt(
-    sections: list[dict[str, Any]] | None, wanted_units: set[str] | None
+    sections: list[dict[str, Any]] | None,
+    wanted_units: set[str] | None,
+    wanted_samples: set[str] | None = None,
 ) -> tuple[str, str]:
     """System + user prompt for the one-shot LLM unit→age resolution.
 
     The LLM reads the paper's own prose (geological setting / biozonation
     sections) and returns a strict-JSON map. Keeping it ONE call per
     paper (not per panel) bounds the cost regardless of plate count.
+
+    2026-09-14 (P1): the same call may also resolve the sample→unit
+    chain ("Sample CHA4 … attributed to UAZ 5-7") — captions cite the
+    sample code, the prose assigns the unit to it, so the response
+    gains a ``sample_codes`` map alongside ``units``.
     """
+    sample_schema = (
+        ', "sample_codes": {"<CODE>": {"unit": "<UNIT NAME>", "section": '
+        '"<section code or empty>"}}'
+    )
+    sample_rule = (
+        " sample_codes maps each plate-caption sample code to the "
+        "biostratigraphic unit the paper's prose assigns to that sample "
+        "(caption codes may be abbreviated — match CH4 to prose CHA4)."
+    )
     system_prompt = (
         "You are a stratigraphy assistant. Given paper prose describing "
         "biostratigraphic units and their ages, return STRICT JSON only: "
         '{"units": {"<UNIT NAME>": {"age_text": "...", '
         '"chronostratigraphy": "...", "ma_top": number|null, "ma_base": '
         'number|null}}, "section_codes": {"<CODE>": "full locality '
-        'description"}}. age_text must be quoted VERBATIM from the paper '
-        "(no translation, no invented Ma numbers — use null when the "
-        "paper gives none). chronostratigraphy is the standard epoch/"
-        "period (e.g. 'Middle Jurassic'). section_codes maps the paper's "
-        "short section codes to their full locality names."
+        'description"' + sample_schema + "}. age_text must be quoted "
+        "VERBATIM from the paper (no translation, no invented Ma "
+        "numbers — use null when the paper gives none). "
+        "chronostratigraphy is the standard epoch/period (e.g. 'Middle "
+        "Jurassic'). section_codes maps the paper's short section codes "
+        "to their full locality names." + sample_rule
     )
     wanted_line = (
         "Units cited by the plate captions: "
         + (", ".join(sorted(wanted_units)) if wanted_units else "(detect all)")
-        + ".\n\n"
+        + ".\n"
     )
+    if wanted_samples:
+        wanted_line += (
+            "Sample codes cited by the plate captions (resolve these in "
+            "sample_codes): " + ", ".join(sorted(wanted_samples)) + ".\n"
+        )
+    wanted_line += "\n"
 
     # 2026-09-14: stratigraphy-bearing sections first (the LLM read was
     # losing every unit past the char cap when front-matter sections
@@ -1891,4 +1924,147 @@ def parse_unit_resolution_response(
                 entry[k] = float(v)
         if entry["age_text"] or entry["chronostratigraphy"]:
             parsed[unit] = entry
+    return parsed
+
+
+# ============================================================
+# 2026-09-14 (P1): sample→unit chain (Boughdiri 2007 shape)
+# ============================================================
+# The caption carries the SAMPLE code ("1) Ristola altissima
+# altissima (RÜST), CH4, specimen 7, 550 µm") while the prose assigns
+# the UNIT — and its age — to the sample: "Sample CHA4 released an
+# association attributed to UAZ 5-7 of latest Bajocian–early
+# Callovian age". The proximity linker cannot see this two-hop chain
+# (sample → unit → age), so rows resolved only through it stayed
+# ageless. Vocabulary-constrained like the unit regexes above so a
+# chatty match cannot invent stratigraphy.
+_SAMPLE_CODE_ALNUM_RE = re.compile(r"^([A-Z]+)(\d.*)$")
+
+
+def sample_code_aliases(code: str | None) -> set[str]:
+    """Alias keys for matching a caption sample code against prose
+    variants ("CH4" ↔ "CHA4" — the caption drops the section-name
+    vowel). Case/punctuation-insensitive; the alpha prefix also matches
+    with trailing vowels stripped."""
+    c = re.sub(r"[^A-Za-z0-9]", "", str(code or "")).upper()
+    if not c:
+        return set()
+    out = {c}
+    m = _SAMPLE_CODE_ALNUM_RE.match(c)
+    if m:
+        prefix, rest = m.groups()
+        stripped = prefix.rstrip("AEIOU")
+        if stripped:
+            out.add(stripped + rest)
+    return out
+
+
+def sample_codes_match(a: str | None, b: str | None) -> bool:
+    if not a or not b:
+        return False
+    return bool(sample_code_aliases(a) & sample_code_aliases(b))
+
+
+_SAMPLE_UNIT_RE = re.compile(
+    r"\bSample\s+([A-Z]{1,4}\d[A-Za-z0-9]*)"  # 1: sample code
+    # gaps cross sentence-internal dots AND PDF line breaks (OD section
+    # text wraps mid-sentence: "sample CHA4 released\nan association
+    # attributed to UAZ 5-7 of …") but not semicolons — the next sample
+    # clause starts there
+    r"[^;]{0,160}?"
+    r"(?:correspond\w* to|correlativ\w* with|attributed to)"
+    r"[^;]{0,60}?"
+    # 2: unit — vocabulary-constrained like the unit regexes above
+    r"\b((?:UAZ|Subzone|Zone|Unit|Assemblage|Bed)\s?\d(?:\s?[–—-]\s?\d)?[A-Za-z]?)"
+    # 3/4: optional verbatim age tail — "of late Bathonian or early
+    # Callovian age" / "(middle Bathonian–early Callovian age)"
+    r"(?:\s+(?:of\s+)?([^;]{3,90}?\bage)|\s*\(([^();]{3,90}?\s+age)\))?",
+    re.IGNORECASE,
+)
+
+
+def _norm_sample_unit_key(raw: str | None) -> str:
+    """Normalize a unit reference to the ``NAME SUB`` resolution-map key
+    shape ("uaz 5 – 6" → "UAZ 5-6")."""
+    unit = re.sub(r"\s+", " ", str(raw or "").strip()).upper()
+    return re.sub(r"\s*[–—-]\s*", "-", unit)
+
+
+def extract_sample_unit_map_regex(
+    sections: list[dict[str, Any]] | None,
+    wanted_samples: set[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Regex fallback for the sample→unit map, from the paper prose.
+
+    Shapes seen in Boughdiri 2007:
+      * "Sample MB4 … contained an association corresponding to UAZ 6"
+      * "sample OTA1 … correlative with UAZ 7 of late Bathonian or
+        early Callovian age"
+      * "Sample CHA2 corresponds to UAZ 5-6 of latest Bajocian–middle
+        Bathonian age"
+
+    Only samples matching ``wanted_samples`` (alias-matched — the
+    caption may abbreviate) are returned; ``age_text`` stays VERBATIM.
+    Keys are the wanted-sample spelling so the row-level lookup needs
+    no fuzzy matching.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    if wanted_samples is not None and not wanted_samples:
+        return out
+    for sec in sections or []:
+        text = sec.get("text") or ""
+        if not text:
+            continue
+        for m in _SAMPLE_UNIT_RE.finditer(text):
+            code = m.group(1).upper()
+            key = next(
+                (w for w in (wanted_samples or []) if sample_codes_match(code, w)),
+                code,
+            )
+            if wanted_samples is not None and key not in wanted_samples:
+                continue
+            if key in out:
+                continue
+            entry: dict[str, Any] = {"unit": _norm_sample_unit_key(m.group(2))}
+            age = (m.group(3) or m.group(4) or "").strip()
+            if age:
+                entry["age_text"] = age
+            out[key] = entry
+    return out
+
+
+def parse_sample_resolution_response(
+    out: dict[str, Any] | None, wanted_samples: set[str] | None
+) -> dict[str, dict[str, Any]]:
+    """Tolerantly parse the LLM's ``sample_codes`` map (same response
+    object as :func:`parse_unit_resolution_response`). Keys are the
+    wanted-sample spelling; units not resolvable to a wanted sample are
+    dropped so a chatty model cannot invent samples the captions never
+    cite."""
+    samples = (out or {}).get("sample_codes")
+    if not isinstance(samples, dict):
+        return {}
+    parsed: dict[str, dict[str, Any]] = {}
+    for name, val in samples.items():
+        if not isinstance(val, dict):
+            continue
+        unit = _norm_sample_unit_key(val.get("unit"))
+        if not unit:
+            continue
+        key = next(
+            (w for w in (wanted_samples or []) if sample_codes_match(str(name), w)),
+            None,
+        )
+        if key is None:
+            continue
+        if key in parsed:
+            continue
+        entry: dict[str, Any] = {"unit": unit}
+        age = str(val.get("age_text")).strip() if val.get("age_text") else ""
+        if age:
+            entry["age_text"] = age
+        sec = str(val.get("section")).strip() if val.get("section") else ""
+        if sec:
+            entry["section"] = sec
+        parsed[key] = entry
     return parsed

@@ -919,11 +919,21 @@ def _panel_review_reasons(match: MatchResult) -> list[str]:
     # review UI noise. The flag is reserved for true visual-evidence
     # paths (image_ocr / image_panel_label) where the absence of a
     # pixel-read label genuinely indicates a missing OCR step.
-    if not printed_id and panel_id_source not in (
-        "image_ocr",
-        "image_panel_label",
-        "llm_first",
-        "caption",
+    # ``caption_order_positional`` (2026-09-14) is the same honesty
+    # case from the other side: the Phase 67 pass read the WHOLE plate
+    # and found no printed digits at all (e.g. Bragin 2025 Plate I
+    # carries only specimens and scale bars), so caption/reading order
+    # is the only possible pairing — there is no printed id to miss.
+    if (
+        not printed_id
+        and meta.get("association_method") != "caption_order_positional"
+        and panel_id_source
+        not in (
+            "image_ocr",
+            "image_panel_label",
+            "llm_first",
+            "caption",
+        )
     ):
         reasons.append("missing_printed_panel_id")
     if meta.get("extraction_method") == "llm_first" and not match.panel_path:
