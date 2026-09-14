@@ -89,3 +89,10 @@ scratch_*.py
 # User-provided PDF folders
 经典放射虫论文/
 
+
+# JVM crash logs from native OCR subprocess crashes (PaddleX on Arrow Lake)
+hs_err_pid*.log
+replay_pid*.log
+
+# ZCode local session state
+.zcode/
