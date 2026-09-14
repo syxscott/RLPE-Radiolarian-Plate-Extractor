@@ -13,8 +13,24 @@ runs). For each ``matches.jsonl`` found, build a JobRecord with
 ``status=STATUS_DONE`` and the rows loaded from disk, then call
 ``add_or_update_job()``.
 
+Audit 2026-08-19 (B-15) made the JSONL parse asynchronous (a
+``_DiskScanWorker`` QThread): ``load_recent_jobs_from_disk()``
+returns the *candidate* count synchronously and the actual
+JobRecords arrive via the ``JobsTab.scan_finished`` signal. The
+tests below therefore drive the event loop via
+``_wait_for_disk_scan`` before asserting on ``_jobs``.
+
+Audit 2026-08-17 (jobs_tab C1) made the loaded status honest: a
+manifests/ directory *with* ``complete.flag`` loads as
+STATUS_DONE; without it, the run was interrupted and loads as
+STATUS_FAILED. The main fixtures write ``complete.flag`` so the
+Phase 49 "loaded jobs are done" contract stays testable; a
+dedicated test pins the no-flag → STATUS_FAILED behaviour.
+
 Tests pin:
-  1. ``JobsTab.load_recent_jobs_from_disk()`` returns the count.
+  1. ``JobsTab.load_recent_jobs_from_disk()`` returns the candidate
+     count; the final loaded count lands in ``_jobs`` after the
+     async scan finishes.
   2. The synthetic ``service_work/<jid>/output/manifests/matches.jsonl``
      produces a job in ``_jobs`` with status=done, rows populated,
      output_dir pointing at ``<root>/output``.
@@ -30,6 +46,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -47,6 +64,54 @@ import pytest
 
 
 # ============================================================
+# Hermetic QSettings
+# ============================================================
+@pytest.fixture(autouse=True)
+def _hermetic_qsettings(monkeypatch):
+    """Point the QSettings keys the scan reads at junk names.
+
+    ``load_recent_jobs_from_disk`` also scans the *user's* last
+    PDF/export directories (audit 2026-09-03) and honours the
+    hidden-jobs set ("Clear all"). On a developer machine those
+    QSettings hold real values, which would inject real jobs into
+    these tests. Renaming the keys makes every lookup miss.
+    """
+    import rlpe.gui.constants as consts
+
+    for key in (
+        "QS_KEY_LAST_DIR",
+        "QS_KEY_LAST_EXPORT_DIR",
+        "QS_KEY_HIDDEN_JOB_IDS",
+    ):
+        if hasattr(consts, key):
+            monkeypatch.setattr(consts, key, f"test.missing.{key}")
+
+
+# ============================================================
+# Async scan helper
+# ============================================================
+def _wait_for_disk_scan(jobs_tab, timeout_s: float = 15.0) -> None:
+    """Spin the Qt event loop until the ``_DiskScanWorker`` finishes.
+
+    B-15 moved the JSONL parse onto a QThread; without this wait the
+    assertions below would race the worker (CI failure signature:
+    ``_jobs`` empty / count off by the not-yet-parsed jobs).
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        QApplication.processEvents()
+        worker = getattr(jobs_tab, "_disk_scan_worker", None)
+        try:
+            if worker is None or worker.isFinished():
+                QApplication.processEvents()
+                return
+        except RuntimeError:
+            # deleteLater already destroyed the worker → scan completed
+            return
+        time.sleep(0.01)
+
+
+# ============================================================
 # Fixtures
 # ============================================================
 @pytest.fixture
@@ -59,40 +124,42 @@ def tmp_work_dirs(tmp_path, monkeypatch):
     We monkeypatch ``constants.PROJECT_ROOT`` to point at the tmp_path
     so the scan picks up our synthetic dirs without touching the
     real project tree.
+
+    job-a / job-b / cli write ``complete.flag`` (audit 2026-08-17
+    C1: a manifests/ dir without it loads as STATUS_FAILED — those
+    pins live in the dedicated partial-run test).
     """
     import rlpe.gui.constants as consts
 
     monkeypatch.setattr(consts, "PROJECT_ROOT", tmp_path)
+
+    def _manifest(jid_dir: Path, rows: list[dict], complete: bool = True) -> None:
+        manifests = jid_dir / "output" / "manifests"
+        manifests.mkdir(parents=True)
+        (manifests / "matches.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in rows) + "\n",
+            encoding="utf-8",
+        )
+        if complete:
+            (manifests / "complete.flag").write_text("", encoding="utf-8")
+
     # service_work/<job-a>/output/manifests/matches.jsonl
-    job_a = tmp_path / "service_work" / "job-a" / "output" / "manifests"
-    job_a.mkdir(parents=True)
-    rows_a = [
-        {"species": "Species A1", "panel_id": "job-a/fig1/p1", "page_index": 5},
-        {"species": "Species A2", "panel_id": "job-a/fig1/p2", "page_index": 5},
-    ]
-    (job_a / "matches.jsonl").write_text(
-        "\n".join(json.dumps(r) for r in rows_a) + "\n",
-        encoding="utf-8",
+    _manifest(
+        tmp_path / "service_work" / "job-a",
+        [
+            {"species": "Species A1", "panel_id": "job-a/fig1/p1", "page_index": 5},
+            {"species": "Species A2", "panel_id": "job-a/fig1/p2", "page_index": 5},
+        ],
     )
     # service_work/<job-b>/output/manifests/matches.jsonl  (1 row)
-    job_b = tmp_path / "service_work" / "job-b" / "output" / "manifests"
-    job_b.mkdir(parents=True)
-    (job_b / "matches.jsonl").write_text(
-        json.dumps({"species": "Species B1", "panel_id": "job-b/fig1/p1"}) + "\n",
-        encoding="utf-8",
+    _manifest(
+        tmp_path / "service_work" / "job-b",
+        [{"species": "Species B1", "panel_id": "job-b/fig1/p1"}],
     )
     # service_work/<job-empty>/output/manifests/matches.jsonl (empty → skip)
-    job_empty = tmp_path / "service_work" / "job-empty" / "output" / "manifests"
-    job_empty.mkdir(parents=True)
-    (job_empty / "matches.jsonl").write_text("", encoding="utf-8")
+    _manifest(tmp_path / "service_work" / "job-empty", [], complete=False)
     # work/output/manifests/matches.jsonl (CLI run, single job_id via hash)
-    cli_dir = tmp_path / "work" / "output" / "manifests"
-    cli_dir.mkdir(parents=True)
-    cli_rows = [{"species": "Species CLI", "panel_id": "cli/p1"}]
-    (cli_dir / "matches.jsonl").write_text(
-        "\n".join(json.dumps(r) for r in cli_rows) + "\n",
-        encoding="utf-8",
-    )
+    _manifest(tmp_path / "work", [{"species": "Species CLI", "panel_id": "cli/p1"}])
     return tmp_path
 
 
@@ -100,13 +167,17 @@ def tmp_work_dirs(tmp_path, monkeypatch):
 # 1. load_recent_jobs_from_disk returns count
 # ============================================================
 def test_load_recent_jobs_returns_count(tmp_work_dirs):
-    """Phase 49: load_recent_jobs_from_disk() returns the number of
-    jobs loaded (service_work + work CLI = 3 in this fixture)."""
+    """B-15: the synchronous return value is the *candidate* count
+    (4 manifests found: job-a, job-b, job-empty, cli); the final
+    loaded count after the async parse is 3 (the empty manifest is
+    skipped in the worker)."""
     from rlpe.gui.jobs_tab import JobsTab
 
     jt = JobsTab()
     n = jt.load_recent_jobs_from_disk()
-    assert n == 3, f"expected 3 jobs loaded, got {n}"
+    assert n == 4, f"expected 4 candidate manifests, got {n}"
+    _wait_for_disk_scan(jt)
+    assert len(jt._jobs) == 3, f"expected 3 jobs loaded after async scan, got {len(jt._jobs)}"
 
 
 # ============================================================
@@ -118,13 +189,14 @@ def test_loaded_job_has_correct_status_and_rows(tmp_work_dirs):
 
     jt = JobsTab()
     jt.load_recent_jobs_from_disk()
+    _wait_for_disk_scan(jt)
     # job-a: 2 rows
     job = jt._jobs.get("job-a")
     assert job is not None, "job-a should be loaded"
     assert job.status == STATUS_DONE, f"loaded job should be STATUS_DONE, got {job.status!r}"
     assert len(job.rows) == 2, f"job-a should have 2 rows, got {len(job.rows)}"
     assert job.rows[0]["species"] == "Species A1"
-    assert job.output_dir.endswith("service_work/job-a/output"), (
+    assert job.output_dir.replace("\\", "/").endswith("service_work/job-a/output"), (
         f"output_dir should end with service_work/job-a/output, got {job.output_dir!r}"
     )
 
@@ -145,6 +217,8 @@ def test_load_recent_jobs_handles_missing_dirs(tmp_path, monkeypatch):
     jt = JobsTab()
     n = jt.load_recent_jobs_from_disk()
     assert n == 0, f"expected 0 jobs (no dirs), got {n}"
+    QApplication.processEvents()
+    assert len(jt._jobs) == 0
 
 
 def test_load_recent_jobs_skips_empty_manifest(tmp_path, monkeypatch):
@@ -161,8 +235,10 @@ def test_load_recent_jobs_skips_empty_manifest(tmp_path, monkeypatch):
 
     jt = JobsTab()
     n = jt.load_recent_jobs_from_disk()
-    assert n == 0, f"expected 0 jobs (empty manifest), got {n}"
+    assert n == 1, f"expected 1 candidate (empty manifest), got {n}"
+    _wait_for_disk_scan(jt)
     assert "ghost" not in jt._jobs
+    assert len(jt._jobs) == 0, f"expected 0 loaded jobs (empty manifest), got {len(jt._jobs)}"
 
 
 # ============================================================
@@ -185,7 +261,32 @@ def test_load_recent_jobs_skips_corrupt_manifest(tmp_path, monkeypatch):
     jt = JobsTab()
     # Must not raise
     n = jt.load_recent_jobs_from_disk()
-    assert n == 0
+    _wait_for_disk_scan(jt)
+    assert len(jt._jobs) == 0, f"expected 0 loaded jobs (corrupt manifest), got {len(jt._jobs)}"
+
+
+def test_load_recent_jobs_partial_run_without_complete_flag(tmp_path, monkeypatch):
+    """Audit 2026-08-17 (jobs_tab C1): a manifests/ dir WITH rows but
+    WITHOUT ``complete.flag`` is a partial (interrupted) run — it must
+    load as STATUS_FAILED, not the misleading STATUS_DONE."""
+    import rlpe.gui.constants as consts
+    from rlpe.gui.constants import STATUS_FAILED
+
+    monkeypatch.setattr(consts, "PROJECT_ROOT", tmp_path)
+    job_dir = tmp_path / "service_work" / "partial" / "output" / "manifests"
+    job_dir.mkdir(parents=True)
+    (job_dir / "matches.jsonl").write_text(
+        json.dumps({"species": "Species P1", "panel_id": "partial/p1"}) + "\n",
+        encoding="utf-8",
+    )
+    from rlpe.gui.jobs_tab import JobsTab
+
+    jt = JobsTab()
+    jt.load_recent_jobs_from_disk()
+    _wait_for_disk_scan(jt)
+    job = jt._jobs.get("partial")
+    assert job is not None, "partial job should still be loaded (visible to operator)"
+    assert job.status == STATUS_FAILED, f"partial run should be STATUS_FAILED, got {job.status!r}"
 
 
 # ============================================================
@@ -199,8 +300,10 @@ def test_cli_work_gets_stable_hash_id(tmp_work_dirs):
 
     jt1 = JobsTab()
     jt1.load_recent_jobs_from_disk()
+    _wait_for_disk_scan(jt1)
     jt2 = JobsTab()
     jt2.load_recent_jobs_from_disk()
+    _wait_for_disk_scan(jt2)
     cli_ids_1 = [jid for jid in jt1._jobs if jid.startswith("cli_")]
     cli_ids_2 = [jid for jid in jt2._jobs if jid.startswith("cli_")]
     assert cli_ids_1, "should have a cli_ job_id"
@@ -215,6 +318,7 @@ def test_cli_work_loaded_with_cli_rows(tmp_work_dirs):
 
     jt = JobsTab()
     jt.load_recent_jobs_from_disk()
+    _wait_for_disk_scan(jt)
     cli_jobs = [j for j in jt._jobs.values() if j.job_id.startswith("cli_")]
     assert len(cli_jobs) == 1
     assert cli_jobs[0].rows[0]["species"] == "Species CLI"
@@ -230,6 +334,8 @@ def test_main_window_calls_load_recent_jobs_on_init(tmp_work_dirs, monkeypatch):
 
     mw = MainWindow()
     try:
+        # B-15: the parse runs on a QThread — wait for it before asserting
+        _wait_for_disk_scan(mw._jobs_tab)
         # The scan must have populated _jobs_tab._jobs with our 3 jobs
         job_ids = list(mw._jobs_tab._jobs.keys())
         assert "job-a" in job_ids, f"job-a should be loaded after MainWindow init, got {job_ids}"
@@ -276,6 +382,8 @@ def test_loaded_job_can_be_opened_in_results_tab(tmp_work_dirs):
 
     mw = MainWindow()
     try:
+        # B-15: wait for the async scan before touching _jobs
+        _wait_for_disk_scan(mw._jobs_tab)
         # Sanity: job-a is loaded
         assert "job-a" in mw._jobs_tab._jobs
         # Simulate double-click: open the results tab
@@ -372,6 +480,8 @@ def test_main_window_auto_opens_results_tab_when_jobs_loaded(tmp_work_dirs):
 
     mw = MainWindow()
     try:
+        # B-15: the scan + auto-open both run asynchronously now
+        _wait_for_disk_scan(mw._jobs_tab)
         # The scan must have loaded jobs
         assert len(mw._jobs_tab._jobs) > 0
         # The Results tab must have been auto-populated
@@ -420,6 +530,7 @@ def test_main_window_auto_open_picks_most_recent(tmp_work_dirs):
 
     mw = MainWindow()
     try:
+        _wait_for_disk_scan(mw._jobs_tab)
         jobs = mw._jobs_tab._jobs
         assert len(jobs) > 0
         # Find the job with the largest finished_at

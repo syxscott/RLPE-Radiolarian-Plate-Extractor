@@ -60,13 +60,18 @@ def test_theme_options_use_friendly_names():
 
 
 def test_llm_backend_options_use_friendly_names():
-    """Phase 47: LLM backend dropdown shows MiniMax-M3 (推荐) / etc."""
+    """Phase 47 / F17: the LLM backend dropdown offers the
+    vendor-agnostic registry. The pre-F17 vendor codes ("minimax",
+    "minimax-m3", "minimax_api") are accepted on *load* as legacy
+    aliases (mapped to "anthropic" in settings_tab/run_tab) but are
+    no longer offered as choices."""
     from rlpe.gui.constants import LLM_BACKEND_OPTIONS
 
     codes = [code for code, _en, _zh in LLM_BACKEND_OPTIONS]
-    assert "minimax" in codes
-    assert "minimax-m3" in codes
+    assert "anthropic" in codes
     assert "rules" in codes  # for users who don't want LLM
+    for legacy in ("minimax", "minimax-m3", "minimax_api"):
+        assert legacy not in codes, f"legacy alias {legacy!r} must not be offered in the dropdown"
 
 
 def test_ocr_backend_options_use_friendly_names():
@@ -133,6 +138,7 @@ def test_run_tab_llm_combo_uses_friendly_names():
             continue
         first_data = cb.itemData(0)
         if first_data in (
+            "anthropic",
             "minimax",
             "minimax-m3",
             "minimax_api",
@@ -198,8 +204,10 @@ def test_run_tab_collect_settings_returns_iso_codes():
     assert settings["ocr_lang"] in {"en", "ch_sim", "ch_tra", "ja", "ko", "fr", "de", "ru"}, (
         f"ocr_lang should be ISO code, got {settings['ocr_lang']!r}"
     )
-    # LLM backend
+    # LLM backend — F17 registry plus the pre-F17 legacy aliases that
+    # persisted settings may still carry (mapped to "anthropic" on load).
     assert settings["llm_backend"] in {
+        "anthropic",
         "minimax",
         "minimax-m3",
         "minimax_api",
@@ -252,6 +260,7 @@ def test_settings_tab_llm_backend_combo_uses_friendly_names():
     st = SettingsTab({})
     for cb in st.findChildren(QComboBox):
         if cb.itemData(0) in {
+            "anthropic",
             "minimax",
             "minimax-m3",
             "minimax_api",
@@ -302,6 +311,7 @@ def test_settings_tab_save_uses_current_data_iso_codes():
                 f"OCR backend currentData should be ISO code, got {cb.currentData()!r}"
             )
         elif cb.itemData(0) in {
+            "anthropic",
             "minimax",
             "minimax-m3",
             "minimax_api",
@@ -311,6 +321,7 @@ def test_settings_tab_save_uses_current_data_iso_codes():
             "rules",
         }:
             assert cb.currentData() in {
+                "anthropic",
                 "minimax",
                 "minimax-m3",
                 "minimax_api",
