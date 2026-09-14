@@ -1650,14 +1650,78 @@ _ITEM_UNIT_RE = re.compile(
 )
 _ITEM_SPLIT_RE = re.compile(r"(?:^|\n)\s*(\d{1,3})\s*[-–—]\s*", re.MULTILINE)
 
+# 2026-09-14 (tightened): the unit name must come from the KNOWN
+# vocabulary in _ITEM_UNIT_RE, and the name/number junction must stay
+# on one line. The previous "any 2+ capitals" shape flooded matches on
+# PDF line-wrapped words ("BAUMGARTNE R", "PLATEA U"), and the
+# unbounded \s+ before "assigned to" let sentence-distance matches
+# swallow the real "UAZ A is assigned to …".
+_UNIT_NAME_RE = r"((?:UAZ|Subzone|Zone|Unit|Assemblage|Bed))"
 _UNIT_AGE_ASSIGNED_RE = re.compile(
-    r"\b([A-Z]{2,})\s?([A-Z]|\d+|[IVX]+)\s+(?:is|was)?\s*assigned to\s+([^.(\n]{3,120})",
+    _UNIT_NAME_RE
+    + r"\s+([A-Z]|\d+|[IVX]+)\s+(?:is|was)\s+assigned to\s+([^(.]{3,160})",
     re.IGNORECASE,
 )
 _UNIT_AGE_HEADING_RE = re.compile(
-    r"\b([A-Z]{2,})\s?([A-Z]|\d+|[IVX]+)\s*\(\s*([^.)\n]{3,120}?)\s*\)",
+    _UNIT_NAME_RE + r"\s+([A-Z]|\d+|[IVX]+)\s*\(\s*([^)]{3,200}?)\s*\)",
     re.IGNORECASE,
 )
+# Third prose shape (Beccaro 2006 biozones + conclusions): the AGE comes
+# first with the unit cited in parentheses after it —
+#   "… deposition began in the early?-mid Bathonian-early Callovian
+#    pars (UAZ A) at the Coston delle Vette section"
+_UNIT_AGE_BEFORE_RE = re.compile(
+    r"([^(.\n]{10,160}?)\s*\(\s*"
+    + _UNIT_NAME_RE
+    + r"\s+([A-Z]|\d+|[IVX]+)\s*\)",
+    re.IGNORECASE,
+)
+_STAGE_WORDS = (
+    "Bathonian|Bajocian|Callovian|Oxfordian|Kimmeridgian|Tithonian|"
+    "Pliensbachian|Toarcian|Sinemurian|Hettangian|Aalenian|Valanginian|"
+    "Hauterivian|Barremian|Aptian|Albian|Cenomanian|Turonian|Coniacian|"
+    "Santonian|Campanian|Maastrichtian|Norian|Rhaetian|Carnian|Anisian|"
+    "Ladinian|Sakmarian|Artinskian|Darriwilian|Telychian|Sheinwoodian|"
+    "Jurassic|Triassic|Cretaceous|Permian|Ordovician|Silurian"
+)
+_STAGE_TAIL_RE = re.compile(
+    r"(?:^|[;,]|\b(?:in the|of the|from the|began|started|spans)\b)([^;]{0,160}?("
+    + _STAGE_WORDS
+    + r")[^;]{0,80})$",
+    re.IGNORECASE,
+)
+# Standard age phrase: optional early/late/mid qualifiers joined by
+# dashes, one or more stage words, optional "pars" qualifier —
+# "early?-mid Bathonian-early Callovian pars", "mid?-late? Oxfordian".
+_STAGE_PHRASE_RE = re.compile(
+    r"(?:(?:early|late|mid)\??\s*[-–—]\s*)?(?:(?:early|late|mid)\??\s*)?(?:"
+    + _STAGE_WORDS
+    + r")(?:\s+pars\b)?(?:(?:\s*[-–—]\s*|\s+to\s+)(?:(?:early|late|mid)\??\s*)(?:"
+    + _STAGE_WORDS
+    + r")(?:\s+pars\b)?)*",
+    re.IGNORECASE,
+)
+
+
+def _trim_age_before_unit(text: str) -> str:
+    """Reduce the age-before-unit capture to the standard age phrase.
+
+    The window before "(UAZ A)" sweeps in leading prose ("the siliceous
+    deposition began in the …"); the age itself is a well-formed stage
+    phrase ("early?-mid Bathonian-early Callovian pars"), so extract the
+    LAST such phrase from the window.
+    """
+    matches = list(_STAGE_PHRASE_RE.finditer(text))
+    if matches:
+        return matches[-1].group(0).strip(" ;,-")
+    return text.strip(" ;,")
+
+
+def _trim_unit_age_text(text: str) -> str:
+    """Cut justification tails the capture sweeps up ('… pars thanks to
+    the presence of …' -> '… pars') and collapse PDF line breaks."""
+    text = re.sub(r"\s+", " ", text)
+    return re.split(r"\s+(?:thanks|due|by|based on|owing)\b", text, maxsplit=1)[0].strip()
 
 
 def extract_caption_item_context(
@@ -1723,18 +1787,29 @@ def extract_unit_age_map_regex(
         text = sec.get("text") or ""
         if not text:
             continue
-        for pat, key_group in (
-            (_UNIT_AGE_ASSIGNED_RE, "assigned"),
-            (_UNIT_AGE_HEADING_RE, "heading"),
+        for pat, key_group, before_unit in (
+            (_UNIT_AGE_ASSIGNED_RE, "assigned", False),
+            (_UNIT_AGE_HEADING_RE, "heading", False),
+            (_UNIT_AGE_BEFORE_RE, "before", True),
         ):
             for m in pat.finditer(text):
-                unit = _norm_unit_key(m.group(1), m.group(2))
+                if before_unit:
+                    unit = _norm_unit_key(m.group(2), m.group(3))
+                    age_raw = m.group(1)
+                else:
+                    unit = _norm_unit_key(m.group(1), m.group(2))
+                    age_raw = m.group(3)
                 if wanted_units is not None and unit not in wanted_units:
                     continue
                 if unit in out:
                     continue
+                age_text = _trim_unit_age_text(age_raw.strip())
+                if before_unit:
+                    age_text = _trim_age_before_unit(age_text)
+                if not age_text:
+                    continue
                 out[unit] = {
-                    "age_text": m.group(3).strip(),
+                    "age_text": age_text,
                     "evidence": f"{key_group}: …{text[max(0, m.start() - 40) : m.end() + 20]}…",
                 }
     return out
@@ -1766,12 +1841,26 @@ def build_unit_resolution_prompt(
         + (", ".join(sorted(wanted_units)) if wanted_units else "(detect all)")
         + ".\n\n"
     )
+    # 2026-09-14: stratigraphy-bearing sections first (the LLM read was
+    # losing every unit past the char cap when front-matter sections
+    # consumed the budget), and raise the cap — modern cloud models
+    # handle this size without trouble.
+    def _prio(sec: dict[str, Any]) -> int:
+        hay = f"{sec.get('title') or ''} {sec.get('section_type') or ''}".lower()
+        if "geological" in hay or "biozone" in hay or "uaz" in hay or "strat" in hay:
+            return 0
+        if sec.get("section_type") in ("references", "systematic_paleontology"):
+            return 2
+        return 1
+
+    ordered = sorted(
+        (s for s in (sections or []) if s.get("text")), key=_prio
+    )
     prose = "\n\n".join(
-        f"[{sec.get('title') or sec.get('section_type') or 'section'}]\n"
-        + (sec.get("text") or "")[:5000]
-        for sec in (sections or [])
-        if sec.get("text")
-    )[:12000]
+        f"[{s.get('title') or s.get('section_type') or 'section'}]\n"
+        + (s.get("text") or "")[:6000]
+        for s in ordered
+    )[:24000]
     user_prompt = wanted_line + prose
     return system_prompt, user_prompt
 

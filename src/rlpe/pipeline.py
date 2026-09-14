@@ -2819,7 +2819,12 @@ class RadiolarianPipeline:
         if self.config.extra.get("use_caption_unit_geology", True):
             try:
                 _fig_caps = {p.figure_id: (p.caption_text or "") for p in (figures or [])}
-                results = self._attach_caption_unit_geology(results, paper_id, _fig_caps)
+                results = self._attach_caption_unit_geology(
+                    results,
+                    paper_id,
+                    _fig_caps,
+                    sections=list(getattr(od_result, "fulltext_sections", None) or []),
+                )
             except Exception:
                 logger.warning(
                     "caption-unit geology attach failed for %s; continuing",
@@ -3947,6 +3952,37 @@ class RadiolarianPipeline:
             )
             return assignments
 
+        def _has_digit_tokens(toks: list[Any]) -> bool:
+            return any((t.text or "").strip().strip(".,;:()[]").isdigit() for t in (toks or []))
+
+        if not _has_digit_tokens(tokens):
+            # 2026-09-14: PaddleOCR's onednn executor silently yields no
+            # tokens on some builds (observed: NotImplementedError caught
+            # inside paddle, 0 tokens returned on the Arrow Lake dev box)
+            # while EasyOCR reads the same white-on-black digits at ~1.0
+            # confidence. Retry ONCE with a lazily-built EasyOCR backend
+            # before giving up — one extra model load per pipeline
+            # instance, only on the no-digits path.
+            fb = getattr(self, "_ocr_digit_fallback_backend", None)
+            if fb is None:
+                try:
+                    from .ocr import OCRBackend
+
+                    fb = OCRBackend(backend="easyocr")
+                except Exception:
+                    fb = False  # sentinel: unavailable, don't retry
+                self._ocr_digit_fallback_backend = fb
+            if fb:
+                try:
+                    tokens = fb.recognize_panel(
+                        region_img, (0, 0, int(w_img), int(h_img))
+                    )
+                except Exception:
+                    logger.debug(
+                        "printed-number EasyOCR fallback failed", exc_info=True
+                    )
+                    return assignments
+
         def _seg_contains(j: int, cx: float, cy: float) -> bool:
             sx, sy, sw, sh = segmented[j].bbox
             return sx <= cx <= sx + sw and sy <= cy <= sy + sh
@@ -3994,6 +4030,42 @@ class RadiolarianPipeline:
             claimed_labels.add(label)
             claimed_segs.add(seg_j)
             assignments[label] = (seg_j, float(conf), text)
+
+        # Second pass — corner zoom for panels the full-plate read
+        # missed. Full-plate OCR drops small/edge-corner digits (the
+        # Beccaro '1' sits flush against the plate's top-left edge);
+        # recognize_panel_label pads + zooms the panel's corner band
+        # and reads them reliably. Only UNCLAIMED segments are tried,
+        # and only reads landing in the wanted label set are trusted.
+        read_backend = ocr
+        if not _has_digit_tokens(tokens) and fb:
+            read_backend = fb
+        unclaimed_segs = [j for j in range(len(segmented)) if j not in claimed_segs]
+        for j in unclaimed_segs:
+            sx, sy, sw, sh = segmented[j].bbox
+            try:
+                corner_tokens = read_backend.recognize_panel_label(
+                    region_img, (int(sx), int(sy), int(sw), int(sh)), label_corner="adaptive"
+                ) or []
+            except Exception:
+                continue
+            best = None
+            for t in corner_tokens:
+                text = (t.text or "").strip().strip(".,;:()[]")
+                if not text.isdigit():
+                    continue
+                norm = _normalize_panel_label(text)
+                if not norm or not norm.isdigit():
+                    continue
+                lab = int(norm)
+                if lab in wanted_labels and lab not in claimed_labels:
+                    if best is None or t.confidence > best[0]:
+                        best = (float(t.confidence), lab, text)
+            if best is not None:
+                conf, lab, text = best
+                assignments[lab] = (j, conf, text)
+                claimed_labels.add(lab)
+                claimed_segs.add(j)
         return assignments
 
     def _recover_bboxes_via_segmentation(
@@ -4401,11 +4473,17 @@ class RadiolarianPipeline:
                     }
             except Exception:
                 logger.debug("unit-geology LLM resolution failed for %s", paper_id, exc_info=True)
-        if not resolution and wanted_units:
+        # 2026-09-14: MERGE, not either/or — the one-shot LLM read may
+        # resolve only some units (observed: 1/6 on Beccaro), and the
+        # regex fallback reads the two common prose shapes reliably.
+        # LLM entries win; regex fills the gaps.
+        if wanted_units:
             try:
                 from .geology_extraction import extract_unit_age_map_regex
 
-                resolution = extract_unit_age_map_regex(sections, wanted_units)
+                _missing = wanted_units - set(resolution)
+                if _missing:
+                    resolution.update(extract_unit_age_map_regex(sections, _missing))
             except Exception:
                 logger.debug("unit-geology regex fallback failed", exc_info=True)
         cached[paper_id] = resolution
@@ -4422,6 +4500,7 @@ class RadiolarianPipeline:
         results: list[dict[str, Any]],
         paper_id: str,
         figure_captions: dict[str, str],
+        sections: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Prepend a unit-resolution geology link to rows whose caption
         item cites a sample code / stratigraphic unit.
@@ -4450,8 +4529,9 @@ class RadiolarianPipeline:
         if not contexts:
             return results
 
-        sections = (getattr(self, "_paper_sections_cache", {}) or {}).get(paper_id) or []
-        resolution = self._resolve_paper_unit_geology(paper_id, sections, wanted_units)
+        resolution = self._resolve_paper_unit_geology(
+            paper_id, sections, wanted_units
+        )
         section_codes = (getattr(self, "_paper_unit_geology_sections", {}) or {}).get(
             paper_id
         ) or {}
