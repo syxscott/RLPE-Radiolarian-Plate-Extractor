@@ -179,18 +179,23 @@ def test_gemma_fallback_uses_double_checked_lock():
 
 
 def test_pipeline_checks_cv2_imwrite_return():
-    """pipeline.py:2866 — cv2.imwrite returns False on failure but
-    the previous code stored image_path anyway. Fix: check the
-    return and ``continue`` on failure."""
+    """pipeline.py — cv2.imwrite/imwrite_unicode returns False on
+    failure but the previous code stored image_path anyway. Fix: check
+    the return and ``continue`` on failure.
+
+    2026-09-14: the call now goes through the unicode-safe
+    ``imwrite_unicode`` wrapper (cv2.imwrite silently fails on
+    non-ASCII Windows paths); the return-check contract is unchanged.
+    """
     pipeline = Path(__file__).resolve().parents[1] / "src" / "rlpe" / "pipeline.py"
     src = pipeline.read_text(encoding="utf-8")
     # Find the imwrite line and verify the return value is checked.
-    idx = src.find("cv2.imwrite(str(panel_path), crop)")
-    assert idx > 0, "cv2.imwrite line not found"
+    idx = src.find("imwrite_unicode(panel_path, crop)")
+    assert idx > 0, "imwrite_unicode line not found"
     # Look at the surrounding 250 chars
     window = src[max(0, idx - 80) : idx + 250]
-    assert "if not cv2.imwrite" in window, (
-        "cv2.imwrite return value is not checked. A False return "
+    assert "if not imwrite_unicode" in window, (
+        "imwrite_unicode return value is not checked. A False return "
         "(disk full / invalid path / encoding error) silently leaves "
         "the panel referenced in results with no actual crop file."
     )

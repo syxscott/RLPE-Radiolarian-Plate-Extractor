@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+from .preprocess import imread_unicode, imwrite_unicode
 
 from .types import FigureRegion, PageRecord
 from .utils import ensure_dir, slugify
@@ -130,7 +131,7 @@ def detect_figure_regions(
             min_area=min_area,
             device=yolo_device,
         )
-    image = cv2.imread(page.image_path, cv2.IMREAD_UNCHANGED)
+    image = imread_unicode(page.image_path, cv2.IMREAD_UNCHANGED)
     if image is None:
         return []
     # Bug #11 fix: PyMuPDF may save RGBA PNGs. cv2.threshold on a 4-channel
@@ -168,7 +169,7 @@ def detect_figure_regions(
         # audit 2026-07-27 B1: check imwrite return AND catch cv2.error
         # (C-level I/O errors raise cv2.error, not Python exceptions).
         try:
-            if not cv2.imwrite(str(crop_path), crop):
+            if not imwrite_unicode(crop_path, crop):
                 raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
         except Exception as exc:
             import logging
@@ -197,7 +198,7 @@ def detect_figure_regions(
         crop_path = crop_dir / f"{region_id}.png"
         # audit 2026-07-27 B1: same imwrite guard for fullpage fallback.
         try:
-            if not cv2.imwrite(str(crop_path), image):
+            if not imwrite_unicode(crop_path, image):
                 raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
         except Exception as exc:
             import logging
@@ -272,7 +273,7 @@ def detect_figure_regions_yolo(
     if min_area <= 0:
         min_area = 5000
     image_path = Path(page.image_path)
-    image = cv2.imread(str(image_path))
+    image = imread_unicode(str(image_path))
     if image is None:
         return []
     # PyMuPDF may save RGBA PNGs; convert to BGR before any processing so
@@ -397,7 +398,7 @@ def detect_figure_regions_yolo(
         crop_path = crop_dir / f"{region_id}.png"
         # audit 2026-07-27 B1: same imwrite guard for fullpage.
         try:
-            if not cv2.imwrite(str(crop_path), image):
+            if not imwrite_unicode(crop_path, image):
                 raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
         except Exception as write_exc:
             logging.getLogger(__name__).warning(
@@ -449,7 +450,7 @@ def detect_figure_regions_yolo(
             crop_path = crop_dir / f"{region_id}.png"
             # audit 2026-07-27 B1: same imwrite guard for per-detection crops.
             try:
-                if not cv2.imwrite(str(crop_path), crop):
+                if not imwrite_unicode(crop_path, crop):
                     raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
             except Exception as exc:
                 import logging
@@ -488,7 +489,7 @@ def detect_figure_regions_yolo(
         crop_path = crop_dir / f"{region_id}.png"
         # audit 2026-07-27 B1: imwrite guard for YOLO fullpage fallback.
         try:
-            if not cv2.imwrite(str(crop_path), image):
+            if not imwrite_unicode(crop_path, image):
                 raise RuntimeError(f"cv2.imwrite returned False for {crop_path}")
         except Exception as exc:
             import logging

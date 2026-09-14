@@ -97,7 +97,9 @@ def _run_grobid_path(
     monkeypatch.setattr(pipeline_mod, "find_plate_pages", lambda *a, **k: [])
     monkeypatch.setattr(pipeline_mod, "detect_figure_regions", lambda p, **k: list(regions))
     monkeypatch.setattr(
-        pipeline_mod.cv2, "imread", lambda *a, **k: np.zeros((8, 8, 3), dtype=np.uint8)
+        pipeline_mod,
+        "imread_unicode",
+        lambda *a, **k: np.zeros((8, 8, 3), dtype=np.uint8),
     )
     # Isolate the loop under test from the post-processing chain.
     for name in (

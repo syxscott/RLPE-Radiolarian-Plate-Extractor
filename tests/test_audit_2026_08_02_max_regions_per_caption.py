@@ -85,9 +85,11 @@ def _run_grobid_path(
     monkeypatch.setattr(pipeline_mod, "choose_best_page", lambda *a, **k: page)
     monkeypatch.setattr(pipeline_mod, "find_plate_pages", lambda *a, **k: [])
     monkeypatch.setattr(pipeline_mod, "detect_figure_regions", lambda *a, **k: list(regions))
+    # 2026-09-14: the pipeline reads page images through the
+    # unicode-safe imread_unicode wrapper now — mock that, not cv2.
     monkeypatch.setattr(
-        pipeline_mod.cv2,
-        "imread",
+        pipeline_mod,
+        "imread_unicode",
         lambda *a, **k: np.zeros((8, 8, 3), dtype=np.uint8),
     )
     for name in (

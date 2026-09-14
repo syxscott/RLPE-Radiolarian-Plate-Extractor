@@ -6,6 +6,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from .preprocess import imread_unicode, imwrite_unicode
 
 # Audit 2026-09-07: deduplicate the IoU implementation — association.py
 # has the identical function; import rather than maintain a copy.
@@ -98,7 +99,7 @@ class PanelSegmenter:
         return self._predictor
 
     def segment(self, image_path: str | Path) -> list[PanelCandidate]:
-        image = cv2.imread(str(image_path))
+        image = imread_unicode(str(image_path))
         if image is None:
             return []
         return self.segment_image(image)

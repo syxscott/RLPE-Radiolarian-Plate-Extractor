@@ -16,6 +16,7 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image
+from .preprocess import imread_unicode, imwrite_unicode
 
 from .llm_backends import (
     _normalize_panel_dict,
@@ -1852,10 +1853,58 @@ class RadiolarianPipeline:
             "paper_metadata": None,
             "metadata": {
                 "extraction_source": f"{source}_cycle",
-                "ingestion_error": "OD↔GROBID fallback cycle detected; recursive fallback abandoned",
+                # 2026-09-14 (stub honesty): with GROBID disabled the
+                # "cycle" is really "OD produced nothing twice" — name
+                # the actual failure so operators stop chasing the
+                # disabled GROBID server.
+                "ingestion_error": (
+                    "OD↔GROBID fallback cycle detected; recursive fallback abandoned"
+                    if not self.config.extra.get("disable_grobid", False)
+                    else "OD produced no usable results on repeated passes and GROBID is disabled "
+                    "(disable_grobid=true); no fallback available"
+                ),
                 "ingestion_warning": True,
             },
         }
+
+    def _record_od_zero_results_warning(
+        self,
+        paper_id: str,
+        n_figs: int,
+        skip_reasons: dict[str, int],
+        llm_available: bool,
+    ) -> None:
+        """Structured warning for the OD-figure-loop-yielded-zero-results
+        case (2026-09-14). Before this, a run where every figure was
+        skipped produced exactly one opaque ``_ingestion_grobid_cycle``
+        stub and nothing else — the operator could not distinguish
+        "all figures had no readable images" from "the LLM was down"
+        from "every figure was a non-plate type". The breakdown makes
+        the next diagnostic step obvious."""
+        try:
+            from .utils import _WARNINGS, _WARNINGS_LOCK
+
+            breakdown = ", ".join(
+                f"{k}={v}" for k, v in sorted(skip_reasons.items())
+            ) or "no skips recorded (figures may have produced empty results)"
+            msg = (
+                f"OD extracted {n_figs} figure(s) for {paper_id} but the "
+                f"figure loop produced 0 results (skip breakdown: {breakdown}; "
+                f"llm_available={llm_available}). GROBID fallback is disabled "
+                f"(disable_grobid=true), so the paper ends with 0 rows."
+            )
+            with _WARNINGS_LOCK:
+                _WARNINGS.append(
+                    {
+                        "label": "od_zero_results",
+                        "paper_id": paper_id,
+                        "message": msg,
+                        "timestamp": time.time(),
+                    }
+                )
+            logger.warning(msg)
+        except Exception:
+            logger.debug("od_zero_results warning emit failed", exc_info=True)
 
     def _process_one_pdf_od(self, paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
         if not self._enter_od_grobid_guard(paper_id, "OD"):
@@ -1958,6 +2007,16 @@ class RadiolarianPipeline:
                 "No figures AND no JSON data from OpenDataLoader for %s; falling back to GROBID.",
                 paper_id,
             )
+            # 2026-09-14 (Ark 12s-failure fix): same no-op re-entry as
+            # the zero-results branch below — with GROBID disabled the
+            # call just re-runs OD and lands on the cycle stub.
+            if bool(self.config.extra.get("disable_grobid", False)):
+                logger.warning(
+                    "OD returned neither figures nor JSON for %s and GROBID "
+                    "is disabled (disable_grobid=true) — no fallback available.",
+                    paper_id,
+                )
+                return []
             return self._process_one_pdf_grobid(paper_id, pdf_path)
         # Make sure ``figures`` is a list (OD occasionally returns
         # None instead of [] when the Java pairing stage fails).
@@ -2023,6 +2082,20 @@ class RadiolarianPipeline:
                         f"drawing only) — species matching will "
                         f"produce 0 rows."
                     )
+                elif figure_types and kids_tree:
+                    # 2026-09-14 (third silent shape, observed as the
+                    # misleading ``_ingestion_grobid_cycle`` stub on the
+                    # Ark-profile runs): the kids tree DOES contain
+                    # figure/image elements but pairing still yielded 0
+                    # figures. Emit the counts so the next occurrence is
+                    # diagnosable instead of silent.
+                    _warning_msg = (
+                        f"OpenDataLoader pairing flake for {paper_id}: "
+                        f"kids tree contains figure/image elements "
+                        f"({len(kids_tree)} kids) but figure extraction "
+                        f"returned 0 figures even after the retry. "
+                        f"Species matching will produce 0 rows."
+                    )
                 else:
                     _warning_msg = None
                 if _warning_msg is not None:
@@ -2080,6 +2153,11 @@ class RadiolarianPipeline:
 
         results: list[dict[str, Any]] = []
         n_figs = len(figures)
+        # 2026-09-14 (Ark 12s-failure diagnosis): when the loop yields
+        # zero results the operator had no way to tell WHY — every skip
+        # site was a silent ``continue``. Count skips by reason so the
+        # zero-results branch (and the operator) can see the breakdown.
+        skip_reasons: dict[str, int] = {}
         for fig_idx, pair in enumerate(figures, start=1):
             # NOTE: do NOT skip ``if not pair.image_paths`` here — the
             # range-chart pre-detection below needs to see those figures
@@ -2166,12 +2244,16 @@ class RadiolarianPipeline:
                             n_figs,
                             f"[{fig_idx}/{n_figs}] range_chart (orphan) → {len(rc_results)} links",
                         )
+                else:
+                    skip_reasons["no_image_paths"] = (
+                        skip_reasons.get("no_image_paths", 0) + 1
+                    )
                 continue
 
             for cand_path in pair.image_paths:
                 if not cand_path:
                     continue
-                cand = cv2.imread(cand_path)
+                cand = imread_unicode(cand_path)
                 if cand is None:
                     continue
                 area = int(cand.shape[0]) * int(cand.shape[1])
@@ -2186,6 +2268,9 @@ class RadiolarianPipeline:
                     "OD figure loop: %s skipped (no readable image; %d image_paths failed imread)",
                     pair.figure_id,
                     len(pair.image_paths or []),
+                )
+                skip_reasons["unreadable_images"] = (
+                    skip_reasons.get("unreadable_images", 0) + 1
                 )
                 continue
 
@@ -2513,6 +2598,9 @@ class RadiolarianPipeline:
                     "skipping classical segmentation",
                     pair.figure_id,
                 )
+                skip_reasons["figure_type_other"] = (
+                    skip_reasons.get("figure_type_other", 0) + 1
+                )
                 continue
 
             h_img, w_img = region_img.shape[:2]
@@ -2599,8 +2687,30 @@ class RadiolarianPipeline:
                 results.append(m)
 
         # Fallback: if OD returned no results even with figures, try GROBID.
+        # 2026-09-14 (Ark 12s-failure fix): with ``disable_grobid=true``
+        # the re-entry is a no-op that just re-runs OD (the impl's
+        # disable gate bounces straight back here), and the depth-4
+        # guard then mislabels the outcome as an "OD↔GROBID cycle" —
+        # the observed 12 s run burned a second full OD pass and died
+        # on a stub that pointed the operator at GROBID/endpoint issues
+        # that don't exist. Skip the re-entry entirely and surface the
+        # per-reason skip breakdown instead.
         if not results:
-            logger.info("OpenDataLoader produced no matches; falling back to GROBID+layout.")
+            _llm_available = self.gemma_runtime is not None
+            logger.info(
+                "OpenDataLoader produced no matches for %s "
+                "(figures=%d, skip_reasons=%s, llm_available=%s); "
+                "falling back to GROBID+layout.",
+                paper_id,
+                n_figs,
+                skip_reasons or "{}",
+                _llm_available,
+            )
+            if bool(self.config.extra.get("disable_grobid", False)):
+                self._record_od_zero_results_warning(
+                    paper_id, n_figs, skip_reasons, _llm_available
+                )
+                return results
             return self._process_one_pdf_grobid(paper_id, pdf_path)
         # Cross-figure panel reassignment: orphan figures (no species, no real
         # caption) sitting between two real plate figures on adjacent pages
@@ -5420,9 +5530,9 @@ class RadiolarianPipeline:
             seen_panels: set[tuple[Any, Any]] = set()
             for region in chosen_regions:
                 region_img = (
-                    cv2.imread(region.crop_path)
+                    imread_unicode(region.crop_path)
                     if region.crop_path
-                    else cv2.imread(best_page.image_path)
+                    else imread_unicode(best_page.image_path)
                 )
                 if region_img is None:
                     continue
@@ -7676,7 +7786,7 @@ Rules:
             # (disk full, invalid path, encoding error) but the previous
             # code stored image_path anyway — leaving the panel referenced
             # in results with no actual crop file on disk.
-            if not cv2.imwrite(str(panel_path), crop):
+            if not imwrite_unicode(panel_path, crop):
                 logger.warning("cv2.imwrite failed for %s; skipping panel", panel_path)
                 continue
             panel.image_path = str(panel_path)
@@ -8855,7 +8965,7 @@ Rules:
 
         for page, region, ridx in all_regions:
             region_img = (
-                cv2.imread(region.crop_path) if region.crop_path else cv2.imread(page.image_path)
+                imread_unicode(region.crop_path) if region.crop_path else imread_unicode(page.image_path)
             )
             if region_img is None:
                 done += 1

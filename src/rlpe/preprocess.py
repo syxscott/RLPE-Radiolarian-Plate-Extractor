@@ -6,8 +6,51 @@ import cv2
 import numpy as np
 
 
+def imread_unicode(path: str | Path, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
+    """Unicode-safe :func:`cv2.imread`.
+
+    2026-09-14 (Ark 12s-failure root cause): ``cv2.imread`` on Windows
+    opens the file with the ANSI locale codec, so any non-ASCII path
+    component (Chinese output directories, ``C:\\Users\\<中文名>\\``, …)
+    silently returns ``None`` — every plate image became "unreadable"
+    and whole papers collapsed to 0 rows. ``np.fromfile`` goes through
+    Python's own file API, so round-tripping the bytes through
+    ``cv2.imdecode`` reads any path OpenCV itself cannot.
+    """
+    path = Path(path)
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+    except (OSError, ValueError):
+        return None
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, flags)
+
+
+def imwrite_unicode(
+    path: str | Path, image: np.ndarray, params: list[int] | None = None
+) -> bool:
+    """Unicode-safe :func:`cv2.imwrite` (same Windows ANSI-path issue as
+    :func:`imread_unicode`; ``cv2.imwrite`` silently fails for non-ASCII
+    paths). Returns True when the encoded bytes were written.
+
+    ``params`` is cv2's imwrite parameter list, e.g.
+    ``[cv2.IMWRITE_PNG_COMPRESSION, 3]``.
+    """
+    path = Path(path)
+    ext = path.suffix or ".png"
+    ok, buf = cv2.imencode(ext, image, params or [])
+    if not ok:
+        return False
+    try:
+        buf.tofile(str(path))
+    except OSError:
+        return False
+    return True
+
+
 def load_image(image_path: str | Path) -> np.ndarray | None:
-    return cv2.imread(str(image_path))
+    return imread_unicode(image_path)
 
 
 def to_grayscale(image: np.ndarray) -> np.ndarray:
