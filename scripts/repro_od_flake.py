@@ -96,8 +96,12 @@ def main() -> None:
         for r in err[:3]:
             print("  seed", r["seed"], r["error"])
     varying = len(counts) > 1
-    print("VERDICT:", "HASH-ORDER DEPENDENT (varies by seed)" if varying
-          else "deterministic across seeds — flake is NOT hash-order")
+    print(
+        "VERDICT:",
+        "HASH-ORDER DEPENDENT (varies by seed)"
+        if varying
+        else "deterministic across seeds — flake is NOT hash-order",
+    )
     flaky = [r for r in ok if r["figures"] == 0]
     if flaky:
         print("zero-figure seeds:", [r["seed"] for r in flaky])

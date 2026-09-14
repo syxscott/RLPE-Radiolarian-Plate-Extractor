@@ -16,7 +16,6 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image
-from .preprocess import imread_unicode, imwrite_unicode
 
 from .llm_backends import (
     _normalize_panel_dict,
@@ -24,6 +23,7 @@ from .llm_backends import (
     resolve_llm_base_url,
     resolve_llm_model,
 )
+from .preprocess import imread_unicode, imwrite_unicode
 from .semantic_engine import _MATCH_PANEL_SYSTEM
 
 logger = logging.getLogger(__name__)
@@ -1884,9 +1884,10 @@ class RadiolarianPipeline:
         try:
             from .utils import _WARNINGS, _WARNINGS_LOCK
 
-            breakdown = ", ".join(
-                f"{k}={v}" for k, v in sorted(skip_reasons.items())
-            ) or "no skips recorded (figures may have produced empty results)"
+            breakdown = (
+                ", ".join(f"{k}={v}" for k, v in sorted(skip_reasons.items()))
+                or "no skips recorded (figures may have produced empty results)"
+            )
             msg = (
                 f"OD extracted {n_figs} figure(s) for {paper_id} but the "
                 f"figure loop produced 0 results (skip breakdown: {breakdown}; "
@@ -2245,9 +2246,7 @@ class RadiolarianPipeline:
                             f"[{fig_idx}/{n_figs}] range_chart (orphan) → {len(rc_results)} links",
                         )
                 else:
-                    skip_reasons["no_image_paths"] = (
-                        skip_reasons.get("no_image_paths", 0) + 1
-                    )
+                    skip_reasons["no_image_paths"] = skip_reasons.get("no_image_paths", 0) + 1
                 continue
 
             for cand_path in pair.image_paths:
@@ -2269,9 +2268,7 @@ class RadiolarianPipeline:
                     pair.figure_id,
                     len(pair.image_paths or []),
                 )
-                skip_reasons["unreadable_images"] = (
-                    skip_reasons.get("unreadable_images", 0) + 1
-                )
+                skip_reasons["unreadable_images"] = skip_reasons.get("unreadable_images", 0) + 1
                 continue
 
             # ---- Range-chart detection ----
@@ -2598,9 +2595,7 @@ class RadiolarianPipeline:
                     "skipping classical segmentation",
                     pair.figure_id,
                 )
-                skip_reasons["figure_type_other"] = (
-                    skip_reasons.get("figure_type_other", 0) + 1
-                )
+                skip_reasons["figure_type_other"] = skip_reasons.get("figure_type_other", 0) + 1
                 continue
 
             h_img, w_img = region_img.shape[:2]
@@ -2707,9 +2702,7 @@ class RadiolarianPipeline:
                 _llm_available,
             )
             if bool(self.config.extra.get("disable_grobid", False)):
-                self._record_od_zero_results_warning(
-                    paper_id, n_figs, skip_reasons, _llm_available
-                )
+                self._record_od_zero_results_warning(paper_id, n_figs, skip_reasons, _llm_available)
                 return results
             return self._process_one_pdf_grobid(paper_id, pdf_path)
         # Cross-figure panel reassignment: orphan figures (no species, no real
@@ -8965,7 +8958,9 @@ Rules:
 
         for page, region, ridx in all_regions:
             region_img = (
-                imread_unicode(region.crop_path) if region.crop_path else imread_unicode(page.image_path)
+                imread_unicode(region.crop_path)
+                if region.crop_path
+                else imread_unicode(page.image_path)
             )
             if region_img is None:
                 done += 1

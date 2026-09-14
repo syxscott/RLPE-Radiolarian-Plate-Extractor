@@ -6,11 +6,11 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from .preprocess import imread_unicode, imwrite_unicode
 
 # Audit 2026-09-07: deduplicate the IoU implementation — association.py
 # has the identical function; import rather than maintain a copy.
 from .association import _iou  # noqa: F401 — re-exported for self._iou call sites
+from .preprocess import imread_unicode
 from .types import PanelCandidate
 
 

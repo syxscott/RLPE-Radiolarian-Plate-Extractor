@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-from .preprocess import imread_unicode, imwrite_unicode
 
+from .preprocess import imread_unicode, imwrite_unicode
 from .types import FigureRegion, PageRecord
 from .utils import ensure_dir, slugify
 

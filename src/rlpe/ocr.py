@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
-from .preprocess import imread_unicode, imwrite_unicode
+
+from .preprocess import imread_unicode
 
 logger = logging.getLogger(__name__)
 
@@ -206,8 +207,6 @@ class OCRBackend:
             return []
 
         if isinstance(image, (str, Path)):
-            import cv2
-
             image = imread_unicode(str(image))
         if image is None:
             return []
@@ -481,12 +480,9 @@ class OCRBackend:
         if engine is None:
             return []
         if isinstance(image, (str, Path)):
-            import cv2
-
             image = imread_unicode(str(image))
         if image is None:
             return []
-        import cv2
 
         h_img, w_img = image.shape[:2]
         x, y, w, h = bbox

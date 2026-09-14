@@ -27,9 +27,7 @@ def imread_unicode(path: str | Path, flags: int = cv2.IMREAD_COLOR) -> np.ndarra
     return cv2.imdecode(data, flags)
 
 
-def imwrite_unicode(
-    path: str | Path, image: np.ndarray, params: list[int] | None = None
-) -> bool:
+def imwrite_unicode(path: str | Path, image: np.ndarray, params: list[int] | None = None) -> bool:
     """Unicode-safe :func:`cv2.imwrite` (same Windows ANSI-path issue as
     :func:`imread_unicode`; ``cv2.imwrite`` silently fails for non-ASCII
     paths). Returns True when the encoded bytes were written.
