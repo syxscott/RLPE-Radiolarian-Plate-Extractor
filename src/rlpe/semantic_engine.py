@@ -1668,6 +1668,51 @@ def _species_candidate_rejected(species: str) -> str | None:
             return "stopword_token"
     except Exception:  # stopword set unavailable → skip that guard
         pass
+    # 2026-09-15 (batch_2020 comparison round): non-plate figures that
+    # entered the species pipeline minted prose taxa from map/photo
+    # captions — observed "River basin" (a field-section figure legend)
+    # and "Siberian abundance" (title-page running text). None of these
+    # common geography/ecology nouns can appear inside a valid binomial:
+    # a candidate built only of such words is prose, and ANY word from
+    # the hard-impossible set is equally impossible as genus or epithet.
+    _PROSE_NOUNS = {
+        "river",
+        "creek",
+        "basin",
+        "abundance",
+        "section",
+        "boundary",
+        "massif",
+        "terrane",
+        "map",
+        "figure",
+        "fig",
+        "plate",
+        "sample",
+        "specimen",
+        "specimens",
+        "scale",
+        "area",
+        "areas",
+        "data",
+        "assemblage",
+        "spectrum",
+        "core",
+        "sediments",
+        "water",
+    }
+    _HARD_PROSE_NOUNS = {
+        "abundance",
+        "basin",
+        "creek",
+        "terrane",
+        "massif",
+        "sediments",
+    }
+    if lowered and all(t in _PROSE_NOUNS for t in lowered):
+        return "prose_noun_candidate"
+    if any(t in _HARD_PROSE_NOUNS for t in lowered):
+        return "prose_noun_candidate"
     try:
         from .stratigraphy import classify_age_string
 
@@ -3382,6 +3427,12 @@ class SemanticEngine:
             labels = item.get("labels") or []
             species = _clean_llm_species(item.get("species")) or ""
             if not labels or not species:
+                continue
+            # 2026-09-15: LLM-first pairs bypass the regex clause parser,
+            # so apply the same non-taxon plausibility gate here — prose
+            # taxa ("River basin" from a field-photo legend) reached
+            # matches.jsonl through this path in the batch_2020 round.
+            if _species_candidate_rejected(species):
                 continue
             if isinstance(labels, str):
                 # Audit 2026-09-01 BL-20: the LLM sometimes emits a
@@ -5140,6 +5191,9 @@ class SemanticEngine:
                 continue
             label = str(p.get("label", "")).strip()
             species = _clean_llm_species(p.get("species"))
+            # same plausibility gate as the Stage-1 path (2026-09-15)
+            if species and _species_candidate_rejected(species):
+                species = None
             conf = p.get("confidence")
             try:
                 conf_f = float(conf) if conf is not None else 0.7
