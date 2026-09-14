@@ -2809,6 +2809,23 @@ class RadiolarianPipeline:
                     paper_id,
                     exc,
                 )
+        # 2026-09-14 (caption-unit geology): rows whose caption item
+        # cites a sample code / stratigraphic unit ("CV 60, UAZ A") get
+        # a paper-level unit→age resolution link PREPENDED, so the age
+        # comes from the paper's own prose reading of that unit instead
+        # of whichever geological-setting record the proximity linker
+        # found first (the Beccaro "Early Jurassic on Middle-Jurassic
+        # panels" failure). One LLM call per paper, regex fallback.
+        if self.config.extra.get("use_caption_unit_geology", True):
+            try:
+                _fig_caps = {p.figure_id: (p.caption_text or "") for p in (figures or [])}
+                results = self._attach_caption_unit_geology(results, paper_id, _fig_caps)
+            except Exception:
+                logger.warning(
+                    "caption-unit geology attach failed for %s; continuing",
+                    paper_id,
+                    exc_info=True,
+                )
         # Round 11: dedup + drop stub rows + drop empty/invalid rows.
         # See ``_finalize_rows`` for the bug fixes this addresses.
         return self._finalize_rows(results, pdf_path=pdf_path)
@@ -3885,6 +3902,100 @@ class RadiolarianPipeline:
             r["caption_pairs"] = serialised_pairs
             r["page_context_snippet"] = page_context
 
+    def _ocr_printed_panel_assignments(
+        self,
+        region_img: np.ndarray,
+        segmented: list[Any],
+        wanted_labels: set[int],
+    ) -> dict[int, tuple[int, float, str]]:
+        """Read the PRINTED panel numbers on a plate and map them to
+        detected segments.
+
+        2026-09-14 (Beccaro Plate-1 scramble root cause): Phase 67
+        paired caption labels with OpenCV segments by reading-order
+        RANK distance — rows sorted by numeric label vs segments sorted
+        (y, x). On a jittered SEM grid those two orders disagree (the
+        topmost-by-y segment was printed panel 6, not printed panel 1),
+        so every crop was mislabeled. The plates of most radiolarian
+        papers carry the printed number ON or NEXT TO each specimen, so
+        read the numbers back and pair by VALUE:
+
+        for each OCR token that reads as a wanted caption label, claim
+        the segment containing the token's center (else the nearest
+        segment). Tokens are consumed highest-confidence first, and a
+        segment already claimed by a stronger read is not stolen.
+
+        Returns ``{label_int: (seg_index, confidence, token_text)}``.
+        Purely evidence-based — falls back to the historical rank
+        pairing for plates without readable printed numbers, with the
+        rows flagged ``association_method`` so the uncertainty stays
+        visible downstream.
+        """
+        assignments: dict[int, tuple[int, float, str]] = {}
+        if region_img is None or not segmented or not wanted_labels:
+            return assignments
+        ocr = getattr(self, "ocr", None)
+        if ocr is None:
+            return assignments
+        h_img, w_img = region_img.shape[:2]
+        try:
+            tokens = ocr.recognize_panel(region_img, (0, 0, int(w_img), int(h_img)))
+        except Exception:
+            logger.debug(
+                "printed-number OCR failed; falling back to rank pairing",
+                exc_info=True,
+            )
+            return assignments
+
+        def _seg_contains(j: int, cx: float, cy: float) -> bool:
+            sx, sy, sw, sh = segmented[j].bbox
+            return sx <= cx <= sx + sw and sy <= cy <= sy + sh
+
+        def _seg_dist(j: int, cx: float, cy: float) -> float:
+            sx, sy, sw, sh = segmented[j].bbox
+            dx = max(sx - cx, 0, cx - (sx + sw))
+            dy = max(sy - cy, 0, cy - (sy + sh))
+            return (dx * dx + dy * dy) ** 0.5
+
+        # Collect reads: (label, confidence, token_text, seg_j) — the
+        # segment is the token's containing segment, else the nearest.
+        reads: list[tuple[float, int, str, int]] = []
+        for tok in tokens or []:
+            text = (tok.text or "").strip().strip(".,;:()[]")
+            if not text.isdigit():
+                continue
+            norm = _normalize_panel_label(text)
+            if not norm or not norm.isdigit():
+                continue
+            label = int(norm)
+            if label not in wanted_labels:
+                continue
+            tx, ty, tw, th = tok.bbox
+            cx, cy = tx + tw / 2, ty + th / 2
+            best_j, best_d = None, float("inf")
+            for j in range(len(segmented)):
+                if _seg_contains(j, cx, cy):
+                    best_j, best_d = j, -1.0
+                    break
+                d = _seg_dist(j, cx, cy)
+                if d < best_d:
+                    best_j, best_d = j, d
+            if best_j is not None:
+                reads.append((float(tok.confidence), label, tok.text, best_j))
+
+        # Highest-confidence read first; a label already assigned keeps
+        # its first (strongest) read; a seg already claimed by a
+        # stronger read is not stolen.
+        claimed_labels: set[int] = set()
+        claimed_segs: set[int] = set()
+        for conf, label, text, seg_j in sorted(reads, key=lambda r: -r[0]):
+            if label in claimed_labels or seg_j in claimed_segs:
+                continue
+            claimed_labels.add(label)
+            claimed_segs.add(seg_j)
+            assignments[label] = (seg_j, float(conf), text)
+        return assignments
+
     def _recover_bboxes_via_segmentation(
         self,
         results: list[dict[str, Any]],
@@ -4052,6 +4163,52 @@ class RadiolarianPipeline:
         #      index pairing if scipy is unavailable.
         assignment: dict[int, int] = {}
 
+        # Pass 0 (2026-09-14, Beccaro Plate-1 scramble fix): pair rows
+        # to segments by the PRINTED panel number read off the plate.
+        # Rank distance (pass 2) assumes (y, x) sort == caption label
+        # order, which is false on jittered SEM grids — the observed
+        # failure assigned caption label 1 to the segment at printed
+        # panel 6's position. Reads are evidence; ranks are not.
+        ocr_paired: dict[int, str] = {}
+        _wanted_labels: set[int] = set()
+        for _r in sorted_results:
+            try:
+                _wanted_labels.add(int(str(_r.get("panel_id")).strip()))
+            except (ValueError, TypeError):
+                continue
+        if _wanted_labels:
+            try:
+                _ocr_map = self._ocr_printed_panel_assignments(
+                    region_img, segmented, _wanted_labels
+                )
+            except Exception:  # pragma: no cover - defensive
+                logger.debug(
+                    "Phase 67 printed-number pass failed; falling back to ranks",
+                    exc_info=True,
+                )
+                _ocr_map = {}
+            for _i, _r in enumerate(sorted_results):
+                try:
+                    _lab = int(str(_r.get("panel_id")).strip())
+                except (ValueError, TypeError):
+                    continue
+                if _lab in _ocr_map:
+                    _seg_j, _conf, _text = _ocr_map[_lab]
+                    assignment[_i] = _seg_j
+                    ocr_paired[_i] = _text
+            if ocr_paired:
+                logger.info(
+                    "Phase 67 bbox recovery: %s/%s paired %d/%d panels by printed-number OCR (%s)",
+                    paper_id,
+                    figure_id,
+                    len(ocr_paired),
+                    n_panels,
+                    ",".join(
+                        f"{sorted_results[_i].get('panel_id')}→#{t}"
+                        for _i, t in sorted(ocr_paired.items())[:12]
+                    ),
+                )
+
         def _seg_centroid(j: int) -> tuple[float, float]:
             sx, sy, sw, sh = segmented[j].bbox
             return float(sx + sw / 2), float(sy + sh / 2)
@@ -4078,7 +4235,7 @@ class RadiolarianPipeline:
             hint_requests.append((best_dist, i, best_j))
         # Greedy: closest hint first, each takes its preferred seg
         # unless already taken (then it falls through to pass 2).
-        claimed_segs: set[int] = set()
+        claimed_segs: set[int] = set(assignment.values())
         for _dist, panel_i, seg_j in sorted(hint_requests):
             if seg_j in claimed_segs:
                 continue  # fall through to pass 2
@@ -4149,6 +4306,20 @@ class RadiolarianPipeline:
             orig_r["bbox"] = new_bbox
             md = orig_r.get("metadata") or {}
             md["panel_id_source"] = "phase67_segmentation_recovery"
+            # 2026-09-14: record HOW this crop was paired to its label.
+            # printed_number_ocr = the printed label was read back off
+            # the plate (evidence); hint/rank = positional inference
+            # (unverifiable — flag for review).
+            if panel_i in ocr_paired:
+                md["association_method"] = "printed_number_ocr"
+                md["printed_label_read"] = ocr_paired[panel_i]
+            else:
+                md["association_method"] = "positional_fallback"
+                md.setdefault("needs_review", True)
+                reasons = list(md.get("review_reasons") or [])
+                if "positional_panel_association" not in reasons:
+                    reasons.append("positional_panel_association")
+                md["review_reasons"] = reasons
             orig_r["metadata"] = md
             # Write crop if possible.
             if pil_region is not None and crop_dir is not None:
@@ -4174,6 +4345,152 @@ class RadiolarianPipeline:
                         pid,
                         exc,
                     )
+        return results
+
+    def _resolve_paper_unit_geology(
+        self,
+        paper_id: str,
+        sections: list[dict[str, Any]] | None,
+        wanted_units: set[str] | None,
+    ) -> dict[str, dict[str, Any]]:
+        """One-shot paper-level unit→age resolution (2026-09-14).
+
+        Many papers attach per-specimen stratigraphy to each plate item
+        ("1 – Species AUTHOR, CV 60, UAZ A, x250"): the sample code and
+        the local biozone unit live in the CAPTION, the unit's AGE lives
+        in the prose ("UAZ A is assigned to early?–mid Bathonian –
+        early Callovian pars"). The proximity geology linker cannot see
+        this two-hop chain and stamps whichever geological-setting
+        record it found first onto every panel — the observed
+        "Early Jurassic 174.7-201.4" on Middle-Jurassic panels.
+
+        Resolution is ONE LLM call per paper (cost bounded regardless
+        of plate count); the regex fallback reads the two common prose
+        shapes ("X is assigned to …" / "X (…)" headings) when no LLM is
+        configured. Cached per paper.
+        """
+        cached = getattr(self, "_paper_unit_geology", None)
+        if cached is None:
+            cached = self._paper_unit_geology = {}
+        if getattr(self, "_paper_sections_cache", None) is None:
+            self._paper_sections_cache = {}
+        if getattr(self, "_paper_unit_geology_sections", None) is None:
+            self._paper_unit_geology_sections = {}
+        self._paper_sections_cache[paper_id] = list(sections or [])
+        if paper_id in cached:
+            return cached[paper_id]
+
+        resolution: dict[str, dict[str, Any]] = {}
+        if wanted_units and self.gemma_runtime is not None:
+            try:
+                from .gemma_postprocess import gemma_extract_text_json
+                from .geology_extraction import (
+                    build_unit_resolution_prompt,
+                    parse_unit_resolution_response,
+                )
+
+                system_prompt, user_prompt = build_unit_resolution_prompt(sections, wanted_units)
+                out = gemma_extract_text_json(self.gemma_runtime, system_prompt, user_prompt)
+                resolution = parse_unit_resolution_response(out, wanted_units)
+                codes = (out or {}).get("section_codes")
+                if isinstance(codes, dict):
+                    self._paper_unit_geology_sections[paper_id] = {
+                        str(k).strip().upper(): str(v)
+                        for k, v in codes.items()
+                        if isinstance(v, (str, list))
+                    }
+            except Exception:
+                logger.debug("unit-geology LLM resolution failed for %s", paper_id, exc_info=True)
+        if not resolution and wanted_units:
+            try:
+                from .geology_extraction import extract_unit_age_map_regex
+
+                resolution = extract_unit_age_map_regex(sections, wanted_units)
+            except Exception:
+                logger.debug("unit-geology regex fallback failed", exc_info=True)
+        cached[paper_id] = resolution
+        if resolution:
+            logger.info(
+                "unit-geology resolution for %s: %s",
+                paper_id,
+                ", ".join(sorted(resolution)),
+            )
+        return resolution
+
+    def _attach_caption_unit_geology(
+        self,
+        results: list[dict[str, Any]],
+        paper_id: str,
+        figure_captions: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """Prepend a unit-resolution geology link to rows whose caption
+        item cites a sample code / stratigraphic unit.
+
+        The synthetic link carries the paper's OWN reading of the unit's
+        age ("UAZ A" → "early?–mid Bathonian – early Callovian pars") and
+        the section-code locality, and is PREPENDED so _finalize_rows'
+        best-link pick (first link with age/locality) prefers it over
+        the proximity linker's paper-level dump.
+        """
+        if not results:
+            return results
+        from .geology_extraction import extract_caption_item_context
+
+        wanted_units: set[str] = set()
+        contexts: dict[int, dict[str, str | None]] = {}
+        for i, r in enumerate(results):
+            cap = figure_captions.get(r.get("figure_id") or "")
+            if not cap:
+                continue
+            ctx = extract_caption_item_context(cap, r.get("panel_id"))
+            if ctx["unit_token"] or ctx["sample_code"]:
+                contexts[i] = ctx
+                if ctx["unit_token"]:
+                    wanted_units.add(ctx["unit_token"])
+        if not contexts:
+            return results
+
+        sections = (getattr(self, "_paper_sections_cache", {}) or {}).get(paper_id) or []
+        resolution = self._resolve_paper_unit_geology(paper_id, sections, wanted_units)
+        section_codes = (getattr(self, "_paper_unit_geology_sections", {}) or {}).get(
+            paper_id
+        ) or {}
+        for i, ctx in contexts.items():
+            r = results[i]
+            md = r.get("metadata") or {}
+            unit = ctx["unit_token"]
+            entry = resolution.get(unit or "")
+            link: dict[str, Any] = {
+                "label": "caption_unit_geology",
+                "biozone": unit,
+                "sample_code": ctx.get("sample_code"),
+                "confidence": 0.75,
+                "evidence_text": (
+                    f"caption item {r.get('panel_id')}: sample "
+                    f"{ctx.get('sample_code')}; unit {unit}"
+                    + (f" → {entry.get('age_text')}" if entry else " (age unresolved)")
+                ),
+            }
+            if entry:
+                link["age"] = entry.get("age_text")
+                link["chronostratigraphy"] = entry.get("chronostratigraphy")
+                if entry.get("ma_top") is not None:
+                    link["ma_top"] = entry["ma_top"]
+                if entry.get("ma_base") is not None:
+                    link["ma_base"] = entry["ma_base"]
+            sec_code = ctx.get("section_code")
+            if sec_code and sec_code in section_codes:
+                link["locality"] = section_codes[sec_code]
+            if not entry:
+                md.setdefault("needs_review", True)
+                reasons = list(md.get("review_reasons") or [])
+                if "unresolved_unit_age" not in reasons:
+                    reasons.append("unresolved_unit_age")
+                md["review_reasons"] = reasons
+            links = list(md.get("geology_links") or [])
+            links.insert(0, link)
+            md["geology_links"] = links
+            r["metadata"] = md
         return results
 
     def _apply_multi_plate_enrichment(

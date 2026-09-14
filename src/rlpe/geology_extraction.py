@@ -1623,3 +1623,188 @@ def _extract_first(pattern: re.Pattern, text: str) -> str | None:
 from .text_filters import (
     looks_like_placeholder_caption as _is_placeholder_caption,  # noqa: E402,F401
 )
+
+# ---------------------------------------------------------------------------
+# 2026-09-14: caption-item sample/stratigraphic-unit capture + paper-level
+# unit→age resolution (Beccaro 2006 age-mismatch root cause).
+#
+# Many radiolarian papers attach PER-SPECIMEN stratigraphy to each plate
+# item — "1 – Species AUTHOR, CV 60, UAZ A, x250" — where the sample code
+# and the local biozone unit (UAZ A) live in the CAPTION, while the
+# unit's AGE lives in the prose ("UAZ A is assigned to early?–mid
+# Bathonian – early Callovian pars", "UAZ B (early Callovian pars –
+# early Oxfordian)"). The proximity geology linker cannot see this chain:
+# it matched a geological-setting record wholesale and stamped
+# "Early Jurassic 174.7-201.4" onto Middle-Jurassic panels.
+#
+# These helpers are generic: the unit-token vocabulary (UAZ / Zone /
+# Subzone / Unit / Assemblage / Bed) and the section-code shape
+# (1-3 capitals + number) cover the common biostratigraphy conventions
+# without any paper-specific rule.
+# ---------------------------------------------------------------------------
+
+_ITEM_SAMPLE_RE = re.compile(r"\b([A-Z]{1,3})\s?(\d+(?:\.\d+)?)\b")
+_ITEM_UNIT_RE = re.compile(
+    r"\b(UAZ|Subzone|Zone|Unit|Assemblage|Bed)\s+([A-Z]|\d+|[IVX]+)\b",
+    re.IGNORECASE,
+)
+_ITEM_SPLIT_RE = re.compile(r"(?:^|\n)\s*(\d{1,3})\s*[-–—]\s*", re.MULTILINE)
+
+_UNIT_AGE_ASSIGNED_RE = re.compile(
+    r"\b([A-Z]{2,})\s?([A-Z]|\d+|[IVX]+)\s+(?:is|was)?\s*assigned to\s+([^.(\n]{3,120})",
+    re.IGNORECASE,
+)
+_UNIT_AGE_HEADING_RE = re.compile(
+    r"\b([A-Z]{2,})\s?([A-Z]|\d+|[IVX]+)\s*\(\s*([^.)\n]{3,120}?)\s*\)",
+    re.IGNORECASE,
+)
+
+
+def extract_caption_item_context(
+    caption_text: str | None, label: str | int | None
+) -> dict[str, str | None]:
+    """Sample code + stratigraphic unit mentioned in ONE caption item.
+
+    Splits the plate caption on its numbered items (``1 – …`` / ``12 –``
+    etc., any dash kind) and inspects the item whose number matches
+    ``label``. Returns ``{"sample_code": "CV 60", "section_code": "CV",
+    "unit_token": "UAZ A"}`` with ``None`` for anything absent.
+    """
+    out: dict[str, str | None] = {
+        "sample_code": None,
+        "section_code": None,
+        "unit_token": None,
+    }
+    if not caption_text or label is None:
+        return out
+    label_s = str(label).strip()
+    matches = list(_ITEM_SPLIT_RE.finditer(caption_text))
+    if not matches:
+        return out
+    item_text = ""
+    for i, m in enumerate(matches):
+        if m.group(1) == label_s:
+            start = m.end()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(caption_text)
+            item_text = caption_text[start:end]
+            break
+    if not item_text:
+        return out
+    sm = _ITEM_SAMPLE_RE.search(item_text)
+    if sm:
+        out["sample_code"] = f"{sm.group(1)} {sm.group(2)}"
+        out["section_code"] = sm.group(1)
+    um = _ITEM_UNIT_RE.search(item_text)
+    if um:
+        out["unit_token"] = f"{um.group(1).upper()} {um.group(2).upper()}"
+    return out
+
+
+def _norm_unit_key(name: str, sub: str) -> str:
+    return f"{name.upper()} {sub.upper()}"
+
+
+def extract_unit_age_map_regex(
+    sections: list[dict[str, Any]] | None,
+    wanted_units: set[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Regex fallback for the unit→age map, from the paper prose.
+
+    Two prose shapes are recognised (both appear in Beccaro 2006):
+      * "UAZ A is assigned to early?–mid Bathonian – early Callovian pars …"
+      * heading form "UAZ B (early Callovian pars – early Oxfordian)"
+    Only units in ``wanted_units`` (the ones the captions actually cite)
+    are returned; the age text is kept VERBATIM (no Ma fabrication —
+    numeric bounds require either the LLM's reading of calibrated
+    anchors or an operator).
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for sec in sections or []:
+        text = sec.get("text") or ""
+        if not text:
+            continue
+        for pat, key_group in (
+            (_UNIT_AGE_ASSIGNED_RE, "assigned"),
+            (_UNIT_AGE_HEADING_RE, "heading"),
+        ):
+            for m in pat.finditer(text):
+                unit = _norm_unit_key(m.group(1), m.group(2))
+                if wanted_units is not None and unit not in wanted_units:
+                    continue
+                if unit in out:
+                    continue
+                out[unit] = {
+                    "age_text": m.group(3).strip(),
+                    "evidence": f"{key_group}: …{text[max(0, m.start() - 40) : m.end() + 20]}…",
+                }
+    return out
+
+
+def build_unit_resolution_prompt(
+    sections: list[dict[str, Any]] | None, wanted_units: set[str] | None
+) -> tuple[str, str]:
+    """System + user prompt for the one-shot LLM unit→age resolution.
+
+    The LLM reads the paper's own prose (geological setting / biozonation
+    sections) and returns a strict-JSON map. Keeping it ONE call per
+    paper (not per panel) bounds the cost regardless of plate count.
+    """
+    system_prompt = (
+        "You are a stratigraphy assistant. Given paper prose describing "
+        "biostratigraphic units and their ages, return STRICT JSON only: "
+        '{"units": {"<UNIT NAME>": {"age_text": "...", '
+        '"chronostratigraphy": "...", "ma_top": number|null, "ma_base": '
+        'number|null}}, "section_codes": {"<CODE>": "full locality '
+        'description"}}. age_text must be quoted VERBATIM from the paper '
+        "(no translation, no invented Ma numbers — use null when the "
+        "paper gives none). chronostratigraphy is the standard epoch/"
+        "period (e.g. 'Middle Jurassic'). section_codes maps the paper's "
+        "short section codes to their full locality names."
+    )
+    wanted_line = (
+        "Units cited by the plate captions: "
+        + (", ".join(sorted(wanted_units)) if wanted_units else "(detect all)")
+        + ".\n\n"
+    )
+    prose = "\n\n".join(
+        f"[{sec.get('title') or sec.get('section_type') or 'section'}]\n"
+        + (sec.get("text") or "")[:5000]
+        for sec in (sections or [])
+        if sec.get("text")
+    )[:12000]
+    user_prompt = wanted_line + prose
+    return system_prompt, user_prompt
+
+
+def parse_unit_resolution_response(
+    out: dict[str, Any] | None, wanted_units: set[str] | None
+) -> dict[str, dict[str, Any]]:
+    """Tolerantly parse the LLM's unit-resolution JSON.
+
+    Accepts the parsed dict and keeps only well-formed unit entries;
+    units not in ``wanted_units`` are dropped so a chatty model cannot
+    invent units the captions never cite.
+    """
+    units = (out or {}).get("units")
+    if not isinstance(units, dict):
+        return {}
+    parsed: dict[str, dict[str, Any]] = {}
+    for name, val in units.items():
+        if not isinstance(val, dict):
+            continue
+        unit = str(name).strip().upper()
+        if wanted_units is not None and unit not in wanted_units:
+            continue
+        entry: dict[str, Any] = {
+            "age_text": (str(val.get("age_text")).strip() or None) if val.get("age_text") else None,
+            "chronostratigraphy": (str(val.get("chronostratigraphy")).strip() or None)
+            if val.get("chronostratigraphy")
+            else None,
+        }
+        for k in ("ma_top", "ma_base"):
+            v = val.get(k)
+            if isinstance(v, (int, float)):
+                entry[k] = float(v)
+        if entry["age_text"] or entry["chronostratigraphy"]:
+            parsed[unit] = entry
+    return parsed

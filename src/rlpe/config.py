@@ -143,6 +143,12 @@ _KNOWN_EXTRA_KEYS = {
     # (max stability), an integer N = N threads (4 measured 3.2x faster
     # than 1 and stable), False = no clamp. Read by pipeline.py.
     "clamp_torch_threads",
+    # 2026-09-14: per-item caption sample/biozone-unit geology — the
+    # plate caption's "CV 60, UAZ A" item tokens are resolved against
+    # the paper prose (one LLM call per paper, regex fallback) so panel
+    # ages come from the cited unit instead of a proximity-matched
+    # geological-setting record.
+    "use_caption_unit_geology",
     # 2026-09-12: fresh-worker retries after a NATIVE worker crash
     # (0xC0000005-class) — probabilistic on hybrid CPUs; each retry is
     # a new process/memory layout. Default 3; 0 disables.
