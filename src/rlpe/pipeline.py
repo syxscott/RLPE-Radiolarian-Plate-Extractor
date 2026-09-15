@@ -7528,12 +7528,17 @@ Rules:
             # occur in the caption/page text the LLM saw — a full binomial
             # expanded from an abbreviated caption genus ("A. setosa" →
             # "Acanthodesmia setosa") is model world knowledge, not the
-            # paper's taxon.
+            # paper's taxon. Also apply the non-taxon plausibility gate:
+            # LLM-first rows bypass the regex caption parser, so prose
+            # look-alikes from garbled captions ("Khivach River basin" →
+            # "River basin") reached matches.jsonl through this path.
             if species:
+                from .semantic_engine import _species_candidate_rejected as _scr
+
                 _ctx = (caption.caption or "") if hasattr(caption, "caption") else ""
-                if not species_supported_by_text(str(species), _ctx):
+                if _scr(str(species)) or not species_supported_by_text(str(species), _ctx):
                     logger.debug(
-                        "LLM-first species rejected (genus not in caption): %r (fig=%s label=%s)",
+                        "LLM-first species rejected (plausibility/genus-support): %r (fig=%s label=%s)",
                         species,
                         figure_id,
                         label,
