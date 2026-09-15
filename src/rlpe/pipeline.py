@@ -194,6 +194,53 @@ def _pdf_title_fingerprint(pdf_path: Path | str) -> str | None:
     return _hashlib.sha1(norm[:400].encode("utf-8")).hexdigest()
 
 
+def _pdf_page_count(pdf_path: Path | str) -> int | None:
+    """Page count via pymupdf, or ``None`` when the PDF cannot be opened.
+
+    Cheap (metadata only — no text extraction), used for the adaptive
+    worker timeout.
+    """
+    try:
+        import pymupdf as _fitz
+    except Exception:
+        return None
+    try:
+        with _fitz.open(str(pdf_path)) as doc:
+            return len(doc)
+    except Exception:
+        return None
+
+
+_WORKER_TIMEOUT_BASE_SEC = 3600
+_WORKER_TIMEOUT_PER_PAGE_SEC = 120
+_WORKER_TIMEOUT_MAX_SEC = 14400
+
+
+def _worker_timeout_for(pdf_path: Path | str, configured: int | None) -> int:
+    """Resolve the per-paper worker subprocess timeout.
+
+    2026-09-15 (v4 rerun diagnosis): the flat 3600s default killed 4
+    workers that were all chewing on 3-7 MB scanned books — head-of-line
+    blocking starved the whole batch while every small paper queued
+    behind them. An explicit ``batch_worker_timeout_sec`` stays
+    authoritative (user override); the default now scales with page
+    count: 3600s + 120s/page, capped at 14400s, falling back to the
+    flat 3600s when the page count cannot be read.
+    """
+    if configured is not None:
+        try:
+            return max(1, int(configured))
+        except (TypeError, ValueError):
+            pass
+    pages = _pdf_page_count(pdf_path)
+    if not pages:
+        return _WORKER_TIMEOUT_BASE_SEC
+    return min(
+        _WORKER_TIMEOUT_MAX_SEC,
+        _WORKER_TIMEOUT_BASE_SEC + _WORKER_TIMEOUT_PER_PAGE_SEC * int(pages),
+    )
+
+
 def _total_physical_memory_mb() -> int | None:
     """Total physical RAM in MB, or ``None`` when it cannot be determined.
 
@@ -616,8 +663,21 @@ class RadiolarianPipeline:
 
                         handler.on_error = cli_fallback_prompt
                 self.gemma_fallback_handler = handler
+                # 2026-09-15 (v4 rerun diagnosis): the resolved model /
+                # endpoint were never logged, so an env leak
+                # (ANTHROPIC_MODEL=MiniMax-M2.7-highspeed overriding the
+                # intended model) ran for hours before anyone noticed.
+                # Print the resolved identity + call knobs on every init.
+                _b = getattr(self.gemma_runtime, "backend", None)
                 logger.info(
-                    "Anthropic-compatible LLM backend ready (default_fallback=%s interactive=%s)",
+                    "Anthropic-compatible LLM backend ready "
+                    "(model=%s base_url=%s thinking=%s budget=%s max_concurrent=%s "
+                    "default_fallback=%s interactive=%s)",
+                    getattr(_b, "model", "") or "?",
+                    getattr(_b, "base_url", "") or "?",
+                    bool(getattr(_b, "enable_thinking", False)),
+                    getattr(_b, "thinking_budget_tokens", 0),
+                    getattr(_b, "max_concurrent", "?"),
                     handler.default_action,
                     bool(self.config.extra.get("llm_interactive", False)),
                 )
@@ -3003,6 +3063,10 @@ class RadiolarianPipeline:
         actually run, not the raw ``num_workers``. Without a global
         cap, a combined workers × llm_max_concurrent above 32 gets a
         warning pointing at the knob.
+
+        2026-09-15: an unset ``llm_global_max_concurrent`` now defaults
+        the cap to 32 instead of warning-only (the v4 rerun diagnosis
+        showed the warning path still rate-limit-crashed an 8×8 run).
         """
         from dataclasses import replace as _dc_replace
 
@@ -3010,32 +3074,29 @@ class RadiolarianPipeline:
 
         dump_cfg = self.config
         num_w = max(1, int(effective_workers or self.config.num_workers))
+        # 2026-09-15 (v4 rerun diagnosis): an unset global cap used to
+        # mean "off + warning only", and the warning fired per-run while
+        # the 8-worker × 8-concurrent run still smashed the API rate
+        # limit. The cap now DEFAULTS to 32 (auto); an explicit
+        # ``llm_global_max_concurrent`` stays authoritative, and a true
+        # unbounded run can pass a large value (e.g. 999).
         global_cap = int(self.config.extra.get("llm_global_max_concurrent", 0) or 0)
-        if global_cap > 0:
-            per_worker = max(1, global_cap // num_w)
-            if per_worker < int(self.config.extra.get("llm_max_concurrent", 8) or 8):
-                logger.info(
-                    "run: llm_global_max_concurrent=%d across %d workers -> "
-                    "per-worker llm_max_concurrent=%d",
-                    global_cap,
-                    num_w,
-                    per_worker,
-                )
+        if global_cap <= 0:
+            global_cap = 32
+        per_worker_cfg = int(self.config.extra.get("llm_max_concurrent", 8) or 8)
+        per_worker = max(1, global_cap // num_w)
+        if per_worker < per_worker_cfg:
+            logger.info(
+                "run: llm_global_max_concurrent=%d across %d workers -> "
+                "per-worker llm_max_concurrent=%d",
+                global_cap,
+                num_w,
+                per_worker,
+            )
             dump_cfg = _dc_replace(
                 self.config,
                 extra={**self.config.extra, "llm_max_concurrent": per_worker},
             )
-        else:
-            per_worker_cfg = int(self.config.extra.get("llm_max_concurrent", 8) or 8)
-            if num_w * per_worker_cfg > 32:
-                logger.warning(
-                    "run: %d workers × llm_max_concurrent=%d = %d concurrent "
-                    "LLM calls — likely to hit API rate limits; consider "
-                    "llm_global_max_concurrent to divide the budget",
-                    num_w,
-                    per_worker_cfg,
-                    num_w * per_worker_cfg,
-                )
         path = self.config.work_dir / "manifests" / ".batch_worker_config.json"
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         self.config.manifests_dir().mkdir(parents=True, exist_ok=True)
@@ -3076,7 +3137,17 @@ class RadiolarianPipeline:
         # run from src/ without an installed package).
         rlpe_parent = str(Path(__file__).resolve().parents[1])
         env["PYTHONPATH"] = rlpe_parent + os.pathsep + env.get("PYTHONPATH", "")
-        timeout = int(self.config.extra.get("batch_worker_timeout_sec", 3600))
+        # 2026-09-15 (v4 rerun diagnosis): the default timeout adapts to
+        # the paper's page count (see _worker_timeout_for); an explicit
+        # ``batch_worker_timeout_sec`` stays authoritative.
+        _configured_timeout = self.config.extra.get("batch_worker_timeout_sec")
+        timeout = _worker_timeout_for(pdf_path, _configured_timeout)
+        if _configured_timeout is None:
+            logger.info(
+                "worker timeout for %s: adaptive %ss (no explicit batch_worker_timeout_sec set)",
+                pdf_path.name,
+                timeout,
+            )
         try:
             proc = _subprocess.run(
                 cmd,

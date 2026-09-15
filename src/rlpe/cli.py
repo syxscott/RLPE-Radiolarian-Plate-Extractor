@@ -685,8 +685,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--batch-worker-timeout-sec",
         dest="batch_worker_timeout_sec",
         type=int,
-        default=3600,
-        help="Kill a hung batch worker subprocess after this many seconds.",
+        default=None,
+        help="Kill a hung batch worker subprocess after this many seconds "
+        "(default: adaptive — 3600s + 120s per PDF page, capped at 14400s; "
+        "large scanned books used to hit the old flat 3600s default)",
     )
     # 2026-09-13: high-parallelism guardrails (8-16 subprocess workers).
     p.add_argument(
@@ -707,7 +709,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Divide the LLM API budget across batch workers: each "
         "worker's llm_max_concurrent becomes global/num-workers. Prevents "
         "16 workers × 8 calls = 128 simultaneous API requests (429 "
-        "storms). 0 = off (per-worker value applies unchanged).",
+        "storms). 0/unset = auto cap of 32 total in-flight calls; pass a "
+        "large value (e.g. 999) for a truly unbounded run.",
     )
     p.add_argument(
         "--batch-spawn-stagger-sec",
@@ -786,7 +789,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--MiniMax-no-thinking",
         dest="llm_no_thinking",
         action="store_true",
-        help="Disable extended thinking (default: OFF)",
+        help="Explicitly disable extended thinking (kept for backward "
+        "compatibility; thinking is already OFF by default — see "
+        "--llm-enable-thinking)",
+    )
+    p.add_argument(
+        "--llm-enable-thinking",
+        "--MiniMax-enable-thinking",
+        dest="llm_enable_thinking",
+        action="store_true",
+        help="Opt in to extended thinking (default: OFF — slower, more "
+        "conservative responses, ~1k extra tokens per call)",
     )
     p.add_argument(
         "--llm-thinking-budget",
@@ -794,6 +807,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="llm_thinking_budget",
         type=int,
         default=1024,
+        help="Thinking token budget per call when thinking is enabled (default: 1024)",
     )
     p.add_argument(
         "--llm-max-output-tokens",
@@ -1449,7 +1463,15 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             "llm_max_concurrent": args.llm_max_concurrent,
             "llm_timeout_sec": args.llm_timeout_sec,
             "llm_max_retries": args.llm_max_retries,
-            "llm_enable_thinking": not args.llm_no_thinking,
+            # 2026-09-15 (v4 rerun diagnosis): thinking is OPT-IN from the
+            # CLI now. The previous `not args.llm_no_thinking` made
+            # thinking ON by default — contradicting the backend dataclass
+            # default (llm_backends "default OFF to avoid surprise API
+            # cost") and the GUI/API paths (both default False), and it
+            # made every call 30-60s slower on Minimax M3.
+            "llm_enable_thinking": (
+                bool(getattr(args, "llm_enable_thinking", False)) and not args.llm_no_thinking
+            ),
             "llm_thinking_budget_tokens": args.llm_thinking_budget,
             "llm_max_output_tokens": args.llm_max_output_tokens,
             "llm_fallback_default": args.llm_fallback_default,
@@ -1578,6 +1600,42 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     if args.llm_morphology_max_species_per_paper is not None:
         cfg.llm_morphology_max_species_per_paper = int(args.llm_morphology_max_species_per_paper)
     ensure_dir(cfg.work_dir)
+    # 2026-09-15 (v4 rerun diagnosis): print the RESOLVED LLM identity and
+    # batch knobs once at startup. An env leak (shell
+    # ANTHROPIC_MODEL=MiniMax-M2.7-highspeed overriding the intended
+    # model) previously ran for hours before anyone noticed. The resolve
+    # chain is explicit-config > saved settings > env, so this shows what
+    # will ACTUALLY be called.
+    try:
+        from .llm_backends import resolve_llm_base_url, resolve_llm_model
+
+        _resolved_model = resolve_llm_model(cfg.extra)
+        _resolved_url = resolve_llm_base_url(cfg.extra)
+        _logger = logging.getLogger("rlpe.cli")
+        _logger.info(
+            "resolved LLM config: model=%s base_url=%s backend=%s thinking=%s "
+            "llm_max_concurrent=%s global_cap=%s workers=%s worker_timeout=%s",
+            _resolved_model or "(unset!)",
+            _resolved_url or "(vendor default)",
+            cfg.extra.get("llm_backend"),
+            bool(cfg.extra.get("llm_enable_thinking")),
+            cfg.extra.get("llm_max_concurrent"),
+            cfg.extra.get("llm_global_max_concurrent") or "auto(32)",
+            cfg.num_workers,
+            cfg.extra.get("batch_worker_timeout_sec") or "adaptive",
+        )
+        for _env_var in ("ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL"):
+            _env_val = os.environ.get(_env_var, "").strip()
+            if _env_val:
+                _logger.warning(
+                    "%s env var present (= %s) — explicit config/profile takes "
+                    "precedence, but unset it if this leak is unintentional "
+                    "(it silently changes the model when no config sets it)",
+                    _env_var,
+                    _env_val,
+                )
+    except Exception:  # diagnostics must never block the run
+        logging.getLogger("rlpe.cli").debug("resolved-LLM-config log failed", exc_info=True)
     pipeline = RadiolarianPipeline(cfg)
     rows = pipeline.run()
 
