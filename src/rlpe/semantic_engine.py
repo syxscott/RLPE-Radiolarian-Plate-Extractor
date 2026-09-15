@@ -1661,6 +1661,10 @@ def _species_candidate_rejected(species: str) -> str | None:
     if not tokens:
         return "empty"
     lowered = [t.lower().strip(".,;:()") for t in tokens]
+    # 2026-09-15 (batch_2020 audit): stringified nulls ("None", "null",
+    # "n/a") reaching the species field are never taxa.
+    if lowered == ["none"] or lowered == ["null"] or lowered == ["na"]:
+        return "stringified_null"
     try:
         from .association import _TAXON_STOP_WORDS
 

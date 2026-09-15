@@ -630,9 +630,15 @@ def _normalize_panel_dict(obj: dict[str, Any]) -> dict[str, Any]:
         # None, list, dict, object — none are sensible confidence
         # values, so default to 0.0 instead of crashing.
         conf_value = 0.0
+    # 2026-09-15 (batch_2020 audit): str(None) minted the literal string
+    # "None" when the model returned JSON null — a truthy value that
+    # slipped past the ``or None`` fallback and reached matches.jsonl as
+    # a species. Coerce None to None BEFORE stringifying (label too).
+    _raw_species = obj.get("species")
+    _raw_label = obj.get("label")
     out = {
-        "label": (str(obj.get("label", "")).strip() or None),
-        "species": (str(obj.get("species", "")).strip() or None),
+        "label": (str(_raw_label).strip() or None) if _raw_label is not None else None,
+        "species": (str(_raw_species).strip() or None) if _raw_species is not None else None,
         "confidence": conf_value,
         "reasoning": str(obj.get("reasoning", "")).strip() or "No reasoning provided.",
     }
