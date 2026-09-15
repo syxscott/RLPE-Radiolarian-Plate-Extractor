@@ -252,6 +252,21 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
         "block diagram",
         "flow diagram",
         "schematic diagram",
+        # 2026-09-15 (batch_2020 audit, Hernandez-Almeida FAIL): data
+        # CHARTS — abundance plots, scatter/line charts — were falling
+        # through to the species-clause override and getting mined for
+        # species rows ("Acanthodesmia setosa" fabricated from an
+        # abbreviated caption genus on an abundance figure). Chart
+        # captions must classify as diagram BEFORE the override.
+        "abundance of",
+        "relative abundance",
+        "abundance pattern",
+        "plot of",
+        "versus",
+        "time series",
+        "age-depth",
+        "age depth",
+        "scatter",
     ),
     "reconstruction": (
         "reconstruction",

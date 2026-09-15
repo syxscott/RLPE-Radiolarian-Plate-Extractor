@@ -29,6 +29,7 @@ import logging
 import re
 import threading
 import time
+import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -1752,6 +1753,51 @@ def _reject_non_taxon_pairs(pairs: list[CaptionPair]) -> list[CaptionPair]:
     return kept
 
 
+def _norm_for_support(text: str) -> str:
+    """Normalise text for species-support lookups: fold PDF ligatures,
+    lowercase, strip every non-alphanumeric char."""
+    text = unicodedata.normalize("NFKD", text or "")
+    for lig, rep in (("ﬁ", "fi"), ("ﬂ", "fl"), ("ﬀ", "ff"), ("ﬃ", "ffi"), ("ﬄ", "ffl")):
+        text = text.replace(lig, rep)
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def species_supported_by_text(species: str | None, context_text: str | None) -> bool:
+    """True when the species string is supported by its source text.
+
+    2026-09-15 (batch_2020 audit, Hernandez-Almeida FAIL): LLM caption
+    parsing is prompted to return a full binomial, so a caption that only
+    carries the abbreviation "A. setosa" got expanded from model world
+    knowledge into a real-but-WRONG genus ("Acanthodesmia setosa" — the
+    paper's taxon is Amphimelissa setosa).
+
+    Gate: the GENUS must occur in the context text (normalized: PDF
+    ligatures/linebreaks/punctuation folded). Abbreviated-caption cases
+    pass only when the full genus appears elsewhere in the SAME context
+    (caption + page text) — expansion of "X. epithet" must self-verify
+    against the paper's own wording, otherwise the row is dropped.
+    Genus-level swaps inside one caption are the association layer's
+    job, not this gate's.
+
+    Open-nomenclature forms ("gen. et sp. indet.", "Parvicingula sp.")
+    and paper-native descriptive labels return True — they come from the
+    source verbatim and have no expansion to verify.
+    """
+    words = re.findall(r"[A-Za-z][A-Za-z-]*", species or "")
+    if not words:
+        return True
+    low = [w.lower().strip("-") for w in words]
+    skip = {"sp", "spp", "cf", "aff", "nov", "gr", "gen", "et", "juv"}
+    content = [w for w in low if w not in skip]
+    if not content or "indet" in low:
+        return True  # "sp." / "gen. et sp. indet." — nothing to expand
+    genus = content[0]
+    n_ctx = _norm_for_support(context_text)
+    if not n_ctx:
+        return True  # no context available → other layers must judge
+    return _norm_for_support(genus) in n_ctx
+
+
 # 2026-09-12 (composite captions): one plate, MANY species groups —
 # "Plate 1. 1-5–Praenanina? hirsuta nov. sp.; 6–Nodotrisphaera ossispina
 # ...; 8, 9–Hindeosphaera venusta ...; 12-17–Glomeropyle algidum ..."
@@ -3437,6 +3483,17 @@ class SemanticEngine:
             # taxa ("River basin" from a field-photo legend) reached
             # matches.jsonl through this path in the batch_2020 round.
             if _species_candidate_rejected(species):
+                continue
+            # 2026-09-15 (Hernandez-Almeida FAIL): the LLM expands an
+            # abbreviated caption genus ("A. setosa") from world knowledge
+            # — "Acanthodesmia setosa" is a REAL genus that was never in
+            # the paper. Require the genus to occur in the caption text
+            # the model actually saw.
+            if not species_supported_by_text(species, caption_text):
+                logger.debug(
+                    "Stage-1 LLM species rejected (genus not in caption): %r",
+                    species,
+                )
                 continue
             if isinstance(labels, str):
                 # Audit 2026-09-01 BL-20: the LLM sometimes emits a
@@ -5197,6 +5254,16 @@ class SemanticEngine:
             species = _clean_llm_species(p.get("species"))
             # same plausibility gate as the Stage-1 path (2026-09-15)
             if species and _species_candidate_rejected(species):
+                species = None
+            # and the genus-support gate: enrich runs on page-level
+            # caption context, so an expanded genus absent from every
+            # caption on the page is model world knowledge, not the
+            # paper's taxon (Hernandez-Almeida FAIL class).
+            if species and not species_supported_by_text(species, page_caption):
+                logger.debug(
+                    "enrich species rejected (genus not in page caption): %r",
+                    species,
+                )
                 species = None
             conf = p.get("confidence")
             try:

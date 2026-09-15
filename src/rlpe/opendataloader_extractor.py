@@ -2037,6 +2037,43 @@ _SPECIES_NAME_RE = re.compile(
     r")"
 )
 
+# 2026-09-15 (systematic backfill for header-only plate captions):
+# detect whether a caption carries numbered item marks ("1. Species",
+# "2–Species", "; 3)", single-line "Plate 2. 1-5–Species") so a
+# header-only caption (Suzuki & Gawlick P3: "Plate 3. Scanning electron
+# micrographs... (1–6), EW146 (7–17)..." — zero items) can be enriched
+# from systematic-section mentions. The `\.\s` alternative catches
+# items that start right after the "Plate N." header on ONE line.
+_ITEM_MARK_RE = re.compile(r"(?:^|[\n;]|\.\s)\s*\d{1,3}\s*[-–—.)]\s*[A-Za-z]")
+_FIG_NUM_RE = re.compile(
+    r"fig(?:s|ure)?\.?\s*([0-9][0-9,\s\u2013\u2014\-]*[0-9a-z]*)", re.IGNORECASE
+)
+
+
+def _fig_numbers_from_ref(ref: str) -> list[int]:
+    """Extract the figure numbers from an inline plate reference like
+    ``"Plate 3, figs. 1, 32"`` → ``[1, 32]``; ranges expand (``figs 5–7``
+    → ``[5, 6, 7]``). Returns [] when the ref carries no fig numbers."""
+    m = _FIG_NUM_RE.search(ref or "")
+    if not m:
+        return []
+    blob = m.group(1)
+    out: list[int] = []
+    for part in re.split(r"[,]", blob):
+        part = part.strip()
+        if not part:
+            continue
+        rm = re.match(r"(\d+)\s*[\u2013\u2014-]\s*(\d+)", part)
+        if rm:
+            lo, hi = int(rm.group(1)), int(rm.group(2))
+            if 0 < lo <= hi <= 200:
+                out.extend(range(lo, hi + 1))
+            continue
+        dm = re.match(r"(\d+)", part)
+        if dm:
+            out.append(int(dm.group(1)))
+    return out
+
 
 def _collect_following_text(
     kids: list[dict[str, Any]],
@@ -2548,7 +2585,47 @@ def _find_plate_captions(
     # only mention is in the body, not in a standalone caption header)
     # still gets a chance to be reconstructed.
     plate_cap = max_real_plate + 1 if max_real_plate else 0
-    for plate_number, mentions in _harvest_inline_plate_refs(kids).items():
+    inline_refs = _harvest_inline_plate_refs(kids)
+    # 2026-09-15 (batch_2020 audit, Suzuki & Gawlick P3): OD's
+    # sibling-window/pagination limits in _collect_following_text can
+    # detach the numbered ITEM LIST from a plate-caption HEADER, leaving
+    # a header-only caption (209 chars, zero species) — the whole plate
+    # then extracts zero rows. The systematic paleontology section carries
+    # the same mapping as inline refs ("Tetracapsa sp. A ... (Plate 3,
+    # figs. 1, 32)"): merge harvested mentions into header-only captions
+    # as synthesized numbered item lines so the caption parser can pair
+    # every panel. Conservative gate: only when the caption has NO item
+    # marks AND fewer than 2 binomial patterns (i.e. genuinely
+    # header-only), and the harvest found >= 3 mentions for the plate.
+    for entry in found:
+        content = entry.get("content") or ""
+        if _ITEM_MARK_RE.search(content):
+            continue
+        mentions = inline_refs.get(entry.get("plate_number")) or []
+        if len(mentions) < 3:
+            continue
+        item_lines: list[tuple[int, str]] = []
+        for sp, plate_ref, _page in mentions:
+            for fig_no in _fig_numbers_from_ref(plate_ref):
+                item_lines.append((fig_no, sp))
+        if len({n for n, _ in item_lines}) < 3:
+            continue
+        item_lines.sort(key=lambda t: t[0])
+        seen_figs: set[int] = set()
+        merged: list[str] = []
+        for fig_no, sp in item_lines:
+            if fig_no in seen_figs:
+                continue
+            seen_figs.add(fig_no)
+            merged.append(f"{fig_no}. {sp}")
+        entry["content"] = content.rstrip() + "\n(systematic backfill)\n" + "\n".join(merged)
+        logger.info(
+            "plate %s: header-only caption backfilled with %d item(s) from "
+            "systematic-section mentions",
+            entry.get("plate_number"),
+            len(merged),
+        )
+    for plate_number, mentions in inline_refs.items():
         if plate_number in seen_plates:
             continue
         if not mentions:

@@ -82,7 +82,13 @@ from .scale_bar import (
 )
 from .schema_models import ProvenanceRecord
 from .segmentation import PanelSegmenter, SegmentationConfig
-from .semantic_engine import CaptionPair, PanelBox, PanelMatch, SemanticEngine
+from .semantic_engine import (
+    CaptionPair,
+    PanelBox,
+    PanelMatch,
+    SemanticEngine,
+    species_supported_by_text,
+)
 from .taxon import TaxonRecognizer
 from .text_filters import (
     looks_like_placeholder_caption as _looks_like_placeholder_caption,
@@ -3544,6 +3550,15 @@ class RadiolarianPipeline:
         missing_caption_pairs = 0
         missing_page_context = 0
         for r in results:
+            # 2026-09-15 (Hernandez-Almeida FAIL): abundance charts /
+            # diagrams / maps carry figure_type on their rows — they are
+            # not specimen plates, so LLM species ID on their panels
+            # fabricates taxa from chart labels ("A. setosa" → a real
+            # wrong genus). Only plate-family rows qualify.
+            _ft = (r.get("metadata") or {}).get("figure_type")
+            if _ft and _ft not in ("plate", None):
+                skipped_no_crop += 1
+                continue
             crop_path = r.get("panel_path")
             if not crop_path:
                 skipped_no_crop += 1
@@ -3774,6 +3789,17 @@ class RadiolarianPipeline:
                                 _pp_species = None
                         except Exception:
                             pass
+                    # 2026-09-15 (Hernandez-Almeida FAIL): same genus-support
+                    # gate — the panel LLM sees the caption + page context,
+                    # so a genus absent from both is model world knowledge.
+                    if _pp_species and not species_supported_by_text(
+                        _pp_species, f"{caption_for_panel}\n{page_context}"
+                    ):
+                        logger.debug(
+                            "Stage 4.5: LLM species genus not in context: %r",
+                            _pp_species,
+                        )
+                        _pp_species = None
                     if _pp_species:
                         r["species"] = _pp_species
                     r["label"] = parsed.get("label") or r.get("label")
@@ -4854,6 +4880,19 @@ class RadiolarianPipeline:
                     continue
                 # Skip stubs / non-plate figures.
                 src = (getattr(od_fig, "metadata", {}) or {}).get("extraction_source", "")
+                # 2026-09-15: `src` was read but never checked (dead
+                # variable) — geo/schematic stubs with non-empty captions
+                # could reach the LLM enrich call. Gate on it now.
+                if src in {"map", "range_chart", "geo_vision", "schematic_vision"}:
+                    continue
+                _fig_md = getattr(od_fig, "metadata", {}) or {}
+                if _fig_md.get("figure_type") in (
+                    "diagram",
+                    "schematic",
+                    "phylogenetic",
+                    "reconstruction",
+                ):
+                    continue
                 od_caption = getattr(od_fig, "caption_text", "") or ""
                 if not od_caption:
                     # No caption → can't meaningfully enrich
@@ -7485,6 +7524,21 @@ Rules:
                 "na",
             }:
                 species = None
+            # 2026-09-15 (Hernandez-Almeida FAIL): require the genus to
+            # occur in the caption/page text the LLM saw — a full binomial
+            # expanded from an abbreviated caption genus ("A. setosa" →
+            # "Acanthodesmia setosa") is model world knowledge, not the
+            # paper's taxon.
+            if species:
+                _ctx = (caption.caption or "") if hasattr(caption, "caption") else ""
+                if not species_supported_by_text(str(species), _ctx):
+                    logger.debug(
+                        "LLM-first species rejected (genus not in caption): %r (fig=%s label=%s)",
+                        species,
+                        figure_id,
+                        label,
+                    )
+                    species = None
             m = MatchResult(
                 paper_id=paper_id,
                 figure_id=str(figure_id),

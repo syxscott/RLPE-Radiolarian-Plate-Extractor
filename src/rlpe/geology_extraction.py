@@ -1683,6 +1683,22 @@ _UNIT_AGE_BEFORE_RE = re.compile(
     r"([^(.\n]{10,160}?)\s*\(\s*" + _UNIT_NAME_RE + r"\s+([A-Z]|\d+|[IVX]+)\s*\)",
     re.IGNORECASE,
 )
+# Fourth prose shape (2026-09-15, Ozkan 2020 Erzincan): "dated ... as
+# <stage phrase> (UNIT N to M; <age>)" — the unit carries a RANGE sub
+# number ("UAZ 9 to 11e12") and the age sits in the parens after a
+# semicolon. Neither the assigned/heading shapes (single sub token, no
+# range) nor the before-shape (age before the parens, unit sub is a
+# single token) match it. Groups: 1 = pre-paren window (may hold a
+# stage phrase like "middle Oxfordian–Tithonian"), 2 = unit name,
+# 3 = first sub number (the map key), 4 = paren age tail.
+_UNIT_AGE_DATED_RE = re.compile(
+    r"\bdated\b[^.;()]{0,120}?([A-Za-z][^.;()]{0,100}?)\s*\(\s*"
+    + _UNIT_NAME_RE
+    + r"\s+([A-Z]|\d+|[IVX]+)"
+    + r"(?:\s*(?:to|[–—-])\s*[A-Za-z0-9]+)*"
+    + r"\s*[;,]\s*([^)]{3,90}?)\s*\)",
+    re.IGNORECASE,
+)
 _STAGE_WORDS = (
     "Bathonian|Bajocian|Callovian|Oxfordian|Kimmeridgian|Tithonian|"
     "Pliensbachian|Toarcian|Sinemurian|Hettangian|Aalenian|Valanginian|"
@@ -1697,13 +1713,14 @@ _STAGE_TAIL_RE = re.compile(
     + r")[^;]{0,80})$",
     re.IGNORECASE,
 )
-# Standard age phrase: optional early/late/mid qualifiers joined by
+# Standard age phrase: optional early/late/mid/middle qualifiers joined by
 # dashes, one or more stage words, optional "pars" qualifier —
-# "early?-mid Bathonian-early Callovian pars", "mid?-late? Oxfordian".
+# "early?-mid Bathonian-early Callovian pars", "mid?-late? Oxfordian",
+# "middle Oxfordian–Tithonian" (2026-09-15: "middle" added — Ozkan 2020).
 _STAGE_PHRASE_RE = re.compile(
-    r"(?:(?:early|late|mid)\??\s*[-–—]\s*)?(?:(?:early|late|mid)\??\s*)?(?:"
+    r"(?:(?:early|late|mid|middle)\??\s*[-–—]\s*)?(?:(?:early|late|mid|middle)\??\s*)?(?:"
     + _STAGE_WORDS
-    + r")(?:\s+pars\b)?(?:(?:\s*[-–—]\s*|\s+to\s+)(?:(?:early|late|mid)\??\s*)(?:"
+    + r")(?:\s+pars\b)?(?:(?:\s*[-–—]\s*|\s+to\s+)(?:(?:early|late|mid|middle)\??\s*)?(?:"
     + _STAGE_WORDS
     + r")(?:\s+pars\b)?)*",
     re.IGNORECASE,
@@ -1798,9 +1815,18 @@ def extract_unit_age_map_regex(
             (_UNIT_AGE_ASSIGNED_RE, "assigned", False),
             (_UNIT_AGE_HEADING_RE, "heading", False),
             (_UNIT_AGE_BEFORE_RE, "before", True),
+            (_UNIT_AGE_DATED_RE, "dated", False),
         ):
             for m in pat.finditer(text):
-                if before_unit:
+                if key_group == "dated":
+                    # groups: 1=pre-paren window, 2=name, 3=first sub, 4=paren age
+                    unit = _norm_unit_key(m.group(2), m.group(3))
+                    stage_hit = _trim_age_before_unit(m.group(1) or "")
+                    if stage_hit and _STAGE_PHRASE_RE.search(stage_hit):
+                        age_raw = stage_hit
+                    else:
+                        age_raw = (m.group(4) or "").strip()
+                elif before_unit:
                     unit = _norm_unit_key(m.group(2), m.group(3))
                     age_raw = m.group(1)
                 else:
@@ -1858,7 +1884,12 @@ def build_unit_resolution_prompt(
         "numbers — use null when the paper gives none). "
         "chronostratigraphy is the standard epoch/period (e.g. 'Middle "
         "Jurassic'). section_codes maps the paper's short section codes "
-        "to their full locality names." + sample_rule
+        "to their full locality names."
+        + sample_rule
+        + " Units may also be dated inside a 'dated ... as' clause with a "
+        "range — e.g. 'dated this as middle Oxfordian–Tithonian (UAZ 9 to "
+        "11–12; Late Jurassic)' — resolve unit UAZ 9's age_text to the "
+        "paper's verbatim age wording there."
     )
     wanted_line = (
         "Units cited by the plate captions: "
