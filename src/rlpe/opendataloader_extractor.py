@@ -2601,7 +2601,16 @@ def _find_plate_captions(
         content = entry.get("content") or ""
         if _ITEM_MARK_RE.search(content):
             continue
-        mentions = inline_refs.get(entry.get("plate_number")) or []
+        cap_page = int(entry.get("page_number") or 0)
+        # 2026-09-15 (softening): only mentions BEFORE the caption page —
+        # systematic paleontology precedes the plates; a "(Pl. 2, fig. 3)"
+        # citation in the reference list (after the plates) is another
+        # paper's figure and must not be merged into this caption.
+        mentions = [
+            (sp, ref, pg)
+            for sp, ref, pg in (inline_refs.get(entry.get("plate_number")) or [])
+            if not cap_page or pg < cap_page
+        ]
         if len(mentions) < 3:
             continue
         item_lines: list[tuple[int, str]] = []

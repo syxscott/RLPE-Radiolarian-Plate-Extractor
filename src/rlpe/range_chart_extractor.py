@@ -286,6 +286,30 @@ _FIGURE_TYPE_PROMPT_KEYWORDS = {
     ),
 }
 
+# 2026-09-15 (softening): a caption naming CORES / drilling sites /
+# marine isotope stages describes a DOWNCORE DATA CHART, never a
+# specimen plate — SEM plates label specimens with figure numbers, not
+# hole/site identifiers. Checked (as a pair: an abundance/frequency/
+# distribution noun + a core-site identifier) before the
+# species-clause override so phrasing variants of the Hernandez-Almeida
+# abundance-chart class cannot mint species rows.
+_CORE_SITE_RE = re.compile(
+    r"\b(?:cores?|core\s+tops?|IODP|ODP|DSDP|Site\s+U?\d{3,}|MIS\s*\d)",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_core_chart(caption: str) -> bool:
+    low = caption.lower()
+    has_noun = bool(
+        re.search(
+            r"\b(?:frequency|variability|abundance|distribution|record|"
+            r"reconstruction|flux)\s+of\b",
+            low,
+        )
+    )
+    return has_noun and bool(_CORE_SITE_RE.search(caption))
+
 
 def classify_figure_type(caption: str | None, image_path: str | None = None) -> str:
     """Heuristically classify a figure's type from its caption text.
@@ -383,6 +407,12 @@ def classify_figure_type(caption: str | None, image_path: str | None = None) -> 
     # likely a plate even though no explicit keyword matched. This
     # catches the "other" gap that silently dropped Munasri-type
     # papers whose species lists use non-standard numbering.
+    # 2026-09-15 (softening): the core-chart rule runs FIRST — a
+    # caption citing cores/drilling sites is a downcore data chart
+    # even when it also names taxa ("Abundance of A. setosa in cores
+    # ... Site U1417").
+    if _looks_like_core_chart(caption):
+        return "diagram"
     _species_clause = re.compile(
         r"(?:\d{1,2}\s*[.):]\s+[A-Z][a-z]{2,})"  # "1. Dictyomitra"
         r"|(?:[A-Z][a-z]{3,}\s+[a-z]{3,})"  # "Dictyomitra formosa"

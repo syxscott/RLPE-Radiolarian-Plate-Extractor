@@ -2145,6 +2145,11 @@ class RadiolarianPipeline:
         section_links: dict[str, list[dict[str, Any]]] = {}
         knowledge_graph: dict[str, Any] | None = None
         if od_result.fulltext_sections:
+            # 2026-09-15 (softening): cache the paper's systematic/geo
+            # section text as genus-support context — the caption may
+            # only carry the abbreviated genus ("1–3. A. setosa") while
+            # the full genus is spelled out in the systematic section.
+            self._set_paper_support_text(paper_id, od_result.fulltext_sections)
             section_links = link_species_to_geology(
                 species_names=species_seed,
                 sections=od_result.fulltext_sections,
@@ -3793,7 +3798,8 @@ class RadiolarianPipeline:
                     # gate — the panel LLM sees the caption + page context,
                     # so a genus absent from both is model world knowledge.
                     if _pp_species and not species_supported_by_text(
-                        _pp_species, f"{caption_for_panel}\n{page_context}"
+                        _pp_species,
+                        self._support_context(paper_id, f"{caption_for_panel}\n{page_context}"),
                     ):
                         logger.debug(
                             "Stage 4.5: LLM species genus not in context: %r",
@@ -4541,6 +4547,42 @@ class RadiolarianPipeline:
                     )
         return results
 
+    def _set_paper_support_text(self, paper_id: str, sections: list[dict[str, Any]] | None) -> None:
+        """Cache the paper's systematic-paleontology / geological-setting
+        section text as genus-support context (2026-09-15 softening).
+
+        A caption may only carry the abbreviated genus ("1–3. A. setosa")
+        while the full genus is spelled out in the systematic section on
+        another page. The species-support gate consults this blob as a
+        last resort so cross-page abbreviation does not cost recall.
+        Capped per paper to bound memory.
+        """
+        cache = getattr(self, "_paper_support_text", None)
+        if cache is None:
+            cache = self._paper_support_text = {}
+        parts: list[str] = []
+        total = 0
+        for sec in sections or []:
+            st = str(sec.get("section_type") or "")
+            if st not in ("systematic_paleontology", "geological_setting"):
+                continue
+            txt = sec.get("text") or ""
+            if not txt:
+                continue
+            parts.append(txt)
+            total += len(txt)
+            if total > 400_000:
+                break
+        cache[paper_id] = "\n".join(parts)
+
+    def _support_context(self, paper_id: str, base_context: str) -> str:
+        """Gate context = the immediate text (caption / page context) plus
+        the cached paper support text when available."""
+        blob = (getattr(self, "_paper_support_text", {}) or {}).get(paper_id, "")
+        if not blob:
+            return base_context
+        return f"{base_context}\n{blob[:400_000]}"
+
     def _resolve_paper_unit_geology(
         self,
         paper_id: str,
@@ -4589,7 +4631,22 @@ class RadiolarianPipeline:
         wanted_samples = {str(s).strip().upper() for s in (wanted_samples or set()) if s}
         resolution: dict[str, dict[str, Any]] = {}
         sample_map: dict[str, dict[str, Any]] = {}
-        if (wanted_units or wanted_samples) and self.gemma_runtime is not None:
+        # 2026-09-14: MERGE, not either/or. 2026-09-15 (Ozkan audit):
+        # order REVERSED to evidence-first — the regex shapes quote the
+        # unit's own sentence verbatim, while the LLM paraphrased UAZ 9
+        # as the paper-level "Upper Cretaceous" (the paper also discusses
+        # Cretaceous ophiolite emplacement). Regex resolves first; the
+        # LLM runs ONCE and fills only the units the regex could not
+        # parse (plus the sample map).
+        try:
+            from .geology_extraction import extract_unit_age_map_regex
+
+            if wanted_units:
+                resolution.update(extract_unit_age_map_regex(sections, wanted_units))
+        except Exception:
+            logger.debug("unit-geology regex fallback failed", exc_info=True)
+        _missing = {u for u in wanted_units if u not in resolution}
+        if (_missing or wanted_samples) and self.gemma_runtime is not None:
             try:
                 from .gemma_postprocess import gemma_extract_text_json
                 from .geology_extraction import (
@@ -4599,7 +4656,7 @@ class RadiolarianPipeline:
                 )
 
                 system_prompt, user_prompt = build_unit_resolution_prompt(
-                    sections, wanted_units, wanted_samples
+                    sections, _missing or set(), wanted_samples
                 )
                 out = gemma_extract_text_json(self.gemma_runtime, system_prompt, user_prompt)
                 # Parse the sample map FIRST: the prose units it cites
@@ -4610,8 +4667,11 @@ class RadiolarianPipeline:
                 prose_units = {
                     str(v.get("unit")).strip().upper() for v in sample_map.values() if v.get("unit")
                 }
-                extended_units = set(wanted_units or set()) | prose_units
-                resolution = parse_unit_resolution_response(out, extended_units or None)
+                extended_units = (set(_missing) | prose_units) or None
+                llm_units = parse_unit_resolution_response(out, extended_units)
+                for k, v in llm_units.items():
+                    # evidence-first: regex entries keep precedence
+                    resolution.setdefault(k, v)
                 codes = (out or {}).get("section_codes")
                 if isinstance(codes, dict):
                     self._paper_unit_geology_sections[paper_id] = {
@@ -4621,23 +4681,6 @@ class RadiolarianPipeline:
                     }
             except Exception:
                 logger.debug("unit-geology LLM resolution failed for %s", paper_id, exc_info=True)
-        # 2026-09-14: MERGE, not either/or — the one-shot LLM read may
-        # resolve only some units (observed: 1/6 on Beccaro), and the
-        # regex fallback reads the two common prose shapes reliably.
-        # LLM entries win; regex fills the gaps.
-        try:
-            from .geology_extraction import extract_unit_age_map_regex
-
-            prose_units = {
-                str(v.get("unit")).strip().upper() for v in sample_map.values() if v.get("unit")
-            }
-            _wanted_all = set(wanted_units or set()) | prose_units
-            if _wanted_all:
-                _missing = _wanted_all - set(resolution)
-                if _missing:
-                    resolution.update(extract_unit_age_map_regex(sections, _missing))
-        except Exception:
-            logger.debug("unit-geology regex fallback failed", exc_info=True)
         if wanted_samples:
             try:
                 from .geology_extraction import (
@@ -4654,6 +4697,19 @@ class RadiolarianPipeline:
                     sample_map.update(extract_sample_unit_map_regex(sections, wanted_samples))
             except Exception:
                 logger.debug("sample-unit regex fallback failed", exc_info=True)
+        # prose units cited by the sample map may still lack ages — one
+        # more regex pass now that the sample map is known.
+        try:
+            from .geology_extraction import extract_unit_age_map_regex
+
+            prose_units = {
+                str(v.get("unit")).strip().upper() for v in sample_map.values() if v.get("unit")
+            }
+            _still_missing = {u for u in prose_units if u not in resolution}
+            if _still_missing:
+                resolution.update(extract_unit_age_map_regex(sections, _still_missing))
+        except Exception:
+            logger.debug("prose-unit age pass failed", exc_info=True)
         cached[paper_id] = resolution
         sample_cached[paper_id] = sample_map
         if resolution:
@@ -4708,6 +4764,37 @@ class RadiolarianPipeline:
                     wanted_units.add(ctx["unit_token"])
                 if ctx["sample_code"]:
                     wanted_samples.add(str(ctx["sample_code"]).strip().upper())
+        # 2026-09-15 (Ozkan audit): the unit may live in the SYSTEMATIC
+        # section rather than the caption — the proximity linker already
+        # stamped biozone="UAZ 9" onto these rows' links, but with the
+        # paper-level age. Harvest those unit tokens into the wanted set
+        # so the unit→age resolution can prepend a corrected link; the
+        # row keeps its proximity locality but gets the prose age.
+        import re as _re_units
+
+        _UNIT_LINK_RE = _re_units.compile(
+            r"^(UAZ|Subzone|Zone|Unit|Assemblage|Bed)\s+([A-Z]|\d+|[IVX]+)$",
+            _re_units.IGNORECASE,
+        )
+        for i, r in enumerate(results):
+            if i in contexts:
+                continue
+            md_i = r.get("metadata") or {}
+            for g in md_i.get("geology_links") or []:
+                if not isinstance(g, dict):
+                    continue
+                bz = str(g.get("biozone") or "").strip()
+                m_u = _UNIT_LINK_RE.match(bz)
+                if m_u:
+                    tok = f"{m_u.group(1).upper()} {m_u.group(2).upper()}"
+                    contexts[i] = {
+                        "unit_token": tok,
+                        "sample_code": g.get("sample_code"),
+                        "section_code": None,
+                        "from_proximity": True,
+                    }
+                    wanted_units.add(tok)
+                    break
         if not contexts:
             return results
 
@@ -6011,6 +6098,9 @@ class RadiolarianPipeline:
             {ent.text for cap in tei_captions for ent in (cap.entities or []) if ent and ent.text}
         )
         if grobid_result.fulltext_sections:
+            # 2026-09-15 (softening): genus-support context, mirrors the
+            # OD-path site.
+            self._set_paper_support_text(paper_id, grobid_result.fulltext_sections)
             section_links = link_species_to_geology(
                 species_names=species_seed,
                 sections=grobid_result.fulltext_sections,
@@ -7536,6 +7626,7 @@ Rules:
                 from .semantic_engine import _species_candidate_rejected as _scr
 
                 _ctx = (caption.caption or "") if hasattr(caption, "caption") else ""
+                _ctx = self._support_context(paper_id, _ctx)
                 if _scr(str(species)) or not species_supported_by_text(str(species), _ctx):
                     logger.debug(
                         "LLM-first species rejected (plausibility/genus-support): %r (fig=%s label=%s)",
@@ -7844,6 +7935,22 @@ Rules:
                                     # behaviour. Better a noisy
                                     # downstream than a silent fallback.
                                     pass
+                                # 2026-09-15 (batch_2020 audit): the
+                                # hybrid fill is a species writer — apply
+                                # the non-taxon plausibility gate and the
+                                # genus-support gate against the caption.
+                                from .semantic_engine import (
+                                    _species_candidate_rejected as _scr_h,
+                                )
+
+                                if _scr_h(candidate_species) or not species_supported_by_text(
+                                    candidate_species, caption.caption or ""
+                                ):
+                                    skipped_invalid += 1
+                                    r.setdefault("metadata", {})["hybrid_species_rejected"] = (
+                                        candidate_species
+                                    )
+                                    continue
                                 r["species"] = candidate_species
                                 r.setdefault("metadata", {})["species_source"] = (
                                     "caption_parser_hybrid"
@@ -7905,6 +8012,17 @@ Rules:
                             except Exception:
                                 _new_row_species_is_valid = True
                             if not _new_row_species_is_valid:
+                                skipped_invalid += 1
+                                continue
+                            # 2026-09-15 (batch_2020 audit): same double
+                            # gate on caption-parser new rows.
+                            from .semantic_engine import (
+                                _species_candidate_rejected as _scr_h2,
+                            )
+
+                            if _scr_h2(species) or not species_supported_by_text(
+                                species, caption.caption or ""
+                            ):
                                 skipped_invalid += 1
                                 continue
                             # audit 2026-08-05 (Fill Gaps): 1-based

@@ -235,3 +235,106 @@ def test_prompt_documents_dated_shape():
 
     sys_p, _u = build_unit_resolution_prompt(None, {"UAZ 9"}, None)
     assert "dated" in sys_p and "UAZ 9" in sys_p
+
+
+# ============================================================
+# Softening round (2026-09-15 late)
+# ============================================================
+def test_fuzzy_genus_accepts_spelling_correction():
+    from rlpe.semantic_engine import species_supported_by_text
+
+    cap = "1. Williriedelum crystallinum Dumitrica, 1970"  # print defect
+    assert species_supported_by_text("Williriedellum crystallinum", cap)
+
+
+def test_fuzzy_genus_still_rejects_different_genus():
+    from rlpe.semantic_engine import species_supported_by_text
+
+    cap = "Fig. 10. Abundance of A. setosa in cores. (A) IODP Site U1417."
+    assert not species_supported_by_text("Acanthodesmia setosa", cap)
+
+
+def test_association_gate_rejects_prose_and_unsupported():
+    from rlpe.association import _gate_species_candidate
+
+    cap = "Fig. 3. Triassic section in Pravyi Vodopadnyi Creek, Khivach River basin."
+    assert _gate_species_candidate("River basin", cap, "1") is None
+    assert _gate_species_candidate("Nagrum ustus", "Plate 1. 1. A. setosa", "1") is None
+    assert _gate_species_candidate("Glomeropyle algidum", "1. Glomeropyle algidum", "1") == (
+        "Glomeropyle algidum"
+    )
+
+
+def test_core_chart_rule():
+    from rlpe.range_chart_extractor import classify_figure_type
+
+    cap = (
+        "Fig. 11. Variability of G. bulloides in cores from the North "
+        "Pacific. (A) IODP Site U1417; (B) ODP Site 883."
+    )
+    assert classify_figure_type(cap) == "diagram"
+    # a real plate naming a borehole in passing must stay a plate
+    plate_cap = (
+        "Plate 1. Scanning electron micrographs of radiolarians from "
+        "core samples. 1. Hexasaturnalis hexagonus; 2. Parahsuum."
+    )
+    assert classify_figure_type(plate_cap) == "plate"
+
+
+def test_backfill_ignores_later_page_mentions():
+    """References-section mentions (AFTER the caption page) must not be
+    merged into the caption."""
+    from rlpe.opendataloader_extractor import _find_plate_captions
+
+    header = (
+        "Plate 3. Scanning electron micrographs of radiolarians from "
+        "the Fludergraben section, Austria. A 50 µm scale bar applies."
+    )
+    kids = _kids_with(
+        header,
+        [
+            # all mentions are on page 40 — AFTER the caption page (34)
+            "Tetracapsa sp. A sensu Suzuki and Gawlick, 2003b (Plate 3, figs. 1, 32)",
+            "Saitoum pagei Pessagno, 1977 (Plate 3, figs. 18, 19)",
+            "Parvicingula spinata Vinassa, 1899 (Plate 3, fig. 13)",
+            "Droltus galerus Suzuki, 1995b (Plate 3, fig. 49)",
+            "Archaeodictyomitra sixi Yang, 1993 (Plate 3, fig. 50)",
+        ],
+    )
+    # mentions sit on page 40 — AFTER the caption page (34): they are
+    # references-section citations and must be ignored
+    for k in kids[1:]:
+        k["page number"] = 40
+    found = _find_plate_captions(kids, caption_window=2)
+    p3 = [f for f in found if f["plate_number"] == 3]
+    assert p3 and "systematic backfill" not in p3[0]["content"]
+
+
+def test_paren_age_rule_verb_independent():
+    from rlpe.geology_extraction import extract_unit_age_map_regex
+
+    sections = [
+        {
+            "title": "x",
+            "text": "Sample MET-9 indicates a late Bathonian to early "
+            "Callovian age (UAZ 7 to 8; Middle Jurassic).",
+        }
+    ]
+    out = extract_unit_age_map_regex(sections, {"UAZ 7"})
+    assert out["UAZ 7"]["age_text"] == "Middle Jurassic"
+
+
+def test_garbage_paren_tail_rejected():
+    from rlpe.geology_extraction import extract_unit_age_map_regex
+
+    sections = [
+        {"title": "x", "text": "The cherts are dated (UAZ 9; see Baumgartner et al. 1995)."}
+    ]
+    assert extract_unit_age_map_regex(sections, {"UAZ 9"}) == {}
+
+
+def test_before_shape_requires_stage_word():
+    from rlpe.geology_extraction import extract_unit_age_map_regex
+
+    sections = [{"title": "x", "text": "The section spans (UAZ 9) in the Tb section."}]
+    assert extract_unit_age_map_regex(sections, {"UAZ 9"}) == {}

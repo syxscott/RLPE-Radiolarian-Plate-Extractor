@@ -1725,6 +1725,26 @@ _STAGE_PHRASE_RE = re.compile(
     + r")(?:\s+pars\b)?)*",
     re.IGNORECASE,
 )
+# Fifth shape (2026-09-15, verb-independent bracket rule): ANY sentence
+# that puts a unit (with an optional range sub number) in parentheses
+# followed by a well-formed stage phrase —
+#   "… (UAZ 9 to 11–12; Late Jurassic)" without the word "dated",
+#   "… (UAZ 7; late Middle Jurassic)",
+# covers the same class as the dated shape regardless of the verb used
+# ("indicates", "correlates with", "assigned an age of", …). The tail is
+# the _STAGE_PHRASE_RE itself, so a non-age tail ("see Baumgartner")
+# cannot match. Groups: 1 = unit name, 2 = first sub (map key),
+# 3 = age phrase. Registered in extract_unit_age_map_regex's table.
+_UNIT_PAREN_AGE_RE = re.compile(
+    r"\(\s*"
+    + _UNIT_NAME_RE
+    + r"\s+([A-Z]|\d+|[IVX]+)"
+    + r"(?:\s*(?:to|[–—-])\s*[A-Za-z0-9]+)*"
+    + r"\s*[;,]\s*("
+    + _STAGE_PHRASE_RE.pattern
+    + r")\s*\)",
+    re.IGNORECASE,
+)
 
 
 def _trim_age_before_unit(text: str) -> str:
@@ -1816,6 +1836,7 @@ def extract_unit_age_map_regex(
             (_UNIT_AGE_HEADING_RE, "heading", False),
             (_UNIT_AGE_BEFORE_RE, "before", True),
             (_UNIT_AGE_DATED_RE, "dated", False),
+            (_UNIT_PAREN_AGE_RE, "paren", False),
         ):
             for m in pat.finditer(text):
                 if key_group == "dated":
@@ -1826,6 +1847,10 @@ def extract_unit_age_map_regex(
                         age_raw = stage_hit
                     else:
                         age_raw = (m.group(4) or "").strip()
+                elif key_group == "paren":
+                    # groups: 1=name, 2=first sub, 3=validated age phrase
+                    unit = _norm_unit_key(m.group(1), m.group(2))
+                    age_raw = m.group(3)
                 elif before_unit:
                     unit = _norm_unit_key(m.group(2), m.group(3))
                     age_raw = m.group(1)
@@ -1839,7 +1864,10 @@ def extract_unit_age_map_regex(
                 age_text = _trim_unit_age_text(age_raw.strip())
                 if before_unit:
                     age_text = _trim_age_before_unit(age_text)
-                if not age_text:
+                # 2026-09-15 (audit): a window with NO stage word can't be
+                # a valid age — "The section spans (UAZ 9)" used to emit
+                # the prose fragment "The section spans" as age_text.
+                if not age_text or not _STAGE_PHRASE_RE.search(age_text):
                     continue
                 out[unit] = {
                     "age_text": age_text,

@@ -893,6 +893,37 @@ def assign_panels_to_labels(
     return out
 
 
+def _gate_species_candidate(species: str, context_text: str, panel_id: object) -> str | None:
+    """Shared writer gate (2026-09-15): non-taxon plausibility + genus
+    support against the caption this layer was given. Returns the
+    candidate unchanged when it passes, else ``None`` (logged)."""
+    try:
+        from .semantic_engine import (
+            _species_candidate_rejected,
+            species_supported_by_text,
+        )
+
+        reason = _species_candidate_rejected(species)
+        if reason:
+            logger.debug(
+                "match_panels: species candidate rejected (%s): %r (panel %s)",
+                reason,
+                species,
+                panel_id,
+            )
+            return None
+        if not species_supported_by_text(species, context_text):
+            logger.debug(
+                "match_panels: species candidate genus not in caption: %r (panel %s)",
+                species,
+                panel_id,
+            )
+            return None
+    except Exception:  # gates unavailable → keep candidate (shape-validated)
+        pass
+    return species
+
+
 def match_panels(
     paper_id: str,
     figure_id: str,
@@ -1067,6 +1098,17 @@ def match_panels(
                         candidate = None
                 except Exception:  # validator unavailable → keep candidate
                     pass
+            # 2026-09-15 (batch_2020 audit): the heuristic caption parse is
+            # a species writer too — prose look-alikes from garbled captions
+            # ("Khivach River basin" → "River basin", "Siberian abundance"
+            # from a title page) reached matches.jsonl through this path
+            # with only the shape validator running. Apply the non-taxon
+            # plausibility gate and the genus-support gate (context: the
+            # caption this layer was given).
+            if candidate:
+                candidate = _gate_species_candidate(
+                    candidate, getattr(caption, "caption", "") or "", panel_id
+                )
             assigned_species.append(candidate)
     else:
         # Last-resort fallback: position-based, but DO NOT collapse the tail
@@ -1093,6 +1135,11 @@ def match_panels(
                         cand = None
                 except Exception:  # validator unavailable → keep candidate
                     pass
+            # 2026-09-15: same double gate on the position-fallback path.
+            if cand:
+                cand = _gate_species_candidate(
+                    cand, getattr(caption, "caption", "") or "", f"pos{i}"
+                )
             assigned_species.append(cand)
 
     # 2) 可选神经图匹配。未训练权重或缺少checkpoint时跳过。
