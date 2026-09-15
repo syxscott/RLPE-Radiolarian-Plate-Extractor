@@ -1795,7 +1795,22 @@ def species_supported_by_text(species: str | None, context_text: str | None) -> 
     n_ctx = _norm_for_support(context_text)
     if not n_ctx:
         return True  # no context available → other layers must judge
-    return _norm_for_support(genus) in n_ctx
+    if _norm_for_support(genus) in n_ctx:
+        return True
+    # 2026-09-15 (softening): OCR print defects and LLM spelling
+    # corrections ("Williriedelum" → "Williriedellum") fail the exact
+    # match — accept a near-identical context word (ratio ≥ 0.9). For
+    # an 8+ letter genus a 0.9 cutoff cannot smuggle in a different
+    # real genus.
+    try:
+        from difflib import get_close_matches
+
+        ctx_words = re.findall(r"[A-Za-z]{4,}", context_text or "")
+        if get_close_matches(genus, [w.lower() for w in ctx_words], n=1, cutoff=0.9):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # 2026-09-12 (composite captions): one plate, MANY species groups —
