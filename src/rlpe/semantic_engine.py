@@ -1155,15 +1155,17 @@ _CAPTION_CLAUSE_RE = re.compile(
     r"((?:\d+[a-z]?(?:\s*[,\-–—]\s*(?:\d+[a-z]?|[a-z]))*(?:\s*,\s*\d+[a-z]?(?:\s*[,\-–—]\s*(?:\d+[a-z]?|[a-z]))*)*))"  # label list
     r"\s*[\.:]?\s*"
     r"([A-Z][a-zA-Z-]+"  # Genus (capitalized)
-    # Optional "?" uncertainty marker. We always consume the "?" so
-    # the genus token includes it (e.g. "Periphaena?"). After a "?"
+    # Optional uncertainty marker. We always consume it so the genus
+    # token includes it (e.g. "Periphaena?" / Bragin 2020 Omolon
+    # "Hexapyramis(?) sp. cf. H. perforatum" — the parenthesised "(?)"
+    # form sits tight against the genus with no space). After a "?"
     # the epithet may follow WITHOUT a space (e.g. "Periphaena? duplus"
     # has a space, but "Trilonche? sp." also has a space). The epithet
     # pattern below uses `(?:\s+|\s*\?\s*)` to handle both: " sp" via
     # the leading `\s+` branch, "? sp" via the `\?\s+` branch. We
     # require the "?" to come right after a letter (no extra space) by
     # using a non-space boundary below.
-    r"(?:\?)?"
+    r"(?:\?|\(\?\))?"
     r"(?:"  # optionally followed by epithet, possibly with cf./aff. between
     r"(?:\s+(?:cf\.|aff\.)\s+[a-z][a-zA-Z-]+)"  # cf./aff. + species
     r"|"
@@ -1204,7 +1206,7 @@ _CAPTION_CLAUSE_RE = re.compile(
     # rejects. Anchoring on the first char of the next word fixes it.
     r"(?:\s+(?!sp\b|spp\b|cf\b|aff\b|n\b|nov\b)(?=[a-z])[a-z][a-zA-Z-]+)?"
     r")"
-    r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?"
+    r"(\s+(?:n\.\s*sp\.|sp\.\s*nov\.|nov\.\s*sp\.|sp\.|spp\.|cf\.|aff\.|n\.\s*gen\.\s*&\s*sp\.|nov\.))?"
     # Trailing identifier after the (modifier+) species. Captures the
     # "sp. 1" / "sp. A" / "epithet 2" forms that feng2007 uses to
     # distinguish multiple "sp." specimens in the same genus. The
@@ -1705,6 +1707,45 @@ def _species_candidate_rejected(species: str) -> str | None:
         "core",
         "sediments",
         "water",
+        # 2026-09-15 (external review): lithology / rock terms minted from
+        # columnar-section legends ("Struganik limestone") and figure-word /
+        # layout fragments ("Legend same", "Field photographs") that passed
+        # the shape checks because they look like Capitalised + lowercase
+        # binomials. None can be a genus or epithet.
+        "limestone",
+        "limestones",
+        "sandstone",
+        "sandstones",
+        "clay",
+        "clays",
+        "marl",
+        "marls",
+        "chert",
+        "silex",
+        "radiolarite",
+        "radiolarites",
+        "flysch",
+        "shale",
+        "shales",
+        "conglomerate",
+        "calcarenite",
+        "legend",
+        "correlation",
+        "photographs",
+        "photograph",
+        "photo",
+        "view",
+        "same",
+        "when",
+        "only",
+        "single",
+        "optical",
+        "field",
+        "black",
+        "hard",
+        "detail",
+        "details",
+        "overview",
     }
     _HARD_PROSE_NOUNS = {
         "abundance",
@@ -1713,11 +1754,31 @@ def _species_candidate_rejected(species: str) -> str | None:
         "terrane",
         "massif",
         "sediments",
+        # 2026-09-15 (external review): impossible as taxon name components.
+        "limestone",
+        "sandstone",
+        "legend",
+        "correlation",
+        "photographs",
+        "flysch",
+        "radiolarite",
     }
     if lowered and all(t in _PROSE_NOUNS for t in lowered):
         return "prose_noun_candidate"
     if any(t in _HARD_PROSE_NOUNS for t in lowered):
         return "prose_noun_candidate"
+    # 2026-09-15 (external review): connective/preposition words inside a
+    # candidate ("Correlation of", "When only") are caption prose, never
+    # binomial components — valid open-nomenclature forms (sp. aff. C. x,
+    # gen. et sp. indet.) never contain these bare tokens.
+    _INTERIOR_STOPWORDS = {"of", "the", "and", "from", "with", "only", "same", "at", "in"}
+    if any(t in _INTERIOR_STOPWORDS for t in lowered[1:]):
+        return "interior_stopword"
+    # Truncated open-nomenclature candidates ("Cyclastrum sp. aff" with no
+    # compared genus after aff./cf.) are caption parse fragments; a complete
+    # form always names the genus being compared.
+    if lowered[-1] in {"aff", "cf"}:
+        return "truncated_open_nomenclature"
     try:
         from .stratigraphy import classify_age_string
 
@@ -1947,6 +2008,12 @@ def _parse_paren_letter_caption(text: str) -> list[CaptionPair] | None:
     return pairs
 
 
+# 2026-09-15 (external review): PDF hyphenation at line breaks splits
+# species epithets ("perapedien-\nsis"); parse_caption joins these once
+# before any parser runs. Lowercase continuation only — genuinely
+# hyphenated compound words at a line end keep their hyphen.
+_HYPHEN_BREAK_RE = re.compile(r"([A-Za-z])-\s*\n\s*([a-z])")
+
 _COMPOSITE_GROUP_RE = re.compile(
     # A group must START at the caption anchor, a semicolon, a colon or
     # a period — the separators journals actually put between species
@@ -2011,17 +2078,34 @@ def _parse_composite_caption(text: str) -> list[CaptionPair] | None:
             # morphotype identifier; a real taxa group, kept verbatim.
             species = re.sub(r"\s+", " ", open_nom)
         else:
-            genus = (m.group(2) or "").rstrip("?")
+            # 2026-09-15 (external review): the "?" uncertainty marker is
+            # part of the author's taxon concept ("Noritus? sp.",
+            # "Plafkerium? sp.", "Savaryella? nikishini") — stripping it
+            # silently upgraded an uncertain identification to a certain
+            # one. Keep the marker verbatim.
+            genus = (m.group(2) or "").strip()
             if genus.lower() in _COMPOSITE_NON_SPECIES:
                 # "2–paratype, GIN no ..." — a specimen-type entry, not
                 # a species group.
                 continue
             epithet = (m.group(3) or "").strip()
             species = f"{genus} {epithet}".strip()
+            # Nomenclatural modifier tails: "Savaryella? nikishini nov. sp."
+            # / "… nov" (Bragin prints "nov" without the dot). Without this
+            # the composite parser cut "nov. sp." off, degrading a new-species
+            # designation to a bare binomial.
+            tail_consumed = 0
+            tail = text[m.end() : m.end() + 24]
+            m_nov = re.match(r"\s+(nov\.?\s*(?:sp\.?)?|sp\.\s*nov\.?|n\.\s*sp\.)", tail)
+            if m_nov:
+                species = f"{species} {m_nov.group(1).strip()}"
+                tail_consumed = m_nov.end()
             # Open-nomenclature tail: "3- Williriedellum sp. S; 4- ..."
             # the short-code tail ("sp. S", "sp. cf. W.") sits right
             # after the group match and is part of the species name.
-            tail = text[m.end() : m.end() + 48]
+            # (Skipped when the modifier tail above already consumed the
+            # " sp." — otherwise "Noritus? sp." would gain a second "sp.".)
+            tail = text[m.end() + tail_consumed : m.end() + tail_consumed + 48]
             m_tail = re.match(
                 r"\s+((?:sp|spp)\.\s*(?:cf\.\s*|aff\.\s*)?[A-Z](?:\.\s*[A-Za-z][a-zA-Z-]*|\.\s*[A-Z])?|(?:sp|spp)\.)",
                 tail,
@@ -2087,6 +2171,9 @@ def _regex_parse_caption(caption_text: str) -> list[CaptionPair]:
     # otherwise the U+FB01 ligature in OpenDataLoader output makes
     # _CAPTION_CLAUSE_RE miss every clause and return zero pairs.
     text = _normalize_caption_text(caption_text)
+    # 2026-09-15 (external review): join PDF hyphenation so epithets split
+    # across line breaks ("perapedien-\nsis") parse as one word.
+    text = _HYPHEN_BREAK_RE.sub(r"\1\2", text)
     # 2026-09-12 (composite captions): "Plate 1. 1-5–Species A ...;
     # 6–Species B ...; 12-17–Species D" — one plate, many numbered
     # species groups separated by specimen-catalogue prose. The clause
@@ -3450,6 +3537,13 @@ class SemanticEngine:
         """
         if not self._stage_enabled(1) or not caption_text or not caption_text.strip():
             return []
+        # 2026-09-15 (external review): PDF line breaks hyphenate species
+        # epithets ("Afens perapedien-\nsis" → the parsers captured the
+        # bare fragment "Afens perapedien"). Join the continuation form
+        # once, here, so every parser (LLM prompt, clause, composite,
+        # Danelian) sees the intact word. Only a lowercase continuation
+        # is joined — real compound words at line ends keep their hyphen.
+        caption_text = _HYPHEN_BREAK_RE.sub(r"\1\2", caption_text)
         # Configurable: skip the LLM and go straight to the regex parser.
         # Useful for tests and for cost-sensitive runs where the regex is
         # accurate enough for the caption convention at hand.

@@ -2032,7 +2032,12 @@ _SPECIES_NAME_RE = re.compile(
     r"(?:\s+(?:cf\.|aff\.)\s+(?:[A-Z]\.\s+)?[A-Z]?[a-z][a-z\-]+)?"  # cf./aff. S. species
     r"|"
     r"[?.]?\s+[a-z][a-z\-]+"  # "Genus? species" (Pouille) or "Genus species"
-    r"(?:\s+[a-z][a-z\-]+)*"  # optional third epithet
+    r"(?:\s+(?!nov\b)[a-z][a-z\-]+)*"  # optional third epithet (not "nov")
+    # 2026-09-15 (external review): "Becus naidini nov. sp." — the
+    # new-taxon marker must survive the harvest; cutting it degraded a
+    # nov. sp. designation to a bare binomial. Bragin also prints
+    # "nov" without the dot.
+    r"(?:\s+nov\.?\s*(?:sp\.?)?)?"
     r")"
     r")"
 )
@@ -2709,6 +2714,9 @@ def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tup
         text = k.get("content") or ""
         if not text:
             continue
+        # 2026-09-15: join PDF hyphenation ("perapedien-\nsis") so the
+        # species regex sees intact epithets.
+        text = re.sub(r"([A-Za-z])-\s*\n\s*([a-z])", r"\1\2", text)
         page = int(k.get("page number", 0) or 0)
         for m in _PLATE_INLINE_REF_RE.finditer(text):
             plate_number = int(m.group(1))  # inline refs are always Arabic
@@ -2743,6 +2751,19 @@ def _harvest_inline_plate_refs(kids: list[dict[str, Any]]) -> dict[int, list[tup
                     continue
             else:
                 species = sp_match.group(1)
+                # 2026-09-15 (synonymy guard, external review): a species
+                # mention immediately preceded by a YEAR ("…1976
+                # Dumitricaia maxwellensis nov. sp. — Pessagno, pl. 4,
+                # figs. 10, 11") is a synonymy entry citing ANOTHER
+                # paper's plate. Its pl./fig. numbers are not this
+                # paper's figures — mapping them minted a wrong species
+                # on a vacant panel (Bragina & Bragin 2020 Lower
+                # Cenomanian Plate 4, fig. 10). Skip the whole ref: an
+                # earlier candidate must not inherit another paper's
+                # fig numbers either.
+                _pre = prefix[max(0, sp_match.start() - 30) : sp_match.start()]
+                if re.search(r"(?:1[6-9]|20)\d{2}[a-z]?\s*[-–—.:;]?\s*$", _pre):
+                    continue
             # Reject false positives: parenthetical authorship that
             # precedes the plate ref (e.g. "Nazarov in (Pl. 1, fig. 15)"
             # in Pouille 2014 — "Nazarov in" is an author citation, not

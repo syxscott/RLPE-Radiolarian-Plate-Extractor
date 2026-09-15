@@ -57,7 +57,13 @@ from .association import (
 from .config import PipelineConfig
 from .converters import match_result_from_dict, run_output_from_provenance
 from .gemma_postprocess import apply_gemma_to_matches, build_gemma_backend_from_config
-from .geology_extraction import build_knowledge_graph, link_species_to_geology
+from .geology_extraction import (
+    ages_consistent,
+    build_knowledge_graph,
+    extract_geology_from_sections,
+    filter_links_consistent_with_anchor,
+    link_species_to_geology,
+)
 from .grobid import GrobidClient, PipelineCancelledError, parse_paper_metadata_from_tei
 from .layout import (
     choose_best_page,
@@ -159,6 +165,33 @@ def _short_sha256_file(path: Path) -> str:
 # explicit alias with a deprecation note rather than renaming
 # silently. New callers should use ``_short_sha256_file`` directly.
 _sha256_file = _short_sha256_file  # noqa: F811  (legacy alias for backward compat)
+
+
+def _pdf_title_fingerprint(pdf_path: Path | str) -> str | None:
+    """Fingerprint a PDF's first pages' text for duplicate-article detection.
+
+    Two scans of the same paper differ byte-wise (so ``stable_id`` yields
+    two paper_ids) but share their title page text. Normalise (lowercase,
+    alphanumeric only) and hash the first ~400 chars of the first two
+    pages. Returns ``None`` when the text cannot be extracted — the
+    caller must treat that as "no opinion" and process the PDF.
+    """
+    import hashlib as _hashlib
+
+    try:
+        import pymupdf as _fitz
+    except Exception:
+        return None
+    try:
+        with _fitz.open(str(pdf_path)) as doc:
+            text = " ".join((doc[i].get_text() or "") for i in range(min(2, len(doc))))
+    except Exception:
+        return None
+    norm = "".join(c for c in text.lower() if c.isalnum())
+    if len(norm) < 80:
+        # Scanned image-only PDF — no text layer, cannot judge.
+        return None
+    return _hashlib.sha1(norm[:400].encode("utf-8")).hexdigest()
 
 
 def _total_physical_memory_mb() -> int | None:
@@ -754,6 +787,23 @@ class RadiolarianPipeline:
                 done_markers[stem] = marker
             resume = bool(self.config.extra.get("resume", False))
             pending_pdfs = []
+            # 2026-09-15 (external review): the same paper uploaded twice
+            # under different filenames ("… Omolon Massif [Rev Micropal
+            # 67].pdf" vs "… boreal radiolarians.pdf") hashes to two
+            # paper_ids (stable_id is a content hash of the FILE, and the
+            # scans differ byte-wise) and produced two identical extraction
+            # sets. Pre-flight each pending PDF's first pages and skip one
+            # of a title-fingerprint collision. The fingerprint store is
+            # persisted next to the manifests so per-paper worker runs
+            # (one PDF per invocation) still see earlier papers.
+            _fp_store_path = self.config.work_dir / "manifests" / ".title_fingerprints.json"
+            _title_fps: dict[str, str] = {}
+            try:
+                if _fp_store_path.exists():
+                    _title_fps = json.loads(_fp_store_path.read_text(encoding="utf-8"))
+            except Exception:
+                _title_fps = {}
+            _fps_dirty = False
             for p in pdf_files:
                 stem = stable_id(p)
                 if resume and done_markers[stem].exists():
@@ -763,7 +813,50 @@ class RadiolarianPipeline:
                         done_markers[stem],
                     )
                     continue
+                _fp = _pdf_title_fingerprint(p)
+                if _fp:
+                    _prior = _title_fps.get(_fp)
+                    if _prior and _prior != stem:
+                        logger.warning(
+                            "run: skipping %s — title fingerprint matches already-"
+                            "processed paper %s (duplicate upload of the same article)",
+                            p.name,
+                            _prior,
+                        )
+                        from .utils import _WARNINGS, _WARNINGS_LOCK  # noqa: PLC0415
+
+                        with _WARNINGS_LOCK:
+                            _WARNINGS.append(
+                                {
+                                    "label": "duplicate_paper_skipped",
+                                    "paper_id": stem,
+                                    "message": (
+                                        f"{p.name} is a duplicate upload of paper {_prior} "
+                                        "(same title fingerprint); skipped"
+                                    ),
+                                    "timestamp": time.time(),
+                                }
+                            )
+                        # Mark done so --resume doesn't retry it.
+                        try:
+                            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                            done_markers[stem].write_text("duplicate", encoding="utf-8")
+                        except Exception:
+                            logger.debug("duplicate checkpoint write failed", exc_info=True)
+                        continue
+                    if _prior != stem:
+                        _title_fps[_fp] = stem
+                        _fps_dirty = True
                 pending_pdfs.append(p)
+            if _fps_dirty:
+                try:
+                    _fp_store_path.parent.mkdir(parents=True, exist_ok=True)
+                    _fp_store_path.write_text(
+                        json.dumps(_title_fps, ensure_ascii=False, indent=1),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    logger.debug("title fingerprint store write failed", exc_info=True)
             if not pending_pdfs:
                 logger.info("run: all PDFs already checkpointed; nothing to do")
                 return []
@@ -2842,6 +2935,24 @@ class RadiolarianPipeline:
                     paper_id,
                     exc_info=True,
                 )
+        # 2026-09-15 (paper-level anchor): rows that ended up with NO
+        # geology links inherit the paper's own study-area record
+        # (abstract / geological setting, regex-verified fields only).
+        # Runs after the caption-unit attach so unit-resolved rows are
+        # left untouched.
+        if self.config.extra.get("use_paper_geology_anchor", True):
+            try:
+                results = self._attach_paper_geology_anchor(
+                    results,
+                    paper_id,
+                    list(getattr(od_result, "fulltext_sections", None) or []),
+                )
+            except Exception:
+                logger.warning(
+                    "paper geology anchor failed for %s; continuing",
+                    paper_id,
+                    exc_info=True,
+                )
         # Round 11: dedup + drop stub rows + drop empty/invalid rows.
         # See ``_finalize_rows`` for the bug fixes this addresses.
         return self._finalize_rows(results, pdf_path=pdf_path)
@@ -4896,6 +5007,89 @@ class RadiolarianPipeline:
             r["metadata"] = md
         return results
 
+    def _attach_paper_geology_anchor(
+        self,
+        results: list[dict[str, Any]],
+        paper_id: str,
+        sections: list[dict[str, str]] | None,
+    ) -> list[dict[str, Any]]:
+        """Give rows with NO geology links the paper's own study-area facts.
+
+        External review 2026-09-15 (Bragin 2020 Omolon): papers whose plate
+        captions are bare ("Plate 1. 1–5. Praenanina? hirsuta …") and whose
+        species never appear in the geological-setting text shipped with
+        every metadata field empty — the paper states its age and locality
+        plainly in the abstract / setting, but nothing propagated. For such
+        rows we extract ONE paper-level record from the title / abstract /
+        geological-setting sections (regex-verified fields only — no LLM,
+        no fabrication) and attach it as a ``paper_anchor`` link. Rows that
+        already carry caption/section/unit links are untouched.
+
+        Returns ``results`` unchanged when every row already has links or
+        the paper yields no verifiable geology.
+        """
+        if not results:
+            return results
+        empty_rows = [r for r in results if not ((r.get("metadata") or {}).get("geology_links"))]
+        if not empty_rows:
+            return results
+        secs = [
+            s
+            for s in (sections or [])
+            if (s.get("section_type") or "").lower() == "geological_setting"
+        ]
+        if not secs:
+            # Papers that don't use typed sections: any non-reference,
+            # non-systematic text may carry the study-area statement.
+            secs = [
+                s
+                for s in (sections or [])
+                if (s.get("section_type") or "").lower()
+                not in {"references", "systematic_paleontology"}
+            ]
+        recs = extract_geology_from_sections(secs[:3])
+        anchor: dict[str, Any] = {}
+        for rec in recs:
+            d = rec.to_dict() if hasattr(rec, "to_dict") else dict(rec)
+            fields = {
+                k: d.get(k)
+                for k in (
+                    "age",
+                    "chronostratigraphy",
+                    "chronostratigraphy_rank",
+                    "ma_top",
+                    "ma_base",
+                    "formation",
+                    "lithology",
+                    "locality",
+                    "country",
+                    "biozone",
+                )
+                if d.get(k) is not None
+            }
+            # Prefer a record that at least dates the material; the first
+            # section is usually the headline statement (abstract/intro).
+            if fields.get("age") or fields.get("locality"):
+                anchor = fields
+                break
+            anchor = anchor or fields
+        if not anchor:
+            return results
+        for r in empty_rows:
+            md = r.setdefault("metadata", {})
+            link = dict(anchor)
+            link["section_type"] = "paper_anchor"
+            link.setdefault("confidence", 0.5)
+            md["geology_links"] = [link]
+            md["geology_scope"] = "paper_anchor"
+        logger.info(
+            "paper_geology_anchor %s: attached %d-field paper-level record to %d unlinked rows",
+            paper_id,
+            len(anchor),
+            len(empty_rows),
+        )
+        return results
+
     def _apply_multi_plate_enrichment(
         self,
         results: list[dict[str, Any]],
@@ -6859,14 +7053,32 @@ class RadiolarianPipeline:
             # the highest-confidence link (links are already ordered
             # best-first by the extractors); fields the link lacks
             # stay absent rather than being fabricated as None noise.
-            best = next(
-                (
-                    gl
-                    for gl in geo_links
-                    if isinstance(gl, dict) and (gl.get("age") or gl.get("locality"))
-                ),
+            # 2026-09-15 (summary consistency): the summary inherits the
+            # first age-bearing link. Links are ordered best-first by the
+            # enrichment blocks (caption > section), but a later writer
+            # appending an age-contradicting link must never win the pick.
+            # Walk links in order and take the first whose age doesn't
+            # contradict the first age seen.
+            _anchor_age = next(
+                (gl.get("age") for gl in geo_links if isinstance(gl, dict) and gl.get("age")),
                 None,
             )
+            best = None
+            for gl in geo_links:
+                if not isinstance(gl, dict) or not (gl.get("age") or gl.get("locality")):
+                    continue
+                if ages_consistent(gl.get("age"), _anchor_age):
+                    best = gl
+                    break
+            if best is None:
+                best = next(
+                    (
+                        gl
+                        for gl in geo_links
+                        if isinstance(gl, dict) and (gl.get("age") or gl.get("locality"))
+                    ),
+                    None,
+                )
             if best is not None:
                 summary_keys = (
                     "age",
@@ -8841,29 +9053,38 @@ Rules:
                 fallback_sections=grobid_sections or [],
             )
         for i, m in enumerate(matches):
-            geo_list = section_links.get(m.species or "", [])
-            if not geo_list:
-                # Round 18 fix: only the FIRST panel in a figure with
-                # a non-placeholder caption inherits the figure-level
-                # geology as a default anchor. All other panels get
-                # empty lists (data gap, not fabricated). The
-                # ``geology_scope`` marker on the first panel tells
-                # the operator that the data is figure-level, not
-                # panel-specific.
-                key = panel_keys[i] if i < len(panel_keys) else (m.panel_id or f"idx_{i}")
-                panel_local_geo = panel_geo.get(key, [])
-                if panel_local_geo and not _looks_like_placeholder_caption(
-                    panel_captions.get(key, "")
-                ):
-                    geo_list = panel_local_geo
-                    m.metadata["geology_scope"] = "panel"
-                elif i == 0 and panel_local_geo:
-                    # First panel as figure-level anchor. Marked so
-                    # the operator can distinguish from panel-specific.
-                    geo_list = panel_local_geo
-                    m.metadata["geology_scope"] = "figure_anchor"
-                else:
-                    m.metadata["geology_scope"] = "none"
+            # 2026-09-15 (caption-first geology): the plate caption is the
+            # paper's OWN statement about the material on this figure
+            # ("Plate I. Upper Santonian radiolarians from the Petrovića
+            # Brdo section (Serbia)"), so caption-derived links win.
+            # Species-comparison links from the geological-setting text
+            # ("similar to specimens from the Perapedhi Formation, Upper
+            # Triassic, Cyprus") previously took priority and contaminated
+            # every panel whose species happened to be named in a comparison
+            # sentence — external review 2026-09-15 found whole plates where
+            # half the rows carried another country's stratigraphy. Section
+            # links now only append fields the caption lacked, and only when
+            # their age doesn't contradict the caption's age.
+            cap_key = panel_keys[i] if i < len(panel_keys) else (m.panel_id or f"idx_{i}")
+            cap_links = (
+                panel_geo.get(cap_key, [])
+                if not _looks_like_placeholder_caption(panel_captions.get(cap_key, ""))
+                else []
+            )
+            sec_links = section_links.get(m.species or "", [])
+            cap_age = next(
+                (gl.get("age") for gl in cap_links if isinstance(gl, dict) and gl.get("age")),
+                None,
+            )
+            if cap_links:
+                geo_list = cap_links + filter_links_consistent_with_anchor(sec_links, cap_age)
+                m.metadata["geology_scope"] = "panel_caption"
+            elif sec_links:
+                geo_list = sec_links
+                m.metadata["geology_scope"] = "section_context"
+            else:
+                geo_list = []
+                m.metadata["geology_scope"] = "none"
             m.metadata["scale_bar"] = merged_scale.to_dict()
             m.metadata["geology_links"] = geo_list[:5]
             m.metadata["llm_diagnostic"] = llm_diag
@@ -8968,23 +9189,30 @@ Rules:
         for i, row in enumerate(rows):
             md = dict(row.get("metadata") or {})
             sp = row.get("species") or ""
-            geo_list = section_links.get(sp, [])
-            if not geo_list:
-                # Round 18 fix: only the FIRST panel in a figure
-                # inherits figure-level geology; others stay empty
-                # so we don't fabricate per-panel data.
-                key = panel_keys[i] if i < len(panel_keys) else (row.get("panel_id") or f"idx_{i}")
-                panel_local_geo = panel_geo.get(key, [])
-                if panel_local_geo and not _looks_like_placeholder_caption(
-                    panel_captions.get(key, "")
-                ):
-                    geo_list = panel_local_geo
-                    md["geology_scope"] = "panel"
-                elif i == 0 and panel_local_geo:
-                    geo_list = panel_local_geo
-                    md["geology_scope"] = "figure_anchor"
-                else:
-                    md["geology_scope"] = "none"
+            # 2026-09-15 (caption-first geology): mirror of the classical
+            # block above — caption links outrank species/setting links,
+            # and inconsistent setting links are dropped. See the long
+            # comment there for the failure this fixes.
+            key = panel_keys[i] if i < len(panel_keys) else (row.get("panel_id") or f"idx_{i}")
+            cap_links = (
+                panel_geo.get(key, [])
+                if not _looks_like_placeholder_caption(panel_captions.get(key, ""))
+                else []
+            )
+            sec_links = section_links.get(sp, [])
+            cap_age = next(
+                (gl.get("age") for gl in cap_links if isinstance(gl, dict) and gl.get("age")),
+                None,
+            )
+            if cap_links:
+                geo_list = cap_links + filter_links_consistent_with_anchor(sec_links, cap_age)
+                md["geology_scope"] = "panel_caption"
+            elif sec_links:
+                geo_list = sec_links
+                md["geology_scope"] = "section_context"
+            else:
+                geo_list = []
+                md["geology_scope"] = "none"
             md["scale_bar"] = merged_scale.to_dict()
             md["geology_links"] = geo_list[:5]
             md.setdefault("llm_diagnostic", {})

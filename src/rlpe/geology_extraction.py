@@ -1028,20 +1028,34 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
                     country = fallback_country
                     break
 
-        # Stratigraphy enrichment — find stage names (Changhsingian, Wuchiapingian, …)
+        # Stratigraphy enrichment — resolve chronostratigraphy + Ma from the
+        # SAME age mention that becomes the record's ``age`` field.
+        # 2026-09-15 (field-consistency): the previous "most specific mention
+        # anywhere in the section" heuristic let a stage-rank mention from one
+        # sentence ("Campanian–Maastrichtian" in a Fig. 1 map legend) outrank
+        # the section headline age ("upper Albian radiolarians"), baking
+        # contradictions like age="upper Albian" + chronostratigraphy=
+        # "Maastrichtian" + ma 66–72.1 into a SINGLE record. When the AGE regex
+        # already produced hits, chrono/Ma are now classified from ages[0];
+        # the whole-text scan only runs when no AGE mention exists.
         chrono = None
         chrono_rank = None
         ma_top = ma_base = ma_mid = None
-        if find_ages_in_text is not None:
+        if find_ages_in_text is not None and classify_age_string is not None:
             try:
-                cls_list = find_ages_in_text(text)
-                # Pick the most specific one (rank="age" > "epoch" > "period")
-                rank_order = {"age": 3, "epoch": 2, "period": 1}
-                best = max(
-                    [c for c in cls_list if c.confidence > 0],
-                    key=lambda c: rank_order.get(c.rank or "", 0),
-                    default=None,
-                )
+                if ages:
+                    best = classify_age_string(ages[0])
+                    if best.confidence <= 0:
+                        best = None
+                else:
+                    cls_list = find_ages_in_text(text)
+                    # Pick the most specific one (rank="age" > "epoch" > "period")
+                    rank_order = {"age": 3, "epoch": 2, "period": 1}
+                    best = max(
+                        [c for c in cls_list if c.confidence > 0],
+                        key=lambda c: rank_order.get(c.rank or "", 0),
+                        default=None,
+                    )
                 if best is not None:
                     # audit 2026-07-31: ``best.age or best.period``
                     # downgraded epoch-level hits to their parent
@@ -1067,26 +1081,15 @@ def extract_geology_from_sections(sections: list[dict[str, str]]) -> list[Geolog
         # range check, which let invalid coordinates leak into
         # GeologyRecord.latitude/longitude.
         lat, lon, coord_start, coord_end = _extract_first_coord(text)
-        # Round 21: country-centroid fallback. When the section text
-        # has no explicit coordinates (only a country name like
-        # "Greece" or "Tunisia"), look up the centroid as a low-
-        # confidence fallback. The ``confidence`` flag on the
-        # GeologyRecord reflects this: regex-extracted coords are
-        # 0.7 / 0.55; centroid fallback is 0.3 (and the
-        # ``coord_source`` field carries "country_centroid" so the
-        # operator can tell).
+        # 2026-09-15 (honest coordinates): the country-centroid fallback
+        # (Russia → 60,100; Cyprus → 35,33) emitted national centre points as
+        # if they were section coordinates — unusable and misleading for
+        # palaeogeographic analysis (external review 2026-09-15 flagged 6
+        # papers where every row carried Russia's centroid). The fallback now
+        # leaves lat/lon empty; the section's country is still recorded and
+        # ``coord_source`` stays empty so consumers can distinguish "no
+        # coordinates in source" from real extracted coordinates.
         centroid_source = ""
-        if lat is None and lon is None and country is not None:
-            centroid = _COUNTRY_CENTROIDS.get(country)
-            if centroid is not None:
-                lat, lon = centroid
-                centroid_source = "country_centroid"
-                logger.debug(
-                    "country centroid fallback: country=%r → lat=%s lon=%s",
-                    country,
-                    lat,
-                    lon,
-                )
         # Round 18: classify the coordinate as paleo vs modern based
         # on surrounding keywords ("at deposition time" → paleo,
         # "today / present-day" → modern). Without this, both
@@ -1289,6 +1292,56 @@ def _extract_first_coord(
     if start < 0:
         return None, None, None, None
     return coord.latitude, coord.longitude, start, start + len(raw)
+
+
+def ages_consistent(age_a: str | None, age_b: str | None, tol_ma: float = 1.0) -> bool:
+    """True when two free-form age strings can describe the same interval.
+
+    Classifies both strings via the ICS lexicon and checks Ma-range overlap.
+    Unclassifiable strings (confidence 0) are treated as consistent — the
+    gate only rejects when BOTH sides resolve AND their [base, top] ranges
+    are disjoint by more than ``tol_ma``. This is what lets "upper Albian"
+    and "late Albian" coexist while "Upper Triassic" on an "Upper Santonian"
+    caption is rejected.
+    """
+    if not age_a or not age_b:
+        return True
+    try:
+        from .stratigraphy import classify_age_string as _cas
+    except Exception:  # pragma: no cover - lexicon unavailable
+        return True
+    try:
+        ca, cb = _cas(str(age_a)), _cas(str(age_b))
+    except Exception:
+        return True
+    if ca.confidence <= 0 or cb.confidence <= 0:
+        return True
+    a_lo, a_hi = sorted((ca.ma_base, ca.ma_top))
+    b_lo, b_hi = sorted((cb.ma_base, cb.ma_top))
+    if a_lo is None or a_hi is None or b_lo is None or b_hi is None:
+        return True
+    # Ma intervals are [younger, older]; disjoint when one ends before the
+    # other starts (allowing a small tolerance for boundary rounding).
+    return (a_hi + tol_ma >= b_lo) and (b_hi + tol_ma >= a_lo)
+
+
+def filter_links_consistent_with_anchor(
+    links: list[dict[str, Any]] | None,
+    anchor_age: str | None,
+) -> list[dict[str, Any]]:
+    """Drop geology links whose age contradicts the anchor age.
+
+    Used to keep species-comparison material (``"similar to specimens from
+    the Perapedhi Formation (Upper Triassic, Cyprus)"``) out of rows whose
+    own plate caption states a different period. Links without an age are
+    kept — only age-bearing links can contradict.
+    """
+    out: list[dict[str, Any]] = []
+    for gl in links or []:
+        if isinstance(gl, dict) and not ages_consistent(gl.get("age"), anchor_age):
+            continue
+        out.append(gl)
+    return out
 
 
 def link_species_to_geology(
