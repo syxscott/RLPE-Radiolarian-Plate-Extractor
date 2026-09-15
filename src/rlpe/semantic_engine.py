@@ -5364,16 +5364,13 @@ class SemanticEngine:
             # same plausibility gate as the Stage-1 path (2026-09-15)
             if species and _species_candidate_rejected(species):
                 species = None
-            # and the genus-support gate: enrich runs on page-level
-            # caption context, so an expanded genus absent from every
-            # caption on the page is model world knowledge, not the
-            # paper's taxon (Hernandez-Almeida FAIL class).
-            if species and not species_supported_by_text(species, page_caption):
-                logger.debug(
-                    "enrich species rejected (genus not in page caption): %r",
-                    species,
-                )
-                species = None
+            # NOTE: no genus-support gate here. Enrichment is a VISION
+            # path — the model reads the plate image, so a species that
+            # appears only in the image's printed labels (not in the
+            # page caption text) is legitimately the paper's taxon.
+            # Text-path expansion verification lives at parse_caption
+            # and the llm-first row builder; the Hernandez chart class
+            # is blocked upstream by the figure-type routing.
             conf = p.get("confidence")
             try:
                 conf_f = float(conf) if conf is not None else 0.7

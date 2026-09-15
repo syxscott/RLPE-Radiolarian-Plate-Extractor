@@ -180,7 +180,7 @@ class TestB8ParseCaptionNormalizes:
             ]
         )
         engine = self._engine_with_llm(payload)
-        pairs = engine.parse_caption("Fig. 1. caption text")
+        pairs = engine.parse_caption("Fig. 1. Triactoma caption text")
         assert len(pairs) == 1
         # ``_normalize_species`` is the source of truth for what
         # the species string becomes — verify the LLM path used
@@ -207,7 +207,7 @@ class TestB8ParseCaptionNormalizes:
             ]
         )
         engine = self._engine_with_llm(payload)
-        pairs = engine.parse_caption("Fig. 1. caption text")
+        pairs = engine.parse_caption("Fig. 1. Archaeodictyomitra caption text")
         assert len(pairs) == 1
         # "(?)" is stripped, leaving the gold-form species.
         assert "(?)" not in pairs[0].species
@@ -229,7 +229,7 @@ class TestB8ParseCaptionNormalizes:
             ]
         )
         engine = self._engine_with_llm(payload)
-        pairs = engine.parse_caption("Fig. 1. caption text")
+        pairs = engine.parse_caption("Fig. 1. Foo caption text")
         assert len(pairs) == 1
         # "(?)" in modifier is also stripped.
         assert "(?)" not in pairs[0].modifier
@@ -256,7 +256,7 @@ class TestB8ParseCaptionNormalizes:
             ]
         )
         engine = self._engine_with_llm(payload)
-        pairs = engine.parse_caption("Fig. 1. caption text")
+        pairs = engine.parse_caption("Fig. 1. Foo caption text")
         assert len(pairs) == 1
         assert pairs[0].species == "Foo bar"
 

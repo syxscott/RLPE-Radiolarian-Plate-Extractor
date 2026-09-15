@@ -3905,18 +3905,13 @@ class RadiolarianPipeline:
                                 _pp_species = None
                         except Exception:
                             pass
-                    # 2026-09-15 (Hernandez-Almeida FAIL): same genus-support
-                    # gate — the panel LLM sees the caption + page context,
-                    # so a genus absent from both is model world knowledge.
-                    if _pp_species and not species_supported_by_text(
-                        _pp_species,
-                        self._support_context(paper_id, f"{caption_for_panel}\n{page_context}"),
-                    ):
-                        logger.debug(
-                            "Stage 4.5: LLM species genus not in context: %r",
-                            _pp_species,
-                        )
-                        _pp_species = None
+                    # NOTE: no genus-support gate here. Stage 4.5 is a
+                    # VISION path — the model reads the panel crop, so a
+                    # genus printed on the image need not appear in the
+                    # caption/page text. Chart/diagram figures (the
+                    # Hernandez class) are excluded by the figure-type
+                    # gate at method entry; text-path expansion checks
+                    # live at parse_caption and the llm-first builder.
                     if _pp_species:
                         r["species"] = _pp_species
                     r["label"] = parsed.get("label") or r.get("label")

@@ -132,13 +132,13 @@ class TestLLMFirstExtract:
         mock_backend = MagicMock()
         mock_backend.infer_panel.return_value = {
             "fallback_used": False,
-            "panels": [{"label": "A", "species": "Test sp.", "confidence": 0.9}],
+            "panels": [{"label": "A", "species": "Actinomma leptodermum", "confidence": 0.9}],
         }
         result = self._run_with_mock_backend(mock_backend)
         assert result is not None
         assert len(result) == 1
         assert result[0]["panel_id"] == "A"
-        assert result[0]["species"] == "Test sp."
+        assert result[0]["species"] == "Actinomma leptodermum"
 
     def test_returns_match_results_on_success(self):
         """Successful LLM extraction returns MatchResult dicts."""
